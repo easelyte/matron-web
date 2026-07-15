@@ -136,6 +136,14 @@ export interface PendingMessage {
     convoId: string;
     body: string;
     createdAt: number;
+    kind?: "text" | "image" | "file";
+    filename?: string;
+    size?: number;
+    contentType?: string;
+    blobRef?: string | null;
+    attachState?: "uploading" | "sending" | "error";
+    errorKind?: "upload_failed" | "send_failed" | "too_large" | "empty";
+    canRetry?: boolean;
 }
 
 export type ConnectionState = "offline" | "connecting" | "online";
@@ -156,6 +164,7 @@ export interface ClientState {
     sessionStatus?: SessionStatus;
     textStreams: Record<string, string>;
     toolStreams: Record<string, ToolStreamState>;
+    dragActive: boolean;
 }
 
 export function isObject(value: unknown): value is Record<string, unknown> {

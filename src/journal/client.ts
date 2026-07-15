@@ -60,6 +60,7 @@ function blankState(): ClientState {
         hasOlderHistory: false,
         textStreams: {},
         toolStreams: {},
+        dragActive: false,
     };
 }
 
