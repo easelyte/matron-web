@@ -1,0 +1,621 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+:root {
+    --cpd-color-bg-canvas-default: #fff;
+    --cpd-color-bg-subtle-primary: #f7f8fa;
+    --cpd-color-bg-subtle-secondary: #f0f2f5;
+    --cpd-color-border-disabled: #d8dadd;
+    --cpd-color-border-interactive-primary: #8f96a0;
+    --cpd-color-border-interactive-secondary: #c7cbd1;
+    --cpd-color-icon-accent-primary: #0dbd8b;
+    --cpd-color-icon-secondary: #656d77;
+    --cpd-color-text-action-accent: #087f6d;
+    --cpd-color-text-critical-primary: #bd2020;
+    --cpd-color-text-link-external: #087f6d;
+    --cpd-color-text-primary: #1b1d22;
+    --cpd-color-text-secondary: #656d77;
+    --cpd-font-size-root: 16px;
+    --cpd-font-body-xs-regular: 400 12px/16px Inter, sans-serif;
+    --cpd-font-body-xs-semibold: 600 12px/16px Inter, sans-serif;
+    --cpd-font-body-sm-regular: 400 14px/20px Inter, sans-serif;
+    --cpd-space-1x: 4px;
+    --cpd-space-2x: 8px;
+    --cpd-space-3x: 12px;
+    --cpd-space-4x: 16px;
+    --cpd-space-5x: 20px;
+}
+
+body {
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    font-family: Inter, "Helvetica Neue", "Segoe UI", Roboto, Ubuntu, "Fira Sans", "Noto Sans", Arial, sans-serif;
+    font-size: 14.0625px;
+    font-weight: 400;
+    line-height: 1.5;
+}
+
+button,
+input,
+textarea {
+    color: inherit;
+}
+
+button {
+    cursor: pointer;
+}
+
+.mx_MatrixChat_wrapper,
+.mx_MatrixChat,
+.mx_RoomView_wrapper,
+.mx_RoomView,
+.mx_RoomView_body,
+.mx_LeftPanel_wrapper,
+.mx_LeftPanel_wrapper--user,
+.mx_LeftPanel,
+.mx_LeftPanel_roomListContainer {
+    min-width: 0;
+    min-height: 0;
+}
+
+.mx_MatrixChat_wrapper,
+.mx_MatrixChat {
+    width: 100%;
+    height: 100%;
+}
+
+.mx_MatrixChat {
+    display: flex;
+    overflow: hidden;
+}
+
+.mx_LeftPanel_outerWrapper,
+.mx_LeftPanel_wrapper,
+.mx_LeftPanel_wrapper--user,
+.mx_LeftPanel,
+.mx_LeftPanel_roomListContainer,
+.mx_RoomListPanel {
+    display: flex;
+    height: 100%;
+}
+
+.mx_LeftPanel_outerWrapper {
+    position: relative;
+    overflow: visible;
+    background: #fff;
+}
+
+.mx_LeftPanel_wrapper,
+.mx_LeftPanel_wrapper--user,
+.mx_LeftPanel,
+.mx_LeftPanel_roomListContainer,
+.mx_RoomListPanel {
+    flex: 1 1 auto;
+}
+
+.mx_RoomListPanel {
+    flex-direction: column;
+    background: #fff;
+}
+
+.mj_RoomListHeader {
+    display: flex;
+    min-height: 46px;
+    align-items: end;
+    justify-content: space-between;
+    padding: 0 16px 0 12px;
+}
+
+.mj_RoomListHeader h1 {
+    overflow: hidden;
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 28px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_RoomListHeaderActions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mj_IconButton {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_IconButton:hover {
+    background: #f0f2f5;
+}
+
+.mj_IconButton svg {
+    width: 20px;
+    height: 20px;
+}
+
+.mx_RoomListSearch {
+    display: flex;
+    min-height: 56px;
+    align-items: center;
+    padding: 0 12px;
+}
+
+.mx_RoomListSearch_inputWrapper {
+    display: flex;
+    width: 100%;
+    height: 36px;
+    align-items: center;
+    gap: 10px;
+    border-radius: 8px;
+    background: #f0f2f5;
+    color: var(--cpd-color-text-secondary);
+    padding: 0 12px;
+}
+
+.mx_RoomListSearch_inputWrapper svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+}
+
+.mx_RoomListSearch_input {
+    width: 100%;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    font-size: 14px;
+}
+
+.mx_RoomListSearch_input::placeholder {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mx_RoomListSearch_input::-webkit-search-cancel-button {
+    display: none;
+}
+
+.mj_RoomList {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding-top: 8px;
+}
+
+.mj_RoomListItem {
+    display: flex;
+    width: calc(100% - 12px);
+    box-sizing: border-box;
+    min-height: 56px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 4px 4px;
+    padding: 8px 12px 8px 4px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    text-align: left;
+}
+
+.mj_RoomListItem:hover,
+.mj_RoomListItem_selected {
+    background: #f0f2f5;
+}
+
+.mj_RoomListText {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.mj_RoomListName,
+.mj_RoomListPreview {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_RoomListName {
+    font-weight: 600;
+    line-height: 20px;
+}
+
+.mj_RoomListPreview {
+    font-size: 14px;
+    line-height: 20px;
+}
+
+.mj_RoomListText_unread .mj_RoomListName,
+.mj_RoomListText_unread .mj_RoomListPreview {
+    font-weight: 600;
+}
+
+.mj_UnreadBadge {
+    display: inline-flex;
+    min-width: 20px;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: var(--cpd-color-icon-secondary);
+    color: #fff;
+    padding: 0 6px;
+    font-size: 11px;
+    line-height: 20px;
+}
+
+.mj_RoomListEmpty {
+    color: var(--cpd-color-text-secondary);
+    padding: 12px;
+    text-align: center;
+}
+
+.mx_ResizeHandle {
+    position: relative;
+    z-index: 10;
+    width: 0;
+    flex: 0 0 0;
+    cursor: col-resize;
+}
+
+.mx_ResizeHandle::after {
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    bottom: 0;
+    left: -3px;
+    width: 6px;
+    content: "";
+}
+
+.mx_ResizeHandle:hover::after {
+    background: rgb(13 189 139 / 18%);
+}
+
+.mx_RoomView_wrapper,
+.mx_RoomView,
+.mx_RoomView_body {
+    display: flex;
+    flex: 1 1 0;
+}
+
+.mx_RoomView,
+.mx_RoomView_body {
+    width: 100%;
+}
+
+.mx_RoomView_body {
+    flex-direction: column;
+    overflow: hidden;
+    background: #f1efe9;
+}
+
+.mx_RoomHeader {
+    width: 100%;
+    min-height: 56px;
+    box-sizing: border-box;
+    padding: 0 12px 0 18px;
+    background: #fff;
+}
+
+.mx_RoomView_timeline {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 0;
+    position: relative;
+}
+
+.mx_RoomView_messagePanel {
+    width: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.mx_RoomView_messageListWrapper {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 0 6px;
+}
+
+.mx_RoomView_MessageList {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.mx_EventTile[data-layout="bubble"] {
+    --EventTile-bubble-max-width: min(76.75%, 800px);
+
+    position: relative;
+    min-height: 0;
+    flex: 0 0 auto;
+    margin: 5.5px 20px 0;
+}
+
+.mx_EventTile[data-layout="bubble"].mx_EventTile_continuation {
+    margin-top: 1px;
+}
+
+.mx_EventTile[data-layout="bubble"].mx_EventTile_lastInSection {
+    margin-bottom: 5.5px;
+}
+
+.mx_DisambiguatedProfile {
+    display: block;
+    margin: 0 0 5px 2px;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 16px;
+}
+
+.mx_EventTile_avatar {
+    display: none;
+}
+
+.mx_EventTile_line {
+    display: flex;
+    width: fit-content;
+    max-width: var(--EventTile-bubble-max-width);
+    min-height: 36px;
+    box-sizing: border-box;
+    position: relative;
+    gap: 5px;
+    margin-left: -9px;
+    padding: 10px 60px 10px 10px;
+    border-radius: 6px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgb(18 16 14 / 8%);
+    line-height: 1.2;
+}
+
+.mx_EventTile[data-self="true"] .mx_EventTile_line {
+    margin-right: -9px;
+    margin-left: auto;
+    background: #dff7ed;
+}
+
+.mx_EventTile_line > a {
+    position: absolute;
+    right: 8px;
+    bottom: 7px;
+}
+
+.mx_MessageTimestamp {
+    white-space: nowrap;
+    font-size: 10px !important;
+    line-height: 12px !important;
+}
+
+.mx_EventTile_content {
+    min-width: 0;
+    overflow: hidden;
+    padding: 1px;
+}
+
+.markdown-body {
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+}
+
+.markdown-body p:first-child {
+    margin-top: 0;
+}
+
+.markdown-body p:last-child {
+    margin-bottom: 0;
+}
+
+.mx_WhoIsTypingTile {
+    list-style: none;
+}
+
+.mx_MessageComposer {
+    min-height: 56px;
+    flex: 0 0 auto;
+    background: #fff;
+}
+
+.mx_MessageComposer_wrapper {
+    padding: 0 16px;
+}
+
+.mx_MessageComposer_row {
+    display: flex;
+    min-height: 55px;
+    align-items: center;
+}
+
+.mx_SendMessageComposer {
+    display: flex;
+    margin-right: 6px;
+    justify-content: center;
+}
+
+.mx_BasicMessageComposer {
+    display: flex;
+    align-items: center;
+}
+
+.mx_BasicMessageComposer_input {
+    min-height: 38px;
+    box-sizing: border-box;
+    margin: 8.5px 0;
+    padding: 8px 12px;
+    border: 1px solid #f0f2f5;
+    border-radius: 8px;
+    background: #fff;
+    font-size: inherit;
+    line-height: 1.2;
+}
+
+.mx_BasicMessageComposer_input::placeholder {
+    color: #737983;
+}
+
+.mx_MessageComposer_actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+}
+
+.mx_MessageComposer_button,
+.mx_MessageComposer_sendMessage {
+    display: inline-flex;
+    width: 22px;
+    height: 32px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #8090a3;
+}
+
+.mx_MessageComposer_button svg,
+.mx_MessageComposer_sendMessage svg {
+    width: 19px;
+    height: 19px;
+}
+
+.mx_MessageComposer_sendMessage {
+    color: #087f6d;
+}
+
+.mx_HomePage {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    background: #f1efe9;
+}
+
+.mx_HomePage_default_wrapper {
+    text-align: center;
+}
+
+.mx_HomePage_default_wrapper img {
+    width: 96px;
+}
+
+.mx_AuthPage {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.mx_AuthPage_modal {
+    width: min(440px, 100%);
+    overflow: hidden;
+    border-radius: 16px;
+    background: rgb(255 255 255 / 82%);
+    box-shadow: 0 16px 48px rgb(18 16 14 / 12%);
+}
+
+.mx_AuthPage_modalContent {
+    position: relative;
+    flex-direction: column;
+    padding: 40px;
+}
+
+.mx_AuthHeaderLogo {
+    display: flex;
+    justify-content: center;
+}
+
+.mx_AuthHeaderLogo img {
+    width: 72px;
+    height: 72px;
+}
+
+.mx_AuthBody h1 {
+    margin: 20px 0 28px;
+    text-align: center;
+}
+
+.mx_Field {
+    position: relative;
+    margin-bottom: 18px;
+}
+
+.mx_Field input {
+    width: 100%;
+    height: 48px;
+    padding: 18px 12px 6px;
+    border: 1px solid #c7cbd1;
+    border-radius: 8px;
+    outline: 0;
+    background: #fff;
+}
+
+.mx_Field label {
+    position: absolute;
+    top: 14px;
+    left: 12px;
+    color: var(--cpd-color-text-secondary);
+    pointer-events: none;
+    transition: 120ms ease;
+}
+
+.mx_Field input:focus + label,
+.mx_Field input:not(:placeholder-shown) + label,
+.mx_Field_labelAlwaysTopLeft label {
+    top: 4px;
+    font-size: 10px;
+}
+
+.mx_Field input:focus {
+    border-color: #087f6d;
+}
+
+.mx_ErrorMessage {
+    margin-bottom: 16px;
+}
+
+.mx_Login_submit {
+    min-height: 40px;
+    border: 0;
+    border-radius: 8px;
+    background: #087f6d;
+    color: #fff;
+    font-weight: 600;
+}
+
+.mx_Login_submit:disabled {
+    opacity: 0.6;
+}
+
+.mx_AutoHideScrollbar {
+    scrollbar-color: transparent transparent;
+}
+
+.mx_AutoHideScrollbar:hover {
+    scrollbar-color: rgb(101 109 119 / 40%) transparent;
+}

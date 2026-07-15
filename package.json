@@ -1,0 +1,61 @@
+{
+    "name": "matron-web",
+    "version": "1.12.11-rc.0",
+    "description": "A lightweight browser client for chatting with agents",
+    "author": "Matron Contributors",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/Matronhq/matron-web"
+    },
+    "license": "AGPL-3.0-only OR GPL-3.0-only",
+    "type": "module",
+    "scripts": {
+        "build": "rimraf webapp && webpack --config webpack.config.mjs --mode production",
+        "start": "webpack serve --config webpack.config.mjs --mode development",
+        "lint": "pnpm lint:types && prettier --check src test webpack.config.mjs jest.config.cjs babel.config.cjs",
+        "lint:fix": "prettier --write src test webpack.config.mjs jest.config.cjs babel.config.cjs",
+        "lint:types": "tsc --noEmit",
+        "test": "jest --runInBand",
+        "coverage": "jest --runInBand --coverage"
+    },
+    "dependencies": {
+        "@fontsource/fira-code": "^5.2.7",
+        "@fontsource/inter": "^5.2.8",
+        "react": "^19.2.4",
+        "react-dom": "^19.2.4"
+    },
+    "devDependencies": {
+        "@babel/core": "^7.28.0",
+        "@babel/preset-env": "^7.28.0",
+        "@babel/preset-react": "^7.28.0",
+        "@babel/preset-typescript": "^7.28.0",
+        "@types/jest": "^30.0.0",
+        "@types/node": "^22.0.0",
+        "@types/react": "^19.2.10",
+        "@types/react-dom": "^19.2.3",
+        "babel-jest": "^30.0.0",
+        "babel-loader": "^10.0.0",
+        "copy-webpack-plugin": "^13.0.0",
+        "css-loader": "^7.0.0",
+        "dotenv": "^17.0.0",
+        "fake-indexeddb": "^6.0.0",
+        "html-webpack-plugin": "^5.6.0",
+        "jest": "^30.0.0",
+        "jest-environment-jsdom": "^30.0.0",
+        "mini-css-extract-plugin": "^2.10.0",
+        "postcss": "^8.5.0",
+        "postcss-loader": "^8.2.0",
+        "postcss-preset-env": "^11.1.0",
+        "prettier": "^3.8.0",
+        "rimraf": "^6.0.0",
+        "typescript": "^5.9.3",
+        "webpack": "^5.105.0",
+        "webpack-cli": "^6.0.0",
+        "webpack-dev-server": "^5.2.0"
+    },
+    "engines": {
+        "node": ">=22.18"
+    },
+    "packageManager": "pnpm@10.29.3+sha512.498e1fb4cca5aa06c1dcf2611e6fafc50972ffe7189998c409e90de74566444298ffe43e6cd2acdc775ba1aa7cc5e092a8b7054c811ba8c5770f84693d33d2dc",
+    "private": true
+}

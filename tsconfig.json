@@ -1,0 +1,17 @@
+{
+    "compilerOptions": {
+        "allowImportingTsExtensions": true,
+        "esModuleInterop": true,
+        "jsx": "react-jsx",
+        "lib": ["es2022", "dom", "dom.iterable"],
+        "module": "preserve",
+        "moduleResolution": "bundler",
+        "noEmit": true,
+        "noUnusedLocals": true,
+        "resolveJsonModule": true,
+        "strict": true,
+        "target": "es2022",
+        "types": ["jest", "node"]
+    },
+    "include": ["src/journal/**/*.ts", "src/journal/**/*.tsx", "test/unit-tests/journal/**/*.ts"]
+}

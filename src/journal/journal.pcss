@@ -1,0 +1,640 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+/* Journal-specific behaviour inside the Matron visual shell. */
+
+html,
+body,
+#matron {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+html {
+    /* Match Matron's pre-Journal FontWatcher default (the browser default minus 1px). */
+    font-size: calc(var(--cpd-font-size-root) - 1px);
+}
+
+body {
+    margin: 0;
+}
+
+button,
+input,
+textarea {
+    font: inherit;
+}
+
+.mx_LeftPanel_outerWrapper {
+    --mj-left-panel-width: 350px;
+
+    flex: 0 0 var(--mj-left-panel-width);
+    width: var(--mj-left-panel-width);
+}
+
+.mx_LeftPanel_wrapper--user,
+.mx_LeftPanel,
+.mx_LeftPanel_roomListContainer,
+.mx_RoomListPanel {
+    width: 100%;
+    min-height: 0;
+}
+
+.mx_RoomListPanel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.mx_RoomListPanel [data-testid="room-list"] {
+    flex: 1;
+    min-height: 0;
+}
+
+.mx_RoomListPanel [data-testid="virtuoso-scroller"] {
+    overscroll-behavior: contain;
+}
+
+.mx_RoomHeader {
+    position: relative;
+    flex: 0 0 auto;
+}
+
+.mx_RoomHeader:hover {
+    background-color: var(--cpd-color-bg-canvas-default);
+}
+
+.mj_ChatHeader {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--cpd-space-3x);
+}
+
+.mj_HeaderCluster {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+    border: 1px solid rgb(28, 24, 20, 0.08);
+    border-radius: 10px;
+    background-color: rgb(255, 254, 250, 0.72);
+    box-shadow: 0 1px 2px rgb(28, 24, 20, 0.06);
+    padding: 4px 10px;
+}
+
+.mj_HeaderCluster_empty {
+    visibility: hidden;
+}
+
+.mj_ModelContextCluster,
+.mj_HeaderTitleCluster {
+    display: flex;
+    height: 38px;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.mj_ModelContextCluster {
+    justify-self: start;
+}
+
+.mj_HeaderTitleCluster {
+    max-width: min(360px, 38vw);
+    align-items: center;
+    justify-self: center;
+    padding-inline: 12px;
+}
+
+.mj_HeaderTitleCluster .mx_RoomHeader_heading {
+    display: block;
+    width: 100%;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 18px;
+    text-align: center;
+}
+
+.mj_HeaderModel,
+.mj_HeaderContext,
+.mj_HeaderEmail {
+    display: block;
+    overflow: hidden;
+    color: var(--cpd-color-text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_HeaderModel,
+.mj_HeaderEmail {
+    font-size: 10px;
+    line-height: 12px;
+}
+
+.mj_HeaderContext {
+    font-size: 12px;
+    line-height: 16px;
+}
+
+.mj_HeaderEmail {
+    width: 100%;
+    text-align: center;
+}
+
+.mj_UsageCluster {
+    height: 38px;
+    overflow: hidden;
+    justify-self: end;
+    padding-block: 3px;
+}
+
+.mj_UsageBars {
+    display: grid;
+    gap: 2px;
+}
+
+.mj_UsageRow {
+    display: grid;
+    grid-template-columns: minmax(34px, auto) 90px minmax(34px, auto);
+    align-items: center;
+    gap: 5px;
+    font-size: 9px;
+    line-height: 9px;
+}
+
+.mj_UsageLabel {
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_UsageTrack {
+    display: block;
+    width: 90px;
+    height: 3px;
+    overflow: hidden;
+    border-radius: 999px;
+    background-color: rgb(28, 24, 20, 0.12);
+}
+
+.mj_UsageFill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+}
+
+.mj_UsageFill_low {
+    background-color: #34c759;
+}
+
+.mj_UsageFill_medium {
+    background-color: #ff9500;
+}
+
+.mj_UsageFill_high {
+    background-color: #ff3b30;
+}
+
+.mj_UsageReset {
+    overflow: hidden;
+    color: var(--cpd-color-text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_BackButton {
+    display: none;
+    width: 28px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_BackButton svg {
+    width: 20px;
+    height: 20px;
+}
+
+.mj_HeaderMenu {
+    position: absolute;
+    z-index: 1000;
+    display: flex;
+    width: min(280px, calc(100vw - 32px));
+    flex-direction: column;
+    gap: var(--cpd-space-2x);
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-disabled);
+    border-radius: 8px;
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: 0 8px 24px rgb(15, 23, 42, 0.14);
+    color: var(--cpd-color-text-primary);
+    padding: var(--cpd-space-3x);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_HeaderMenu span {
+    overflow: hidden;
+    color: var(--cpd-color-text-secondary);
+    text-overflow: ellipsis;
+}
+
+.mj_HeaderMenu button {
+    min-height: 32px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+}
+
+.mj_AccountMenu,
+.mj_ComposeHint {
+    top: 44px;
+    right: 8px;
+}
+
+.mx_RoomView_messageListWrapper {
+    min-height: 100%;
+}
+
+.mx_RoomView_MessageList {
+    min-height: 100%;
+}
+
+.mx_EventTile[data-layout="bubble"] .mx_EventTile_line > a {
+    color: inherit;
+    text-decoration: none;
+}
+
+.mx_EventTile[data-layout="bubble"] .mx_MessageTimestamp {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-xs-regular);
+}
+
+.mj_MessageText {
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.mj_SendingLabel {
+    float: right;
+    margin: 2px 0 0;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-xs-regular);
+}
+
+.mj_HistoryRow {
+    display: flex;
+    justify-content: center;
+    padding: var(--cpd-space-3x);
+}
+
+.mj_LoadHistory,
+.mj_TextButton {
+    border: 0;
+    border-radius: 8px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+}
+
+.mj_LoadHistory:disabled,
+.mj_TextButton:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.mj_PromptCard {
+    min-width: min(360px, 55vw);
+}
+
+.mj_PromptCard p {
+    margin: 0 0 var(--cpd-space-3x);
+}
+
+.mj_PromptLabel {
+    margin-bottom: var(--cpd-space-1x);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-xs-semibold);
+    text-transform: uppercase;
+}
+
+.mj_PromptOptions,
+.mj_PromptText {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--cpd-space-2x);
+}
+
+.mj_PromptOptions button,
+.mj_PromptText button,
+.mj_PromptText input {
+    min-height: 32px;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+}
+
+.mj_PromptText input {
+    flex: 1;
+    min-width: 180px;
+}
+
+.mj_Answered,
+.mj_Muted,
+.mj_Expired,
+.mj_FileSize {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_ToolCard {
+    min-width: min(480px, 60vw);
+}
+
+.mj_ToolCard summary {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    cursor: pointer;
+    list-style: none;
+}
+
+.mj_ToolCard summary::-webkit-details-marker {
+    display: none;
+}
+
+.mj_ToolCard summary code {
+    border: 1px solid #e1e4e8;
+    border-radius: 4px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    padding: 3px 4px;
+    font-family: "Fira Code", monospace;
+    font-size: 100%;
+    line-height: 22px;
+}
+
+.mj_ToolCard summary span:last-child,
+.mj_ToolCard summary span:nth-last-child(2) {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_ToolCommand,
+.mj_ToolCard pre,
+.mj_LiveTool pre,
+.mj_Diff,
+.mj_Unknown pre {
+    max-width: min(720px, 62vw);
+    max-height: 360px;
+    overflow: auto;
+    box-sizing: border-box;
+    border-radius: 6px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    padding: var(--cpd-space-3x);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: "Fira Code", monospace;
+    font-size: 12px;
+}
+
+.mj_ToolCommand {
+    margin-top: var(--cpd-space-2x);
+}
+
+.mj_ToolCard_failed summary {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_File {
+    color: var(--cpd-color-text-link-external);
+}
+
+button.mj_File {
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+}
+
+.mj_FileSize {
+    margin-left: var(--cpd-space-2x);
+}
+
+.mj_Image {
+    max-width: min(560px, 60vw);
+    margin: 0;
+}
+
+.mj_Image img {
+    display: block;
+    max-width: 100%;
+    max-height: 520px;
+    border-radius: 6px;
+}
+
+.mj_Image figcaption {
+    margin-top: var(--cpd-space-1x);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_LiveDot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--cpd-color-icon-accent-primary);
+    animation: mj-pulse 1.2s ease-in-out infinite;
+}
+
+.mj_Cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    margin-left: 2px;
+    background: currentColor;
+    vertical-align: -2px;
+    animation: mj-blink 0.9s step-end infinite;
+}
+
+.mj_Activity {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: var(--cpd-space-3x) var(--cpd-space-5x);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_Activity > span {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: mj-pulse 1.2s ease-in-out infinite;
+}
+
+.mj_Activity > span:nth-child(2) {
+    animation-delay: 0.15s;
+}
+
+.mj_Activity > span:nth-child(3) {
+    margin-right: 4px;
+    animation-delay: 0.3s;
+}
+
+.mx_SendMessageComposer {
+    flex: 1;
+    min-width: 0;
+}
+
+.mx_BasicMessageComposer {
+    width: 100%;
+}
+
+.mx_RoomView_body[data-layout="bubble"] .mx_BasicMessageComposer textarea.mx_BasicMessageComposer_input {
+    display: block;
+    width: 100%;
+    max-height: 160px;
+    outline: none;
+    resize: none;
+    color: var(--cpd-color-text-primary);
+    overflow-y: auto;
+}
+
+.mx_MessageComposer_actions button {
+    border: 0;
+}
+
+.mx_MessageComposer_button[aria-disabled="true"] {
+    cursor: default;
+}
+
+.mj_ConnectionError {
+    margin: var(--cpd-space-2x) 0;
+    color: var(--cpd-color-text-critical-primary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_Error {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mx_Login_submit {
+    width: 100%;
+}
+
+.mj_PrivacyLink {
+    display: block;
+    margin-top: var(--cpd-space-4x);
+    text-align: center;
+}
+
+.mj_Loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fbfaf6;
+}
+
+.mj_Loading img {
+    width: 96px;
+}
+
+@keyframes mj-pulse {
+    0%,
+    100% {
+        opacity: 0.35;
+    }
+
+    50% {
+        opacity: 1;
+    }
+}
+
+@keyframes mj-blink {
+    50% {
+        opacity: 0;
+    }
+}
+
+@media (max-width: 700px) {
+    .mx_LeftPanel_outerWrapper {
+        flex: 1 1 auto;
+        width: 100%;
+        max-width: none;
+    }
+
+    .mj_Sidebar_mobileHidden,
+    .mx_ResizeHandle,
+    .mj_Chat_mobileHidden {
+        display: none;
+    }
+
+    .mj_BackButton {
+        display: inline-flex;
+        position: absolute;
+        z-index: 1;
+        left: var(--cpd-space-2x);
+    }
+
+    .mj_ChatHeader {
+        gap: var(--cpd-space-1x);
+        padding-inline: 42px var(--cpd-space-2x);
+    }
+
+    .mj_HeaderCluster {
+        padding-inline: 6px;
+    }
+
+    .mj_HeaderTitleCluster {
+        max-width: 30vw;
+    }
+
+    .mj_UsageRow {
+        grid-template-columns: minmax(28px, auto) 58px minmax(28px, auto);
+        gap: 3px;
+    }
+
+    .mj_UsageTrack {
+        width: 58px;
+    }
+
+    .mx_RoomView_body[data-layout="bubble"] {
+        --RoomView_MessageList-padding: 2px;
+    }
+
+    .mx_EventTile[data-layout="bubble"],
+    .mx_GenericEventListSummary[data-layout="bubble"] {
+        --EventTile_bubble-margin-inline-start: var(--cpd-space-3x);
+        --EventTile_bubble-margin-inline-end: var(--cpd-space-3x);
+    }
+
+    .mj_PromptCard,
+    .mj_ToolCard,
+    .mj_ToolCard pre,
+    .mj_LiveTool pre,
+    .mj_Diff,
+    .mj_Unknown pre,
+    .mj_Image {
+        min-width: 0;
+        max-width: 76vw;
+    }
+}
