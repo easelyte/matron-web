@@ -137,14 +137,25 @@ export class JournalApi {
             method?: "GET" | "POST";
             body?: Record<string, unknown>;
             authenticated?: boolean;
+            rawBody?: ArrayBuffer;
+            contentType?: string;
+            signal?: AbortSignal;
         } = {},
     ): Promise<{ status: number; headers: Headers; body: ArrayBuffer }> {
         const method = options.method ?? "GET";
         const authenticated = options.authenticated ?? true;
         if (authenticated && !this.token) throw new JournalApiError("Not signed in.", 401, "unauthenticated");
 
-        const body = options.body ? JSON.stringify(options.body) : undefined;
+        const jsonBody = options.rawBody === undefined && options.body ? JSON.stringify(options.body) : undefined;
+        const body = options.rawBody ?? jsonBody;
         const electron = electronBridge();
+        if (electron && options.rawBody !== undefined) {
+            throw new JournalApiError(
+                "Attachments aren't supported in the desktop build yet.",
+                0,
+                "electron_binary_unsupported",
+            );
+        }
         let status: number;
         let headers: Headers;
         let responseBody: ArrayBuffer;
@@ -155,7 +166,7 @@ export class JournalApi {
                 path,
                 method,
                 token: authenticated ? this.token : undefined,
-                body,
+                body: jsonBody,
             });
             status = response.status;
             headers = new Headers(response.headers);
@@ -166,10 +177,17 @@ export class JournalApi {
                 response = await fetch(endpointUrl(this.serverUrl, path), {
                     method,
                     headers: {
-                        ...(body ? { "Content-Type": "application/json" } : {}),
+                        ...(options.rawBody !== undefined
+                            ? options.contentType
+                                ? { "Content-Type": options.contentType }
+                                : {}
+                            : jsonBody
+                              ? { "Content-Type": "application/json" }
+                              : {}),
                         ...(authenticated ? { Authorization: `Bearer ${this.token}` } : {}),
                     },
                     body,
+                    signal: options.signal,
                 });
             } catch (error) {
                 throw new JournalApiError(

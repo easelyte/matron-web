@@ -1,0 +1,4 @@
+0ea8ced2705423e7c872cccd5be16601
+const { deserialize, serialize } = require("node:v8");
+
+globalThis.structuredClone ??= (value) => deserialize(serialize(value));
