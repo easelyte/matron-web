@@ -75,6 +75,10 @@ function messageForCode(code: string | undefined, status: number): string {
             return "This device is not allowed to perform that action.";
         case "not_found":
             return "The requested item was not found.";
+        case "too_large":
+            return "File too large.";
+        case "empty":
+            return "That file is empty.";
         default:
             return `The journal server returned HTTP ${status}.`;
     }
@@ -112,6 +116,25 @@ export class JournalApi {
         const response = await this.request(`/media/${encodeURIComponent(mediaId)}`);
         const contentType = response.headers.get("content-type") ?? "application/octet-stream";
         return new Blob([response.body], { type: contentType });
+    }
+
+    public async uploadMedia(
+        bytes: ArrayBuffer,
+        contentType: string,
+        signal?: AbortSignal,
+    ): Promise<{ media_id: string; size: number; content_type: string }> {
+        const response = await this.request("/media", {
+            method: "POST",
+            rawBody: bytes,
+            contentType,
+            signal,
+        });
+        const text = new TextDecoder().decode(response.body);
+        try {
+            return JSON.parse(text) as { media_id: string; size: number; content_type: string };
+        } catch {
+            throw new JournalApiError("The journal server returned malformed JSON.", response.status);
+        }
     }
 
     private async json<T>(
