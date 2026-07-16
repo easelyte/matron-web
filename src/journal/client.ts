@@ -431,7 +431,13 @@ export class MatronJournalClient {
         this.storageListener = (event: StorageEvent): void => {
             const currentSession = this.state.session;
             if (!currentSession || event.key !== archivedStorageKey(currentSession) || event.newValue === null) return;
-            this.patch({ archivedIds: parseArchivedValue(event.newValue) });
+            const archivedIds = parseArchivedValue(event.newValue);
+            this.patch({ archivedIds });
+            // Mirror the local archive path: if another tab archived the convo we're viewing,
+            // don't keep it selected (else this tab reads/marks/sends to an archived room).
+            if (this.state.selectedConversationId && archivedIds.has(this.state.selectedConversationId)) {
+                this.clearSelection();
+            }
         };
         window.addEventListener("storage", this.storageListener);
         this.emit();
