@@ -54,6 +54,7 @@ interface FakeDatabase {
     markLocallyRead: (conversationId: string, upToSeq: number) => Promise<void>;
     conversations: () => Promise<Conversation[]>;
     addToOutbox: (message: PendingMessage) => Promise<void>;
+    deleteOutboxRow: (localId: string) => Promise<void>;
     cursor: () => Promise<number | undefined>;
 }
 
@@ -63,7 +64,7 @@ interface ClientInternals {
     api?: {
         messages: () => Promise<{ events: [] }>;
         snapshot?: () => Promise<{ seq: number; conversations: Conversation[] }>;
-        uploadMedia?: () => Promise<{ media_id: string }>;
+        uploadMedia?: (bytes: ArrayBuffer, contentType: string, signal?: AbortSignal) => Promise<{ media_id: string }>;
     };
     connection?: { send: ReturnType<typeof jest.fn> };
     history: Map<string, { initialized: boolean; hasMore: boolean; oldestSeq?: number }>;
@@ -76,6 +77,7 @@ interface ClientInternals {
     readTimers: Map<string, number>;
     pendingFiles: Map<string, File>;
     transientAttachmentErrors: Map<string, PendingMessage>;
+    dismissedAttachments: Set<string>;
     pendingAck: number;
     sessionGen: number;
     scheduleRead(conversationId: string, upToSeq: number, delay?: number): void;
@@ -110,6 +112,7 @@ function fakeDatabase(overrides: Partial<FakeDatabase> = {}): FakeDatabase {
         markLocallyRead: jest.fn().mockResolvedValue(undefined),
         conversations: jest.fn().mockResolvedValue(CONVERSATIONS),
         addToOutbox: jest.fn().mockResolvedValue(undefined),
+        deleteOutboxRow: jest.fn().mockResolvedValue(undefined),
         cursor: jest.fn().mockResolvedValue(10),
         ...overrides,
     };
@@ -437,6 +440,120 @@ describe("MatronJournalClient state handling", () => {
         await Promise.all([first, second]);
 
         expect(uploadMedia).toHaveBeenCalledTimes(1);
+    });
+
+    it("tombstones a dismissed attachment before an in-flight retry can replay it", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        let resolveOutbox!: (messages: PendingMessage[]) => void;
+        const message: PendingMessage = {
+            localId: "attachment-1",
+            convoId: "c1",
+            body: "",
+            createdAt: 1,
+            kind: "file",
+            filename: "notes.txt",
+            contentType: "text/plain",
+            size: 8,
+            blobRef: "media-1",
+            attachState: "error",
+            errorKind: "send_failed",
+        };
+        const database = fakeDatabase({
+            outbox: jest.fn().mockReturnValue(
+                new Promise<PendingMessage[]>((resolve) => {
+                    resolveOutbox = resolve;
+                }),
+            ),
+        });
+        const send = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }) };
+        state.connection = { send };
+
+        const retry = client.retryAttachment(message.localId);
+        const dismiss = client.dismissAttachment(message.localId);
+        expect(state.dismissedAttachments.has(message.localId)).toBe(true);
+        resolveOutbox([message]);
+        await Promise.all([retry, dismiss]);
+
+        expect(send).not.toHaveBeenCalled();
+        expect(database.addToOutbox).not.toHaveBeenCalled();
+        expect(database.deleteOutboxRow).toHaveBeenCalledWith(message.localId);
+    });
+
+    it("aborts only the dismissed attachment's in-flight upload and never persists its failure", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase();
+        let uploadStarted!: () => void;
+        const started = new Promise<void>((resolve) => (uploadStarted = resolve));
+        const uploadMedia = jest.fn(
+            (_bytes: ArrayBuffer, _contentType: string, signal?: AbortSignal) =>
+                new Promise<{ media_id: string }>((_resolve, reject) => {
+                    uploadStarted();
+                    signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+                        once: true,
+                    });
+                }),
+        );
+        const send = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send };
+        const file = {
+            name: "notes.txt",
+            type: "text/plain",
+            size: 8,
+            arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(8)),
+        } as unknown as File;
+
+        const upload = client.sendAttachment(file, "c1");
+        await started;
+        const localId = (database.addToOutbox as jest.Mock).mock.calls[0][0].localId as string;
+        await client.dismissAttachment(localId);
+        await upload;
+
+        expect(database.deleteOutboxRow).toHaveBeenCalledWith(localId);
+        expect(database.addToOutbox).toHaveBeenCalledTimes(1);
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it("does not reconnect-replay a stale row after it has been dismissed", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        let resolveOutbox!: (messages: PendingMessage[]) => void;
+        const database = fakeDatabase({
+            outbox: jest.fn().mockReturnValue(
+                new Promise<PendingMessage[]>((resolve) => {
+                    resolveOutbox = resolve;
+                }),
+            ),
+        });
+        const send = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client);
+        state.database = database;
+        state.connection = { send };
+
+        const ready = state.handleReady();
+        const dismiss = client.dismissAttachment("attachment-1");
+        resolveOutbox([
+            {
+                localId: "attachment-1",
+                convoId: "c1",
+                body: "",
+                createdAt: 1,
+                kind: "file",
+                blobRef: "media-1",
+                attachState: "sending",
+            },
+        ]);
+        await dismiss;
+        await ready;
+
+        expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "send" }));
     });
 
     it("does not replay an outbox after its session owner changes", async () => {

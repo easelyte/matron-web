@@ -825,6 +825,24 @@ function PendingAttachment({
 }): React.ReactElement {
     const filename = message.filename || (message.kind === "image" ? "Image" : "Attachment");
     const detail = formatBytes(message.size);
+    const [recoveryAction, setRecoveryAction] = useState<"retry" | "dismiss">();
+    const [recoveryError, setRecoveryError] = useState<string>();
+    const [recoveryResult, setRecoveryResult] = useState<string>();
+
+    const recover = async (action: "retry" | "dismiss"): Promise<void> => {
+        setRecoveryAction(action);
+        setRecoveryError(undefined);
+        setRecoveryResult(undefined);
+        try {
+            if (action === "retry") await client.retryAttachment(message.localId);
+            else await client.dismissAttachment(message.localId);
+            setRecoveryResult(action === "retry" ? "Retry completed." : "Dismissed.");
+        } catch (error) {
+            setRecoveryError(`${action === "retry" ? "Retry" : "Dismiss"} failed: ${errorMessage(error)}`);
+        } finally {
+            setRecoveryAction(undefined);
+        }
+    };
 
     return (
         <li
@@ -850,14 +868,24 @@ function PendingAttachment({
             {message.attachState === "error" && (
                 <div className="mj_AttachmentChip_error" role="alert">
                     <span>{attachmentErrorMessage(message.errorKind)}</span>
+                    {recoveryError && <span>{recoveryError}</span>}
+                    {recoveryResult && <span role="status">{recoveryResult}</span>}
                     <div className="mj_AttachmentChip_actions">
                         {message.canRetry && (
-                            <button type="button" onClick={() => void client.retryAttachment(message.localId)}>
-                                Retry
+                            <button
+                                type="button"
+                                disabled={recoveryAction !== undefined}
+                                onClick={() => void recover("retry")}
+                            >
+                                {recoveryAction === "retry" ? "Retrying…" : "Retry"}
                             </button>
                         )}
-                        <button type="button" onClick={() => void client.dismissAttachment(message.localId)}>
-                            Dismiss
+                        <button
+                            type="button"
+                            disabled={recoveryAction !== undefined}
+                            onClick={() => void recover("dismiss")}
+                        >
+                            {recoveryAction === "dismiss" ? "Dismissing…" : "Dismiss"}
                         </button>
                     </div>
                 </div>
@@ -1152,10 +1180,12 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                         <div
                             className={`mx_RoomView${dragActive ? " mj_RoomView_dragActive" : ""}`}
                             onDragOver={(event) => {
+                                if (!isFileDrag(event)) return;
                                 event.preventDefault();
-                                setDragActive(isFileDrag(event));
+                                setDragActive(true);
                             }}
                             onDrop={(event) => {
+                                if (!isFileDrag(event)) return;
                                 event.preventDefault();
                                 const files = [...event.dataTransfer.files];
                                 if (files.length > 0) void client.attachFiles(files);

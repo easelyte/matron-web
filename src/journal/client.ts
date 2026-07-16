@@ -146,8 +146,10 @@ export class MatronJournalClient {
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
     private transientAttachmentErrors = new Map<string, PendingMessage>();
-    private retryingAttachments = new Set<string>();
-    private inFlightUploads = new Set<AbortController>();
+    private readonly dismissedAttachments = new Set<string>();
+    private readonly attachmentOperations = new Map<string, Promise<void>>();
+    private readonly retryingAttachments = new Set<string>();
+    private inFlightUploads = new Map<string, AbortController>();
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
@@ -213,8 +215,9 @@ export class MatronJournalClient {
 
     public async logout(message?: string): Promise<void> {
         this.sessionGen += 1;
-        for (const controller of this.inFlightUploads) controller.abort();
+        for (const controller of this.inFlightUploads.values()) controller.abort();
         this.inFlightUploads.clear();
+        this.dismissedAttachments.clear();
         this.pendingFiles.clear();
         this.transientAttachmentErrors.clear();
         this.connection?.stop();
@@ -376,63 +379,72 @@ export class MatronJournalClient {
     }
 
     public async retryAttachment(localId: string): Promise<void> {
-        if (this.retryingAttachments.has(localId)) return;
+        if (this.dismissedAttachments.has(localId) || this.retryingAttachments.has(localId)) return;
         this.retryingAttachments.add(localId);
         try {
-            const gen = this.sessionGen;
-            const api = this.api;
-            const db = this.database;
-            if (!api || !db) return;
-            const owner = { gen, api, db };
+            await this.runAttachmentOperation(localId, async () => {
+                if (this.dismissedAttachments.has(localId)) return;
+                const gen = this.sessionGen;
+                const api = this.api;
+                const db = this.database;
+                if (!api || !db) return;
+                const owner = { gen, api, db };
 
-            const outbox = await db.outbox();
-            if (!this.ownsAttachment(owner)) return;
-            const message =
-                outbox.find((candidate) => candidate.localId === localId) ??
-                this.transientAttachmentErrors.get(localId);
-            if (!message || message.attachState !== "error") return;
-            delete message.canRetry;
+                const outbox = await db.outbox();
+                if (!this.ownsAttachment(owner, localId)) return;
+                const message =
+                    outbox.find((candidate) => candidate.localId === localId) ??
+                    this.transientAttachmentErrors.get(localId);
+                if (!message || message.attachState !== "error") return;
+                delete message.canRetry;
 
-            if (message.errorKind === "upload_failed" || (message.errorKind === "storage_failed" && !message.blobRef)) {
-                const file = this.pendingFiles.get(localId);
-                if (!file) return;
-                message.attachState = "uploading";
-                message.blobRef = null;
-                delete message.errorKind;
-                if (!(await this.persistAttachment(message, db, gen))) return;
-                if (!this.ownsAttachment(owner)) return;
-                await this.refreshSelectedConversation(message.convoId, db, gen);
-                if (!this.ownsAttachment(owner)) return;
-                await this.uploadPendingAttachment(message, file, owner);
-                return;
-            }
+                if (
+                    message.errorKind === "upload_failed" ||
+                    (message.errorKind === "storage_failed" && !message.blobRef)
+                ) {
+                    const file = this.pendingFiles.get(localId);
+                    if (!file) return;
+                    message.attachState = "uploading";
+                    message.blobRef = null;
+                    delete message.errorKind;
+                    if (!(await this.persistAttachment(message, db, gen))) return;
+                    if (!this.ownsAttachment(owner, localId)) return;
+                    await this.refreshSelectedConversation(message.convoId, db, gen);
+                    if (!this.ownsAttachment(owner, localId)) return;
+                    await this.uploadPendingAttachment(message, file, owner);
+                    return;
+                }
 
-            if ((message.errorKind === "send_failed" || message.errorKind === "storage_failed") && message.blobRef) {
-                await this.emitPendingAttachment(message, owner);
-            }
+                if (
+                    (message.errorKind === "send_failed" || message.errorKind === "storage_failed") &&
+                    message.blobRef
+                ) {
+                    await this.emitPendingAttachment(message, owner);
+                }
+            });
         } finally {
             this.retryingAttachments.delete(localId);
         }
     }
 
     private async uploadPendingAttachment(message: PendingMessage, file: File, owner: AttachmentOwner): Promise<void> {
-        if (!this.ownsAttachment(owner)) return;
+        if (!this.ownsAttachment(owner, message.localId)) return;
 
         const controller = new AbortController();
         const timer = window.setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
-        this.inFlightUploads.add(controller);
+        this.inFlightUploads.set(message.localId, controller);
         let mediaId: string;
         try {
             const bytes = await Promise.race([file.arrayBuffer(), abortPromise(controller.signal)]);
-            if (!this.ownsAttachment(owner)) return;
+            if (!this.ownsAttachment(owner, message.localId)) return;
             const response = await owner.api.uploadMedia(bytes, message.contentType ?? file.type, controller.signal);
-            if (!this.ownsAttachment(owner)) return;
+            if (!this.ownsAttachment(owner, message.localId)) return;
             if (typeof response.media_id !== "string" || response.media_id.trim() === "") {
                 throw new Error("The journal server returned a malformed media response.");
             }
             mediaId = response.media_id;
         } catch (error) {
-            if (!this.ownsAttachment(owner)) return;
+            if (!this.ownsAttachment(owner, message.localId)) return;
             message.blobRef = null;
             message.attachState = "error";
             message.errorKind =
@@ -441,13 +453,15 @@ export class MatronJournalClient {
                     : "upload_failed";
             if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
             if (message.errorKind !== "upload_failed") this.pendingFiles.delete(message.localId);
-            if (!this.ownsAttachment(owner)) return;
+            if (!this.ownsAttachment(owner, message.localId)) return;
             await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
-            if (!this.ownsAttachment(owner)) return;
+            if (!this.ownsAttachment(owner, message.localId)) return;
             return;
         } finally {
             window.clearTimeout(timer);
-            this.inFlightUploads.delete(controller);
+            if (this.inFlightUploads.get(message.localId) === controller) {
+                this.inFlightUploads.delete(message.localId);
+            }
         }
 
         message.blobRef = mediaId;
@@ -456,16 +470,17 @@ export class MatronJournalClient {
 
     private async emitPendingAttachment(message: PendingMessage, owner: AttachmentOwner): Promise<void> {
         if (!message.blobRef || (message.kind !== "image" && message.kind !== "file")) return;
-        if (!this.ownsAttachment(owner)) return;
+        if (!this.ownsAttachment(owner, message.localId)) return;
 
         message.attachState = "sending";
         delete message.errorKind;
         if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
-        if (!this.ownsAttachment(owner)) return;
+        if (!this.ownsAttachment(owner, message.localId)) return;
         this.pendingFiles.delete(message.localId);
         await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
-        if (!this.ownsAttachment(owner)) return;
+        if (!this.ownsAttachment(owner, message.localId)) return;
 
+        if (this.dismissedAttachments.has(message.localId)) return;
         const ok = this.connection?.send({
             op: "send",
             convo_id: message.convoId,
@@ -485,11 +500,11 @@ export class MatronJournalClient {
 
         message.attachState = "error";
         message.errorKind = "send_failed";
-        if (!this.ownsAttachment(owner)) return;
+        if (!this.ownsAttachment(owner, message.localId)) return;
         if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
-        if (!this.ownsAttachment(owner)) return;
+        if (!this.ownsAttachment(owner, message.localId)) return;
         await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
-        if (!this.ownsAttachment(owner)) return;
+        if (!this.ownsAttachment(owner, message.localId)) return;
     }
 
     public async attachFiles(files: File[]): Promise<void> {
@@ -506,16 +521,20 @@ export class MatronJournalClient {
     }
 
     public async dismissAttachment(localId: string): Promise<void> {
+        this.dismissedAttachments.add(localId);
+        this.inFlightUploads.get(localId)?.abort();
         const gen = this.sessionGen;
         const db = this.database;
         if (!db) return;
 
-        await db.deleteOutboxRow(localId);
-        if (this.sessionGen !== gen || this.database !== db) return;
-        this.pendingFiles.delete(localId);
-        this.transientAttachmentErrors.delete(localId);
-        const conversationId = this.state.selectedConversationId;
-        if (conversationId) await this.refreshSelectedConversation(conversationId, db, gen);
+        await this.runAttachmentOperation(localId, async () => {
+            await db.deleteOutboxRow(localId);
+            if (this.sessionGen !== gen || this.database !== db) return;
+            this.pendingFiles.delete(localId);
+            this.transientAttachmentErrors.delete(localId);
+            const conversationId = this.state.selectedConversationId;
+            if (conversationId) await this.refreshSelectedConversation(conversationId, db, gen);
+        });
     }
 
     public sendPromptReply(targetSeq: number, choice?: string, text?: string): boolean {
@@ -549,8 +568,9 @@ export class MatronJournalClient {
 
     private async startSession(session: Session): Promise<void> {
         this.sessionGen += 1;
-        for (const controller of this.inFlightUploads) controller.abort();
+        for (const controller of this.inFlightUploads.values()) controller.abort();
         this.inFlightUploads.clear();
+        this.dismissedAttachments.clear();
         this.pendingFiles.clear();
         this.transientAttachmentErrors.clear();
         this.connection?.stop();
@@ -797,10 +817,12 @@ export class MatronJournalClient {
     }
 
     private async persistAttachment(message: PendingMessage, db: JournalDatabase, gen: number): Promise<boolean> {
+        if (this.dismissedAttachments.has(message.localId)) return false;
         try {
             await db.addToOutbox(message);
         } catch {
-            if (this.sessionGen !== gen || this.database !== db) return false;
+            if (this.sessionGen !== gen || this.database !== db || this.dismissedAttachments.has(message.localId))
+                return false;
             const storageError: PendingMessage = {
                 ...message,
                 attachState: "error",
@@ -816,18 +838,35 @@ export class MatronJournalClient {
             }
             return false;
         }
-        if (this.sessionGen !== gen || this.database !== db) return false;
+        if (this.sessionGen !== gen || this.database !== db || this.dismissedAttachments.has(message.localId))
+            return false;
         this.transientAttachmentErrors.delete(message.localId);
         return true;
     }
 
-    private ownsAttachment(owner: AttachmentOwner): boolean {
-        return this.sessionGen === owner.gen && this.api === owner.api && this.database === owner.db;
+    private ownsAttachment(owner: AttachmentOwner, localId: string): boolean {
+        return (
+            this.sessionGen === owner.gen &&
+            this.api === owner.api &&
+            this.database === owner.db &&
+            !this.dismissedAttachments.has(localId)
+        );
+    }
+
+    private async runAttachmentOperation(localId: string, operation: () => Promise<void>): Promise<void> {
+        const previous = this.attachmentOperations.get(localId);
+        const current = previous ? previous.catch(() => undefined).then(operation) : operation();
+        this.attachmentOperations.set(localId, current);
+        try {
+            await current;
+        } finally {
+            if (this.attachmentOperations.get(localId) === current) this.attachmentOperations.delete(localId);
+        }
     }
 
     private sendPendingMessage(message: PendingMessage, connection = this.connection): void {
         if (message.kind === "image" || message.kind === "file") {
-            if (!message.blobRef) return;
+            if (!message.blobRef || this.dismissedAttachments.has(message.localId)) return;
             connection?.send({
                 op: "send",
                 convo_id: message.convoId,
