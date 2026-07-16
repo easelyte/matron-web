@@ -54,6 +54,7 @@ interface FakeDatabase {
     markLocallyRead: (conversationId: string, upToSeq: number) => Promise<void>;
     conversations: () => Promise<Conversation[]>;
     addToOutbox: (message: PendingMessage) => Promise<void>;
+    cursor: () => Promise<number | undefined>;
 }
 
 interface ClientInternals {
@@ -73,11 +74,14 @@ interface ClientInternals {
     retiredStreamRefs: Set<string>;
     readHighWater: Map<string, number>;
     readTimers: Map<string, number>;
+    pendingFiles: Map<string, File>;
+    transientAttachmentErrors: Map<string, PendingMessage>;
     pendingAck: number;
     sessionGen: number;
     scheduleRead(conversationId: string, upToSeq: number, delay?: number): void;
     flushRead(conversationId: string): Promise<void>;
     replaceSnapshot(): Promise<void>;
+    handleReady(): Promise<void>;
     refreshSelectedConversation(conversationId: string, database?: FakeDatabase, generation?: number): Promise<void>;
     handleEphemeral(frame: JournalEphemeralFrame): void;
 }
@@ -106,6 +110,7 @@ function fakeDatabase(overrides: Partial<FakeDatabase> = {}): FakeDatabase {
         markLocallyRead: jest.fn().mockResolvedValue(undefined),
         conversations: jest.fn().mockResolvedValue(CONVERSATIONS),
         addToOutbox: jest.fn().mockResolvedValue(undefined),
+        cursor: jest.fn().mockResolvedValue(10),
         ...overrides,
     };
 }
@@ -348,7 +353,13 @@ describe("MatronJournalClient state handling", () => {
             uploadMedia: jest.fn().mockResolvedValue({ media_id: "unused" }),
         };
 
-        await client.sendAttachment(new File(["contents"], "notes.txt", { type: "text/plain" }), "c1");
+        const file = {
+            name: "notes.txt",
+            type: "text/plain",
+            size: 8,
+            arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(8)),
+        } as unknown as File;
+        await client.sendAttachment(file, "c1");
 
         expect(client.getSnapshot().pendingMessages).toEqual([
             expect.objectContaining({
@@ -359,5 +370,137 @@ describe("MatronJournalClient state handling", () => {
                 canRetry: true,
             }),
         ]);
+    });
+
+    it("persists and resumes an attachment after a transient storage failure", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const addToOutbox = jest.fn().mockRejectedValueOnce(new Error("quota")).mockResolvedValue(undefined);
+        const database = fakeDatabase({ addToOutbox });
+        const uploadMedia = jest.fn().mockResolvedValue({ media_id: "media-1" });
+        const send = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send };
+
+        const file = {
+            name: "notes.txt",
+            type: "text/plain",
+            size: 8,
+            arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(8)),
+        } as unknown as File;
+        await client.sendAttachment(file, "c1");
+        const failed = client.getSnapshot().pendingMessages[0];
+        await client.retryAttachment(failed.localId);
+
+        expect(addToOutbox).toHaveBeenCalledWith(
+            expect.objectContaining({ localId: failed.localId, attachState: "uploading" }),
+        );
+        expect(uploadMedia).toHaveBeenCalledTimes(1);
+        expect(send).toHaveBeenCalledWith(expect.objectContaining({ local_id: failed.localId, blob_ref: "media-1" }));
+        expect(state.transientAttachmentErrors.has(failed.localId)).toBe(false);
+    });
+
+    it("claims an attachment retry before reading the outbox", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const message: PendingMessage = {
+            localId: "attachment-1",
+            convoId: "c1",
+            body: "",
+            createdAt: 1,
+            kind: "file",
+            filename: "notes.txt",
+            contentType: "text/plain",
+            size: 8,
+            blobRef: null,
+            attachState: "error",
+            errorKind: "upload_failed",
+        };
+        const database = fakeDatabase({ outbox: jest.fn().mockResolvedValue([message]) });
+        const uploadMedia = jest.fn().mockResolvedValue({ media_id: "media-1" });
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        state.pendingFiles.set(message.localId, {
+            name: "notes.txt",
+            type: "text/plain",
+            size: 8,
+            arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(8)),
+        } as unknown as File);
+
+        const first = client.retryAttachment(message.localId);
+        const second = client.retryAttachment(message.localId);
+        expect(database.outbox).toHaveBeenCalledTimes(1);
+        await Promise.all([first, second]);
+
+        expect(uploadMedia).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not replay an outbox after its session owner changes", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        let resolveOutbox!: (messages: PendingMessage[]) => void;
+        const oldDatabase = fakeDatabase({
+            outbox: jest.fn().mockReturnValue(
+                new Promise<PendingMessage[]>((resolve) => {
+                    resolveOutbox = resolve;
+                }),
+            ),
+        });
+        const oldSend = jest.fn().mockReturnValue(true);
+        const newSend = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client);
+        state.database = oldDatabase;
+        state.connection = { send: oldSend };
+
+        const ready = state.handleReady();
+        state.sessionGen += 1;
+        state.database = fakeDatabase();
+        state.connection = { send: newSend };
+        resolveOutbox([
+            {
+                localId: "old-attachment",
+                convoId: "c1",
+                body: "",
+                createdAt: 1,
+                kind: "file",
+                blobRef: "old-media",
+                attachState: "sending",
+            },
+        ]);
+        await ready;
+
+        expect(oldSend).not.toHaveBeenCalled();
+        expect(newSend).not.toHaveBeenCalled();
+    });
+
+    it("does not acknowledge a cursor after the replay connection changes", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        let resolveCursor!: (cursor: number | undefined) => void;
+        const database = fakeDatabase({
+            cursor: jest.fn().mockReturnValue(
+                new Promise<number | undefined>((resolve) => {
+                    resolveCursor = resolve;
+                }),
+            ),
+        });
+        const oldSend = jest.fn().mockReturnValue(true);
+        const newSend = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client, "");
+        state.database = database;
+        state.connection = { send: oldSend };
+
+        const ready = state.handleReady();
+        await Promise.resolve();
+        state.connection = { send: newSend };
+        resolveCursor(10);
+        await ready;
+
+        expect(oldSend).not.toHaveBeenCalled();
+        expect(newSend).not.toHaveBeenCalled();
     });
 });

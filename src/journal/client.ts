@@ -146,6 +146,7 @@ export class MatronJournalClient {
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
     private transientAttachmentErrors = new Map<string, PendingMessage>();
+    private retryingAttachments = new Set<string>();
     private inFlightUploads = new Set<AbortController>();
     private sessionGen = 0;
     private ackTimer?: number;
@@ -375,33 +376,42 @@ export class MatronJournalClient {
     }
 
     public async retryAttachment(localId: string): Promise<void> {
-        const gen = this.sessionGen;
-        const api = this.api;
-        const db = this.database;
-        if (!api || !db) return;
-        const owner = { gen, api, db };
+        if (this.retryingAttachments.has(localId)) return;
+        this.retryingAttachments.add(localId);
+        try {
+            const gen = this.sessionGen;
+            const api = this.api;
+            const db = this.database;
+            if (!api || !db) return;
+            const owner = { gen, api, db };
 
-        const outbox = await db.outbox();
-        if (!this.ownsAttachment(owner)) return;
-        const message = outbox.find((candidate) => candidate.localId === localId);
-        if (!message || message.attachState !== "error") return;
-
-        if (message.errorKind === "upload_failed") {
-            const file = this.pendingFiles.get(localId);
-            if (!file) return;
-            message.attachState = "uploading";
-            message.blobRef = null;
-            delete message.errorKind;
-            if (!(await this.persistAttachment(message, db, gen))) return;
+            const outbox = await db.outbox();
             if (!this.ownsAttachment(owner)) return;
-            await this.refreshSelectedConversation(message.convoId, db, gen);
-            if (!this.ownsAttachment(owner)) return;
-            await this.uploadPendingAttachment(message, file, owner);
-            return;
-        }
+            const message =
+                outbox.find((candidate) => candidate.localId === localId) ??
+                this.transientAttachmentErrors.get(localId);
+            if (!message || message.attachState !== "error") return;
+            delete message.canRetry;
 
-        if (message.errorKind === "send_failed" && message.blobRef) {
-            await this.emitPendingAttachment(message, owner);
+            if (message.errorKind === "upload_failed" || (message.errorKind === "storage_failed" && !message.blobRef)) {
+                const file = this.pendingFiles.get(localId);
+                if (!file) return;
+                message.attachState = "uploading";
+                message.blobRef = null;
+                delete message.errorKind;
+                if (!(await this.persistAttachment(message, db, gen))) return;
+                if (!this.ownsAttachment(owner)) return;
+                await this.refreshSelectedConversation(message.convoId, db, gen);
+                if (!this.ownsAttachment(owner)) return;
+                await this.uploadPendingAttachment(message, file, owner);
+                return;
+            }
+
+            if ((message.errorKind === "send_failed" || message.errorKind === "storage_failed") && message.blobRef) {
+                await this.emitPendingAttachment(message, owner);
+            }
+        } finally {
+            this.retryingAttachments.delete(localId);
         }
     }
 
@@ -617,18 +627,27 @@ export class MatronJournalClient {
     }
 
     private async handleReady(): Promise<void> {
-        const outbox = await this.database?.outbox();
-        for (const message of outbox ?? []) this.sendPendingMessage(message);
+        const gen = this.sessionGen;
+        const db = this.database;
+        const connection = this.connection;
+        if (!db || !connection) return;
+        const ownsReplay = (): boolean =>
+            this.sessionGen === gen && this.database === db && this.connection === connection;
+
+        const outbox = await db.outbox();
+        if (!ownsReplay()) return;
+        for (const message of outbox) this.sendPendingMessage(message, connection);
         if (this.state.selectedConversationId) {
-            this.connection?.send({ op: "viewing", convo_id: this.state.selectedConversationId });
+            connection.send({ op: "viewing", convo_id: this.state.selectedConversationId });
             const conversation = this.selectedConversation();
             if (conversation?.unread_count) this.scheduleRead(conversation.id, conversation.last_seq, 0);
         }
         for (const [conversationId, upToSeq] of this.readHighWater) {
             this.scheduleRead(conversationId, upToSeq, 0);
         }
-        const cursor = await this.database?.cursor();
-        if (cursor !== undefined) this.connection?.send({ op: "ack", cursor });
+        const cursor = await db.cursor();
+        if (!ownsReplay()) return;
+        if (cursor !== undefined) connection.send({ op: "ack", cursor });
     }
 
     private async handleFrame(frame: ServerFrame): Promise<void> {
@@ -806,10 +825,10 @@ export class MatronJournalClient {
         return this.sessionGen === owner.gen && this.api === owner.api && this.database === owner.db;
     }
 
-    private sendPendingMessage(message: PendingMessage): void {
+    private sendPendingMessage(message: PendingMessage, connection = this.connection): void {
         if (message.kind === "image" || message.kind === "file") {
             if (!message.blobRef) return;
-            this.connection?.send({
+            connection?.send({
                 op: "send",
                 convo_id: message.convoId,
                 type: message.kind,
@@ -826,7 +845,7 @@ export class MatronJournalClient {
             });
             return;
         }
-        this.connection?.send({
+        connection?.send({
             op: "send",
             convo_id: message.convoId,
             type: "text",
