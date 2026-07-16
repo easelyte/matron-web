@@ -423,6 +423,19 @@ export class MatronJournalClient {
         if (this.sessionGen !== gen) return;
     }
 
+    public async attachFiles(files: File[]): Promise<void> {
+        const convoId = this.state.selectedConversationId;
+        if (!convoId) return;
+
+        for (const file of files) {
+            try {
+                await this.sendAttachment(file, convoId);
+            } catch {
+                // Continue so one failed attachment does not block the rest of the batch.
+            }
+        }
+    }
+
     public sendPromptReply(targetSeq: number, choice?: string, text?: string): boolean {
         const conversationId = this.state.selectedConversationId;
         if (!conversationId) return false;
