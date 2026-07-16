@@ -204,6 +204,10 @@ export class MatronJournalClient {
     }
 
     public async logout(message?: string): Promise<void> {
+        this.sessionGen += 1;
+        for (const controller of this.inFlightUploads) controller.abort();
+        this.inFlightUploads.clear();
+        this.pendingFiles.clear();
         this.connection?.stop();
         this.connection = undefined;
         this.resetTransientSyncState();
@@ -379,6 +383,7 @@ export class MatronJournalClient {
                 error instanceof JournalApiError && (error.code === "too_large" || error.code === "empty")
                     ? error.code
                     : "upload_failed";
+            if (message.errorKind !== "upload_failed") this.pendingFiles.delete(localId);
             await db?.addToOutbox(message);
             if (this.sessionGen !== gen) return;
             await this.refreshSelectedConversation(convoId);
@@ -392,6 +397,7 @@ export class MatronJournalClient {
         message.blobRef = mediaId;
         message.attachState = "sending";
         delete message.errorKind;
+        this.pendingFiles.delete(localId);
         await db.addToOutbox(message);
         if (this.sessionGen !== gen) return;
         await this.refreshSelectedConversation(convoId);
@@ -466,6 +472,10 @@ export class MatronJournalClient {
     }
 
     private async startSession(session: Session): Promise<void> {
+        this.sessionGen += 1;
+        for (const controller of this.inFlightUploads) controller.abort();
+        this.inFlightUploads.clear();
+        this.pendingFiles.clear();
         this.connection?.stop();
         this.database?.close();
         this.api = new JournalApi(session.serverUrl, session.token);
@@ -669,7 +679,15 @@ export class MatronJournalClient {
             this.database.outbox(expectedId),
         ]);
         if (this.state.selectedConversationId !== expectedId) return;
-        this.patch({ events, pendingMessages });
+        this.patch({
+            events,
+            pendingMessages: pendingMessages.map((message) => ({
+                ...message,
+                canRetry:
+                    (message.errorKind === "upload_failed" && this.pendingFiles.has(message.localId)) ||
+                    message.errorKind === "send_failed",
+            })),
+        });
     }
 
     private sendPendingMessage(message: PendingMessage): void {
