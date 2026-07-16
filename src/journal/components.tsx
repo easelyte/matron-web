@@ -966,6 +966,7 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
 function Composer({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const [body, setBody] = useState("");
     const textarea = useRef<HTMLTextAreaElement>(null);
+    const fileInput = useRef<HTMLInputElement>(null);
     const send = async (): Promise<void> => {
         if (await client.sendMessage(body)) {
             setBody("");
@@ -1014,12 +1015,22 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
                         </button>
                         <button
                             className="mx_MessageComposer_button"
-                            title="Attachments are not supported by this journal server"
+                            title="Attach a file"
                             aria-label="Attach a file"
-                            aria-disabled="true"
+                            onClick={() => fileInput.current?.click()}
                         >
                             <AttachmentIcon />
                         </button>
+                        <input
+                            ref={fileInput}
+                            type="file"
+                            multiple
+                            hidden
+                            onChange={(event) => {
+                                if (event.target.files) void client.attachFiles([...event.target.files]);
+                                event.target.value = "";
+                            }}
+                        />
                         <button
                             className="mx_MessageComposer_button"
                             title="Voice messages are not supported by this journal server"
