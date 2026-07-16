@@ -172,6 +172,61 @@ describe("MatronJournalClient state handling", () => {
         expect(database.markLocallyRead).toHaveBeenCalledWith("c1", 10);
     });
 
+    it("marks every active unread conversation read and skips archived or already-read conversations", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const conversations: Conversation[] = [
+            { ...CONVERSATIONS[0], unread_count: 3 },
+            { ...CONVERSATIONS[1], unread_count: 2 },
+            { ...CONVERSATIONS[0], id: "c3", last_seq: 30, unread_count: 1 },
+            { ...CONVERSATIONS[0], id: "c4", last_seq: 40, unread_count: 0 },
+        ];
+        const database = fakeDatabase({ conversations: jest.fn().mockResolvedValue(conversations) });
+        const send = jest.fn().mockReturnValue(true);
+        state.state = {
+            ...signedInState(client),
+            conversations,
+            archivedIds: new Set(["c2"]),
+        };
+        state.database = database;
+        state.connection = { send };
+
+        client.markAllRead();
+        await jest.runAllTimersAsync();
+
+        const readMarkers = send.mock.calls
+            .map(([operation]) => operation)
+            .filter((operation) => operation.op === "read_marker");
+        expect(readMarkers).toEqual([
+            { op: "read_marker", convo_id: "c1", up_to_seq: 10 },
+            { op: "read_marker", convo_id: "c3", up_to_seq: 30 },
+        ]);
+        expect(database.markLocallyRead).toHaveBeenCalledTimes(2);
+    });
+
+    it("advances the read marker when an unread conversation is selected", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase();
+        const send = jest.fn().mockReturnValue(true);
+        state.state = {
+            ...signedInState(client, "c2"),
+            conversations: CONVERSATIONS.map((conversation) =>
+                conversation.id === "c1" ? { ...conversation, unread_count: 3 } : conversation,
+            ),
+        };
+        state.database = database;
+        state.connection = { send };
+
+        await client.selectConversation("c1");
+        await jest.runAllTimersAsync();
+
+        expect(send).toHaveBeenCalledWith({ op: "read_marker", convo_id: "c1", up_to_seq: 10 });
+        expect(database.markLocallyRead).toHaveBeenCalledWith("c1", 10);
+    });
+
     it("stores the open conversation and clears it when returning to the list", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);

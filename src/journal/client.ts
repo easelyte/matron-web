@@ -314,6 +314,14 @@ export class MatronJournalClient {
         this.scheduleRead(conversationId, conversation.last_seq, 0);
     }
 
+    public markAllRead(): void {
+        for (const conversation of this.state.conversations) {
+            if (conversation.unread_count > 0 && !this.state.archivedIds.has(conversation.id)) {
+                this.markConversationRead(conversation.id);
+            }
+        }
+    }
+
     public async loadOlderHistory(): Promise<void> {
         const conversationId = this.state.selectedConversationId;
         if (!conversationId || !this.database || !this.api || this.state.loadingHistory) return;
