@@ -27,6 +27,7 @@ import {
 const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
+const ARCHIVED_CONVERSATIONS_KEY_PREFIX = "matron_journal_archived_conversations_v1";
 const HISTORY_PAGE_SIZE = 80;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 
@@ -53,6 +54,7 @@ function blankState(): ClientState {
         phase: "loading",
         config: {},
         conversations: [],
+        archivedIds: new Set(),
         events: [],
         pendingMessages: [],
         connection: "offline",
@@ -92,6 +94,44 @@ function storedSelectedConversation(session: Session): string | undefined {
     } catch {
         return undefined;
     }
+}
+
+export function archivedStorageKey(session: Session): string {
+    return `${ARCHIVED_CONVERSATIONS_KEY_PREFIX}:${encodeURIComponent(session.serverUrl)}:${session.userId}`;
+}
+
+function parseArchivedValue(raw: string | null): Set<string> {
+    if (raw === null) return new Set();
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        console.warn("matron: malformed archived-conversations value, ignoring");
+        return new Set();
+    }
+
+    if (!Array.isArray(parsed)) {
+        console.warn("matron: archived-conversations value not an array, ignoring");
+        return new Set();
+    }
+
+    return new Set(parsed.filter((value): value is string => typeof value === "string"));
+}
+
+export function storedArchivedIds(session: Session): Set<string> {
+    let raw: string | null;
+    try {
+        raw = localStorage.getItem(archivedStorageKey(session));
+    } catch {
+        console.warn("matron: archived-conversations read failed (storage unavailable)");
+        return new Set();
+    }
+    return parseArchivedValue(raw);
+}
+
+export function storeArchivedIds(session: Session, ids: Set<string>): void {
+    localStorage.setItem(archivedStorageKey(session), JSON.stringify([...ids]));
 }
 
 function storeSelectedConversation(session: Session, conversationId: string | undefined): void {
