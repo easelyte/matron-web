@@ -65,6 +65,7 @@ interface FakeDatabase {
     cursor: () => Promise<number | undefined>;
     applyJournal: (event: JournalEvent) => Promise<boolean>;
     reconcileOwnMessage: (event: JournalEvent) => Promise<string | null>;
+    reconcilePersistedOwnMessages: () => Promise<string[]>;
 }
 
 interface ClientInternals {
@@ -130,6 +131,7 @@ function fakeDatabase(overrides: Partial<FakeDatabase> = {}): FakeDatabase {
         cursor: jest.fn().mockResolvedValue(10),
         applyJournal: jest.fn().mockResolvedValue(true),
         reconcileOwnMessage: jest.fn().mockResolvedValue(null),
+        reconcilePersistedOwnMessages: jest.fn().mockResolvedValue([]),
         ...overrides,
     };
 }
@@ -325,6 +327,7 @@ describe("MatronJournalClient state handling", () => {
         await state.replaceSnapshot();
 
         expect(database.replaceWithSnapshot).toHaveBeenCalledWith(snapshot);
+        expect(database.reconcilePersistedOwnMessages).toHaveBeenCalled();
         expect(state.pendingAck).toBe(0);
         expect(state.readHighWater.size).toBe(0);
         expect(state.readTimers.size).toBe(0);
@@ -745,6 +748,39 @@ describe("MatronJournalClient attachment send state machine", () => {
 
         expect(rows.size).toBe(0);
         expect(state.pendingFiles.has(pending.localId)).toBe(false);
+        expect(client.getSnapshot().pendingMessages).toEqual([]);
+    });
+
+    it("reconciles an own echo even when the journal frame is already applied", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        const pending: PendingMessage = {
+            localId: "duplicate-image",
+            convoId: "c1",
+            body: "",
+            createdAt: 1,
+            kind: "image",
+            attachState: "sending",
+            blobRef: "media-1",
+        };
+        rows.set(pending.localId, pending);
+        database.applyJournal = jest.fn().mockResolvedValue(false);
+        state.state = { ...signedInState(client), pendingMessages: [pending] };
+        state.database = database;
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 10,
+            convo_id: "c1",
+            ts: 1,
+            sender: "user:2",
+            type: "image",
+            payload: { local_id: pending.localId, blob_ref: "media-1" },
+        });
+
+        expect(database.reconcileOwnMessage).toHaveBeenCalledTimes(1);
+        expect(rows.size).toBe(0);
         expect(client.getSnapshot().pendingMessages).toEqual([]);
     });
 

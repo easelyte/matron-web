@@ -294,6 +294,7 @@ export class MatronJournalClient {
                 HISTORY_PAGE_SIZE,
             );
             await this.database.putHistory(response.events);
+            await this.reconcilePersistedOwnMessages(this.database);
             const minimum = response.events.reduce<number | undefined>(
                 (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
                 history.oldestSeq,
@@ -609,6 +610,14 @@ export class MatronJournalClient {
         this.api = new JournalApi(session.serverUrl, session.token);
         this.database = await JournalDatabase.open(session.serverUrl, session.userId, session.username);
         await this.database.expireToolLogs();
+
+        let cursor = await this.database.cursor();
+        if (cursor === undefined) {
+            const snapshot = await this.api.snapshot();
+            await this.database.replaceWithSnapshot(snapshot);
+            cursor = snapshot.seq;
+        }
+        await this.reconcilePersistedOwnMessages(this.database);
         const outbox = await this.database.outbox();
         for (const message of outbox) {
             if (message.attachState !== "uploading") continue;
@@ -628,12 +637,6 @@ export class MatronJournalClient {
             }
         }
 
-        let cursor = await this.database.cursor();
-        if (cursor === undefined) {
-            const snapshot = await this.api.snapshot();
-            await this.database.replaceWithSnapshot(snapshot);
-            cursor = snapshot.seq;
-        }
         const conversations = await this.database.conversations();
         const storedConversationId = storedSelectedConversation(session);
         const selectedConversation =
@@ -678,6 +681,7 @@ export class MatronJournalClient {
         });
         const snapshot = await this.api.snapshot();
         await this.database.replaceWithSnapshot(snapshot);
+        await this.reconcilePersistedOwnMessages(this.database);
         const conversations = await this.database.conversations();
         const selectedConversation =
             conversations.find((conversation) => conversation.id === previousSelection) ?? conversations[0];
@@ -727,13 +731,18 @@ export class MatronJournalClient {
     private async handleJournal(event: JournalEvent): Promise<void> {
         if (!this.database) return;
         const applied = await this.database.applyJournal(event);
-        if (!applied) return;
-        this.clearHistoryError();
         const removed = await this.database.reconcileOwnMessage(event);
         if (removed) {
             this.pendingFiles.delete(removed);
             this.transientAttachmentErrors.delete(removed);
         }
+        if (!applied) {
+            if (removed && event.convo_id === this.state.selectedConversationId) {
+                await this.refreshSelectedConversation(event.convo_id);
+            }
+            return;
+        }
+        this.clearHistoryError();
         this.scheduleAck(event.seq);
 
         const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
@@ -751,6 +760,14 @@ export class MatronJournalClient {
             if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
                 this.scheduleRead(event.convo_id, event.seq);
             }
+        }
+    }
+
+    private async reconcilePersistedOwnMessages(database: JournalDatabase): Promise<void> {
+        const removed = await database.reconcilePersistedOwnMessages();
+        for (const localId of removed) {
+            this.pendingFiles.delete(localId);
+            this.transientAttachmentErrors.delete(localId);
         }
     }
 

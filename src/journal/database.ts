@@ -47,6 +47,20 @@ function emptyConversation(id: string, timestamp: number): Conversation {
     };
 }
 
+function matchesOwnPendingMessage(event: JournalEvent, pending: PendingMessage, ownSender: string): boolean {
+    const isText = event.type === "text" && typeof event.payload.body === "string";
+    const isAttachment = event.type === "file" || event.type === "image";
+    const localId = typeof event.payload.local_id === "string" ? event.payload.local_id : undefined;
+    const pendingKind = pending.kind ?? "text";
+    return (
+        (isText || isAttachment) &&
+        event.sender === ownSender &&
+        localId === pending.localId &&
+        event.convo_id === pending.convoId &&
+        pendingKind === event.type
+    );
+}
+
 export class JournalDatabase {
     private constructor(
         private readonly database: IDBDatabase,
@@ -235,19 +249,35 @@ export class JournalDatabase {
     }
 
     public async reconcileOwnMessage(event: JournalEvent): Promise<string | null> {
-        const isText = event.type === "text" && typeof event.payload.body === "string";
-        const isAttachment = event.type === "file" || event.type === "image";
-        if ((!isText && !isAttachment) || event.sender !== this.ownSender) return null;
         const localId = typeof event.payload.local_id === "string" ? event.payload.local_id : undefined;
         if (!localId) return null;
         const transaction = this.database.transaction("outbox", "readwrite");
         const outbox = transaction.objectStore("outbox");
         const pending = (await requestResult(outbox.get(localId))) as PendingMessage | undefined;
-        const pendingKind = pending?.kind ?? "text";
-        const matchesPending = pending?.convoId === event.convo_id && pendingKind === event.type;
+        const matchesPending = pending ? matchesOwnPendingMessage(event, pending, this.ownSender) : false;
         if (matchesPending) outbox.delete(localId);
         await transactionDone(transaction);
         return matchesPending ? localId : null;
+    }
+
+    public async reconcilePersistedOwnMessages(): Promise<string[]> {
+        const transaction = this.database.transaction(["events", "outbox"], "readwrite");
+        const outbox = transaction.objectStore("outbox");
+        const [events, pendingMessages] = await Promise.all([
+            requestResult(transaction.objectStore("events").getAll()) as Promise<JournalEvent[]>,
+            requestResult(outbox.getAll()) as Promise<PendingMessage[]>,
+        ]);
+        const candidates = pendingMessages.filter(
+            (message) => message.attachState === "sending" || message.errorKind === "send_failed",
+        );
+        const removed: string[] = [];
+        for (const pending of candidates) {
+            if (!events.some((event) => matchesOwnPendingMessage(event, pending, this.ownSender))) continue;
+            outbox.delete(pending.localId);
+            removed.push(pending.localId);
+        }
+        await transactionDone(transaction);
+        return removed;
     }
 
     public async expireToolLogs(now = Date.now()): Promise<void> {

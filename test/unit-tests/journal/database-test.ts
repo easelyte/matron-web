@@ -129,6 +129,40 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("clears a persisted sending row when its own event is present after snapshot history loads", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 8, "dan");
+        await database.replaceWithSnapshot({
+            seq: 10,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 10,
+                    unread_count: 0,
+                    snippet: "[image]",
+                    created_at: 1,
+                },
+            ],
+        });
+        await database.addToOutbox({
+            localId: "persisted-image",
+            convoId: "c1",
+            body: "",
+            createdAt: 1,
+            kind: "image",
+            attachState: "sending",
+            blobRef: "media-1",
+        });
+        await database.putHistory([
+            event(10, "user:dan", "image", { local_id: "persisted-image", blob_ref: "media-1" }),
+        ]);
+
+        expect(await database.reconcilePersistedOwnMessages()).toEqual(["persisted-image"]);
+        expect(await database.outbox()).toEqual([]);
+        database.close();
+    });
+
     it("durably deletes a dismissed attachment outbox row", async () => {
         const serverUrl = "https://journal.example";
         const userId = 7;

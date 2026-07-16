@@ -221,6 +221,40 @@ describe("attachment composer", () => {
         expect(rendered.container.querySelector(".mj_MessageText")).toBeNull();
     });
 
+    it("renders pending messages in timestamp order among journal events", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    kind: "journal",
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 100,
+                    sender: "agent:dev",
+                    type: "text",
+                    payload: { body: "first event" },
+                },
+                {
+                    kind: "journal",
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 300,
+                    sender: "agent:dev",
+                    type: "text",
+                    payload: { body: "last event" },
+                },
+            ],
+            pendingMessages: [
+                { localId: "pending-late", convoId: "c1", body: "pending late", createdAt: 250 },
+                { localId: "pending-early", convoId: "c1", body: "pending early", createdAt: 200 },
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(
+            [...rendered.container.querySelectorAll(".mx_EventTile_content")].map((item) => item.textContent),
+        ).toEqual(["first event", "pending early", "pending late", "last event"]);
+    });
+
     it("renders an echoed file as the inline media tile", async () => {
         const client = signedInClient({
             events: [

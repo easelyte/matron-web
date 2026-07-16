@@ -917,6 +917,18 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
             ),
         [state.events],
     );
+    const timeline = useMemo(
+        () =>
+            [
+                ...visibleEvents.map((event) => ({ kind: "event" as const, timestamp: event.ts, event })),
+                ...state.pendingMessages.map((message) => ({
+                    kind: "pending" as const,
+                    timestamp: message.createdAt,
+                    message,
+                })),
+            ].sort((left, right) => left.timestamp - right.timestamp),
+        [visibleEvents, state.pendingMessages],
+    );
     const answeredPrompts = useMemo(
         () =>
             new Set(
@@ -994,21 +1006,27 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
                                 </button>
                             </li>
                         )}
-                        {visibleEvents.map((event, index) => (
-                            <EventRow
-                                key={event.seq}
-                                client={client}
-                                event={event}
-                                answeredPrompts={answeredPrompts}
-                                continuation={index > 0 && visibleEvents[index - 1].sender === event.sender}
-                                lastInSection={
-                                    index === visibleEvents.length - 1 ||
-                                    visibleEvents[index + 1].sender !== event.sender
-                                }
-                            />
-                        ))}
-                        {state.pendingMessages.map((message) =>
-                            message.kind === "image" || message.kind === "file" ? (
+                        {timeline.map((item, index) => {
+                            if (item.kind === "event") {
+                                const previous = timeline[index - 1];
+                                const next = timeline[index + 1];
+                                return (
+                                    <EventRow
+                                        key={item.event.seq}
+                                        client={client}
+                                        event={item.event}
+                                        answeredPrompts={answeredPrompts}
+                                        continuation={
+                                            previous?.kind === "event" && previous.event.sender === item.event.sender
+                                        }
+                                        lastInSection={
+                                            next?.kind !== "event" || next.event.sender !== item.event.sender
+                                        }
+                                    />
+                                );
+                            }
+                            const message = item.message;
+                            return message.kind === "image" || message.kind === "file" ? (
                                 <PendingAttachment key={message.localId} client={client} message={message} />
                             ) : (
                                 <li
@@ -1024,8 +1042,8 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
                                     </div>
                                     <span className="mj_SendingLabel">Sending…</span>
                                 </li>
-                            ),
-                        )}
+                            );
+                        })}
                         {Object.values(state.textStreams).map((text, index) => (
                             <li
                                 className="mx_EventTile mx_EventTile_lastInSection"
