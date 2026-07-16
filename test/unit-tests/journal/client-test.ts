@@ -7,6 +7,8 @@ Please see LICENSE files in the repository root for full details.
 
 import { MatronJournalClient } from "../../../src/journal/client";
 import { JournalApi, JournalApiError } from "../../../src/journal/api";
+import { JournalConnection } from "../../../src/journal/connection";
+import { JournalDatabase } from "../../../src/journal/database";
 import { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "node:util";
 import {
     type ClientState,
@@ -50,6 +52,8 @@ const CONVERSATIONS: Conversation[] = [
 
 interface FakeDatabase {
     reset?: () => Promise<void>;
+    close: () => void;
+    expireToolLogs: () => Promise<void>;
     events: (conversationId: string) => Promise<[]>;
     outbox: (conversationId?: string) => Promise<PendingMessage[]>;
     putHistory: (events: []) => Promise<void>;
@@ -71,7 +75,7 @@ interface ClientInternals {
         snapshot?: () => Promise<{ seq: number; conversations: Conversation[] }>;
         uploadMedia?: (bytes: ArrayBuffer, contentType: string, signal?: AbortSignal) => Promise<{ media_id: string }>;
     };
-    connection?: { send: ReturnType<typeof jest.fn> };
+    connection?: { send: ReturnType<typeof jest.fn>; stop?: ReturnType<typeof jest.fn> };
     history: Map<string, { initialized: boolean; hasMore: boolean; oldestSeq?: number }>;
     activities: Map<string, unknown>;
     statuses: Map<string, unknown>;
@@ -85,6 +89,7 @@ interface ClientInternals {
     dismissedAttachments: Set<string>;
     pendingAck: number;
     sessionGen: number;
+    startSession(session: Session): Promise<void>;
     scheduleRead(conversationId: string, upToSeq: number, delay?: number): void;
     flushRead(conversationId: string): Promise<void>;
     replaceSnapshot(): Promise<void>;
@@ -111,6 +116,8 @@ function signedInState(client: MatronJournalClient, selectedConversationId = "c1
 
 function fakeDatabase(overrides: Partial<FakeDatabase> = {}): FakeDatabase {
     return {
+        close: jest.fn(),
+        expireToolLogs: jest.fn().mockResolvedValue(undefined),
         events: jest.fn().mockResolvedValue([]),
         outbox: jest.fn().mockResolvedValue([]),
         putHistory: jest.fn().mockResolvedValue(undefined),
@@ -680,6 +687,7 @@ describe("MatronJournalClient attachment send state machine", () => {
 
     afterEach(() => {
         jest.useRealTimers();
+        jest.restoreAllMocks();
         delete (globalThis as { fetch?: typeof fetch }).fetch;
     });
 
@@ -722,6 +730,7 @@ describe("MatronJournalClient attachment send state machine", () => {
                 }),
             }),
         );
+        expect(state.pendingFiles.has(pending.localId)).toBe(false);
 
         await state.handleJournal({
             kind: "journal",
@@ -734,6 +743,7 @@ describe("MatronJournalClient attachment send state machine", () => {
         });
 
         expect(rows.size).toBe(0);
+        expect(state.pendingFiles.has(pending.localId)).toBe(false);
         expect(client.getSnapshot().pendingMessages).toEqual([]);
     });
 
@@ -756,6 +766,123 @@ describe("MatronJournalClient attachment send state machine", () => {
             attachState: "error",
             errorKind: "send_failed",
         });
+        expect(state.pendingFiles.size).toBe(0);
+    });
+
+    it.each(["logout", "startSession"] as const)(
+        "guards cross-session egress after %s with no HTTP, database write, or websocket send",
+        async (transition) => {
+            const client = new MatronJournalClient();
+            const state = internals(client);
+            const { database: oldDatabase } = attachmentDatabase();
+            const newDatabase = fakeDatabase();
+            const oldSend = jest.fn().mockReturnValue(true);
+            const oldStop = jest.fn();
+            let uploadStarted!: () => void;
+            let uploadSignal: AbortSignal | undefined;
+            const started = new Promise<void>((resolve) => (uploadStarted = resolve));
+            const oldUpload = jest.fn(
+                (_bytes: ArrayBuffer, _contentType: string, signal?: AbortSignal) =>
+                    new Promise<{ media_id: string }>((_resolve, reject) => {
+                        uploadSignal = signal;
+                        uploadStarted();
+                        signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+                            once: true,
+                        });
+                    }),
+            );
+            const newUpload = jest.spyOn(JournalApi.prototype, "uploadMedia");
+            const newSend = jest.spyOn(JournalConnection.prototype, "send").mockReturnValue(true);
+            jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+            jest.spyOn(JournalDatabase, "open").mockResolvedValue(newDatabase as unknown as JournalDatabase);
+            state.state = signedInState(client);
+            state.database = oldDatabase;
+            state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia: oldUpload };
+            state.connection = { send: oldSend, stop: oldStop };
+
+            const upload = client.sendAttachment(fileFixture("held.bin", "application/octet-stream", [1]), "c1");
+            await started;
+            expect(uploadSignal?.aborted).toBe(false);
+            expect(oldDatabase.addToOutbox).toHaveBeenCalledTimes(1);
+
+            if (transition === "logout") {
+                await client.logout();
+            } else {
+                await state.startSession({ ...SESSION, token: "token-b", userId: 3, username: "pat" });
+            }
+            await upload;
+
+            expect(uploadSignal?.aborted).toBe(true);
+            expect(oldUpload).toHaveBeenCalledTimes(1);
+            expect(newUpload).not.toHaveBeenCalled();
+            expect(oldDatabase.addToOutbox).toHaveBeenCalledTimes(1);
+            expect(newDatabase.addToOutbox).not.toHaveBeenCalled();
+            expect(oldSend).not.toHaveBeenCalledWith(expect.objectContaining({ op: "send" }));
+            expect(newSend).not.toHaveBeenCalledWith(expect.objectContaining({ op: "send" }));
+            expect(state.pendingFiles.size).toBe(0);
+        },
+    );
+
+    it("keeps the captured conversation for every file when selection changes mid-batch", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database } = attachmentDatabase();
+        const send = jest.fn().mockReturnValue(true);
+        let firstUploadStarted!: () => void;
+        let releaseFirstUpload!: (value: { media_id: string }) => void;
+        const started = new Promise<void>((resolve) => (firstUploadStarted = resolve));
+        const uploadMedia = jest
+            .fn()
+            .mockImplementationOnce(
+                () =>
+                    new Promise<{ media_id: string }>((resolve) => {
+                        releaseFirstUpload = resolve;
+                        firstUploadStarted();
+                    }),
+            )
+            .mockResolvedValueOnce({ media_id: "media-2" });
+        const secondRead = jest.fn<Promise<ArrayBuffer>, []>().mockResolvedValue(new Uint8Array([2]).buffer);
+        state.state = signedInState(client, "c1");
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send };
+
+        const batch = client.attachFiles([
+            fileFixture("first.bin", "application/octet-stream", [1]),
+            fileFixture("second.bin", "application/octet-stream", [2], secondRead),
+        ]);
+        await started;
+        state.state = { ...state.state, selectedConversationId: "c2" };
+        expect(secondRead).not.toHaveBeenCalled();
+        releaseFirstUpload({ media_id: "media-1" });
+        await batch;
+
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(send.mock.calls.map(([operation]) => operation.convo_id)).toEqual(["c1", "c1"]);
+    });
+
+    it("removes pending bytes on reconcile and dismiss", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase({ reconcileOwnMessage: jest.fn().mockResolvedValue("reconciled") });
+        state.state = signedInState(client);
+        state.database = database;
+        state.pendingFiles.set("reconciled", fileFixture("echo.bin", "application/octet-stream", [1]));
+        state.pendingFiles.set("dismissed", fileFixture("dismiss.bin", "application/octet-stream", [2]));
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 11,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "user:2",
+            type: "file",
+            payload: { local_id: "reconciled", blob_ref: "media-1" },
+        });
+        await client.dismissAttachment("dismissed");
+
+        expect(state.pendingFiles.size).toBe(0);
+        expect(database.deleteOutboxRow).toHaveBeenCalledWith("dismissed");
     });
 
     it("times out a held file read and advances to the next file in the batch", async () => {
@@ -865,6 +992,7 @@ describe("MatronJournalClient attachment send state machine", () => {
         expect([...rows.values()][0]).toMatchObject({ attachState: "error", errorKind: "too_large" });
         expect(arrayBuffer).not.toHaveBeenCalled();
         expect(uploadMedia).not.toHaveBeenCalled();
+        expect(state.pendingFiles.size).toBe(0);
     });
 
     it("preserves a structured upload error code in the attachment state", async () => {
@@ -882,5 +1010,24 @@ describe("MatronJournalClient attachment send state machine", () => {
         await client.sendAttachment(fileFixture("server-rejected.bin", "application/octet-stream", [1]), "c1");
 
         expect([...rows.values()][0]).toMatchObject({ attachState: "error", errorKind: "too_large" });
+        expect(state.pendingFiles.size).toBe(0);
+    });
+
+    it("does not retain pending bytes for an empty-file terminal error", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        const file = fileFixture("empty.txt", "text/plain", []);
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            uploadMedia: jest.fn(),
+        };
+
+        await client.sendAttachment(file, "c1");
+
+        expect([...rows.values()][0]).toMatchObject({ attachState: "error", errorKind: "empty" });
+        expect(state.pendingFiles.size).toBe(0);
     });
 });
