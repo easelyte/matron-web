@@ -497,6 +497,15 @@ export class MatronJournalClient {
         this.api = new JournalApi(session.serverUrl, session.token);
         this.database = await JournalDatabase.open(session.serverUrl, session.userId, session.username);
         await this.database.expireToolLogs();
+        const outbox = await this.database.outbox();
+        for (const message of outbox) {
+            if (message.attachState !== "uploading") continue;
+            await this.database.addToOutbox({
+                ...message,
+                attachState: "error",
+                errorKind: "upload_failed",
+            });
+        }
 
         let cursor = await this.database.cursor();
         if (cursor === undefined) {
