@@ -248,17 +248,21 @@ function ConversationList({
     const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
     const roomMenuRef = useRef(roomMenu);
     const roomMenuElementRef = useRef<HTMLDivElement>(null);
+    const roomMenuOpenerRef = useRef<HTMLElement | null>(null);
     const menuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
     const longPressTargetRef = useRef<{ conversationId: string; row: HTMLButtonElement } | undefined>(undefined);
     const longPressFiredRef = useRef(false);
     const longPressScrollCleanupRef = useRef<() => void>(() => undefined);
-    const openRoomMenuRef = useRef<(conversationId: string, left: number, top: number) => void>(() => undefined);
+    const openRoomMenuRef = useRef<(conversationId: string, left: number, top: number, opener: HTMLElement) => void>(
+        () => undefined,
+    );
     const longPressControllerRef = useRef<LongPressController | undefined>(undefined);
 
     roomMenuRef.current = roomMenu;
-    openRoomMenuRef.current = (conversationId, left, top): void => {
+    openRoomMenuRef.current = (conversationId, left, top, opener): void => {
         setAccountOpen(false);
         setComposeHint(false);
+        roomMenuOpenerRef.current = opener;
         setRoomMenu({ conversationId, left, top });
     };
     if (!longPressControllerRef.current) {
@@ -270,13 +274,15 @@ function ConversationList({
                 if (!target) return;
                 const rect = target.row.getBoundingClientRect();
                 longPressFiredRef.current = true;
-                openRoomMenuRef.current(target.conversationId, rect.right, rect.top);
+                openRoomMenuRef.current(target.conversationId, rect.right, rect.top, target.row);
             },
         });
     }
 
-    const closeRoomMenu = useCallback((): void => {
-        if (roomMenuRef.current) setRoomMenu(undefined);
+    const closeRoomMenu = useCallback((restoreFocus = false): void => {
+        if (!roomMenuRef.current) return;
+        setRoomMenu(undefined);
+        if (restoreFocus) roomMenuOpenerRef.current?.focus();
     }, []);
 
     const cancelLongPress = useCallback((): void => {
@@ -311,7 +317,7 @@ function ConversationList({
             closeRoomMenu();
         };
         const onKeyDown = (event: KeyboardEvent): void => {
-            if (roomMenuRef.current && event.key === "Escape") closeRoomMenu();
+            if (roomMenuRef.current && event.key === "Escape") closeRoomMenu(true);
         };
         const onScroll = (): void => {
             if (roomMenuRef.current) closeRoomMenu();
@@ -334,6 +340,11 @@ function ConversationList({
         if (left !== roomMenu.left || top !== roomMenu.top) {
             setRoomMenu({ ...roomMenu, left, top });
         }
+    }, [roomMenu]);
+
+    useLayoutEffect(() => {
+        if (!roomMenu) return;
+        roomMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     }, [roomMenu]);
     const conversations = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
@@ -361,9 +372,9 @@ function ConversationList({
         if (roomMenu && !menuConversation) closeRoomMenu();
     }, [roomMenu, menuConversation, closeRoomMenu]);
 
-    const openAtElement = (conversationId: string, element: HTMLElement): void => {
-        const rect = element.getBoundingClientRect();
-        openRoomMenuRef.current(conversationId, rect.right, rect.bottom);
+    const openAtElement = (conversationId: string, anchor: HTMLElement, opener: HTMLElement = anchor): void => {
+        const rect = anchor.getBoundingClientRect();
+        openRoomMenuRef.current(conversationId, rect.right, rect.bottom, opener);
     };
 
     const renderConversation = (conversation: ClientState["conversations"][number]): React.ReactElement => {
@@ -391,10 +402,10 @@ function ConversationList({
                         const keyboardTriggered = event.clientX === 0 && event.clientY === 0;
                         if (keyboardTriggered) {
                             const trigger = menuTriggerRefs.current.get(conversation.id);
-                            openAtElement(conversation.id, trigger ?? event.currentTarget);
+                            openAtElement(conversation.id, trigger ?? event.currentTarget, event.currentTarget);
                             return;
                         }
-                        openRoomMenuRef.current(conversation.id, event.clientX, event.clientY);
+                        openRoomMenuRef.current(conversation.id, event.clientX, event.clientY, event.currentTarget);
                     }}
                     onPointerDown={(event) => {
                         if (event.pointerType !== "touch") return;
@@ -586,6 +597,32 @@ function ConversationList({
                         role="menu"
                         ref={roomMenuElementRef}
                         style={{ position: "fixed", left: roomMenu.left, top: roomMenu.top }}
+                        onKeyDown={(event) => {
+                            const items = Array.from(
+                                event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+                            );
+                            const currentIndex = items.findIndex((item) => item === document.activeElement);
+                            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                                event.preventDefault();
+                                const direction = event.key === "ArrowDown" ? 1 : -1;
+                                const nextIndex =
+                                    currentIndex === -1
+                                        ? event.key === "ArrowDown"
+                                            ? 0
+                                            : items.length - 1
+                                        : (currentIndex + direction + items.length) % items.length;
+                                items[nextIndex]?.focus();
+                            } else if (event.key === "Enter" || event.key === " ") {
+                                const currentItem = items[currentIndex];
+                                if (!currentItem) return;
+                                event.preventDefault();
+                                currentItem.click();
+                            } else if (event.key === "Escape") {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                closeRoomMenu(true);
+                            }
+                        }}
                     >
                         {!state.archivedIds.has(menuConversation.id) && menuConversation.unread_count > 0 && (
                             <button
