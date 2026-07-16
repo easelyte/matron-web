@@ -139,6 +139,7 @@ export class MatronJournalClient {
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
+    private transientAttachmentErrors = new Map<string, PendingMessage>();
     private inFlightUploads = new Set<AbortController>();
     private sessionGen = 0;
     private ackTimer?: number;
@@ -208,6 +209,7 @@ export class MatronJournalClient {
         for (const controller of this.inFlightUploads) controller.abort();
         this.inFlightUploads.clear();
         this.pendingFiles.clear();
+        this.transientAttachmentErrors.clear();
         this.connection?.stop();
         this.connection = undefined;
         this.resetTransientSyncState();
@@ -349,17 +351,17 @@ export class MatronJournalClient {
         if (file.size > MEDIA_MAX_BYTES || file.size === 0) {
             message.attachState = "error";
             message.errorKind = file.size > MEDIA_MAX_BYTES ? "too_large" : "empty";
-            await db.addToOutbox(message);
+            if (!(await this.persistAttachment(message, db, gen))) return;
             if (this.sessionGen !== gen) return;
-            await this.refreshSelectedConversation(convoId);
+            await this.refreshSelectedConversation(convoId, db, gen);
             if (this.sessionGen !== gen) return;
             return;
         }
 
         this.pendingFiles.set(localId, file);
-        await db.addToOutbox(message);
+        if (!(await this.persistAttachment(message, db, gen))) return;
         if (this.sessionGen !== gen) return;
-        await this.refreshSelectedConversation(convoId);
+        await this.refreshSelectedConversation(convoId, db, gen);
         if (this.sessionGen !== gen) return;
 
         const controller = new AbortController();
@@ -383,10 +385,10 @@ export class MatronJournalClient {
                 error instanceof JournalApiError && (error.code === "too_large" || error.code === "empty")
                     ? error.code
                     : "upload_failed";
+            if (!(await this.persistAttachment(message, db, gen))) return;
             if (message.errorKind !== "upload_failed") this.pendingFiles.delete(localId);
-            await db?.addToOutbox(message);
             if (this.sessionGen !== gen) return;
-            await this.refreshSelectedConversation(convoId);
+            await this.refreshSelectedConversation(convoId, db, gen);
             if (this.sessionGen !== gen) return;
             return;
         } finally {
@@ -397,10 +399,10 @@ export class MatronJournalClient {
         message.blobRef = mediaId;
         message.attachState = "sending";
         delete message.errorKind;
+        if (!(await this.persistAttachment(message, db, gen))) return;
         this.pendingFiles.delete(localId);
-        await db.addToOutbox(message);
         if (this.sessionGen !== gen) return;
-        await this.refreshSelectedConversation(convoId);
+        await this.refreshSelectedConversation(convoId, db, gen);
         if (this.sessionGen !== gen) return;
 
         const ok = this.connection?.send({
@@ -423,9 +425,9 @@ export class MatronJournalClient {
         message.attachState = "error";
         message.errorKind = "send_failed";
         if (this.sessionGen !== gen) return;
-        await db?.addToOutbox(message);
+        if (!(await this.persistAttachment(message, db, gen))) return;
         if (this.sessionGen !== gen) return;
-        await this.refreshSelectedConversation(convoId);
+        await this.refreshSelectedConversation(convoId, db, gen);
         if (this.sessionGen !== gen) return;
     }
 
@@ -450,8 +452,9 @@ export class MatronJournalClient {
         await db.deleteOutboxRow(localId);
         if (this.sessionGen !== gen || this.database !== db) return;
         this.pendingFiles.delete(localId);
+        this.transientAttachmentErrors.delete(localId);
         const conversationId = this.state.selectedConversationId;
-        if (conversationId) await this.refreshSelectedConversation(conversationId);
+        if (conversationId) await this.refreshSelectedConversation(conversationId, db, gen);
     }
 
     public sendPromptReply(targetSeq: number, choice?: string, text?: string): boolean {
@@ -488,10 +491,11 @@ export class MatronJournalClient {
         for (const controller of this.inFlightUploads) controller.abort();
         this.inFlightUploads.clear();
         this.pendingFiles.clear();
+        this.transientAttachmentErrors.clear();
         this.connection?.stop();
         this.database?.close();
         this.api = new JournalApi(session.serverUrl, session.token);
-        this.database = await JournalDatabase.open(session.serverUrl, session.userId);
+        this.database = await JournalDatabase.open(session.serverUrl, session.userId, session.username);
         await this.database.expireToolLogs();
 
         let cursor = await this.database.cursor();
@@ -587,7 +591,10 @@ export class MatronJournalClient {
         if (!applied) return;
         this.clearHistoryError();
         const removed = await this.database.reconcileOwnMessage(event);
-        if (removed) this.pendingFiles.delete(removed);
+        if (removed) {
+            this.pendingFiles.delete(removed);
+            this.transientAttachmentErrors.delete(removed);
+        }
         this.scheduleAck(event.seq);
 
         const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
@@ -685,22 +692,54 @@ export class MatronJournalClient {
         this.patch({ conversations: await this.database.conversations() });
     }
 
-    private async refreshSelectedConversation(expectedId: string): Promise<void> {
-        if (!this.database) return;
-        const [events, pendingMessages] = await Promise.all([
-            this.database.events(expectedId),
-            this.database.outbox(expectedId),
-        ]);
-        if (this.state.selectedConversationId !== expectedId) return;
+    private async refreshSelectedConversation(
+        expectedId: string,
+        db = this.database,
+        gen = this.sessionGen,
+    ): Promise<void> {
+        if (!db) return;
+        const [events, pendingMessages] = await Promise.all([db.events(expectedId), db.outbox(expectedId)]);
+        if (this.sessionGen !== gen || this.database !== db || this.state.selectedConversationId !== expectedId) return;
+        const visiblePending = new Map(pendingMessages.map((message) => [message.localId, message]));
+        for (const message of this.transientAttachmentErrors.values()) {
+            if (message.convoId === expectedId) visiblePending.set(message.localId, message);
+        }
         this.patch({
             events,
-            pendingMessages: pendingMessages.map((message) => ({
+            pendingMessages: [...visiblePending.values()].map((message) => ({
                 ...message,
                 canRetry:
                     (message.errorKind === "upload_failed" && this.pendingFiles.has(message.localId)) ||
-                    message.errorKind === "send_failed",
+                    message.errorKind === "send_failed" ||
+                    (message.errorKind === "storage_failed" &&
+                        (this.pendingFiles.has(message.localId) || Boolean(message.blobRef))),
             })),
         });
+    }
+
+    private async persistAttachment(message: PendingMessage, db: JournalDatabase, gen: number): Promise<boolean> {
+        try {
+            await db.addToOutbox(message);
+        } catch {
+            if (this.sessionGen !== gen || this.database !== db) return false;
+            const storageError: PendingMessage = {
+                ...message,
+                attachState: "error",
+                errorKind: "storage_failed",
+                canRetry: this.pendingFiles.has(message.localId) || Boolean(message.blobRef),
+            };
+            this.transientAttachmentErrors.set(message.localId, storageError);
+            if (this.state.selectedConversationId === message.convoId) {
+                const pendingMessages = this.state.pendingMessages.filter(
+                    (pending) => pending.localId !== message.localId,
+                );
+                this.patch({ pendingMessages: [...pendingMessages, storageError] });
+            }
+            return false;
+        }
+        if (this.sessionGen !== gen || this.database !== db) return false;
+        this.transientAttachmentErrors.delete(message.localId);
+        return true;
     }
 
     private sendPendingMessage(message: PendingMessage): void {

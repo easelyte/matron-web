@@ -62,6 +62,7 @@ interface ClientInternals {
     api?: {
         messages: () => Promise<{ events: [] }>;
         snapshot?: () => Promise<{ seq: number; conversations: Conversation[] }>;
+        uploadMedia?: () => Promise<{ media_id: string }>;
     };
     connection?: { send: ReturnType<typeof jest.fn> };
     history: Map<string, { initialized: boolean; hasMore: boolean; oldestSeq?: number }>;
@@ -73,9 +74,11 @@ interface ClientInternals {
     readHighWater: Map<string, number>;
     readTimers: Map<string, number>;
     pendingAck: number;
+    sessionGen: number;
     scheduleRead(conversationId: string, upToSeq: number, delay?: number): void;
     flushRead(conversationId: string): Promise<void>;
     replaceSnapshot(): Promise<void>;
+    refreshSelectedConversation(conversationId: string, database?: FakeDatabase, generation?: number): Promise<void>;
     handleEphemeral(frame: JournalEphemeralFrame): void;
 }
 
@@ -310,5 +313,51 @@ describe("MatronJournalClient state handling", () => {
             payload: { body: string; local_id: string };
         };
         expect(operation.payload).toEqual({ body: "same message", local_id: operation.local_id });
+    });
+
+    it("does not patch a refresh that completes after the database session changes", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        let resolveEvents!: (events: []) => void;
+        let resolveOutbox!: (messages: PendingMessage[]) => void;
+        const oldDatabase = fakeDatabase({
+            events: jest.fn().mockReturnValue(new Promise<[]>((resolve) => (resolveEvents = resolve))),
+            outbox: jest.fn().mockReturnValue(new Promise<PendingMessage[]>((resolve) => (resolveOutbox = resolve))),
+        });
+        const retained = { localId: "new-session", convoId: "c1", body: "keep", createdAt: 1 };
+        state.state = { ...signedInState(client), pendingMessages: [retained] };
+        state.database = oldDatabase;
+        const refresh = state.refreshSelectedConversation("c1", oldDatabase, state.sessionGen);
+
+        state.database = fakeDatabase();
+        state.sessionGen += 1;
+        resolveEvents([]);
+        resolveOutbox([{ localId: "old-session", convoId: "c1", body: "leak", createdAt: 2 }]);
+        await refresh;
+
+        expect(client.getSnapshot().pendingMessages).toEqual([retained]);
+    });
+
+    it("surfaces an attachment storage failure per item and retains retry bytes", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.database = fakeDatabase({ addToOutbox: jest.fn().mockRejectedValue(new Error("quota")) });
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            uploadMedia: jest.fn().mockResolvedValue({ media_id: "unused" }),
+        };
+
+        await client.sendAttachment(new File(["contents"], "notes.txt", { type: "text/plain" }), "c1");
+
+        expect(client.getSnapshot().pendingMessages).toEqual([
+            expect.objectContaining({
+                convoId: "c1",
+                filename: "notes.txt",
+                attachState: "error",
+                errorKind: "storage_failed",
+                canRetry: true,
+            }),
+        ]);
     });
 });

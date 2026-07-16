@@ -26,7 +26,7 @@ describe("JournalDatabase", () => {
     });
 
     it("applies ordered frames atomically and ignores replay duplicates", async () => {
-        const database = await JournalDatabase.open("https://journal.example", 1);
+        const database = await JournalDatabase.open("https://journal.example", 1, "dan");
         await database.replaceWithSnapshot({
             seq: 0,
             conversations: [
@@ -51,7 +51,7 @@ describe("JournalDatabase", () => {
     });
 
     it("keeps own messages unread-free and converges read markers", async () => {
-        const database = await JournalDatabase.open("https://journal.example", 2);
+        const database = await JournalDatabase.open("https://journal.example", 2, "dan");
         await database.replaceWithSnapshot({
             seq: 0,
             conversations: [
@@ -74,7 +74,7 @@ describe("JournalDatabase", () => {
     });
 
     it("persists and reconciles the idempotent send outbox", async () => {
-        const database = await JournalDatabase.open("https://journal.example", 3);
+        const database = await JournalDatabase.open("https://journal.example", 3, "dan");
         await database.replaceWithSnapshot({ seq: 0, conversations: [] });
         await database.addToOutbox({ localId: "local-1", convoId: "c1", body: "ship it", createdAt: 10 });
         expect(await database.outbox("c1")).toHaveLength(1);
@@ -84,7 +84,7 @@ describe("JournalDatabase", () => {
     });
 
     it("reconciles repeated messages by their exact mirrored local id", async () => {
-        const database = await JournalDatabase.open("https://journal.example", 4);
+        const database = await JournalDatabase.open("https://journal.example", 4, "dan");
         await database.replaceWithSnapshot({ seq: 0, conversations: [] });
         await database.addToOutbox({ localId: "local-1", convoId: "c1", body: "same", createdAt: 10 });
         await database.addToOutbox({ localId: "local-2", convoId: "c1", body: "same", createdAt: 11 });
@@ -100,8 +100,37 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("reconciles only the authenticated user's matching conversation and pending kind", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 6, "dan");
+        await database.replaceWithSnapshot({ seq: 0, conversations: [] });
+        await database.addToOutbox({ localId: "text-1", convoId: "c1", body: "same", createdAt: 10 });
+        await database.addToOutbox({
+            localId: "image-1",
+            convoId: "c1",
+            body: "",
+            createdAt: 11,
+            kind: "image",
+            attachState: "sending",
+            blobRef: "media-1",
+        });
+
+        await database.reconcileOwnMessage(event(1, "user:pat", "text", { body: "same", local_id: "text-1" }));
+        await database.reconcileOwnMessage({
+            ...event(2, "user:dan", "text", { body: "same", local_id: "text-1" }),
+            convo_id: "c2",
+        });
+        await database.reconcileOwnMessage(event(3, "user:dan", "file", { local_id: "image-1" }));
+        expect((await database.outbox()).map((message) => message.localId)).toEqual(["text-1", "image-1"]);
+
+        expect(await database.reconcileOwnMessage(event(4, "user:dan", "image", { local_id: "image-1" }))).toBe(
+            "image-1",
+        );
+        expect((await database.outbox()).map((message) => message.localId)).toEqual(["text-1"]);
+        database.close();
+    });
+
     it("drops pending messages for conversations removed by a replacement snapshot", async () => {
-        const database = await JournalDatabase.open("https://journal.example", 5);
+        const database = await JournalDatabase.open("https://journal.example", 5, "dan");
         const conversation = {
             title: "Agent",
             session_state: "running",

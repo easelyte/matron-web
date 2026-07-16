@@ -48,9 +48,12 @@ function emptyConversation(id: string, timestamp: number): Conversation {
 }
 
 export class JournalDatabase {
-    private constructor(private readonly database: IDBDatabase) {}
+    private constructor(
+        private readonly database: IDBDatabase,
+        private readonly ownSender: string,
+    ) {}
 
-    public static open(serverUrl: string, userId: number): Promise<JournalDatabase> {
+    public static open(serverUrl: string, userId: number, username: string): Promise<JournalDatabase> {
         const name = `matron-journal:${serverUrl}:${userId}`;
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(name, DATABASE_VERSION);
@@ -69,7 +72,7 @@ export class JournalDatabase {
                     outbox.createIndex("byConversation", "convoId", { unique: false });
                 }
             };
-            request.onsuccess = () => resolve(new JournalDatabase(request.result));
+            request.onsuccess = () => resolve(new JournalDatabase(request.result, `user:${username}`));
             request.onerror = () => reject(request.error ?? new Error("Could not open the local journal"));
             request.onblocked = () => reject(new Error("The local journal is open in another incompatible tab"));
         });
@@ -234,15 +237,17 @@ export class JournalDatabase {
     public async reconcileOwnMessage(event: JournalEvent): Promise<string | null> {
         const isText = event.type === "text" && typeof event.payload.body === "string";
         const isAttachment = event.type === "file" || event.type === "image";
-        if ((!isText && !isAttachment) || !event.sender.startsWith("user:")) return null;
+        if ((!isText && !isAttachment) || event.sender !== this.ownSender) return null;
         const localId = typeof event.payload.local_id === "string" ? event.payload.local_id : undefined;
         if (!localId) return null;
         const transaction = this.database.transaction("outbox", "readwrite");
         const outbox = transaction.objectStore("outbox");
         const pending = (await requestResult(outbox.get(localId))) as PendingMessage | undefined;
-        if (pending) outbox.delete(localId);
+        const pendingKind = pending?.kind ?? "text";
+        const matchesPending = pending?.convoId === event.convo_id && pendingKind === event.type;
+        if (matchesPending) outbox.delete(localId);
         await transactionDone(transaction);
-        return pending ? localId : null;
+        return matchesPending ? localId : null;
     }
 
     public async expireToolLogs(now = Date.now()): Promise<void> {
