@@ -29,6 +29,8 @@ const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
 const HISTORY_PAGE_SIZE = 80;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
+const MEDIA_MAX_BYTES = 50 * 1024 * 1024;
+const UPLOAD_TIMEOUT_MS = 60_000;
 
 interface ConversationHistoryState {
     initialized: boolean;
@@ -113,6 +115,14 @@ function capToolStream(value: string): { content: string; truncated: boolean } {
     return { content: new TextDecoder().decode(slice), truncated: true };
 }
 
+function abortPromise(signal: AbortSignal): Promise<never> {
+    return new Promise((_, reject) => {
+        const rejectAbort = (): void => reject(new DOMException("The upload timed out.", "AbortError"));
+        if (signal.aborted) rejectAbort();
+        else signal.addEventListener("abort", rejectAbort, { once: true });
+    });
+}
+
 export class MatronJournalClient {
     private state = blankState();
     private readonly listeners = new Set<() => void>();
@@ -128,6 +138,9 @@ export class MatronJournalClient {
     private readonly mediaUrls = new Map<string, string>();
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
+    private pendingFiles = new Map<string, File>();
+    private inFlightUploads = new Set<AbortController>();
+    private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
     private historyError?: string;
@@ -305,6 +318,109 @@ export class MatronJournalClient {
         await this.refreshSelectedConversation(conversationId);
         this.sendPendingMessage(message);
         return true;
+    }
+
+    public async sendAttachment(file: File, convoId: string): Promise<void> {
+        const gen = this.sessionGen;
+        const api = this.api;
+        const db = this.database;
+        if (!api || !db) return;
+
+        const localId = crypto.randomUUID();
+        const kind = file.type.startsWith("image/") ? "image" : "file";
+        const contentType = file.type || "application/octet-stream";
+        const message: PendingMessage = {
+            localId,
+            convoId,
+            body: "",
+            createdAt: Date.now(),
+            kind,
+            filename: file.name,
+            size: file.size,
+            contentType,
+            blobRef: null,
+            attachState: "uploading",
+        };
+
+        if (file.size > MEDIA_MAX_BYTES || file.size === 0) {
+            message.attachState = "error";
+            message.errorKind = file.size > MEDIA_MAX_BYTES ? "too_large" : "empty";
+            await db.addToOutbox(message);
+            if (this.sessionGen !== gen) return;
+            await this.refreshSelectedConversation(convoId);
+            if (this.sessionGen !== gen) return;
+            return;
+        }
+
+        this.pendingFiles.set(localId, file);
+        await db.addToOutbox(message);
+        if (this.sessionGen !== gen) return;
+        await this.refreshSelectedConversation(convoId);
+        if (this.sessionGen !== gen) return;
+
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+        this.inFlightUploads.add(controller);
+        let mediaId: string;
+        try {
+            const bytes = await Promise.race([file.arrayBuffer(), abortPromise(controller.signal)]);
+            if (this.sessionGen !== gen) return;
+            const response = await api.uploadMedia(bytes, contentType, controller.signal);
+            if (this.sessionGen !== gen) return;
+            if (typeof response.media_id !== "string" || response.media_id.trim() === "") {
+                throw new Error("The journal server returned a malformed media response.");
+            }
+            mediaId = response.media_id;
+        } catch (error) {
+            if (this.sessionGen !== gen) return;
+            message.blobRef = null;
+            message.attachState = "error";
+            message.errorKind =
+                error instanceof JournalApiError && (error.code === "too_large" || error.code === "empty")
+                    ? error.code
+                    : "upload_failed";
+            await db?.addToOutbox(message);
+            if (this.sessionGen !== gen) return;
+            await this.refreshSelectedConversation(convoId);
+            if (this.sessionGen !== gen) return;
+            return;
+        } finally {
+            window.clearTimeout(timer);
+            this.inFlightUploads.delete(controller);
+        }
+
+        message.blobRef = mediaId;
+        message.attachState = "sending";
+        delete message.errorKind;
+        await db.addToOutbox(message);
+        if (this.sessionGen !== gen) return;
+        await this.refreshSelectedConversation(convoId);
+        if (this.sessionGen !== gen) return;
+
+        const ok = this.connection?.send({
+            op: "send",
+            convo_id: convoId,
+            type: kind,
+            blob_ref: mediaId,
+            payload: {
+                blob_ref: mediaId,
+                name: file.name,
+                filename: file.name,
+                content_type: contentType,
+                size: file.size,
+                local_id: localId,
+            },
+            local_id: localId,
+        });
+        if (ok === true) return;
+
+        message.attachState = "error";
+        message.errorKind = "send_failed";
+        if (this.sessionGen !== gen) return;
+        await db?.addToOutbox(message);
+        if (this.sessionGen !== gen) return;
+        await this.refreshSelectedConversation(convoId);
+        if (this.sessionGen !== gen) return;
     }
 
     public sendPromptReply(targetSeq: number, choice?: string, text?: string): boolean {
