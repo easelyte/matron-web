@@ -11,10 +11,10 @@ import { JournalApi, JournalApiError } from "../../../src/journal/api";
 
 const fetchMock = jest.fn();
 
-function jsonResponse(body: unknown): Pick<Response, "status" | "headers" | "arrayBuffer"> {
+function jsonResponse(body: unknown, status = 200): Pick<Response, "status" | "headers" | "arrayBuffer"> {
     const encoded = new NodeTextEncoder().encode(JSON.stringify(body));
     return {
-        status: 200,
+        status,
         headers: new Headers({ "Content-Type": "application/json" }),
         arrayBuffer: async () => encoded.buffer,
     };
@@ -31,15 +31,27 @@ describe("JournalApi uploadMedia", () => {
         delete (window as Window & { electron?: unknown }).electron;
     });
 
-    it("returns a structurally valid media response", async () => {
+    it("sends the bytes and content type verbatim and returns a structurally valid media response", async () => {
         fetchMock.mockResolvedValue(jsonResponse({ media_id: "media-1", size: 3, content_type: "image/png" }));
         const api = new JournalApi("https://journal.example", "token");
+        const bytes = new Uint8Array([1, 2, 3]).buffer;
 
-        await expect(api.uploadMedia(new ArrayBuffer(3), "image/png")).resolves.toEqual({
+        await expect(api.uploadMedia(bytes, "image/png")).resolves.toEqual({
             media_id: "media-1",
             size: 3,
             content_type: "image/png",
         });
+        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/media");
+        expect(fetchMock.mock.calls[0][1]).toEqual(
+            expect.objectContaining({
+                method: "POST",
+                headers: expect.objectContaining({
+                    Authorization: "Bearer token",
+                    "Content-Type": "image/png",
+                }),
+            }),
+        );
+        expect(fetchMock.mock.calls[0][1].body).toBe(bytes);
     });
 
     it.each([
@@ -58,5 +70,56 @@ describe("JournalApi uploadMedia", () => {
 
         await expect(upload).rejects.toBeInstanceOf(JournalApiError);
         await expect(upload).rejects.toMatchObject({ status: 200 });
+    });
+
+    it.each([
+        [413, "too_large", "File too large."],
+        [400, "empty", "That file is empty."],
+    ])("maps HTTP %i code %s to prose", async (status, code, message) => {
+        fetchMock.mockResolvedValue(jsonResponse({ error: code }, status));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.uploadMedia(new ArrayBuffer(1), "application/octet-stream")).rejects.toMatchObject({
+            message,
+            status,
+            code,
+        });
+    });
+
+    it("forwards the abort signal to fetch and rejects when it is aborted", async () => {
+        fetchMock.mockImplementation(
+            (_url: string, init: RequestInit) =>
+                new Promise((_resolve, reject) => {
+                    init.signal?.addEventListener(
+                        "abort",
+                        () => reject(new DOMException("The operation was aborted.", "AbortError")),
+                        { once: true },
+                    );
+                }),
+        );
+        const api = new JournalApi("https://journal.example", "token");
+        const controller = new AbortController();
+
+        const upload = api.uploadMedia(new ArrayBuffer(1), "application/octet-stream", controller.signal);
+        expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ signal: controller.signal }));
+        controller.abort();
+
+        await expect(upload).rejects.toMatchObject({ name: "Error", message: "The operation was aborted." });
+    });
+
+    it("rejects binary requests in Electron before issuing a POST", async () => {
+        const journalRequest = jest.fn();
+        (window as Window & { electron?: unknown }).electron = {
+            initialise: jest.fn(),
+            journalRequest,
+        };
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.uploadMedia(new ArrayBuffer(1), "application/octet-stream")).rejects.toMatchObject({
+            message: "Attachments aren't supported in the desktop build yet.",
+            code: "electron_binary_unsupported",
+        });
+        expect(journalRequest).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 });

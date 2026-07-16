@@ -6,10 +6,13 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import { MatronJournalClient } from "../../../src/journal/client";
+import { JournalApi, JournalApiError } from "../../../src/journal/api";
+import { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "node:util";
 import {
     type ClientState,
     type Conversation,
     type JournalEphemeralFrame,
+    type JournalEvent,
     type PendingMessage,
     type Session,
 } from "../../../src/journal/types";
@@ -56,6 +59,8 @@ interface FakeDatabase {
     addToOutbox: (message: PendingMessage) => Promise<void>;
     deleteOutboxRow: (localId: string) => Promise<void>;
     cursor: () => Promise<number | undefined>;
+    applyJournal: (event: JournalEvent) => Promise<boolean>;
+    reconcileOwnMessage: (event: JournalEvent) => Promise<string | null>;
 }
 
 interface ClientInternals {
@@ -86,6 +91,7 @@ interface ClientInternals {
     handleReady(): Promise<void>;
     refreshSelectedConversation(conversationId: string, database?: FakeDatabase, generation?: number): Promise<void>;
     handleEphemeral(frame: JournalEphemeralFrame): void;
+    handleJournal(event: JournalEvent): Promise<void>;
 }
 
 function internals(client: MatronJournalClient): ClientInternals {
@@ -114,8 +120,52 @@ function fakeDatabase(overrides: Partial<FakeDatabase> = {}): FakeDatabase {
         addToOutbox: jest.fn().mockResolvedValue(undefined),
         deleteOutboxRow: jest.fn().mockResolvedValue(undefined),
         cursor: jest.fn().mockResolvedValue(10),
+        applyJournal: jest.fn().mockResolvedValue(true),
+        reconcileOwnMessage: jest.fn().mockResolvedValue(null),
         ...overrides,
     };
+}
+
+function attachmentDatabase(): {
+    database: FakeDatabase;
+    rows: Map<string, PendingMessage>;
+    writes: PendingMessage[];
+} {
+    const rows = new Map<string, PendingMessage>();
+    const writes: PendingMessage[] = [];
+    const database = fakeDatabase({
+        addToOutbox: jest.fn(async (message: PendingMessage) => {
+            const stored = structuredClone(message);
+            rows.set(message.localId, stored);
+            writes.push(stored);
+        }),
+        deleteOutboxRow: jest.fn(async (localId: string) => {
+            rows.delete(localId);
+        }),
+        outbox: jest.fn(async (conversationId?: string) =>
+            [...rows.values()].filter((message) => !conversationId || message.convoId === conversationId),
+        ),
+        reconcileOwnMessage: jest.fn(async (event: JournalEvent) => {
+            const localId = typeof event.payload.local_id === "string" ? event.payload.local_id : undefined;
+            if (!localId || event.sender !== "user:2" || !rows.has(localId)) return null;
+            rows.delete(localId);
+            return localId;
+        }),
+    });
+    return { database, rows, writes };
+}
+
+function fileFixture(
+    name: string,
+    type: string,
+    contents: number[],
+    arrayBuffer: jest.MockedFunction<() => Promise<ArrayBuffer>> = jest.fn(),
+): File {
+    const bytes = new Uint8Array(contents);
+    const file = new File([new Blob([bytes], { type })], name, { type });
+    if (arrayBuffer.getMockImplementation() === undefined) arrayBuffer.mockResolvedValue(bytes.buffer);
+    Object.defineProperty(file, "arrayBuffer", { value: arrayBuffer });
+    return file;
 }
 
 describe("MatronJournalClient state handling", () => {
@@ -619,5 +669,218 @@ describe("MatronJournalClient state handling", () => {
 
         expect(oldSend).not.toHaveBeenCalled();
         expect(newSend).not.toHaveBeenCalled();
+    });
+});
+
+describe("MatronJournalClient attachment send state machine", () => {
+    beforeEach(() => {
+        localStorage.clear();
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+        delete (globalThis as { fetch?: typeof fetch }).fetch;
+    });
+
+    it("moves uploading to sending and removes the pending row on its own echo", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows, writes } = attachmentDatabase();
+        const send = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            uploadMedia: jest.fn().mockResolvedValue({ media_id: "media-1" }),
+        };
+        state.connection = { send };
+
+        await client.sendAttachment(fileFixture("photo.png", "image/png", [1, 2, 3]), "c1");
+
+        const pending = [...rows.values()][0];
+        expect(writes.map((message) => message.attachState)).toEqual(["uploading", "sending"]);
+        expect(pending).toMatchObject({
+            convoId: "c1",
+            kind: "image",
+            filename: "photo.png",
+            blobRef: "media-1",
+            attachState: "sending",
+        });
+        expect(send).toHaveBeenCalledWith(
+            expect.objectContaining({
+                op: "send",
+                convo_id: "c1",
+                type: "image",
+                blob_ref: "media-1",
+                local_id: pending.localId,
+                payload: expect.objectContaining({
+                    blob_ref: "media-1",
+                    name: "photo.png",
+                    filename: "photo.png",
+                    local_id: pending.localId,
+                }),
+            }),
+        );
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 11,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "user:2",
+            type: "image",
+            payload: { local_id: pending.localId, blob_ref: "media-1" },
+        });
+
+        expect(rows.size).toBe(0);
+        expect(client.getSnapshot().pendingMessages).toEqual([]);
+    });
+
+    it("retains the uploaded blob reference when the websocket send returns false", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            uploadMedia: jest.fn().mockResolvedValue({ media_id: "media-1" }),
+        };
+        state.connection = { send: jest.fn().mockReturnValue(false) };
+
+        await client.sendAttachment(fileFixture("notes.txt", "text/plain", [1]), "c1");
+
+        expect([...rows.values()][0]).toMatchObject({
+            blobRef: "media-1",
+            attachState: "error",
+            errorKind: "send_failed",
+        });
+    });
+
+    it("times out a held file read and advances to the next file in the batch", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        const uploadMedia = jest.fn().mockResolvedValue({ media_id: "media-2" });
+        const heldRead = jest.fn(() => new Promise<ArrayBuffer>(() => undefined));
+        const nextRead = jest.fn<Promise<ArrayBuffer>, []>().mockResolvedValue(new Uint8Array([2]).buffer);
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        const batch = client.attachFiles([
+            fileFixture("held.bin", "application/octet-stream", [1], heldRead),
+            fileFixture("next.bin", "application/octet-stream", [2], nextRead),
+        ]);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(heldRead).toHaveBeenCalledTimes(1);
+        await jest.advanceTimersByTimeAsync(60_000);
+        await batch;
+
+        expect([...rows.values()].find((row) => row.filename === "held.bin")).toMatchObject({
+            attachState: "error",
+            errorKind: "upload_failed",
+        });
+        expect([...rows.values()].find((row) => row.filename === "next.bin")).toMatchObject({
+            blobRef: "media-2",
+            attachState: "sending",
+        });
+        expect(nextRead).toHaveBeenCalledTimes(1);
+        expect(uploadMedia).toHaveBeenCalledTimes(1);
+    });
+
+    it("aborts a never-settling fetch at the deadline and advances the batch", async () => {
+        jest.useFakeTimers();
+        const fetchMock = jest
+            .fn()
+            .mockImplementationOnce(
+                (_url: string, init: RequestInit) =>
+                    new Promise((_resolve, reject) => {
+                        init.signal?.addEventListener(
+                            "abort",
+                            () => reject(new DOMException("The operation was aborted.", "AbortError")),
+                            { once: true },
+                        );
+                    }),
+            )
+            .mockResolvedValueOnce({
+                status: 200,
+                headers: new Headers({ "Content-Type": "application/json" }),
+                arrayBuffer: async () =>
+                    new NodeTextEncoder().encode(
+                        JSON.stringify({ media_id: "media-2", size: 1, content_type: "application/octet-stream" }),
+                    ).buffer,
+            });
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = new JournalApi("https://journal.example", "token") as unknown as ClientInternals["api"];
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        const batch = client.attachFiles([
+            fileFixture("stalled.bin", "application/octet-stream", [1]),
+            fileFixture("next.bin", "application/octet-stream", [2]),
+        ]);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        await jest.advanceTimersByTimeAsync(60_000);
+        await batch;
+
+        expect([...rows.values()].find((row) => row.filename === "stalled.bin")).toMatchObject({
+            attachState: "error",
+            errorKind: "upload_failed",
+        });
+        expect([...rows.values()].find((row) => row.filename === "next.bin")).toMatchObject({
+            blobRef: "media-2",
+            attachState: "sending",
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("rejects an oversized file before reading it", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        const arrayBuffer = jest.fn();
+        const uploadMedia = jest.fn();
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send: jest.fn() };
+        const file = {
+            name: "oversized.bin",
+            type: "application/octet-stream",
+            size: 50 * 1024 * 1024 + 1,
+            arrayBuffer,
+        } as unknown as File;
+
+        await client.sendAttachment(file, "c1");
+
+        expect([...rows.values()][0]).toMatchObject({ attachState: "error", errorKind: "too_large" });
+        expect(arrayBuffer).not.toHaveBeenCalled();
+        expect(uploadMedia).not.toHaveBeenCalled();
+    });
+
+    it("preserves a structured upload error code in the attachment state", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            uploadMedia: jest.fn().mockRejectedValue(new JournalApiError("File too large.", 413, "too_large")),
+        };
+        state.connection = { send: jest.fn() };
+
+        await client.sendAttachment(fileFixture("server-rejected.bin", "application/octet-stream", [1]), "c1");
+
+        expect([...rows.values()][0]).toMatchObject({ attachState: "error", errorKind: "too_large" });
     });
 });
