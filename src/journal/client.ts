@@ -752,6 +752,25 @@ export class MatronJournalClient {
     }
 
     private sendPendingMessage(message: PendingMessage): void {
+        if (message.kind === "image" || message.kind === "file") {
+            if (!message.blobRef) return;
+            this.connection?.send({
+                op: "send",
+                convo_id: message.convoId,
+                type: message.kind,
+                blob_ref: message.blobRef,
+                payload: {
+                    blob_ref: message.blobRef,
+                    name: message.filename,
+                    filename: message.filename,
+                    content_type: message.contentType,
+                    size: message.size,
+                    local_id: message.localId,
+                },
+                local_id: message.localId,
+            });
+            return;
+        }
         this.connection?.send({
             op: "send",
             convo_id: message.convoId,
