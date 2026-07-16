@@ -55,6 +55,7 @@ function blankState(): ClientState {
         config: {},
         conversations: [],
         archivedIds: new Set(),
+        archiveError: undefined,
         events: [],
         pendingMessages: [],
         connection: "offline",
@@ -279,7 +280,15 @@ export class MatronJournalClient {
     public clearSelection(): void {
         this.connection?.send({ op: "viewing", convo_id: null });
         if (this.state.session) storeSelectedConversation(this.state.session, undefined);
-        this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [] });
+        this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [], archiveError: undefined });
+    }
+
+    public archiveConversation(conversationId: string): void {
+        this.setArchived(conversationId, true);
+    }
+
+    public unarchiveConversation(conversationId: string): void {
+        this.setArchived(conversationId, false);
     }
 
     public markConversationRead(conversationId: string): void {
@@ -412,6 +421,33 @@ export class MatronJournalClient {
             onState: (connection, error) => this.patch({ connection, connectionError: error }),
         });
         this.connection.start();
+    }
+
+    private setArchived(conversationId: string, archived: boolean): void {
+        const session = this.state.session;
+        if (!session) return;
+
+        let current: Set<string>;
+        try {
+            current = parseArchivedValue(localStorage.getItem(archivedStorageKey(session)));
+        } catch {
+            this.patch({ archiveError: "Couldn't read saved archive — device storage unavailable." });
+            return;
+        }
+
+        const next = new Set(current);
+        if (archived) next.add(conversationId);
+        else next.delete(conversationId);
+
+        try {
+            storeArchivedIds(session, next);
+        } catch {
+            this.patch({ archiveError: "Couldn't save — device storage is full or unavailable." });
+            return;
+        }
+
+        this.patch({ archivedIds: next, archiveError: undefined });
+        if (archived && conversationId === this.state.selectedConversationId) this.clearSelection();
     }
 
     private async replaceSnapshot(): Promise<void> {
