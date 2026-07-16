@@ -861,6 +861,38 @@ describe("MatronJournalClient attachment send state machine", () => {
         expect(send.mock.calls.map(([operation]) => operation.convo_id)).toEqual(["c1", "c1"]);
     });
 
+    it("processes attachment batches sequentially and continues after one file errors", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        let rejectFirst!: (reason: Error) => void;
+        const firstAttempt = new Promise<void>((_resolve, reject) => {
+            rejectFirst = reject;
+        });
+        const sendAttachment = jest
+            .spyOn(client, "sendAttachment")
+            .mockImplementationOnce(() => firstAttempt)
+            .mockResolvedValueOnce(undefined);
+        const first = fileFixture("first.bin", "application/octet-stream", [1]);
+        const second = fileFixture("second.bin", "application/octet-stream", [2]);
+
+        const batch = client.attachFiles([first, second]);
+
+        expect(sendAttachment).toHaveBeenCalledTimes(1);
+        expect(sendAttachment).toHaveBeenNthCalledWith(1, first, "c1");
+        rejectFirst(new Error("first file failed"));
+        await batch;
+
+        expect(sendAttachment).toHaveBeenCalledTimes(2);
+        expect(sendAttachment).toHaveBeenNthCalledWith(2, second, "c1");
+
+        // Accepted limitations, not regressions: an absent echo or snapshot_required can leave a row
+        // sending (shared with text), and an ambiguous upload timeout can orphan a blob (shared with apple). Snapshot
+        // snippets remain [file]/[image] until a live event nudges them (matron-journal snippetOf follow-up).
+        // Rolling back with an unsent attachment row can replay it through the old text path; keeping the
+        // database version unchanged avoids turning that narrow window into a persistent rollback login wedge.
+    });
+
     it("removes pending bytes on reconcile and dismiss", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
