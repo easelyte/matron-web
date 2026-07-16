@@ -262,40 +262,44 @@ function ConversationList({
     const hasActiveUnread = state.conversations.some(
         (conversation) => conversation.unread_count > 0 && !state.archivedIds.has(conversation.id),
     );
-    const renderConversation = (
-        conversation: ClientState["conversations"][number],
-        index: number,
-        setSize: number,
-    ): React.ReactElement => {
+    const renderConversation = (conversation: ClientState["conversations"][number]): React.ReactElement => {
         const selected = state.selectedConversationId === conversation.id;
         const unread = conversation.unread_count > 0;
         const name = conversationTitle(conversation);
         return (
-            <button
-                className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}`}
-                type="button"
-                role="option"
-                aria-posinset={index + 1}
-                aria-setsize={setSize}
-                aria-selected={selected}
-                aria-label={`Open room ${name}`}
-                key={conversation.id}
-                onClick={() => void client.selectConversation(conversation.id)}
-            >
-                <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
-                    <span className="mj_RoomListName" title={name} data-testid="room-name">
-                        {name}
+            <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
+                <button
+                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}`}
+                    type="button"
+                    aria-current={selected ? "page" : undefined}
+                    aria-label={`Open room ${name}`}
+                    onClick={() => void client.selectConversation(conversation.id)}
+                >
+                    <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
+                        <span className="mj_RoomListName" title={name} data-testid="room-name">
+                            {name}
+                        </span>
+                        <span className="mj_RoomListPreview" title={conversation.snippet}>
+                            {conversation.snippet}
+                        </span>
                     </span>
-                    <span className="mj_RoomListPreview" title={conversation.snippet}>
-                        {conversation.snippet}
-                    </span>
-                </span>
-                {unread && (
-                    <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
-                        {conversation.unread_count}
-                    </span>
-                )}
-            </button>
+                    {unread && (
+                        <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
+                            {conversation.unread_count}
+                        </span>
+                    )}
+                </button>
+                <button
+                    className="mj_RoomItemMenu_trigger"
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={false}
+                    aria-label="Conversation options"
+                    onClick={(event) => event.stopPropagation()}
+                >
+                    ⋯
+                </button>
+            </div>
         );
     };
 
@@ -376,12 +380,10 @@ function ConversationList({
                                 <div
                                     className="mj_RoomList"
                                     data-testid="room-list"
-                                    role="listbox"
+                                    role="list"
                                     aria-label="Conversations"
                                 >
-                                    {active.map((conversation, index) =>
-                                        renderConversation(conversation, index, active.length),
-                                    )}
+                                    {active.map((conversation) => renderConversation(conversation))}
                                     {!active.length && !archived.length && (
                                         <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
                                     )}
@@ -402,12 +404,10 @@ function ConversationList({
                                             <div
                                                 id="mj-room-list-archived"
                                                 className="mj_RoomList_archivedSection"
-                                                role="listbox"
+                                                role="list"
                                                 aria-label="Archived conversations"
                                             >
-                                                {archived.map((conversation, index) =>
-                                                    renderConversation(conversation, index, archived.length),
-                                                )}
+                                                {archived.map((conversation) => renderConversation(conversation))}
                                             </div>
                                         )}
                                     </>
