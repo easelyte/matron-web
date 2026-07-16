@@ -295,6 +295,124 @@ textarea {
     font: var(--cpd-font-body-xs-regular);
 }
 
+.mj_RoomView_dragActive {
+    position: relative;
+}
+
+.mj_DragOverlay {
+    position: absolute;
+    z-index: 10;
+    display: flex;
+    inset: var(--cpd-space-3x);
+    align-items: center;
+    justify-content: center;
+    border: 2px dashed var(--cpd-color-icon-accent-primary);
+    border-radius: 12px;
+    background: rgb(255 255 255 / 90%);
+    box-shadow: 0 8px 24px rgb(15 23 42 / 14%);
+    color: var(--cpd-color-text-action-accent);
+    font: var(--cpd-font-body-sm-regular);
+    font-weight: 600;
+    pointer-events: none;
+}
+
+.mj_AttachmentChip {
+    display: grid;
+    width: fit-content;
+    max-width: min(76.75%, 520px);
+    align-self: flex-end;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--cpd-space-3x);
+    box-sizing: border-box;
+    margin-left: auto !important;
+    border: 1px solid rgb(13 189 139 / 20%);
+    border-radius: 10px;
+    background: #dff7ed;
+    box-shadow: 0 1px 2px rgb(18 16 14 / 8%);
+    color: var(--cpd-color-text-primary);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    font: var(--cpd-font-body-sm-regular);
+    list-style: none;
+}
+
+.mj_AttachmentChip_content {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.mj_AttachmentChip_name {
+    overflow: hidden;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_AttachmentChip_size,
+.mj_AttachmentChip_status {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-xs-regular);
+}
+
+.mj_AttachmentChip_status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    white-space: nowrap;
+}
+
+.mj_AttachmentChip_spinner {
+    width: 12px;
+    height: 12px;
+    box-sizing: border-box;
+    border: 2px solid rgb(8 127 109 / 25%);
+    border-top-color: var(--cpd-color-text-action-accent);
+    border-radius: 50%;
+    animation: mj-spin 0.8s linear infinite;
+}
+
+.mj_AttachmentChip_sending {
+    border-color: var(--cpd-color-border-interactive-secondary);
+}
+
+.mj_AttachmentChip > .mj_AttachmentChip_error {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    color: var(--cpd-color-text-critical-primary);
+    font: var(--cpd-font-body-xs-regular);
+}
+
+.mj_AttachmentChip_actions {
+    display: flex;
+    gap: var(--cpd-space-1x);
+}
+
+.mj_AttachmentChip_actions button {
+    min-height: 28px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    font: var(--cpd-font-body-xs-semibold);
+}
+
+.mj_AttachmentChip_actions button:hover {
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_AttachmentChip_actions button:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+li.mj_AttachmentChip_error {
+    border-color: rgb(189 32 32 / 24%);
+    background: var(--cpd-color-bg-canvas-default);
+}
+
 .mj_HistoryRow {
     display: flex;
     justify-content: center;
@@ -572,6 +690,18 @@ button.mj_File {
 @keyframes mj-blink {
     50% {
         opacity: 0;
+    }
+}
+
+@keyframes mj-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mj_AttachmentChip_spinner {
+        animation: none;
     }
 }
 
