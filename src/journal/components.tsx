@@ -22,6 +22,7 @@ import {
     AttachmentIcon,
     ChevronLeftIcon,
     ComposeIcon,
+    MarkAllReadIcon,
     MicOnIcon,
     ReactionIcon,
     SearchIcon,
@@ -255,6 +256,12 @@ function ConversationList({
     }, [query, state.conversations]);
     const active = conversations.filter((conversation) => !state.archivedIds.has(conversation.id));
     const archived = conversations.filter((conversation) => state.archivedIds.has(conversation.id));
+    // Visibility is computed from the UNFILTERED conversation set (minus archived), NOT the
+    // search-filtered `active` — mark-all operates on the full active partition regardless of
+    // the search box, so the button must not vanish just because the search hides the unread rows.
+    const hasActiveUnread = state.conversations.some(
+        (conversation) => conversation.unread_count > 0 && !state.archivedIds.has(conversation.id),
+    );
     const renderConversation = (
         conversation: ClientState["conversations"][number],
         index: number,
@@ -309,6 +316,16 @@ function ConversationList({
                                 >
                                     <h1 title="Home">Home</h1>
                                     <div className="mj_RoomListHeaderActions">
+                                        {hasActiveUnread && (
+                                            <button
+                                                className="mj_IconButton mj_MarkAllReadButton"
+                                                type="button"
+                                                aria-label="Mark all as read"
+                                                onClick={() => client.markAllRead()}
+                                            >
+                                                <MarkAllReadIcon />
+                                            </button>
+                                        )}
                                         <button
                                             className="mj_IconButton"
                                             type="button"

@@ -55,6 +55,15 @@ export function SearchIcon(props: IconProps): React.ReactElement {
     );
 }
 
+export function MarkAllReadIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="m3 12 4 4 8-9" />
+            <path d="m11 15 2 2 8-9" />
+        </Icon>
+    );
+}
+
 export function ChevronLeftIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>
