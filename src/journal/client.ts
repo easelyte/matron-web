@@ -442,6 +442,18 @@ export class MatronJournalClient {
         }
     }
 
+    public async dismissAttachment(localId: string): Promise<void> {
+        const gen = this.sessionGen;
+        const db = this.database;
+        if (!db) return;
+
+        await db.deleteOutboxRow(localId);
+        if (this.sessionGen !== gen || this.database !== db) return;
+        this.pendingFiles.delete(localId);
+        const conversationId = this.state.selectedConversationId;
+        if (conversationId) await this.refreshSelectedConversation(conversationId);
+    }
+
     public sendPromptReply(targetSeq: number, choice?: string, text?: string): boolean {
         const conversationId = this.state.selectedConversationId;
         if (!conversationId) return false;
