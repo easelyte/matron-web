@@ -129,6 +129,29 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("durably deletes a dismissed attachment outbox row", async () => {
+        const serverUrl = "https://journal.example";
+        const userId = 7;
+        const database = await JournalDatabase.open(serverUrl, userId, "dan");
+        await database.replaceWithSnapshot({ seq: 0, conversations: [] });
+        await database.addToOutbox({
+            localId: "dismissed-file",
+            convoId: "c1",
+            body: "",
+            createdAt: 1,
+            kind: "file",
+            attachState: "error",
+            errorKind: "upload_failed",
+        });
+
+        await database.deleteOutboxRow("dismissed-file");
+        database.close();
+
+        const reopened = await JournalDatabase.open(serverUrl, userId, "dan");
+        expect(await reopened.outbox()).toEqual([]);
+        reopened.close();
+    });
+
     it("drops pending messages for conversations removed by a replacement snapshot", async () => {
         const database = await JournalDatabase.open("https://journal.example", 5, "dan");
         const conversation = {

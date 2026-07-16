@@ -885,6 +885,260 @@ describe("MatronJournalClient attachment send state machine", () => {
         expect(database.deleteOutboxRow).toHaveBeenCalledWith("dismissed");
     });
 
+    it("keeps retry bytes for a foreign attachment echo with a colliding local id", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        const message: PendingMessage = {
+            localId: "collision",
+            convoId: "c1",
+            body: "",
+            createdAt: 1,
+            kind: "file",
+            filename: "retry.bin",
+            blobRef: null,
+            attachState: "error",
+            errorKind: "upload_failed",
+        };
+        rows.set(message.localId, message);
+        state.state = signedInState(client);
+        state.database = database;
+        state.pendingFiles.set(message.localId, fileFixture("retry.bin", "application/octet-stream", [1]));
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 11,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "user:99",
+            type: "file",
+            payload: { local_id: message.localId, blob_ref: "foreign-media" },
+        });
+
+        expect(rows.has(message.localId)).toBe(true);
+        expect(state.pendingFiles.has(message.localId)).toBe(true);
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 12,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "user:2",
+            type: "file",
+            payload: { local_id: message.localId, blob_ref: "own-media" },
+        });
+
+        expect(rows.has(message.localId)).toBe(false);
+        expect(state.pendingFiles.has(message.localId)).toBe(false);
+    });
+
+    it("replays only uploaded attachment rows as media events on reconnect", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const rows: PendingMessage[] = [
+            {
+                localId: "sending-file",
+                convoId: "c1",
+                body: "",
+                createdAt: 1,
+                kind: "file",
+                filename: "notes.txt",
+                blobRef: "media-1",
+                attachState: "sending",
+            },
+            {
+                localId: "failed-image",
+                convoId: "c1",
+                body: "",
+                createdAt: 2,
+                kind: "image",
+                filename: "photo.png",
+                blobRef: "media-2",
+                attachState: "error",
+                errorKind: "send_failed",
+            },
+            {
+                localId: "uploading-file",
+                convoId: "c1",
+                body: "",
+                createdAt: 3,
+                kind: "file",
+                filename: "waiting.bin",
+                blobRef: null,
+                attachState: "uploading",
+            },
+        ];
+        const uploadMedia = jest.fn();
+        const send = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client);
+        state.database = fakeDatabase({ outbox: jest.fn().mockResolvedValue(rows) });
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send };
+
+        await state.handleReady();
+
+        const sends = send.mock.calls.map(([operation]) => operation).filter((operation) => operation.op === "send");
+        expect(sends).toEqual([
+            expect.objectContaining({ local_id: "sending-file", type: "file", blob_ref: "media-1" }),
+            expect.objectContaining({ local_id: "failed-image", type: "image", blob_ref: "media-2" }),
+        ]);
+        expect(sends).not.toContainEqual(expect.objectContaining({ type: "text", payload: { body: "" } }));
+        expect(uploadMedia).not.toHaveBeenCalled();
+    });
+
+    it("reaps persisted uploads before starting the connection", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        rows.set("orphaned-upload", {
+            localId: "orphaned-upload",
+            convoId: "c1",
+            body: "",
+            createdAt: 1,
+            kind: "file",
+            filename: "orphan.bin",
+            blobRef: null,
+            attachState: "uploading",
+        });
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
+        const start = jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+
+        await state.startSession(SESSION);
+
+        expect(rows.get("orphaned-upload")).toMatchObject({
+            attachState: "error",
+            errorKind: "upload_failed",
+        });
+        expect((database.addToOutbox as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+            start.mock.invocationCallOrder[0],
+        );
+        expect(client.getSnapshot().pendingMessages).toContainEqual(
+            expect.objectContaining({ localId: "orphaned-upload", attachState: "error", canRetry: false }),
+        );
+    });
+
+    it("retries an upload in place with the original identity", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        const message: PendingMessage = {
+            localId: "retry-upload",
+            convoId: "c1",
+            body: "",
+            createdAt: 123,
+            kind: "file",
+            filename: "retry.bin",
+            contentType: "application/octet-stream",
+            size: 1,
+            blobRef: null,
+            attachState: "error",
+            errorKind: "upload_failed",
+        };
+        rows.set(message.localId, message);
+        const uploadMedia = jest.fn().mockResolvedValue({ media_id: "media-retry" });
+        const send = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send };
+        state.pendingFiles.set(message.localId, fileFixture("retry.bin", "application/octet-stream", [1]));
+
+        await client.retryAttachment(message.localId);
+
+        expect(rows.size).toBe(1);
+        expect(rows.get(message.localId)).toMatchObject({
+            localId: message.localId,
+            convoId: message.convoId,
+            createdAt: message.createdAt,
+            blobRef: "media-retry",
+            attachState: "sending",
+        });
+        expect(uploadMedia).toHaveBeenCalledTimes(1);
+        expect(send).toHaveBeenCalledWith(expect.objectContaining({ local_id: message.localId }));
+        expect(state.pendingFiles.has(message.localId)).toBe(false);
+    });
+
+    it("offers dismiss only when upload bytes are gone or an error is permanent", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const messages: PendingMessage[] = (["upload_failed", "too_large", "empty"] as const).map(
+            (errorKind, index) => ({
+                localId: errorKind,
+                convoId: "c1",
+                body: "",
+                createdAt: index,
+                kind: "file",
+                blobRef: null,
+                attachState: "error",
+                errorKind,
+            }),
+        );
+        const database = fakeDatabase({ outbox: jest.fn().mockResolvedValue(messages) });
+        const uploadMedia = jest.fn();
+        const send = jest.fn();
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send };
+
+        await state.refreshSelectedConversation("c1");
+        await Promise.all(messages.map((message) => client.retryAttachment(message.localId)));
+
+        expect(client.getSnapshot().pendingMessages).toEqual(
+            messages.map((message) => expect.objectContaining({ localId: message.localId, canRetry: false })),
+        );
+        expect(uploadMedia).not.toHaveBeenCalled();
+        expect(send).not.toHaveBeenCalled();
+        expect(database.addToOutbox).not.toHaveBeenCalled();
+    });
+
+    it("retries send_failed without re-uploading and clears it on its own echo", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        const message: PendingMessage = {
+            localId: "retry-send",
+            convoId: "c1",
+            body: "",
+            createdAt: 1,
+            kind: "image",
+            filename: "photo.png",
+            contentType: "image/png",
+            size: 1,
+            blobRef: "media-1",
+            attachState: "error",
+            errorKind: "send_failed",
+        };
+        rows.set(message.localId, message);
+        const uploadMedia = jest.fn();
+        const send = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send };
+
+        await client.retryAttachment(message.localId);
+
+        expect(uploadMedia).not.toHaveBeenCalled();
+        expect(send).toHaveBeenCalledWith(
+            expect.objectContaining({ local_id: message.localId, type: "image", blob_ref: message.blobRef }),
+        );
+        expect(rows.get(message.localId)).toMatchObject({ attachState: "sending", blobRef: "media-1" });
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 11,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "user:2",
+            type: "image",
+            payload: { local_id: message.localId, blob_ref: "media-1" },
+        });
+
+        expect(rows.has(message.localId)).toBe(false);
+        expect(client.getSnapshot().pendingMessages).toEqual([]);
+    });
+
     it("times out a held file read and advances to the next file in the batch", async () => {
         jest.useFakeTimers();
         const client = new MatronJournalClient();
