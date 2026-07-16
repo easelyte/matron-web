@@ -508,10 +508,12 @@ export class MatronJournalClient {
     }
 
     public async attachFiles(files: File[]): Promise<void> {
+        const gen = this.sessionGen;
         const convoId = this.state.selectedConversationId;
         if (!convoId) return;
 
         for (const file of files) {
+            if (this.sessionGen !== gen) break;
             try {
                 await this.sendAttachment(file, convoId);
             } catch {

@@ -823,6 +823,51 @@ describe("MatronJournalClient attachment send state machine", () => {
         },
     );
 
+    it("stops an attachment batch when the session changes during the first upload", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database: oldDatabase } = attachmentDatabase();
+        const newDatabase = fakeDatabase();
+        const oldSend = jest.fn().mockReturnValue(true);
+        const oldStop = jest.fn();
+        let uploadStarted!: () => void;
+        const started = new Promise<void>((resolve) => (uploadStarted = resolve));
+        const oldUpload = jest.fn(
+            (_bytes: ArrayBuffer, _contentType: string, signal?: AbortSignal) =>
+                new Promise<{ media_id: string }>((_resolve, reject) => {
+                    uploadStarted();
+                    signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+                        once: true,
+                    });
+                }),
+        );
+        const newUpload = jest.spyOn(JournalApi.prototype, "uploadMedia");
+        const newSend = jest.spyOn(JournalConnection.prototype, "send").mockReturnValue(true);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(newDatabase as unknown as JournalDatabase);
+        const secondRead = jest.fn<Promise<ArrayBuffer>, []>().mockResolvedValue(new Uint8Array([2]).buffer);
+        state.state = signedInState(client);
+        state.database = oldDatabase;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia: oldUpload };
+        state.connection = { send: oldSend, stop: oldStop };
+
+        const batch = client.attachFiles([
+            fileFixture("first.bin", "application/octet-stream", [1]),
+            fileFixture("second.bin", "application/octet-stream", [2], secondRead),
+        ]);
+        await started;
+        await state.startSession({ ...SESSION, token: "token-b", userId: 3, username: "pat" });
+        await batch;
+
+        expect(oldUpload).toHaveBeenCalledTimes(1);
+        expect(secondRead).not.toHaveBeenCalled();
+        expect(newUpload).not.toHaveBeenCalled();
+        expect(oldDatabase.addToOutbox).toHaveBeenCalledTimes(1);
+        expect(newDatabase.addToOutbox).not.toHaveBeenCalled();
+        expect(oldSend).not.toHaveBeenCalledWith(expect.objectContaining({ op: "send" }));
+        expect(newSend).not.toHaveBeenCalledWith(expect.objectContaining({ op: "send" }));
+    });
+
     it("keeps the captured conversation for every file when selection changes mid-batch", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
