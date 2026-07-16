@@ -29,6 +29,7 @@ import {
     SendIcon,
     SettingsIcon,
 } from "./icons";
+import { createLongPressController, type LongPressController } from "./longPress";
 import { compactTokens, resetDisplay, usageBarLabel, usageLevel } from "./status";
 import {
     asNumber,
@@ -244,6 +245,96 @@ function ConversationList({
     const [accountOpen, setAccountOpen] = useState(false);
     const [composeHint, setComposeHint] = useState(false);
     const [archivedExpanded, setArchivedExpanded] = useState(false);
+    const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
+    const roomMenuRef = useRef(roomMenu);
+    const roomMenuElementRef = useRef<HTMLDivElement>(null);
+    const menuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
+    const longPressTargetRef = useRef<{ conversationId: string; row: HTMLButtonElement } | undefined>(undefined);
+    const longPressFiredRef = useRef(false);
+    const longPressScrollCleanupRef = useRef<() => void>(() => undefined);
+    const openRoomMenuRef = useRef<(conversationId: string, left: number, top: number) => void>(() => undefined);
+    const longPressControllerRef = useRef<LongPressController | undefined>(undefined);
+
+    roomMenuRef.current = roomMenu;
+    openRoomMenuRef.current = (conversationId, left, top): void => {
+        setAccountOpen(false);
+        setComposeHint(false);
+        setRoomMenu({ conversationId, left, top });
+    };
+    if (!longPressControllerRef.current) {
+        longPressControllerRef.current = createLongPressController({
+            delayMs: 500,
+            onFire: () => {
+                const target = longPressTargetRef.current;
+                longPressScrollCleanupRef.current();
+                if (!target) return;
+                const rect = target.row.getBoundingClientRect();
+                longPressFiredRef.current = true;
+                openRoomMenuRef.current(target.conversationId, rect.right, rect.top);
+            },
+        });
+    }
+
+    const closeRoomMenu = useCallback((): void => {
+        if (roomMenuRef.current) setRoomMenu(undefined);
+    }, []);
+
+    const cancelLongPress = useCallback((): void => {
+        longPressControllerRef.current?.onPointerCancel();
+        longPressTargetRef.current = undefined;
+        longPressFiredRef.current = false;
+        longPressScrollCleanupRef.current();
+    }, []);
+
+    const listenForLongPressScroll = useCallback((): void => {
+        longPressScrollCleanupRef.current();
+        const onScroll = (): void => cancelLongPress();
+        document.addEventListener("scroll", onScroll, true);
+        longPressScrollCleanupRef.current = () => {
+            document.removeEventListener("scroll", onScroll, true);
+            longPressScrollCleanupRef.current = () => undefined;
+        };
+    }, [cancelLongPress]);
+
+    useEffect(
+        () => () => {
+            longPressControllerRef.current?.onPointerCancel();
+            longPressScrollCleanupRef.current();
+        },
+        [],
+    );
+
+    useEffect(() => {
+        if (!roomMenu) return;
+        const onPointerDown = (event: PointerEvent): void => {
+            if (!roomMenuRef.current || roomMenuElementRef.current?.contains(event.target as Node)) return;
+            closeRoomMenu();
+        };
+        const onKeyDown = (event: KeyboardEvent): void => {
+            if (roomMenuRef.current && event.key === "Escape") closeRoomMenu();
+        };
+        const onScroll = (): void => {
+            if (roomMenuRef.current) closeRoomMenu();
+        };
+        document.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("keydown", onKeyDown);
+        document.addEventListener("scroll", onScroll, true);
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown);
+            document.removeEventListener("keydown", onKeyDown);
+            document.removeEventListener("scroll", onScroll, true);
+        };
+    }, [Boolean(roomMenu), closeRoomMenu]);
+
+    useLayoutEffect(() => {
+        if (!roomMenu || !roomMenuElementRef.current) return;
+        const rect = roomMenuElementRef.current.getBoundingClientRect();
+        const left = Math.max(8, Math.min(roomMenu.left, window.innerWidth - rect.width - 8));
+        const top = Math.max(8, Math.min(roomMenu.top, window.innerHeight - rect.height - 8));
+        if (left !== roomMenu.left || top !== roomMenu.top) {
+            setRoomMenu({ ...roomMenu, left, top });
+        }
+    }, [roomMenu]);
     const conversations = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
         return state.conversations.filter(
@@ -262,6 +353,19 @@ function ConversationList({
     const hasActiveUnread = state.conversations.some(
         (conversation) => conversation.unread_count > 0 && !state.archivedIds.has(conversation.id),
     );
+    const menuConversation = roomMenu
+        ? state.conversations.find((conversation) => conversation.id === roomMenu.conversationId)
+        : undefined;
+
+    useEffect(() => {
+        if (roomMenu && !menuConversation) closeRoomMenu();
+    }, [roomMenu, menuConversation, closeRoomMenu]);
+
+    const openAtElement = (conversationId: string, element: HTMLElement): void => {
+        const rect = element.getBoundingClientRect();
+        openRoomMenuRef.current(conversationId, rect.right, rect.bottom);
+    };
+
     const renderConversation = (conversation: ClientState["conversations"][number]): React.ReactElement => {
         const selected = state.selectedConversationId === conversation.id;
         const unread = conversation.unread_count > 0;
@@ -273,7 +377,48 @@ function ConversationList({
                     type="button"
                     aria-current={selected ? "page" : undefined}
                     aria-label={`Open room ${name}`}
-                    onClick={() => void client.selectConversation(conversation.id)}
+                    onClick={(event) => {
+                        if (longPressFiredRef.current) {
+                            longPressFiredRef.current = false;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            return;
+                        }
+                        void client.selectConversation(conversation.id);
+                    }}
+                    onContextMenu={(event) => {
+                        event.preventDefault();
+                        const keyboardTriggered = event.clientX === 0 && event.clientY === 0;
+                        if (keyboardTriggered) {
+                            const trigger = menuTriggerRefs.current.get(conversation.id);
+                            openAtElement(conversation.id, trigger ?? event.currentTarget);
+                            return;
+                        }
+                        openRoomMenuRef.current(conversation.id, event.clientX, event.clientY);
+                    }}
+                    onPointerDown={(event) => {
+                        if (event.pointerType !== "touch") return;
+                        longPressTargetRef.current = { conversationId: conversation.id, row: event.currentTarget };
+                        longPressFiredRef.current = false;
+                        longPressControllerRef.current?.onPointerDown(event.clientX, event.clientY);
+                        listenForLongPressScroll();
+                    }}
+                    onPointerMove={(event) => {
+                        if (event.pointerType !== "touch") return;
+                        longPressControllerRef.current?.onPointerMove(event.clientX, event.clientY);
+                        if (!longPressControllerRef.current?.isPending && !longPressControllerRef.current?.didFire) {
+                            longPressScrollCleanupRef.current();
+                        }
+                    }}
+                    onPointerUp={(event) => {
+                        if (event.pointerType !== "touch") return;
+                        longPressControllerRef.current?.onPointerUp();
+                        longPressTargetRef.current = undefined;
+                        longPressScrollCleanupRef.current();
+                    }}
+                    onPointerCancel={(event) => {
+                        if (event.pointerType === "touch") cancelLongPress();
+                    }}
                 >
                     <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
                         <span className="mj_RoomListName" title={name} data-testid="room-name">
@@ -293,9 +438,16 @@ function ConversationList({
                     className="mj_RoomItemMenu_trigger"
                     type="button"
                     aria-haspopup="menu"
-                    aria-expanded={false}
+                    aria-expanded={roomMenu?.conversationId === conversation.id}
                     aria-label="Conversation options"
-                    onClick={(event) => event.stopPropagation()}
+                    ref={(element) => {
+                        if (element) menuTriggerRefs.current.set(conversation.id, element);
+                        else menuTriggerRefs.current.delete(conversation.id);
+                    }}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        openAtElement(conversation.id, event.currentTarget);
+                    }}
                 >
                     ⋯
                 </button>
@@ -426,6 +578,53 @@ function ConversationList({
                 {composeHint && (
                     <div className="mj_HeaderMenu mj_ComposeHint">
                         New conversations appear when an agent starts a session.
+                    </div>
+                )}
+                {roomMenu && menuConversation && (
+                    <div
+                        className="mj_HeaderMenu mj_RoomItemMenu"
+                        role="menu"
+                        ref={roomMenuElementRef}
+                        style={{ position: "fixed", left: roomMenu.left, top: roomMenu.top }}
+                    >
+                        {!state.archivedIds.has(menuConversation.id) && menuConversation.unread_count > 0 && (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.markConversationRead(menuConversation.id);
+                                }}
+                            >
+                                Mark as read
+                            </button>
+                        )}
+                        {state.archivedIds.has(menuConversation.id) ? (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.unarchiveConversation(menuConversation.id);
+                                }}
+                            >
+                                Unarchive
+                            </button>
+                        ) : (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.archiveConversation(menuConversation.id);
+                                }}
+                            >
+                                Archive
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
