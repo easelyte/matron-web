@@ -190,6 +190,8 @@ export function conversationTitle(conversation: Conversation): string {
 
 export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "text") return asString(payload.body).slice(0, 120);
+    if (type === "file") return `📎 ${asString(payload.filename, "File")}`.slice(0, 120);
+    if (type === "image") return `🖼 ${asString(payload.filename, "Image")}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;
     if (type === "permission_request") return `Permission: ${asString(payload.description).slice(0, 100)}`;
     if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);

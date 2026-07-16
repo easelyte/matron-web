@@ -225,14 +225,18 @@ export class JournalDatabase {
         return values.sort((left, right) => left.createdAt - right.createdAt);
     }
 
-    public async reconcileOwnMessage(event: JournalEvent): Promise<void> {
-        if (event.type !== "text" || !event.sender.startsWith("user:") || typeof event.payload.body !== "string")
-            return;
+    public async reconcileOwnMessage(event: JournalEvent): Promise<string | null> {
+        const isText = event.type === "text" && typeof event.payload.body === "string";
+        const isAttachment = event.type === "file" || event.type === "image";
+        if ((!isText && !isAttachment) || !event.sender.startsWith("user:")) return null;
         const localId = typeof event.payload.local_id === "string" ? event.payload.local_id : undefined;
-        if (!localId) return;
+        if (!localId) return null;
         const transaction = this.database.transaction("outbox", "readwrite");
-        transaction.objectStore("outbox").delete(localId);
+        const outbox = transaction.objectStore("outbox");
+        const pending = (await requestResult(outbox.get(localId))) as PendingMessage | undefined;
+        if (pending) outbox.delete(localId);
         await transactionDone(transaction);
+        return pending ? localId : null;
     }
 
     public async expireToolLogs(now = Date.now()): Promise<void> {

@@ -574,7 +574,8 @@ export class MatronJournalClient {
         const applied = await this.database.applyJournal(event);
         if (!applied) return;
         this.clearHistoryError();
-        await this.database.reconcileOwnMessage(event);
+        const removed = await this.database.reconcileOwnMessage(event);
+        if (removed) this.pendingFiles.delete(removed);
         this.scheduleAck(event.seq);
 
         const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
