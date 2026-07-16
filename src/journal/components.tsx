@@ -19,15 +19,19 @@ import React, {
 import matronLogo from "../../res/matron-logo-simple.svg";
 import { errorMessage, type MatronJournalClient } from "./client";
 import {
+    ArchiveIcon,
     AttachmentIcon,
     ChevronLeftIcon,
     ComposeIcon,
+    KebabIcon,
     MarkAllReadIcon,
+    MarkReadIcon,
     MicOnIcon,
     ReactionIcon,
     SearchIcon,
     SendIcon,
     SettingsIcon,
+    UnarchiveIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { compactTokens, resetDisplay, usageBarLabel, usageLevel } from "./status";
@@ -460,7 +464,7 @@ function ConversationList({
                         openAtElement(conversation.id, event.currentTarget);
                     }}
                 >
-                    ⋯
+                    <KebabIcon />
                 </button>
             </div>
         );
@@ -634,6 +638,7 @@ function ConversationList({
                                     client.markConversationRead(menuConversation.id);
                                 }}
                             >
+                                <MarkReadIcon aria-hidden />
                                 Mark as read
                             </button>
                         )}
@@ -647,6 +652,7 @@ function ConversationList({
                                     client.unarchiveConversation(menuConversation.id);
                                 }}
                             >
+                                <UnarchiveIcon aria-hidden />
                                 Unarchive
                             </button>
                         ) : (
@@ -659,6 +665,7 @@ function ConversationList({
                                     client.archiveConversation(menuConversation.id);
                                 }}
                             >
+                                <ArchiveIcon aria-hidden />
                                 Archive
                             </button>
                         )}
