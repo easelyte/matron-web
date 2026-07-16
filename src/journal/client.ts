@@ -135,6 +135,17 @@ export function storeArchivedIds(session: Session, ids: Set<string>): void {
     localStorage.setItem(archivedStorageKey(session), JSON.stringify([...ids]));
 }
 
+function firstSelectableConversation(
+    conversations: Conversation[],
+    preferredId: string | undefined,
+    archivedIds: Set<string>,
+): Conversation | undefined {
+    const preferred = conversations.find(
+        (conversation) => conversation.id === preferredId && !archivedIds.has(conversation.id),
+    );
+    return preferred ?? conversations.find((conversation) => !archivedIds.has(conversation.id));
+}
+
 function storeSelectedConversation(session: Session, conversationId: string | undefined): void {
     try {
         const key = selectedConversationStorageKey(session);
@@ -171,6 +182,7 @@ export class MatronJournalClient {
     private ackTimer?: number;
     private pendingAck = 0;
     private historyError?: string;
+    private storageListener?: (event: StorageEvent) => void;
 
     public readonly subscribe = (listener: () => void): (() => void) => {
         this.listeners.add(listener);
@@ -233,6 +245,10 @@ export class MatronJournalClient {
     public async logout(message?: string): Promise<void> {
         this.connection?.stop();
         this.connection = undefined;
+        if (this.storageListener) {
+            window.removeEventListener("storage", this.storageListener);
+            this.storageListener = undefined;
+        }
         this.resetTransientSyncState();
         try {
             await this.database?.reset();
@@ -401,8 +417,7 @@ export class MatronJournalClient {
         const conversations = await this.database.conversations();
         const storedConversationId = storedSelectedConversation(session);
         const archivedIds = storedArchivedIds(session);
-        const selectedConversation =
-            conversations.find((conversation) => conversation.id === storedConversationId) ?? conversations[0];
+        const selectedConversation = firstSelectableConversation(conversations, storedConversationId, archivedIds);
         this.state = {
             ...blankState(),
             phase: "signed-in",
@@ -412,6 +427,13 @@ export class MatronJournalClient {
             archivedIds,
             selectedConversationId: selectedConversation?.id,
         };
+        if (this.storageListener) window.removeEventListener("storage", this.storageListener);
+        this.storageListener = (event: StorageEvent): void => {
+            const currentSession = this.state.session;
+            if (!currentSession || event.key !== archivedStorageKey(currentSession) || event.newValue === null) return;
+            this.patch({ archivedIds: parseArchivedValue(event.newValue) });
+        };
+        window.addEventListener("storage", this.storageListener);
         this.emit();
         if (selectedConversation) await this.selectConversation(selectedConversation.id);
 
@@ -472,9 +494,17 @@ export class MatronJournalClient {
         const snapshot = await this.api.snapshot();
         await this.database.replaceWithSnapshot(snapshot);
         const conversations = await this.database.conversations();
-        const selectedConversation =
-            conversations.find((conversation) => conversation.id === previousSelection) ?? conversations[0];
-        this.patch({ conversations, selectedConversationId: selectedConversation?.id });
+        let archivedIds = this.state.archivedIds;
+        const session = this.state.session;
+        if (session) {
+            try {
+                archivedIds = parseArchivedValue(localStorage.getItem(archivedStorageKey(session)));
+            } catch {
+                // Keep the in-memory set when storage is temporarily unavailable.
+            }
+        }
+        const selectedConversation = firstSelectableConversation(conversations, previousSelection, archivedIds);
+        this.patch({ conversations, archivedIds, selectedConversationId: selectedConversation?.id });
         if (selectedConversation) await this.selectConversation(selectedConversation.id);
         else if (this.state.session) storeSelectedConversation(this.state.session, undefined);
     }
