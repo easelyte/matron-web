@@ -1000,6 +1000,10 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
                                         void send();
                                     }
                                 }}
+                                onPaste={(event) => {
+                                    const files = [...event.clipboardData.files];
+                                    if (files.length > 0) void client.attachFiles(files);
+                                }}
                                 placeholder={
                                     state.connection === "online"
                                         ? "Send a message…"
@@ -1057,6 +1061,9 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
 
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const leftPanel = useLeftPanelResize();
+    const [dragActive, setDragActive] = useState(state.dragActive);
+
+    const isFileDrag = (event: React.DragEvent): boolean => Array.from(event.dataTransfer.types).includes("Files");
 
     return (
         <div className="mx_MatrixChat_wrapper">
@@ -1071,7 +1078,30 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                 </div>
                 <div className={`mx_RoomView_wrapper ${state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}>
                     {state.selectedConversationId ? (
-                        <div className="mx_RoomView">
+                        <div
+                            className={`mx_RoomView${dragActive ? " mj_RoomView_dragActive" : ""}`}
+                            onDragOver={(event) => {
+                                event.preventDefault();
+                                setDragActive(isFileDrag(event));
+                            }}
+                            onDrop={(event) => {
+                                event.preventDefault();
+                                const files = [...event.dataTransfer.files];
+                                if (files.length > 0) void client.attachFiles(files);
+                                setDragActive(false);
+                            }}
+                            onDragLeave={(event) => {
+                                const nextTarget = event.relatedTarget;
+                                if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+                                setDragActive(false);
+                            }}
+                            onDragEnd={() => setDragActive(false)}
+                        >
+                            {dragActive && (
+                                <div className="mj_DragOverlay" aria-hidden="true">
+                                    Drop files to attach
+                                </div>
+                            )}
                             <div className="mx_RoomView_body mx_MainSplit_timeline" data-layout="bubble">
                                 <ChatHeader client={client} state={state} />
                                 <Timeline client={client} state={state} />
