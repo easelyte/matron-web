@@ -244,6 +244,7 @@ export class MatronJournalClient {
         this.api = undefined;
         for (const url of this.mediaUrls.values()) URL.revokeObjectURL(url);
         this.mediaUrls.clear();
+        // Per spec §3.1, retain this per-device preference so re-login can restore it without a null storage event.
         localStorage.removeItem(SESSION_KEY);
         this.state = {
             ...blankState(),
@@ -399,6 +400,7 @@ export class MatronJournalClient {
         }
         const conversations = await this.database.conversations();
         const storedConversationId = storedSelectedConversation(session);
+        const archivedIds = storedArchivedIds(session);
         const selectedConversation =
             conversations.find((conversation) => conversation.id === storedConversationId) ?? conversations[0];
         this.state = {
@@ -407,6 +409,7 @@ export class MatronJournalClient {
             config: this.state.config,
             session,
             conversations,
+            archivedIds,
             selectedConversationId: selectedConversation?.id,
         };
         this.emit();
