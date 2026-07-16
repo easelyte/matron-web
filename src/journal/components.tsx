@@ -289,6 +289,19 @@ function ConversationList({
         if (restoreFocus) roomMenuOpenerRef.current?.focus();
     }, []);
 
+    // After a menu ACTION (mark-read/archive/unarchive) the focused menuitem unmounts, and
+    // archive/unarchive also remove the originating row — so restoring to the opener only works
+    // when it survives. Defer past the state-change re-render, then focus the opener if it's still
+    // connected (mark-read), else the always-present search input, so keyboard focus never falls
+    // through to document.body.
+    const restoreFocusAfterMenuAction = useCallback((): void => {
+        const opener = roomMenuOpenerRef.current;
+        requestAnimationFrame(() => {
+            if (opener && opener.isConnected) opener.focus();
+            else document.getElementById("room-list-search-input")?.focus();
+        });
+    }, []);
+
     const cancelLongPress = useCallback((): void => {
         longPressControllerRef.current?.onPointerCancel();
         longPressTargetRef.current = undefined;
@@ -636,6 +649,7 @@ function ConversationList({
                                 onClick={() => {
                                     closeRoomMenu();
                                     client.markConversationRead(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
                                 }}
                             >
                                 <MarkReadIcon aria-hidden />
@@ -650,6 +664,7 @@ function ConversationList({
                                 onClick={() => {
                                     closeRoomMenu();
                                     client.unarchiveConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
                                 }}
                             >
                                 <UnarchiveIcon aria-hidden />
@@ -663,6 +678,7 @@ function ConversationList({
                                 onClick={() => {
                                     closeRoomMenu();
                                     client.archiveConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
                                 }}
                             >
                                 <ArchiveIcon aria-hidden />
