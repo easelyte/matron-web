@@ -30,6 +30,12 @@ interface JournalElectron {
     }): Promise<ElectronJournalResponse>;
 }
 
+interface UploadMediaResponse {
+    media_id: string;
+    size: number;
+    content_type: string;
+}
+
 export class JournalApiError extends Error {
     public constructor(
         message: string,
@@ -122,7 +128,7 @@ export class JournalApi {
         bytes: ArrayBuffer,
         contentType: string,
         signal?: AbortSignal,
-    ): Promise<{ media_id: string; size: number; content_type: string }> {
+    ): Promise<UploadMediaResponse> {
         const response = await this.request("/media", {
             method: "POST",
             rawBody: bytes,
@@ -130,11 +136,32 @@ export class JournalApi {
             signal,
         });
         const text = new TextDecoder().decode(response.body);
+        let parsed: unknown;
         try {
-            return JSON.parse(text) as { media_id: string; size: number; content_type: string };
+            parsed = JSON.parse(text) as unknown;
         } catch {
             throw new JournalApiError("The journal server returned malformed JSON.", response.status);
         }
+        if (
+            typeof parsed !== "object" ||
+            parsed === null ||
+            Array.isArray(parsed) ||
+            !("media_id" in parsed) ||
+            typeof parsed.media_id !== "string" ||
+            parsed.media_id.trim() === "" ||
+            !("size" in parsed) ||
+            typeof parsed.size !== "number" ||
+            !Number.isFinite(parsed.size) ||
+            !("content_type" in parsed) ||
+            typeof parsed.content_type !== "string"
+        ) {
+            throw new JournalApiError("The journal server returned a malformed media response.", response.status);
+        }
+        return {
+            media_id: parsed.media_id,
+            size: parsed.size,
+            content_type: parsed.content_type,
+        };
     }
 
     private async json<T>(
