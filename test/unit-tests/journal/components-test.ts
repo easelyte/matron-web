@@ -279,6 +279,34 @@ describe("attachment composer", () => {
         expect(retryable).toHaveBeenCalledWith("failed");
     });
 
+    it("shows the original terminal Electron upload error without Retry", async () => {
+        const client = signedInClient({
+            pendingMessages: [
+                {
+                    localId: "desktop-failed",
+                    convoId: "c1",
+                    body: "",
+                    createdAt: 1,
+                    kind: "file",
+                    filename: "desktop.bin",
+                    attachState: "error",
+                    errorKind: "electron_binary_unsupported",
+                    errorMessage: "Attachments aren't supported in this desktop package.",
+                    canRetry: false,
+                },
+            ],
+        });
+
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_AttachmentChip_error")?.textContent).toContain(
+            "Attachments aren't supported in this desktop package.",
+        );
+        expect([...rendered.container.querySelectorAll("button")].some((item) => item.textContent === "Retry")).toBe(
+            false,
+        );
+    });
+
     it("Dismiss durably removes the attachment row and its retained bytes", async () => {
         const message: PendingMessage = {
             localId: "failed",

@@ -95,6 +95,7 @@ interface ClientInternals {
     replaceSnapshot(): Promise<void>;
     handleReady(): Promise<void>;
     refreshSelectedConversation(conversationId: string, database?: FakeDatabase, generation?: number): Promise<void>;
+    uploadPendingAttachment(message: PendingMessage, file: File, owner: unknown): Promise<void>;
     handleEphemeral(frame: JournalEphemeralFrame): void;
     handleJournal(event: JournalEvent): Promise<void>;
 }
@@ -938,6 +939,43 @@ describe("MatronJournalClient attachment send state machine", () => {
         // database version unchanged avoids turning that narrow window into a persistent rollback login wedge.
     });
 
+    it("starts an attachment upload even when the optimistic refresh fails", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        database.events = jest.fn().mockRejectedValueOnce(new Error("refresh failed")).mockResolvedValue([]);
+        const uploadMedia = jest.fn().mockResolvedValue({ media_id: "media-1" });
+        const send = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send };
+
+        await client.sendAttachment(fileFixture("photo.png", "image/png", [1]), "c1");
+
+        expect(uploadMedia).toHaveBeenCalledTimes(1);
+        expect(send).toHaveBeenCalledWith(expect.objectContaining({ local_id: [...rows.keys()][0] }));
+        expect([...rows.values()][0]).toMatchObject({ attachState: "sending", blobRef: "media-1" });
+    });
+
+    it("turns an unexpectedly abandoned persisted upload into a visible retryable error", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia: jest.fn() };
+        state.connection = { send: jest.fn() };
+        jest.spyOn(state, "uploadPendingAttachment").mockRejectedValue(new Error("unexpected state failure"));
+
+        await client.sendAttachment(fileFixture("failed.bin", "application/octet-stream", [1]), "c1");
+
+        expect([...rows.values()][0]).toMatchObject({ attachState: "error", errorKind: "upload_failed" });
+        expect(client.getSnapshot().pendingMessages).toContainEqual(
+            expect.objectContaining({ attachState: "error", errorKind: "upload_failed", canRetry: true }),
+        );
+    });
+
     it("removes pending bytes on reconcile and dismiss", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
@@ -1091,6 +1129,43 @@ describe("MatronJournalClient attachment send state machine", () => {
         );
         expect(client.getSnapshot().pendingMessages).toContainEqual(
             expect.objectContaining({ localId: "orphaned-upload", attachState: "error", canRetry: false }),
+        );
+    });
+
+    it("continues session startup and surfaces an in-memory error when an upload reap write fails", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        rows.set("orphaned-upload", {
+            localId: "orphaned-upload",
+            convoId: "c1",
+            body: "",
+            createdAt: 1,
+            kind: "file",
+            filename: "orphan.bin",
+            blobRef: null,
+            attachState: "uploading",
+        });
+        const successfulWrite = database.addToOutbox;
+        database.addToOutbox = jest
+            .fn()
+            .mockRejectedValueOnce(new Error("reap write failed"))
+            .mockImplementation(successfulWrite);
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
+        const start = jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+
+        await state.startSession(SESSION);
+
+        expect(client.getSnapshot().phase).toBe("signed-in");
+        expect(start).toHaveBeenCalledTimes(1);
+        expect(rows.get("orphaned-upload")?.attachState).toBe("uploading");
+        expect(client.getSnapshot().pendingMessages).toContainEqual(
+            expect.objectContaining({
+                localId: "orphaned-upload",
+                attachState: "error",
+                errorKind: "storage_failed",
+                canRetry: false,
+            }),
         );
     });
 
@@ -1301,7 +1376,31 @@ describe("MatronJournalClient attachment send state machine", () => {
         expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
-    it("rejects an oversized file before reading it", async () => {
+    it("allows files above the old client policy limit when the server accepts them", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        const arrayBuffer = jest.fn().mockResolvedValue(new Uint8Array([1]).buffer);
+        const uploadMedia = jest.fn().mockResolvedValue({ media_id: "media-large" });
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        const file = {
+            name: "server-accepted.bin",
+            type: "application/octet-stream",
+            size: 50 * 1024 * 1024 + 1,
+            arrayBuffer,
+        } as unknown as File;
+
+        await client.sendAttachment(file, "c1");
+
+        expect(arrayBuffer).toHaveBeenCalledTimes(1);
+        expect(uploadMedia).toHaveBeenCalledTimes(1);
+        expect([...rows.values()][0]).toMatchObject({ attachState: "sending", blobRef: "media-large" });
+    });
+
+    it("rejects a file above the browser memory-safety ceiling before reading it", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
         const { database, rows } = attachmentDatabase();
@@ -1314,13 +1413,13 @@ describe("MatronJournalClient attachment send state machine", () => {
         const file = {
             name: "oversized.bin",
             type: "application/octet-stream",
-            size: 50 * 1024 * 1024 + 1,
+            size: 512 * 1024 * 1024 + 1,
             arrayBuffer,
         } as unknown as File;
 
         await client.sendAttachment(file, "c1");
 
-        expect([...rows.values()][0]).toMatchObject({ attachState: "error", errorKind: "too_large" });
+        expect([...rows.values()][0]).toMatchObject({ attachState: "error", errorKind: "browser_memory_limit" });
         expect(arrayBuffer).not.toHaveBeenCalled();
         expect(uploadMedia).not.toHaveBeenCalled();
         expect(state.pendingFiles.size).toBe(0);
@@ -1341,6 +1440,37 @@ describe("MatronJournalClient attachment send state machine", () => {
         await client.sendAttachment(fileFixture("server-rejected.bin", "application/octet-stream", [1]), "c1");
 
         expect([...rows.values()][0]).toMatchObject({ attachState: "error", errorKind: "too_large" });
+        expect(state.pendingFiles.size).toBe(0);
+    });
+
+    it("preserves Electron's unsupported upload as a terminal error with its original message", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            uploadMedia: jest
+                .fn()
+                .mockRejectedValue(
+                    new JournalApiError(
+                        "Attachments aren't supported in the desktop build yet.",
+                        0,
+                        "electron_binary_unsupported",
+                    ),
+                ),
+        };
+        state.connection = { send: jest.fn() };
+
+        await client.sendAttachment(fileFixture("desktop.bin", "application/octet-stream", [1]), "c1");
+
+        expect([...rows.values()][0]).toMatchObject({
+            attachState: "error",
+            errorKind: "electron_binary_unsupported",
+            errorMessage: "Attachments aren't supported in the desktop build yet.",
+        });
+        expect(client.getSnapshot().pendingMessages[0]?.canRetry).toBe(false);
         expect(state.pendingFiles.size).toBe(0);
     });
 

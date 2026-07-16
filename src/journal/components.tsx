@@ -800,12 +800,16 @@ function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement
     );
 }
 
-function attachmentErrorMessage(errorKind: PendingMessage["errorKind"]): string {
-    switch (errorKind) {
+function attachmentErrorMessage(message: PendingMessage): string {
+    switch (message.errorKind) {
         case "too_large":
             return "File too large.";
+        case "browser_memory_limit":
+            return "This file is too large for this browser to upload safely.";
         case "empty":
             return "That file is empty.";
+        case "electron_binary_unsupported":
+            return message.errorMessage || "Attachments aren't supported in the desktop build yet.";
         case "send_failed":
             return "Couldn't send attachment.";
         case "storage_failed":
@@ -867,7 +871,7 @@ function PendingAttachment({
             )}
             {message.attachState === "error" && (
                 <div className="mj_AttachmentChip_error" role="alert">
-                    <span>{attachmentErrorMessage(message.errorKind)}</span>
+                    <span>{attachmentErrorMessage(message)}</span>
                     {recoveryError && <span>{recoveryError}</span>}
                     {recoveryResult && <span role="status">{recoveryResult}</span>}
                     <div className="mj_AttachmentChip_actions">

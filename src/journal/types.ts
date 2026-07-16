@@ -142,7 +142,15 @@ export interface PendingMessage {
     contentType?: string;
     blobRef?: string | null;
     attachState?: "uploading" | "sending" | "error";
-    errorKind?: "upload_failed" | "send_failed" | "storage_failed" | "too_large" | "empty";
+    errorKind?:
+        | "upload_failed"
+        | "send_failed"
+        | "storage_failed"
+        | "too_large"
+        | "empty"
+        | "browser_memory_limit"
+        | "electron_binary_unsupported";
+    errorMessage?: string;
     canRetry?: boolean;
 }
 

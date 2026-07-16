@@ -29,7 +29,9 @@ const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
 const HISTORY_PAGE_SIZE = 80;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
-const MEDIA_MAX_BYTES = 50 * 1024 * 1024;
+// This is only a browser memory-safety ceiling. The server's 413 response is
+// authoritative for deployment-specific upload policy.
+const BROWSER_MEMORY_SAFETY_MAX_BYTES = 512 * 1024 * 1024;
 const UPLOAD_TIMEOUT_MS = 60_000;
 
 interface ConversationHistoryState {
@@ -359,9 +361,9 @@ export class MatronJournalClient {
             attachState: "uploading",
         };
 
-        if (file.size > MEDIA_MAX_BYTES || file.size === 0) {
+        if (file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES || file.size === 0) {
             message.attachState = "error";
-            message.errorKind = file.size > MEDIA_MAX_BYTES ? "too_large" : "empty";
+            message.errorKind = file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES ? "browser_memory_limit" : "empty";
             if (!(await this.persistAttachment(message, db, gen))) return;
             if (this.sessionGen !== gen) return;
             await this.refreshSelectedConversation(convoId, db, gen);
@@ -370,12 +372,34 @@ export class MatronJournalClient {
         }
 
         this.pendingFiles.set(localId, file);
-        if (!(await this.persistAttachment(message, db, gen))) return;
-        if (this.sessionGen !== gen) return;
-        await this.refreshSelectedConversation(convoId, db, gen);
-        if (this.sessionGen !== gen) return;
+        let persisted = false;
+        try {
+            persisted = await this.persistAttachment(message, db, gen);
+            if (!persisted || !this.ownsAttachment(owner, localId)) return;
 
-        await this.uploadPendingAttachment(message, file, owner);
+            const optimisticRefresh = this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+            await Promise.all([optimisticRefresh, this.uploadPendingAttachment(message, file, owner)]);
+        } catch {
+            if (
+                !persisted ||
+                !this.ownsAttachment(owner, localId) ||
+                message.attachState !== "uploading" ||
+                this.inFlightUploads.has(localId)
+            ) {
+                return;
+            }
+            message.attachState = "error";
+            message.errorKind = "upload_failed";
+            if (!(await this.persistAttachment(message, db, gen))) return;
+            try {
+                await this.refreshSelectedConversation(convoId, db, gen);
+            } catch {
+                if (this.ownsAttachment(owner, localId) && this.state.selectedConversationId === convoId) {
+                    const pendingMessages = this.state.pendingMessages.filter((pending) => pending.localId !== localId);
+                    this.patch({ pendingMessages: [...pendingMessages, { ...message, canRetry: true }] });
+                }
+            }
+        }
     }
 
     public async retryAttachment(localId: string): Promise<void> {
@@ -448,9 +472,14 @@ export class MatronJournalClient {
             message.blobRef = null;
             message.attachState = "error";
             message.errorKind =
-                error instanceof JournalApiError && (error.code === "too_large" || error.code === "empty")
+                error instanceof JournalApiError &&
+                (error.code === "too_large" || error.code === "empty" || error.code === "electron_binary_unsupported")
                     ? error.code
                     : "upload_failed";
+            message.errorMessage =
+                error instanceof JournalApiError && error.code === "electron_binary_unsupported"
+                    ? error.message
+                    : undefined;
             if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
             if (message.errorKind !== "upload_failed") this.pendingFiles.delete(message.localId);
             if (!this.ownsAttachment(owner, message.localId)) return;
@@ -583,11 +612,20 @@ export class MatronJournalClient {
         const outbox = await this.database.outbox();
         for (const message of outbox) {
             if (message.attachState !== "uploading") continue;
-            await this.database.addToOutbox({
-                ...message,
-                attachState: "error",
-                errorKind: "upload_failed",
-            });
+            try {
+                await this.database.addToOutbox({
+                    ...message,
+                    attachState: "error",
+                    errorKind: "upload_failed",
+                });
+            } catch {
+                this.transientAttachmentErrors.set(message.localId, {
+                    ...message,
+                    attachState: "error",
+                    errorKind: "storage_failed",
+                    canRetry: false,
+                });
+            }
         }
 
         let cursor = await this.database.cursor();
