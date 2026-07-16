@@ -37,6 +37,7 @@ import {
     displaySender,
     type EventPayload,
     type JournalEvent,
+    type PendingMessage,
     type SessionStatus,
     type ToolStreamState,
 } from "./types";
@@ -799,6 +800,72 @@ function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement
     );
 }
 
+function attachmentErrorMessage(errorKind: PendingMessage["errorKind"]): string {
+    switch (errorKind) {
+        case "too_large":
+            return "File too large.";
+        case "empty":
+            return "That file is empty.";
+        case "send_failed":
+            return "Couldn't send attachment.";
+        case "storage_failed":
+            return "Couldn't save attachment.";
+        case "upload_failed":
+        default:
+            return "Couldn't upload attachment.";
+    }
+}
+
+function PendingAttachment({
+    client,
+    message,
+}: {
+    client: MatronJournalClient;
+    message: PendingMessage;
+}): React.ReactElement {
+    const filename = message.filename || (message.kind === "image" ? "Image" : "Attachment");
+    const detail = formatBytes(message.size);
+
+    return (
+        <li
+            className={`mx_EventTile mx_EventTile_lastInSection mj_AttachmentChip mj_AttachmentChip_${message.attachState ?? "sending"}`}
+            data-layout="bubble"
+            data-self="true"
+        >
+            <div className="mj_AttachmentChip_content">
+                <span className="mj_AttachmentChip_name">{filename}</span>
+                {detail && <span className="mj_AttachmentChip_size">{detail}</span>}
+            </div>
+            {message.attachState === "uploading" && (
+                <span className="mj_AttachmentChip_status" role="status">
+                    <span className="mj_AttachmentChip_spinner" aria-hidden="true" />
+                    Uploading…
+                </span>
+            )}
+            {message.attachState === "sending" && (
+                <span className="mj_AttachmentChip_status" role="status">
+                    Sending…
+                </span>
+            )}
+            {message.attachState === "error" && (
+                <div className="mj_AttachmentChip_error" role="alert">
+                    <span>{attachmentErrorMessage(message.errorKind)}</span>
+                    <div className="mj_AttachmentChip_actions">
+                        {message.canRetry && (
+                            <button type="button" onClick={() => void client.retryAttachment(message.localId)}>
+                                Retry
+                            </button>
+                        )}
+                        <button type="button" onClick={() => void client.dismissAttachment(message.localId)}>
+                            Dismiss
+                        </button>
+                    </div>
+                </div>
+            )}
+        </li>
+    );
+}
+
 function Timeline({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
     const historyScrollAnchor = useRef<
@@ -908,21 +975,25 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
                                 }
                             />
                         ))}
-                        {state.pendingMessages.map((message) => (
-                            <li
-                                className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
-                                key={message.localId}
-                                data-layout="bubble"
-                                data-self="true"
-                            >
-                                <div className="mx_EventTile_line">
-                                    <div className="mx_MTextBody mx_EventTile_content">
-                                        <div className="markdown-body mj_MessageText">{message.body}</div>
+                        {state.pendingMessages.map((message) =>
+                            message.kind === "image" || message.kind === "file" ? (
+                                <PendingAttachment key={message.localId} client={client} message={message} />
+                            ) : (
+                                <li
+                                    className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
+                                    key={message.localId}
+                                    data-layout="bubble"
+                                    data-self="true"
+                                >
+                                    <div className="mx_EventTile_line">
+                                        <div className="mx_MTextBody mx_EventTile_content">
+                                            <div className="markdown-body mj_MessageText">{message.body}</div>
+                                        </div>
                                     </div>
-                                </div>
-                                <span className="mj_SendingLabel">Sending…</span>
-                            </li>
-                        ))}
+                                    <span className="mj_SendingLabel">Sending…</span>
+                                </li>
+                            ),
+                        )}
                         {Object.values(state.textStreams).map((text, index) => (
                             <li
                                 className="mx_EventTile mx_EventTile_lastInSection"
