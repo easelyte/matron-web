@@ -423,6 +423,99 @@ textarea {
     pointer-events: none;
 }
 
+.mj_UploadConfirm_scrim {
+    position: fixed;
+    z-index: 100;
+    display: flex;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    background: rgb(18 16 14 / 55%);
+    padding: var(--cpd-space-4x);
+}
+
+.mj_UploadConfirm {
+    display: flex;
+    width: min(520px, 92vw);
+    max-height: 86vh;
+    flex-direction: column;
+    gap: var(--cpd-space-3x);
+    box-sizing: border-box;
+    overflow: auto;
+    border: 1px solid rgb(28 24 20 / 10%);
+    border-radius: 12px;
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: 0 16px 48px rgb(18 16 14 / 24%);
+    color: var(--cpd-color-text-primary);
+    padding: var(--cpd-space-5x);
+}
+
+.mj_UploadConfirm_title {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font: var(--cpd-font-body-sm-regular);
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 26px;
+}
+
+.mj_UploadConfirm_count {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_UploadConfirm_preview {
+    max-width: 100%;
+    max-height: 50vh;
+    align-self: center;
+    border-radius: 8px;
+    object-fit: contain;
+}
+
+.mj_UploadConfirm_fileMeta {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-disabled);
+    border-radius: 8px;
+    background: var(--cpd-color-bg-subtle-primary);
+    padding: var(--cpd-space-4x);
+}
+
+.mj_UploadConfirm_fileMeta > span:first-of-type {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_UploadConfirm_caption {
+    min-height: 44px;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    padding: var(--cpd-space-3x);
+    resize: vertical;
+}
+
+.mj_UploadConfirm_caption:focus {
+    border-color: var(--cpd-color-border-interactive-primary);
+    outline: 2px solid var(--cpd-color-border-interactive-primary);
+    outline-offset: 1px;
+}
+
+.mj_UploadConfirm_actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--cpd-space-2x);
+}
+
+.mj_UploadConfirm_error {
+    margin: 0;
+    color: var(--cpd-color-text-critical-primary);
+}
+
 .mj_AttachmentChip {
     display: grid;
     width: fit-content;
