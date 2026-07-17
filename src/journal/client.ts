@@ -27,6 +27,7 @@ import {
 const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
+const ARCHIVED_CONVERSATIONS_KEY_PREFIX = "matron_journal_archived_conversations_v1";
 const HISTORY_PAGE_SIZE = 80;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 
@@ -53,6 +54,8 @@ function blankState(): ClientState {
         phase: "loading",
         config: {},
         conversations: [],
+        archivedIds: new Set(),
+        archiveError: undefined,
         events: [],
         pendingMessages: [],
         connection: "offline",
@@ -94,6 +97,55 @@ function storedSelectedConversation(session: Session): string | undefined {
     }
 }
 
+export function archivedStorageKey(session: Session): string {
+    return `${ARCHIVED_CONVERSATIONS_KEY_PREFIX}:${encodeURIComponent(session.serverUrl)}:${session.userId}`;
+}
+
+function parseArchivedValue(raw: string | null): Set<string> {
+    if (raw === null) return new Set();
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        console.warn("matron: malformed archived-conversations value, ignoring");
+        return new Set();
+    }
+
+    if (!Array.isArray(parsed)) {
+        console.warn("matron: archived-conversations value not an array, ignoring");
+        return new Set();
+    }
+
+    return new Set(parsed.filter((value): value is string => typeof value === "string"));
+}
+
+export function storedArchivedIds(session: Session): Set<string> {
+    let raw: string | null;
+    try {
+        raw = localStorage.getItem(archivedStorageKey(session));
+    } catch {
+        console.warn("matron: archived-conversations read failed (storage unavailable)");
+        return new Set();
+    }
+    return parseArchivedValue(raw);
+}
+
+export function storeArchivedIds(session: Session, ids: Set<string>): void {
+    localStorage.setItem(archivedStorageKey(session), JSON.stringify([...ids]));
+}
+
+function firstSelectableConversation(
+    conversations: Conversation[],
+    preferredId: string | undefined,
+    archivedIds: Set<string>,
+): Conversation | undefined {
+    const preferred = conversations.find(
+        (conversation) => conversation.id === preferredId && !archivedIds.has(conversation.id),
+    );
+    return preferred ?? conversations.find((conversation) => !archivedIds.has(conversation.id));
+}
+
 function storeSelectedConversation(session: Session, conversationId: string | undefined): void {
     try {
         const key = selectedConversationStorageKey(session);
@@ -130,6 +182,7 @@ export class MatronJournalClient {
     private ackTimer?: number;
     private pendingAck = 0;
     private historyError?: string;
+    private storageListener?: (event: StorageEvent) => void;
 
     public readonly subscribe = (listener: () => void): (() => void) => {
         this.listeners.add(listener);
@@ -192,6 +245,10 @@ export class MatronJournalClient {
     public async logout(message?: string): Promise<void> {
         this.connection?.stop();
         this.connection = undefined;
+        if (this.storageListener) {
+            window.removeEventListener("storage", this.storageListener);
+            this.storageListener = undefined;
+        }
         this.resetTransientSyncState();
         try {
             await this.database?.reset();
@@ -203,6 +260,7 @@ export class MatronJournalClient {
         this.api = undefined;
         for (const url of this.mediaUrls.values()) URL.revokeObjectURL(url);
         this.mediaUrls.clear();
+        // Per spec §3.1, retain this per-device preference so re-login can restore it without a null storage event.
         localStorage.removeItem(SESSION_KEY);
         this.state = {
             ...blankState(),
@@ -239,13 +297,29 @@ export class MatronJournalClient {
     public clearSelection(): void {
         this.connection?.send({ op: "viewing", convo_id: null });
         if (this.state.session) storeSelectedConversation(this.state.session, undefined);
-        this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [] });
+        this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [], archiveError: undefined });
+    }
+
+    public archiveConversation(conversationId: string): void {
+        this.setArchived(conversationId, true);
+    }
+
+    public unarchiveConversation(conversationId: string): void {
+        this.setArchived(conversationId, false);
     }
 
     public markConversationRead(conversationId: string): void {
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
         if (!conversation?.unread_count) return;
         this.scheduleRead(conversationId, conversation.last_seq, 0);
+    }
+
+    public markAllRead(): void {
+        for (const conversation of this.state.conversations) {
+            if (conversation.unread_count > 0 && !this.state.archivedIds.has(conversation.id)) {
+                this.markConversationRead(conversation.id);
+            }
+        }
     }
 
     public async loadOlderHistory(): Promise<void> {
@@ -350,16 +424,30 @@ export class MatronJournalClient {
         }
         const conversations = await this.database.conversations();
         const storedConversationId = storedSelectedConversation(session);
-        const selectedConversation =
-            conversations.find((conversation) => conversation.id === storedConversationId) ?? conversations[0];
+        const archivedIds = storedArchivedIds(session);
+        const selectedConversation = firstSelectableConversation(conversations, storedConversationId, archivedIds);
         this.state = {
             ...blankState(),
             phase: "signed-in",
             config: this.state.config,
             session,
             conversations,
+            archivedIds,
             selectedConversationId: selectedConversation?.id,
         };
+        if (this.storageListener) window.removeEventListener("storage", this.storageListener);
+        this.storageListener = (event: StorageEvent): void => {
+            const currentSession = this.state.session;
+            if (!currentSession || event.key !== archivedStorageKey(currentSession) || event.newValue === null) return;
+            const archivedIds = parseArchivedValue(event.newValue);
+            this.patch({ archivedIds });
+            // Mirror the local archive path: if another tab archived the convo we're viewing,
+            // don't keep it selected (else this tab reads/marks/sends to an archived room).
+            if (this.state.selectedConversationId && archivedIds.has(this.state.selectedConversationId)) {
+                this.clearSelection();
+            }
+        };
+        window.addEventListener("storage", this.storageListener);
         this.emit();
         if (selectedConversation) await this.selectConversation(selectedConversation.id);
 
@@ -372,6 +460,33 @@ export class MatronJournalClient {
             onState: (connection, error) => this.patch({ connection, connectionError: error }),
         });
         this.connection.start();
+    }
+
+    private setArchived(conversationId: string, archived: boolean): void {
+        const session = this.state.session;
+        if (!session) return;
+
+        let current: Set<string>;
+        try {
+            current = parseArchivedValue(localStorage.getItem(archivedStorageKey(session)));
+        } catch {
+            this.patch({ archiveError: "Couldn't read saved archive — device storage unavailable." });
+            return;
+        }
+
+        const next = new Set(current);
+        if (archived) next.add(conversationId);
+        else next.delete(conversationId);
+
+        try {
+            storeArchivedIds(session, next);
+        } catch {
+            this.patch({ archiveError: "Couldn't save — device storage is full or unavailable." });
+            return;
+        }
+
+        this.patch({ archivedIds: next, archiveError: undefined });
+        if (archived && conversationId === this.state.selectedConversationId) this.clearSelection();
     }
 
     private async replaceSnapshot(): Promise<void> {
@@ -393,9 +508,17 @@ export class MatronJournalClient {
         const snapshot = await this.api.snapshot();
         await this.database.replaceWithSnapshot(snapshot);
         const conversations = await this.database.conversations();
-        const selectedConversation =
-            conversations.find((conversation) => conversation.id === previousSelection) ?? conversations[0];
-        this.patch({ conversations, selectedConversationId: selectedConversation?.id });
+        let archivedIds = this.state.archivedIds;
+        const session = this.state.session;
+        if (session) {
+            try {
+                archivedIds = parseArchivedValue(localStorage.getItem(archivedStorageKey(session)));
+            } catch {
+                // Keep the in-memory set when storage is temporarily unavailable.
+            }
+        }
+        const selectedConversation = firstSelectableConversation(conversations, previousSelection, archivedIds);
+        this.patch({ conversations, archivedIds, selectedConversationId: selectedConversation?.id });
         if (selectedConversation) await this.selectConversation(selectedConversation.id);
         else if (this.state.session) storeSelectedConversation(this.state.session, undefined);
     }

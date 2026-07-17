@@ -55,6 +55,51 @@ export function SearchIcon(props: IconProps): React.ReactElement {
     );
 }
 
+export function MarkAllReadIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="m3 12 4 4 8-9" />
+            <path d="m11 15 2 2 8-9" />
+        </Icon>
+    );
+}
+
+export function MarkReadIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="m5 12 4 4 10-10" />
+        </Icon>
+    );
+}
+
+export function ArchiveIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M4 7h16v13H4Z" />
+            <path d="M3 4h18v3H3ZM9 11h6" />
+        </Icon>
+    );
+}
+
+export function UnarchiveIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M4 7h16v13H4Z" />
+            <path d="M3 4h18v3H3ZM12 16v-5m-3 3 3-3 3 3" />
+        </Icon>
+    );
+}
+
+export function KebabIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props} fill="currentColor" stroke="none">
+            <circle cx="5" cy="12" r="1.5" />
+            <circle cx="12" cy="12" r="1.5" />
+            <circle cx="19" cy="12" r="1.5" />
+        </Icon>
+    );
+}
+
 export function ChevronLeftIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>
