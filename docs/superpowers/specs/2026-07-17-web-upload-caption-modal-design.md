@@ -2,8 +2,8 @@
 title: Upload confirmation modal with caption (file + caption as one message)
 date: 2026-07-17
 status: draft
-revision: 2
-review_rounds: 1
+revision: 3
+review_rounds: 2
 author: claude (brainstorm-slim)
 target_repo: easelyte/matron-web (journal client), PR base main
 related_repos:
@@ -116,26 +116,47 @@ an outbox row.
 
 Entry points stop calling `attachFiles()` directly and instead stage:
 
-- `ClientState` gains `stagedUploads?: { convoId: string; files: File[] }`.
-  In-memory only (`File` objects are not serializable — never persisted to
-  IndexedDB). A refresh mid-modal discards staging; nothing was uploaded yet, so
-  nothing is lost or orphaned.
+- `ClientState` gains
+  `stagedUploads?: { convoId: string; items: Array<{ id: string; file: File }>; total: number }`.
+  - `id` = `crypto.randomUUID()` assigned at stage time — the **stable page
+    identity** used as the modal body's React `key` and as the argument to
+    confirm/skip (P5: key on item identity, not on a shifting array index).
+  - `total` = cumulative count of files ever staged into this queue
+    (paste-append increments it); the header shows "File k of N" with
+    `k = total - items.length + 1`, `N = total`.
+  - In-memory only (`File` objects are not serializable — never persisted to
+    IndexedDB). A refresh mid-modal discards staging; nothing was uploaded yet,
+    so nothing is lost or orphaned.
 - `client.stageFiles(files: File[]): void` — no-op when no conversation is
   selected (same guard as today's `attachFiles`). Captures
   `selectedConversationId` at stage time. If a staging queue is already open,
-  **appends** to it (reachable only from the modal's own paste handler — the
-  modal is app-modal, see Modal UI, so no other entry point can fire while it
-  is open, and the selected conversation cannot change; there is no
-  different-convo replace branch).
-- `client.confirmStagedFile(caption?: string): Promise<void>` — pops the head
-  file, calls `sendAttachment(file, stagedConvoId, caption)` (fire-and-forget
-  like today's loop in `attachFiles`), advances the modal to the next file;
-  clears `stagedUploads` when empty.
-- `client.skipStagedFile(): void` — pops the head file without sending
-  (modal Cancel / Escape), advances; clears when empty.
+  **appends** items (with fresh ids, incrementing `total`) — reachable only
+  from the modal's own paste handler plus the structurally guarded entry
+  points (see Modal UI); there is no different-convo replace branch.
+- `client.confirmStagedFile(itemId: string, caption?: string): void` —
+  1. **Head guard (P23):** no-op unless `itemId` equals the current head
+     item's id — a double-click or stale Enter cannot consume the next page
+     with the previous page's caption.
+  2. **Check-act revalidation (P19):** re-check the staged `convoId` at this
+     mutation boundary — it must still exist in `state.conversations` and not
+     be in `state.archivedIds`. If invalidated (cross-tab archive — see Edge
+     cases), do NOT send: discard the queue and swap the modal to a visible
+     error notice (fail visible), never a silent send into an archived convo.
+  3. Pop the head and advance the modal **immediately** (the modal never
+     blocks on an upload), and enqueue the send on an internal **serialized
+     send chain**:
+     `this.stagedSendChain = this.stagedSendChain.then(() => this.sendAttachment(file, convoId, caption)).catch(() => undefined)`.
+     Uploads therefore run **one at a time in confirm order** — exactly the
+     serialization today's `attachFiles` loop provides via sequential `await`
+     (order preserved on the wire; at most one upload buffer in memory) —
+     while captioning of file 2 can proceed during file 1's upload. Upload
+     progress/errors surface through the existing pending-chip machinery once
+     the modal closes (and via `PendingAttachment` rows in the timeline).
+- `client.skipStagedFile(itemId: string): void` — same head guard; pops the
+  head without sending (modal Cancel / Escape), advances; clears when empty.
 - `client.cancelStagedFiles(): void` — clears the whole queue ("Cancel all").
-- `startSession()` clears `stagedUploads` (session teardown already clears the
-  sibling attachment maps).
+- `startSession()` clears `stagedUploads` and resets the send chain (session
+  teardown already clears the sibling attachment maps).
 
 `attachFiles(files)` remains as the internal batch path but is no longer wired
 to UI events (kept for tests / future callers, now delegating per-file with no
@@ -172,10 +193,12 @@ blocked for the seconds a caption takes) is nil in the operator's workflow.
   revoked on advance/close (effect cleanup). For other files: attachment icon +
   filename + `formatBytes(size)`.
 - **Per-file remount (P5/P31):** the modal body (preview + caption field) is
-  rendered with `key` = the current queue index (monotonic — pops advance it),
-  so advancing to the next file **remounts** the body: caption state resets and
-  autofocus re-fires by construction, not by manual effect. A test asserts
-  file 1's caption text does not leak into file 2's field.
+  rendered with `key` = the head **item's `id`** (stable identity assigned at
+  stage time — a popped-array index would collapse to `0` for every head and
+  defeat the remount), so advancing to the next file **remounts** the body:
+  caption state resets and autofocus re-fires by construction, not by manual
+  effect. A test asserts file 1's caption text does not leak into file 2's
+  field.
 - **Caption field:** `<textarea>`, placeholder "Add a caption…", `maxLength`
   4096, autofocused on mount (per remount above).
 - **Keyboard:** Enter confirms **iff the same `canSend` condition that enables
@@ -192,9 +215,20 @@ blocked for the seconds a caption takes) is nil in the operator's workflow.
   the modal is open; Tab cycles within the modal (focus trap). Focus returns to
   the composer textarea **only when the modal closes** (last file
   sent/skipped, or Cancel all) — never while a next page exists.
-- **Paste while open:** the modal registers the document-level paste target
-  while open; pasted files append to the staged queue as additional pages
-  (same conversation by construction).
+- **Paste while open + structural entry-point guards:** the modal registers
+  the document-level paste target while open; pasted files append to the
+  staged queue as additional pages (same conversation by construction). The
+  app-modal claim is additionally **enforced structurally, not just by the
+  focus trap**: Composer `onPaste` and the room-view `onDrop` handlers
+  early-return when `state.stagedUploads` is set (`if (state.stagedUploads)
+  return;`), so a focus-trap bug or non-focus paste path cannot double-stage
+  through a second listener. A test asserts a composer-targeted paste is a
+  no-op while the modal is open.
+- **Staged-convo invalidation error state:** if the confirm-time check-act
+  guard finds the staged conversation archived/removed (cross-tab trigger),
+  the modal swaps to an error notice — "This conversation was archived in
+  another tab. Attachment(s) were not sent." — with a single Close button
+  (fail visible; queue discarded, nothing uploaded).
 - **Pre-flight validation (deterministic client-side only):** `size === 0` or
   `size > BROWSER_MEMORY_SAFETY_MAX_BYTES` (512MB) shows the error copy inline
   in the modal and disables Send (and Enter) for that file; Cancel advances.
@@ -281,12 +315,22 @@ why deployment is **bridge-first** (see Delivery), not order-free.
   boundary (Part 2 §1). WS frame size is nowhere near any limit (payload is
   small JSON; media bytes went via POST /media).
 - **Multi-file:** sequential modal pages, per-file caption, per-file remount;
-  Cancel/Escape skips one, Cancel-all clears the queue. Order preserved
-  (head-of-queue send matches today's sequential `attachFiles` ordering).
+  Cancel/Escape skips one, Cancel-all clears the queue. Order preserved by the
+  **serialized send chain** (uploads run one at a time in confirm order — the
+  same serialization today's sequential-`await` `attachFiles` loop provides;
+  the modal itself never waits on an upload).
+- **Double-click Send / stale Enter:** the head guard (`itemId` must match the
+  current head) makes the second activation a no-op; the next file cannot be
+  sent with the previous file's caption.
 - **Paste while modal open:** files append as additional pages (same convo by
-  construction — the modal is app-modal).
-- **Convo switching while modal open:** impossible — the overlay covers the
-  conversation list; the staged `convoId` cannot go stale.
+  construction — the modal is app-modal + entry-point guards).
+- **Convo switching while modal open:** same-tab switching is impossible (the
+  overlay covers the conversation list). **Cross-tab invalidation is possible**:
+  the existing `storage` listener reacts to another tab archiving the selected
+  conversation with `clearSelection()`, which does not touch `stagedUploads` —
+  the modal stays open over the collapsed room view. The confirm-time
+  check-act guard (P19) catches this: confirm refuses to send into an
+  archived/absent conversation and shows the visible error state instead.
 - **Pre-flight-invalid file (empty / >512MB):** inline modal error, Send +
   Enter disabled; **no outbox row, no timeline chip** (deliberate change from
   today — feedback moves into the modal, before any state exists).
@@ -321,20 +365,37 @@ why deployment is **bridge-first** (see Delivery), not order-free.
    `caption` replayed via `handleReady`/`sendPendingMessage` includes `caption`
    in the payload (guards the second emit site).
 4. `client-test.ts`: `stageFiles`/`confirmStagedFile`/`skipStagedFile`/
-   `cancelStagedFiles` queue semantics incl. convoId capture, append-while-open,
-   and clear-on-empty.
-5. `components-test.ts`: staging files renders the modal; image file shows an
+   `cancelStagedFiles` queue semantics incl. convoId capture, item ids,
+   `total` accounting ("File k of N"), append-while-open, and clear-on-empty.
+5. `client-test.ts`: **send serialization** — confirm files A then B rapidly;
+   assert B's `sendAttachment` does not start until A's resolves (chain), and
+   WS emit order is A then B.
+6. `client-test.ts`: **head guard** — calling `confirmStagedFile` twice with
+   the same `itemId` (double-click) produces exactly one send.
+7. `client-test.ts`: **check-act guard** — archive the staged conversation
+   (simulate the cross-tab `storage` event) then confirm: nothing is sent and
+   the staged state reflects the error (fail visible).
+8. `components-test.ts`: staging files renders the modal; image file shows an
    `img` preview; non-image shows name + size; typed caption + Send calls
-   `confirmStagedFile("caption")`; Enter confirms; Shift+Enter does not; Escape
-   skips; multi-file shows "File 1 of 2" and pages.
-6. `components-test.ts`: **caption isolation** — type a caption on file 1,
-   advance, assert file 2's field is empty (per-file remount).
-7. `components-test.ts`: zero-byte file disables Send AND Enter does not
-   confirm it.
-8. `components-test.ts`: `file` tile renders `payload.caption`; pending chip
-   shows caption; `eventSnippet` prefers caption.
-9. `components-test.ts`: modal overlay covers the app shell (conversation list
-   not interactive while open — assert overlay mount point / inertness).
+   `confirmStagedFile(headId, "caption")`; Enter confirms; Shift+Enter does
+   not; Escape skips; multi-file shows "File 1 of 2" and pages.
+9. `components-test.ts`: **caption isolation** — type a caption on file 1,
+   advance, assert file 2's field is empty (per-file remount keyed by item id).
+10. `components-test.ts`: zero-byte file disables Send AND Enter does not
+    confirm it.
+11. `components-test.ts`: `file` tile renders `payload.caption`; pending chip
+    shows caption; `eventSnippet` prefers caption.
+12. `components-test.ts`: modal overlay covers the app shell (conversation list
+    not interactive while open — assert overlay mount point / inertness), and
+    a composer-targeted paste while the modal is open is a no-op (structural
+    guard, not just focus trap).
+13. `components-test.ts`: **object-URL lifecycle** — `URL.revokeObjectURL` is
+    called for the previewed image on advance, on skip, on Cancel-all, and on
+    unmount (spy; guards the memory-safety contract).
+14. **Existing-test updates (mechanical, expected):** the three
+    `attachFiles`-spy assertions in `components-test.ts` (paste / drop /
+    file-input entry points) are updated to spy `stageFiles` — planned
+    breakage from the entry-point rewire, not a regression.
 
 **bridge** (existing jest suite in the bridge repo):
 
@@ -378,19 +439,31 @@ bridge runs non-iv mode, so this exercises the tail-append path).
    - Health gate: `systemctl is-active matron-bridge-journal` is `active`, and
      the journal log shows the agent reconnected (bridge logs its agent
      connection / head_seq resume on startup). Then send a captioned test image.
-   - Rollback: `git -C /opt/matron/bridge-journal checkout <previous-sha> &&
-     systemctl restart matron-bridge-journal.service` (record `<previous-sha>`
-     = `git rev-parse HEAD` before pulling). Web rollback: restore the
-     `webapp.bak.<timestamp>` directory taken before the build.
+   - **Rollback (coupled, mirrors the deploy order):** the forbidden pairing
+     "new web + old bridge" must not exist in either direction, so rollback is
+     **web first, then bridge**:
+     1. Restore the web client: swap the live `webapp/` back to the
+        `webapp.bak.<timestamp>` taken before the build.
+     2. Then roll the bridge back:
+        `git -C /opt/matron/bridge-journal checkout <previous-sha> &&
+        systemctl restart matron-bridge-journal.service`
+        (record `<previous-sha>` = `git rev-parse HEAD` before pulling).
+     Rolling back only the bridge while the new web stays live would recreate
+     the misleading state Delivery §5 forbids (captions render but silently
+     never reach Claude). Bridge-only rollback is permitted only if the web
+     deploy has not happened yet.
 
 ## Risks
 
 - **IME Enter-guard is the simplified form** (`isComposing || 229`), not
   Element's stateful Safari composition flag. Acceptable for this client's user
   base; revisit only if Safari IME captions misfire.
-- **`components.tsx` is 1.5k lines and growing.** The modal adds ~150-200
-  lines. A file split is deliberately out of scope (PR noise); flagged for a
-  future refactor loop if the next features keep landing here.
+- **`components.tsx` is 1.5k lines and growing (P18).** The modal adds
+  ~150-200 lines to a file already ~4x the cognitive-budget cap. A file split
+  is deliberately out of scope for this PR (noise); **commitment, not prose: a
+  follow-up loop for the `components.tsx` split is filed at ship time** (the
+  ship-slim post-ship extract step, referencing this spec) so the debt is
+  tracked in the loop store rather than only mentioned here.
 - **Two-repo coordination:** web PR is buildable/testable independently, but
   deployment is ordered (bridge first — Delivery §5). The web PR alone is NOT
   the full feature; treating it as independently shippable was rejected in
