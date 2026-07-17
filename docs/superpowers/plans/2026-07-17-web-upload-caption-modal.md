@@ -290,7 +290,8 @@ git -C /opt/matron/web-journal -c user.name=easelyte -c user.email=fantin@easely
                 }),
         );
         state.state = signedInState(client);
-        state.database = fakeDatabase({});
+        const { database } = attachmentDatabase(); // stateful — outbox() must return persisted rows
+        state.database = database;
         state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
         state.connection = { send: jest.fn().mockReturnValue(true) };
 
@@ -503,7 +504,14 @@ Fields (near `pendingFiles`): `private stagedSendChain: Promise<void> = Promise.
     }
 
     public cancelStagedFiles(): void {
-        if (this.state.stagedUploads) this.patch({ stagedUploads: undefined });
+        const staged = this.state.stagedUploads;
+        if (!staged) return;
+        // ROUND-2 FIX (Codex M1): the confirming lock guards ALL mutations at
+        // the client boundary, not just via disabled buttons — a cancel racing
+        // an in-flight persist could otherwise strand a persisted row whose
+        // upload thunk was never scheduled.
+        if (staged.confirming) return;
+        this.patch({ stagedUploads: undefined });
     }
 
     private stagedConvoValid(convoId: string): boolean {
@@ -584,11 +592,18 @@ git -C /opt/matron/web-journal -c user.name=easelyte -c user.email=fantin@easely
 
         client.stageFiles([fileFixture("a.png", "image/png", [1])]);
         const head = client.getSnapshot().stagedUploads!.items[0];
+        // ROUND-2 FIX (Codex M4): capture at INVOCATION time — jest stores
+        // argument references, and the shared PendingMessage mutates to
+        // "sending"/"error" after later ticks, so a post-hoc filter on
+        // row.attachState would see the mutated object and miss the call.
+        const uploadingPersists = new Set<string>();
+        addToOutbox.mockImplementation(async (row: PendingMessage) => {
+            if (row.attachState === "uploading") uploadingPersists.add(row.localId);
+        });
         const race = Promise.all([client.confirmStagedFile(head.id, "x"), client.confirmStagedFile(head.id, "x")]);
         await race;
         await PERSIST_TICK();
-        const uploadingPersists = addToOutbox.mock.calls.filter(([row]) => row.attachState === "uploading");
-        expect(new Set(uploadingPersists.map(([row]) => row.localId)).size).toBe(1);
+        expect(uploadingPersists.size).toBe(1);
     });
 
     it("keeps the page with persistError on a failed put, and retries with the SAME localId", async () => {
@@ -636,17 +651,41 @@ git -C /opt/matron/web-journal -c user.name=easelyte -c user.email=fantin@easely
         expect(state.api!.uploadMedia).not.toHaveBeenCalled();
     });
 
-    it("restart-recovery: two confirmed files (second never started) both surface as upload_failed chips", async () => {
-        // Spec Testing #6, second half. Use the suite's stateful attachmentDatabase()
-        // helper and its existing startSession/resume pattern (mirror the neighboring
-        // "resumes ... after restart" tests) — confirm A (slow upload held open) and B
-        // rapidly, then simulate the restart, then assert BOTH outbox rows convert to
-        // attachState "error"/errorKind "upload_failed" and appear in pendingMessages.
-        // (Full construction mirrors the existing resume tests; the assertion is:)
-        // expect(resumedPending).toEqual(expect.arrayContaining([
-        //     expect.objectContaining({ filename: "a.png", errorKind: "upload_failed" }),
-        //     expect.objectContaining({ filename: "b.png", errorKind: "upload_failed", caption: "b caption" }),
-        // ]));
+    it("restart-recovery: two confirmed rows (second never uploaded) both surface as upload_failed after startSession", async () => {
+        // Spec Testing #6 second half — mirrors the suite's existing
+        // "reaps persisted uploads before starting the connection" pattern
+        // (attachmentDatabase rows map + mocked JournalDatabase.open +
+        // mocked JournalConnection.start). Two persisted `uploading` rows
+        // stand in for confirm-A-uploading + confirm-B-queued at crash time.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        rows.set("row-a", {
+            localId: "row-a", convoId: "c1", body: "", createdAt: 1,
+            kind: "image", filename: "a.png", blobRef: null, attachState: "uploading",
+        });
+        rows.set("row-b", {
+            localId: "row-b", convoId: "c1", body: "", createdAt: 2,
+            kind: "image", filename: "b.png", blobRef: null, attachState: "uploading",
+            caption: "b caption",
+        });
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+
+        await state.startSession(SESSION);
+
+        expect(rows.get("row-a")).toMatchObject({ attachState: "error", errorKind: "upload_failed" });
+        expect(rows.get("row-b")).toMatchObject({
+            attachState: "error",
+            errorKind: "upload_failed",
+            caption: "b caption", // caption survives the reap re-persist
+        });
+        expect(client.getSnapshot().pendingMessages).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ localId: "row-a", attachState: "error" }),
+                expect.objectContaining({ localId: "row-b", attachState: "error", caption: "b caption" }),
+            ]),
+        );
     });
 
     it("refuses confirm into an archived conversation with a visible error state", async () => {
@@ -809,16 +848,22 @@ in-memory).
         const current = this.state.stagedUploads;
         if (!current) return;
         if (!persisted) {
-            // ROUND-1 FIX (Codex B3): purge the transient failure state so a
-            // later Cancel/Skip cannot leave a retryable ghost chip for a file
-            // the user never successfully confirmed — the modal's inline
-            // persistError is the feedback surface, not the timeline chip.
+            // ROUND-1 FIX (Codex B3) + ROUND-2 FIX (Claude M3): purge the
+            // transient failure state so Cancel/Skip cannot leave a retryable
+            // ghost chip — and AWAIT the refresh so the purge is a synchronous
+            // guarantee by the time confirmStagedFile resolves (a fire-and-
+            // forget refresh loses the race against the caller's very next
+            // getSnapshot(), verified by microtask-ordering analysis in
+            // plan-review round 2). This is an error path; one extra awaited
+            // tick cannot stall the happy path.
             this.transientAttachmentErrors.delete(message.localId);
             this.pendingFiles.delete(message.localId);
             if (this.state.selectedConversationId === convoId) {
-                void this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+                await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
             }
-            this.patch({ stagedUploads: { ...current, confirming: false, persistError: true } });
+            const afterPurge = this.state.stagedUploads;
+            if (!afterPurge) return;
+            this.patch({ stagedUploads: { ...afterPurge, confirming: false, persistError: true } });
             return;
         }
         // Live chip visibility: fire the refresh without blocking the modal.
@@ -944,27 +989,54 @@ describe("UploadConfirmDialog", () => {
         expect(dialog().querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("");
     });
 
-    it("Escape skips; Shift+Enter does not confirm; zero-byte and over-cap files disable Send and Enter", async () => {
+    it("keyboard contract: Enter confirms; Shift+Enter, IME-composing Enter, and keyCode-229 Enter do not; Escape skips", async () => {
+        // ROUND-2 FIX (Codex M3): each advertised keyboard path gets its OWN
+        // dispatched event + assertion — no behavior encoded only in the name.
         const client = signedInClient();
         const confirm = jest.spyOn(client, "confirmStagedFile").mockResolvedValue(undefined);
         const skip = jest.spyOn(client, "skipStagedFile");
         rendered = await renderClient(client);
+        await stage(client, [new File(["ok"], "ok.png", { type: "image/png" })]);
+        const textarea = (): HTMLTextAreaElement =>
+            rendered!.container.querySelector<HTMLElement>('[role="dialog"]')!.querySelector("textarea")!;
+        const key = (init: KeyboardEventInit & { keyCode?: number }) =>
+            act(async () => {
+                const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+                if (init.keyCode) Object.defineProperty(event, "keyCode", { value: init.keyCode });
+                textarea().dispatchEvent(event);
+            });
+
+        await key({ key: "Enter", shiftKey: true });
+        expect(confirm).not.toHaveBeenCalled(); // Shift+Enter = newline
+        await key({ key: "Enter", isComposing: true } as KeyboardEventInit);
+        expect(confirm).not.toHaveBeenCalled(); // IME composing guard
+        await key({ key: "Enter", keyCode: 229 });
+        expect(confirm).not.toHaveBeenCalled(); // Safari IME keyCode guard
+        await key({ key: "Enter" });
+        expect(confirm).toHaveBeenCalledTimes(1); // plain Enter confirms
+        await key({ key: "Escape" });
+        expect(skip).toHaveBeenCalledTimes(1); // Escape skips
+    });
+
+    it("zero-byte and over-cap files disable Send AND the Enter path", async () => {
+        const client = signedInClient();
+        const confirm = jest.spyOn(client, "confirmStagedFile").mockResolvedValue(undefined);
+        rendered = await renderClient(client);
+        const empty = new File([], "empty.bin", { type: "application/octet-stream" });
         const big = new File([""], "big.bin", { type: "application/octet-stream" });
         Object.defineProperty(big, "size", { value: BROWSER_MEMORY_SAFETY_MAX_BYTES + 1 });
-        await stage(client, [big]);
+        await stage(client, [empty, big]);
 
-        const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
-        const sendButton = dialog.querySelector<HTMLButtonElement>("button.mj_UploadConfirm_send");
-        expect(sendButton?.disabled).toBe(true);
-        const textarea = dialog.querySelector<HTMLTextAreaElement>("textarea")!;
-        await act(async () => {
-            textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-        });
-        expect(confirm).not.toHaveBeenCalled();
-        await act(async () => {
-            textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-        });
-        expect(skip).toHaveBeenCalledTimes(1);
+        for (let page = 0; page < 2; page += 1) {
+            const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
+            expect(dialog.querySelector<HTMLButtonElement>("button.mj_UploadConfirm_send")?.disabled).toBe(true);
+            const textarea = dialog.querySelector<HTMLTextAreaElement>("textarea")!;
+            await act(async () => {
+                textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+            });
+            expect(confirm).not.toHaveBeenCalled();
+            await act(async () => client.skipStagedFile(client.getSnapshot().stagedUploads!.items[0].id));
+        }
     });
 
     it("shows the archived error state with Close, and pasted files append as pages", async () => {
@@ -1048,7 +1120,7 @@ function UploadConfirmDialog({ client, staged }: { client: MatronJournalClient; 
                         This conversation was archived in another tab. Attachment(s) were not sent.
                     </p>
                     <div className="mj_UploadConfirm_actions">
-                        <button onClick={() => client.cancelStagedFiles()}>Close</button>
+                        <button aria-label="Close" onClick={() => client.cancelStagedFiles()}>Close</button>
                     </div>
                 </div>
             </div>
@@ -1141,15 +1213,23 @@ function UploadConfirmPage({
                 aria-label="Caption"
             />
             <div className="mj_UploadConfirm_actions">
+                {/* aria-labels REQUIRED: the suite's button() helper selects strictly
+                    by button[aria-label=...] (components-test.ts:70-74) — codebase
+                    convention for every helper-targeted button. */}
                 {staged.total > 1 && (
-                    <button className="mj_TextButton" disabled={staged.confirming} onClick={() => client.cancelStagedFiles()}>
+                    <button
+                        className="mj_TextButton"
+                        aria-label="Cancel all"
+                        disabled={staged.confirming}
+                        onClick={() => client.cancelStagedFiles()}
+                    >
                         Cancel all
                     </button>
                 )}
-                <button disabled={staged.confirming} onClick={() => client.skipStagedFile(head.id)}>
+                <button aria-label="Cancel" disabled={staged.confirming} onClick={() => client.skipStagedFile(head.id)}>
                     Cancel
                 </button>
-                <button className="mj_UploadConfirm_send" disabled={!canSend} onClick={send}>
+                <button className="mj_UploadConfirm_send" aria-label="Send" disabled={!canSend} onClick={send}>
                     Send
                 </button>
             </div>
@@ -1432,6 +1512,14 @@ Branch setup (once, before T-4.1): `git -C /opt/matron/bridge-journal checkout -
 
 (Adapt `makeDeps`/`fileFrame` call shapes to their exact local signatures — the invocation form `consumer(frame)` is the verified contract.)
 
+**Planned breakage (round-2 Claude B2 — mirror of T-3.2's spy updates):** the
+unconditional `caption` key breaks the two pre-existing exact-shape assertions
+in this file — "routes a user file event ... resolved media shape"
+(~lines 719-732) and "routes a user image event ... passes through image dims"
+(~lines 734-747), both `expect(media).toEqual({...})` with no `caption` key.
+Update BOTH expected objects to include `caption: null`. Expected, mechanical,
+not a regression.
+
 - [ ] **Step 2: Run to verify failure** — `(cd /opt/matron/bridge-journal && npm test -- journal-input-router)` → FAIL (`caption` undefined).
 
 - [ ] **Step 3: Implement** — in the media branch of `lib/journal-input-router.js`, where the media object literal is built (`{ type, blobRef, contentType: ..., name: ..., size: ..., dims: ... }`), add:
@@ -1532,7 +1620,24 @@ git -C /opt/matron/bridge-journal -c user.name=easelyte -c user.email=fantin@eas
 
 - [ ] **Step 3: Implement**
 
-`lib/journal-media.js` `routeOne`: destructure `caption` — `const { type, blobRef, contentType, name, dims, caption } = media || {};` — and replace the save-branch block construction:
+`lib/journal-media.js` `routeOne`: destructure `caption` — `const { type, blobRef, contentType, name, dims, caption } = media || {};`.
+
+**Audio branch (round-2 Codex B2 — captions must survive transcription):** the
+`audioMime` branch returns before `buildSavedBlocks`, so thread the caption
+there too — both delivery shapes:
+
+```js
+        const injected = caption
+          ? `${caption}\n\n[Voice note transcription]: ${transcript}`
+          : `[Voice note transcription]: ${transcript}`;
+```
+
+(the busy-queue path already queues `injected` inside its text block, so both
+immediate `injectText` and queued delivery carry the caption). Add a test:
+captioned `audio/*` media → the injected/queued text starts with the caption
+and contains the transcript.
+
+Then replace the save-branch block construction:
 
 ```js
       // image / other file: save + attach exactly like the Matrix media path.
@@ -1618,7 +1723,7 @@ gh pr create --repo easelyte/claude-matrix-bridge --base journal-deploy --head f
 | Delivery §1-7 (gates, held PRs, deploy/rollback runbook) | T-5.1, T-5.2; deploy/rollback steps are OPERATOR-run post-merge (runbook lives in the spec, not re-executed by this plan) |
 | Risks (P18 loop commitment) | T-5.2 step 3 |
 
-Deliberate exceptions (right-sizing): focus-trap is the modal's autofocus + inert-actions contract, not a full roving-tabindex implementation (small custom app; Tab-cycle assertion dropped — the structural guards are what's load-bearing, per spec round-2 resolution). IME guard is the simplified `isComposing || 229` form (spec Risks, accepted).
+Deliberate exceptions (right-sizing): focus-trap is the modal's autofocus + inert-actions contract, not a full roving-tabindex implementation (small custom app; Tab-cycle assertion dropped — the structural guards are what's load-bearing, per spec round-2 resolution). IME guard is the simplified `isComposing || 229` form (spec Risks, accepted). **Persist-timeout: OSCILLATION OVERRIDE (locked)** — the bounded-vs-unbounded persist await flipped three times across reviews (spec r5 demanded a ceiling; plan r1 showed the ceiling ghost-writes an orphan row; plan r2 re-demanded a ceiling). Per the reviewer-oscillation stop rule, the documented decision stands: NO artificial timeout; `confirming` holds until the IndexedDB put settles; a never-settling put is browser-broken territory where refresh is the escape (unconfirmed staging is re-pickable). An abortable/transaction-aware persistence layer is out of scope for this feature — reviewers must not re-litigate this point; it is an accepted, documented tradeoff.
 
 ---
 
