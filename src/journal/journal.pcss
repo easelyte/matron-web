@@ -264,6 +264,113 @@ textarea {
     right: 8px;
 }
 
+.mj_RoomListItem_wrapper {
+    position: relative;
+}
+
+.mj_RoomListItem_wrapper .mj_RoomListItem {
+    padding-right: calc(var(--cpd-space-5x) + var(--cpd-space-4x));
+}
+
+.mj_RoomItemMenu_trigger {
+    position: absolute;
+    top: 50%;
+    right: var(--cpd-space-3x);
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transform: translateY(-50%);
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cpd-color-icon-secondary);
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.mj_RoomListItem_wrapper:hover .mj_RoomItemMenu_trigger,
+.mj_RoomListItem_wrapper:focus-within .mj_RoomItemMenu_trigger {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.mj_RoomItemMenu_trigger:hover,
+.mj_RoomItemMenu_trigger:focus-visible {
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_RoomItemMenu_trigger svg {
+    width: 20px;
+    height: 20px;
+}
+
+.mj_RoomItemMenu {
+    width: min(220px, calc(100vw - var(--cpd-space-4x)));
+    max-height: calc(100vh - var(--cpd-space-4x));
+    overflow-y: auto;
+}
+
+.mj_RoomItemMenu_item {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    text-align: left;
+}
+
+.mj_RoomItemMenu_item:hover,
+.mj_RoomItemMenu_item:focus-visible {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_RoomItemMenu_item svg {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+}
+
+.mj_RoomList_archivedToggle {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    border: 0;
+    border-top: 1px solid var(--cpd-color-border-disabled);
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    font: var(--cpd-font-body-sm-regular);
+    text-align: left;
+}
+
+.mj_RoomList_archivedToggle:hover,
+.mj_RoomList_archivedToggle:focus-visible {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_RoomList_archivedCount {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_RoomList_archivedSection {
+    min-height: 0;
+    max-height: 40%;
+    flex: 0 1 auto;
+    overflow-y: auto;
+    background: var(--cpd-color-bg-canvas-default);
+    padding-top: var(--cpd-space-2x);
+}
+
+.mj_MarkAllReadButton {
+    color: var(--cpd-color-text-action-accent);
+}
+
 .mx_RoomView_messageListWrapper {
     min-height: 100%;
 }

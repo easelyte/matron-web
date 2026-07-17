@@ -19,15 +19,21 @@ import React, {
 import matronLogo from "../../res/matron-logo-simple.svg";
 import { errorMessage, type MatronJournalClient } from "./client";
 import {
+    ArchiveIcon,
     AttachmentIcon,
     ChevronLeftIcon,
     ComposeIcon,
+    KebabIcon,
+    MarkAllReadIcon,
+    MarkReadIcon,
     MicOnIcon,
     ReactionIcon,
     SearchIcon,
     SendIcon,
     SettingsIcon,
+    UnarchiveIcon,
 } from "./icons";
+import { createLongPressController, type LongPressController } from "./longPress";
 import { compactTokens, resetDisplay, usageBarLabel, usageLevel } from "./status";
 import {
     asNumber,
@@ -243,6 +249,121 @@ function ConversationList({
     const [query, setQuery] = useState("");
     const [accountOpen, setAccountOpen] = useState(false);
     const [composeHint, setComposeHint] = useState(false);
+    const [archivedExpanded, setArchivedExpanded] = useState(false);
+    const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
+    const roomMenuRef = useRef(roomMenu);
+    const roomMenuElementRef = useRef<HTMLDivElement>(null);
+    const roomMenuOpenerRef = useRef<HTMLElement | null>(null);
+    const menuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
+    const longPressTargetRef = useRef<{ conversationId: string; row: HTMLButtonElement } | undefined>(undefined);
+    const longPressFiredRef = useRef(false);
+    const longPressScrollCleanupRef = useRef<() => void>(() => undefined);
+    const openRoomMenuRef = useRef<(conversationId: string, left: number, top: number, opener: HTMLElement) => void>(
+        () => undefined,
+    );
+    const longPressControllerRef = useRef<LongPressController | undefined>(undefined);
+
+    roomMenuRef.current = roomMenu;
+    openRoomMenuRef.current = (conversationId, left, top, opener): void => {
+        setAccountOpen(false);
+        setComposeHint(false);
+        roomMenuOpenerRef.current = opener;
+        setRoomMenu({ conversationId, left, top });
+    };
+    if (!longPressControllerRef.current) {
+        longPressControllerRef.current = createLongPressController({
+            delayMs: 500,
+            onFire: () => {
+                const target = longPressTargetRef.current;
+                longPressScrollCleanupRef.current();
+                if (!target) return;
+                const rect = target.row.getBoundingClientRect();
+                longPressFiredRef.current = true;
+                openRoomMenuRef.current(target.conversationId, rect.right, rect.top, target.row);
+            },
+        });
+    }
+
+    const closeRoomMenu = useCallback((restoreFocus = false): void => {
+        if (!roomMenuRef.current) return;
+        setRoomMenu(undefined);
+        if (restoreFocus) roomMenuOpenerRef.current?.focus();
+    }, []);
+
+    // After a menu ACTION (mark-read/archive/unarchive) the focused menuitem unmounts, and
+    // archive/unarchive also remove the originating row — so restoring to the opener only works
+    // when it survives. Defer past the state-change re-render, then focus the opener if it's still
+    // connected (mark-read), else the always-present search input, so keyboard focus never falls
+    // through to document.body.
+    const restoreFocusAfterMenuAction = useCallback((): void => {
+        const opener = roomMenuOpenerRef.current;
+        requestAnimationFrame(() => {
+            if (opener && opener.isConnected) opener.focus();
+            else document.getElementById("room-list-search-input")?.focus();
+        });
+    }, []);
+
+    const cancelLongPress = useCallback((): void => {
+        longPressControllerRef.current?.onPointerCancel();
+        longPressTargetRef.current = undefined;
+        longPressFiredRef.current = false;
+        longPressScrollCleanupRef.current();
+    }, []);
+
+    const listenForLongPressScroll = useCallback((): void => {
+        longPressScrollCleanupRef.current();
+        const onScroll = (): void => cancelLongPress();
+        document.addEventListener("scroll", onScroll, true);
+        longPressScrollCleanupRef.current = () => {
+            document.removeEventListener("scroll", onScroll, true);
+            longPressScrollCleanupRef.current = () => undefined;
+        };
+    }, [cancelLongPress]);
+
+    useEffect(
+        () => () => {
+            longPressControllerRef.current?.onPointerCancel();
+            longPressScrollCleanupRef.current();
+        },
+        [],
+    );
+
+    useEffect(() => {
+        if (!roomMenu) return;
+        const onPointerDown = (event: PointerEvent): void => {
+            if (!roomMenuRef.current || roomMenuElementRef.current?.contains(event.target as Node)) return;
+            closeRoomMenu();
+        };
+        const onKeyDown = (event: KeyboardEvent): void => {
+            if (roomMenuRef.current && event.key === "Escape") closeRoomMenu(true);
+        };
+        const onScroll = (): void => {
+            if (roomMenuRef.current) closeRoomMenu();
+        };
+        document.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("keydown", onKeyDown);
+        document.addEventListener("scroll", onScroll, true);
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown);
+            document.removeEventListener("keydown", onKeyDown);
+            document.removeEventListener("scroll", onScroll, true);
+        };
+    }, [Boolean(roomMenu), closeRoomMenu]);
+
+    useLayoutEffect(() => {
+        if (!roomMenu || !roomMenuElementRef.current) return;
+        const rect = roomMenuElementRef.current.getBoundingClientRect();
+        const left = Math.max(8, Math.min(roomMenu.left, window.innerWidth - rect.width - 8));
+        const top = Math.max(8, Math.min(roomMenu.top, window.innerHeight - rect.height - 8));
+        if (left !== roomMenu.left || top !== roomMenu.top) {
+            setRoomMenu({ ...roomMenu, left, top });
+        }
+    }, [roomMenu]);
+
+    useLayoutEffect(() => {
+        if (!roomMenu) return;
+        roomMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }, [roomMenu]);
     const conversations = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
         return state.conversations.filter(
@@ -253,6 +374,115 @@ function ConversationList({
                     .includes(normalized),
         );
     }, [query, state.conversations]);
+    const active = conversations.filter((conversation) => !state.archivedIds.has(conversation.id));
+    const archived = conversations.filter((conversation) => state.archivedIds.has(conversation.id));
+    // Visibility is computed from the UNFILTERED conversation set (minus archived), NOT the
+    // search-filtered `active` — mark-all operates on the full active partition regardless of
+    // the search box, so the button must not vanish just because the search hides the unread rows.
+    const hasActiveUnread = state.conversations.some(
+        (conversation) => conversation.unread_count > 0 && !state.archivedIds.has(conversation.id),
+    );
+    const menuConversation = roomMenu
+        ? state.conversations.find((conversation) => conversation.id === roomMenu.conversationId)
+        : undefined;
+
+    useEffect(() => {
+        if (roomMenu && !menuConversation) closeRoomMenu();
+    }, [roomMenu, menuConversation, closeRoomMenu]);
+
+    const openAtElement = (conversationId: string, anchor: HTMLElement, opener: HTMLElement = anchor): void => {
+        const rect = anchor.getBoundingClientRect();
+        openRoomMenuRef.current(conversationId, rect.right, rect.bottom, opener);
+    };
+
+    const renderConversation = (conversation: ClientState["conversations"][number]): React.ReactElement => {
+        const selected = state.selectedConversationId === conversation.id;
+        const unread = conversation.unread_count > 0;
+        const name = conversationTitle(conversation);
+        return (
+            <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
+                <button
+                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}`}
+                    type="button"
+                    aria-current={selected ? "page" : undefined}
+                    aria-label={`Open room ${name}`}
+                    onClick={(event) => {
+                        if (longPressFiredRef.current) {
+                            longPressFiredRef.current = false;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            return;
+                        }
+                        void client.selectConversation(conversation.id);
+                    }}
+                    onContextMenu={(event) => {
+                        event.preventDefault();
+                        const keyboardTriggered = event.clientX === 0 && event.clientY === 0;
+                        if (keyboardTriggered) {
+                            const trigger = menuTriggerRefs.current.get(conversation.id);
+                            openAtElement(conversation.id, trigger ?? event.currentTarget, event.currentTarget);
+                            return;
+                        }
+                        openRoomMenuRef.current(conversation.id, event.clientX, event.clientY, event.currentTarget);
+                    }}
+                    onPointerDown={(event) => {
+                        if (event.pointerType !== "touch") return;
+                        longPressTargetRef.current = { conversationId: conversation.id, row: event.currentTarget };
+                        longPressFiredRef.current = false;
+                        longPressControllerRef.current?.onPointerDown(event.clientX, event.clientY);
+                        listenForLongPressScroll();
+                    }}
+                    onPointerMove={(event) => {
+                        if (event.pointerType !== "touch") return;
+                        longPressControllerRef.current?.onPointerMove(event.clientX, event.clientY);
+                        if (!longPressControllerRef.current?.isPending && !longPressControllerRef.current?.didFire) {
+                            longPressScrollCleanupRef.current();
+                        }
+                    }}
+                    onPointerUp={(event) => {
+                        if (event.pointerType !== "touch") return;
+                        longPressControllerRef.current?.onPointerUp();
+                        longPressTargetRef.current = undefined;
+                        longPressScrollCleanupRef.current();
+                    }}
+                    onPointerCancel={(event) => {
+                        if (event.pointerType === "touch") cancelLongPress();
+                    }}
+                >
+                    <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
+                        <span className="mj_RoomListName" title={name} data-testid="room-name">
+                            {name}
+                        </span>
+                        <span className="mj_RoomListPreview" title={conversation.snippet}>
+                            {conversation.snippet}
+                        </span>
+                    </span>
+                    {unread && (
+                        <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
+                            {conversation.unread_count}
+                        </span>
+                    )}
+                </button>
+                <button
+                    className="mj_RoomItemMenu_trigger"
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={roomMenu?.conversationId === conversation.id}
+                    aria-label="Conversation options"
+                    ref={(element) => {
+                        if (element) menuTriggerRefs.current.set(conversation.id, element);
+                        else menuTriggerRefs.current.delete(conversation.id);
+                    }}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        openAtElement(conversation.id, event.currentTarget);
+                    }}
+                >
+                    <KebabIcon />
+                </button>
+            </div>
+        );
+    };
 
     return (
         <div
@@ -271,6 +501,16 @@ function ConversationList({
                                 >
                                     <h1 title="Home">Home</h1>
                                     <div className="mj_RoomListHeaderActions">
+                                        {hasActiveUnread && (
+                                            <button
+                                                className="mj_IconButton mj_MarkAllReadButton"
+                                                type="button"
+                                                aria-label="Mark all as read"
+                                                onClick={() => client.markAllRead()}
+                                            >
+                                                <MarkAllReadIcon />
+                                            </button>
+                                        )}
                                         <button
                                             className="mj_IconButton"
                                             type="button"
@@ -313,61 +553,46 @@ function ConversationList({
                                         />
                                     </label>
                                 </div>
+                                {state.archiveError && (
+                                    <div className="mj_ConnectionError" role="status">
+                                        {state.archiveError}
+                                    </div>
+                                )}
                                 <div
                                     className="mj_RoomList"
                                     data-testid="room-list"
-                                    role="listbox"
+                                    role="list"
                                     aria-label="Conversations"
                                 >
-                                    {conversations.length ? (
-                                        conversations.map((conversation, index) => {
-                                            const selected = state.selectedConversationId === conversation.id;
-                                            const unread = conversation.unread_count > 0;
-                                            const name = conversationTitle(conversation);
-                                            return (
-                                                <button
-                                                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}`}
-                                                    type="button"
-                                                    role="option"
-                                                    aria-posinset={index + 1}
-                                                    aria-setsize={conversations.length}
-                                                    aria-selected={selected}
-                                                    aria-label={`Open room ${name}`}
-                                                    key={conversation.id}
-                                                    onClick={() => void client.selectConversation(conversation.id)}
-                                                >
-                                                    <span
-                                                        className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}
-                                                    >
-                                                        <span
-                                                            className="mj_RoomListName"
-                                                            title={name}
-                                                            data-testid="room-name"
-                                                        >
-                                                            {name}
-                                                        </span>
-                                                        <span
-                                                            className="mj_RoomListPreview"
-                                                            title={conversation.snippet}
-                                                        >
-                                                            {conversation.snippet}
-                                                        </span>
-                                                    </span>
-                                                    {unread && (
-                                                        <span
-                                                            className="mj_UnreadBadge"
-                                                            aria-label={`${conversation.unread_count} unread`}
-                                                        >
-                                                            {conversation.unread_count}
-                                                        </span>
-                                                    )}
-                                                </button>
-                                            );
-                                        })
-                                    ) : (
+                                    {active.map((conversation) => renderConversation(conversation))}
+                                    {!active.length && !archived.length && (
                                         <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
                                     )}
                                 </div>
+                                {archived.length > 0 && (
+                                    <>
+                                        <button
+                                            className="mj_RoomList_archivedToggle"
+                                            type="button"
+                                            aria-expanded={archivedExpanded}
+                                            aria-controls="mj-room-list-archived"
+                                            onClick={() => setArchivedExpanded((expanded) => !expanded)}
+                                        >
+                                            Archived{" "}
+                                            <span className="mj_RoomList_archivedCount">({archived.length})</span>
+                                        </button>
+                                        {archivedExpanded && (
+                                            <div
+                                                id="mj-room-list-archived"
+                                                className="mj_RoomList_archivedSection"
+                                                role="list"
+                                                aria-label="Archived conversations"
+                                            >
+                                                {archived.map((conversation) => renderConversation(conversation))}
+                                            </div>
+                                        )}
+                                    </>
+                                )}
                             </nav>
                         </div>
                     </div>
@@ -382,6 +607,85 @@ function ConversationList({
                 {composeHint && (
                     <div className="mj_HeaderMenu mj_ComposeHint">
                         New conversations appear when an agent starts a session.
+                    </div>
+                )}
+                {roomMenu && menuConversation && (
+                    <div
+                        className="mj_HeaderMenu mj_RoomItemMenu"
+                        role="menu"
+                        ref={roomMenuElementRef}
+                        style={{ position: "fixed", left: roomMenu.left, top: roomMenu.top }}
+                        onKeyDown={(event) => {
+                            const items = Array.from(
+                                event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+                            );
+                            const currentIndex = items.findIndex((item) => item === document.activeElement);
+                            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                                event.preventDefault();
+                                const direction = event.key === "ArrowDown" ? 1 : -1;
+                                const nextIndex =
+                                    currentIndex === -1
+                                        ? event.key === "ArrowDown"
+                                            ? 0
+                                            : items.length - 1
+                                        : (currentIndex + direction + items.length) % items.length;
+                                items[nextIndex]?.focus();
+                            } else if (event.key === "Enter" || event.key === " ") {
+                                const currentItem = items[currentIndex];
+                                if (!currentItem) return;
+                                event.preventDefault();
+                                currentItem.click();
+                            } else if (event.key === "Escape") {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                closeRoomMenu(true);
+                            }
+                        }}
+                    >
+                        {!state.archivedIds.has(menuConversation.id) && menuConversation.unread_count > 0 && (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.markConversationRead(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <MarkReadIcon aria-hidden />
+                                Mark as read
+                            </button>
+                        )}
+                        {state.archivedIds.has(menuConversation.id) ? (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.unarchiveConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <UnarchiveIcon aria-hidden />
+                                Unarchive
+                            </button>
+                        ) : (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.archiveConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <ArchiveIcon aria-hidden />
+                                Archive
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
