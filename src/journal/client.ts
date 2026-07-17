@@ -32,7 +32,7 @@ const HISTORY_PAGE_SIZE = 80;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 // This is only a browser memory-safety ceiling. The server's 413 response is
 // authoritative for deployment-specific upload policy.
-const BROWSER_MEMORY_SAFETY_MAX_BYTES = 512 * 1024 * 1024;
+export const BROWSER_MEMORY_SAFETY_MAX_BYTES = 512 * 1024 * 1024;
 const UPLOAD_TIMEOUT_MS = 60_000;
 
 interface ConversationHistoryState {
@@ -50,6 +50,11 @@ interface AttachmentOwner {
     api: JournalApi;
     db: JournalDatabase;
 }
+
+type PersistPendingAttachmentOutcome =
+    | { kind: "persisted-uploadable" }
+    | { kind: "persisted-terminal" }
+    | { kind: "persist-failed" };
 
 function deviceName(): string {
     if ((window as Window & { electron?: unknown }).electron) {
@@ -199,11 +204,14 @@ export class MatronJournalClient {
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
+    private stagedSendChain: Promise<void> = Promise.resolve();
     private transientAttachmentErrors = new Map<string, PendingMessage>();
     private readonly dismissedAttachments = new Set<string>();
     private readonly attachmentOperations = new Map<string, Promise<void>>();
     private readonly retryingAttachments = new Set<string>();
     private inFlightUploads = new Map<string, AbortController>();
+    private readonly issuedRefreshEpochs = new Map<string, number>();
+    private readonly appliedRefreshEpochs = new Map<string, number>();
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
@@ -413,68 +421,86 @@ export class MatronJournalClient {
         return true;
     }
 
-    public async sendAttachment(file: File, convoId: string): Promise<void> {
-        const gen = this.sessionGen;
-        const api = this.api;
-        const db = this.database;
-        if (!api || !db) return;
-        const owner = { gen, api, db };
-
-        const localId = crypto.randomUUID();
-        const kind = file.type.startsWith("image/") ? "image" : "file";
-        const contentType = file.type || "application/octet-stream";
-        const message: PendingMessage = {
-            localId,
+    private buildPendingAttachment(file: File, convoId: string, caption?: string): PendingMessage {
+        return {
+            localId: crypto.randomUUID(),
             convoId,
             body: "",
             createdAt: Date.now(),
-            kind,
+            kind: file.type.startsWith("image/") ? "image" : "file",
             filename: file.name,
             size: file.size,
-            contentType,
+            contentType: file.type || "application/octet-stream",
             blobRef: null,
             attachState: "uploading",
+            ...(caption ? { caption } : {}),
         };
+    }
 
+    private async persistPendingAttachment(
+        message: PendingMessage,
+        file: File,
+        db: JournalDatabase,
+        gen: number,
+    ): Promise<PersistPendingAttachmentOutcome> {
         if (file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES || file.size === 0) {
             message.attachState = "error";
             message.errorKind = file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES ? "browser_memory_limit" : "empty";
-            if (!(await this.persistAttachment(message, db, gen))) return;
-            if (this.sessionGen !== gen) return;
-            await this.refreshSelectedConversation(convoId, db, gen);
-            if (this.sessionGen !== gen) return;
-            return;
+            if (!(await this.persistAttachment(message, db, gen))) return { kind: "persist-failed" };
+            if (this.sessionGen !== gen) return { kind: "persist-failed" };
+            await this.refreshSelectedConversation(message.convoId, db, gen).catch(() => undefined);
+            return { kind: "persisted-terminal" };
         }
+        this.pendingFiles.set(message.localId, file);
+        if (!(await this.persistAttachment(message, db, gen))) return { kind: "persist-failed" };
+        if (this.sessionGen !== gen || this.database !== db) return { kind: "persist-failed" };
+        return message.attachState === "uploading"
+            ? { kind: "persisted-uploadable" }
+            : { kind: "persisted-terminal" };
+    }
 
-        this.pendingFiles.set(localId, file);
-        let persisted = false;
+    private async runPendingUpload(message: PendingMessage, file: File, owner: AttachmentOwner): Promise<void> {
+        if (!this.ownsAttachment(owner, message.localId)) return;
         try {
-            persisted = await this.persistAttachment(message, db, gen);
-            if (!persisted || !this.ownsAttachment(owner, localId)) return;
-
-            const optimisticRefresh = this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-            await Promise.all([optimisticRefresh, this.uploadPendingAttachment(message, file, owner)]);
+            await this.uploadPendingAttachment(message, file, owner);
         } catch {
             if (
-                !persisted ||
-                !this.ownsAttachment(owner, localId) ||
+                !this.ownsAttachment(owner, message.localId) ||
                 message.attachState !== "uploading" ||
-                this.inFlightUploads.has(localId)
+                this.inFlightUploads.has(message.localId)
             ) {
                 return;
             }
             message.attachState = "error";
             message.errorKind = "upload_failed";
-            if (!(await this.persistAttachment(message, db, gen))) return;
+            if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
             try {
-                await this.refreshSelectedConversation(convoId, db, gen);
+                await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
             } catch {
-                if (this.ownsAttachment(owner, localId) && this.state.selectedConversationId === convoId) {
-                    const pendingMessages = this.state.pendingMessages.filter((pending) => pending.localId !== localId);
+                if (
+                    this.ownsAttachment(owner, message.localId) &&
+                    this.state.selectedConversationId === message.convoId
+                ) {
+                    const pendingMessages = this.state.pendingMessages.filter(
+                        (pending) => pending.localId !== message.localId,
+                    );
                     this.patch({ pendingMessages: [...pendingMessages, { ...message, canRetry: true }] });
                 }
             }
         }
+    }
+
+    public async sendAttachment(file: File, convoId: string, caption?: string): Promise<void> {
+        const gen = this.sessionGen;
+        const api = this.api;
+        const db = this.database;
+        if (!api || !db) return;
+        const owner = { gen, api, db };
+        const message = this.buildPendingAttachment(file, convoId, caption);
+        const persistOutcome = await this.persistPendingAttachment(message, file, db, gen);
+        if (persistOutcome.kind !== "persisted-uploadable") return;
+        const optimisticRefresh = this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+        await Promise.all([optimisticRefresh, this.runPendingUpload(message, file, owner)]);
     }
 
     public async retryAttachment(localId: string): Promise<void> {
@@ -572,6 +598,18 @@ export class MatronJournalClient {
         await this.emitPendingAttachment(message, owner);
     }
 
+    private attachmentPayload(message: PendingMessage): Record<string, unknown> {
+        return {
+            blob_ref: message.blobRef,
+            name: message.filename,
+            filename: message.filename,
+            content_type: message.contentType,
+            size: message.size,
+            local_id: message.localId,
+            ...(message.caption ? { caption: message.caption } : {}),
+        };
+    }
+
     private async emitPendingAttachment(message: PendingMessage, owner: AttachmentOwner): Promise<void> {
         if (!message.blobRef || (message.kind !== "image" && message.kind !== "file")) return;
         if (!this.ownsAttachment(owner, message.localId)) return;
@@ -590,14 +628,7 @@ export class MatronJournalClient {
             convo_id: message.convoId,
             type: message.kind,
             blob_ref: message.blobRef,
-            payload: {
-                blob_ref: message.blobRef,
-                name: message.filename,
-                filename: message.filename,
-                content_type: message.contentType,
-                size: message.size,
-                local_id: message.localId,
-            },
+            payload: this.attachmentPayload(message),
             local_id: message.localId,
         });
         if (ok === true) return;
@@ -624,6 +655,131 @@ export class MatronJournalClient {
                 // Continue so one failed attachment does not block the rest of the batch.
             }
         }
+    }
+
+    public stageFiles(files: File[]): void {
+        if (files.length === 0) return;
+        const staged = this.state.stagedUploads;
+        if (staged) {
+            if (staged.error) return;
+            this.patch({
+                stagedUploads: {
+                    ...staged,
+                    items: [...staged.items, ...files.map((file) => ({ id: crypto.randomUUID(), file }))],
+                    total: staged.total + files.length,
+                },
+            });
+            return;
+        }
+        const convoId = this.state.selectedConversationId;
+        if (!convoId) return;
+        this.patch({
+            stagedUploads: {
+                convoId,
+                items: files.map((file) => ({ id: crypto.randomUUID(), file })),
+                total: files.length,
+                confirming: false,
+            },
+        });
+    }
+
+    public async confirmStagedFile(itemId: string, captionInput?: string): Promise<void> {
+        const staged = this.state.stagedUploads;
+        if (!staged || staged.confirming || staged.error) return;
+        const head = staged.items[0];
+        if (!head || head.id !== itemId) return;
+        this.patch({ stagedUploads: { ...staged, confirming: true } });
+
+        const gen = this.sessionGen;
+        const api = this.api;
+        const db = this.database;
+        if (!api || !db) {
+            const current = this.state.stagedUploads;
+            if (current) this.patch({ stagedUploads: { ...current, confirming: false } });
+            return;
+        }
+        const owner: AttachmentOwner = { gen, api, db };
+        const convoId = staged.convoId;
+
+        if (!this.stagedConvoValid(convoId)) {
+            this.patch({ stagedUploads: { ...staged, items: [], confirming: false, error: "archived" } });
+            return;
+        }
+
+        const caption = captionInput?.trim() ? captionInput.trim() : undefined;
+        const message = head.message ?? this.buildPendingAttachment(head.file, convoId, caption);
+        head.message = message;
+        if (caption) message.caption = caption;
+        else delete message.caption;
+
+        const persistOutcome = await this.persistPendingAttachment(message, head.file, db, gen);
+        if (this.sessionGen !== gen) return;
+        const current = this.state.stagedUploads;
+        if (!current) return;
+        if (persistOutcome.kind === "persist-failed") {
+            this.transientAttachmentErrors.delete(message.localId);
+            this.pendingFiles.delete(message.localId);
+            if (this.state.selectedConversationId === convoId) {
+                await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+            }
+            const afterPurge = this.state.stagedUploads;
+            if (!afterPurge) return;
+            this.patch({ stagedUploads: { ...afterPurge, confirming: false, persistError: true } });
+            return;
+        }
+        void this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+        const rest = current.items.slice(1);
+        this.patch({
+            stagedUploads: rest.length
+                ? { ...current, items: rest, confirming: false, persistError: false }
+                : undefined,
+        });
+
+        if (persistOutcome.kind === "persisted-terminal") return;
+
+        this.stagedSendChain = this.stagedSendChain.then(async () => {
+            try {
+                if (this.sessionGen !== gen || this.database !== db) return;
+                if (!this.stagedConvoValid(convoId)) {
+                    message.attachState = "error";
+                    message.errorKind = "upload_failed";
+                    message.errorMessage = "Conversation was archived in another tab — unarchive to retry.";
+                    if (await this.persistAttachment(message, db, gen)) {
+                        await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+                    }
+                    return;
+                }
+                await this.runPendingUpload(message, head.file, owner);
+            } catch {
+                // Rejection isolation: one failed upload must not poison the chain.
+            }
+        });
+    }
+
+    public skipStagedFile(itemId: string): void {
+        const staged = this.state.stagedUploads;
+        if (!staged || staged.confirming || staged.error) return;
+        const head = staged.items[0];
+        if (!head || head.id !== itemId) return;
+        const rest = staged.items.slice(1);
+        this.patch({
+            stagedUploads: rest.length ? { ...staged, items: rest, persistError: false } : undefined,
+        });
+    }
+
+    public cancelStagedFiles(): void {
+        const staged = this.state.stagedUploads;
+        if (!staged) return;
+        // The confirming lock guards all mutations at the client boundary.
+        if (staged.confirming) return;
+        this.patch({ stagedUploads: undefined });
+    }
+
+    private stagedConvoValid(convoId: string): boolean {
+        return (
+            this.state.conversations.some((conversation) => conversation.id === convoId) &&
+            !this.state.archivedIds.has(convoId)
+        );
     }
 
     public async dismissAttachment(localId: string): Promise<void> {
@@ -678,6 +834,7 @@ export class MatronJournalClient {
         this.inFlightUploads.clear();
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
+        this.stagedSendChain = Promise.resolve();
         this.transientAttachmentErrors.clear();
         this.connection?.stop();
         this.database?.close();
@@ -977,8 +1134,17 @@ export class MatronJournalClient {
         gen = this.sessionGen,
     ): Promise<void> {
         if (!db) return;
+        const refreshEpoch = (this.issuedRefreshEpochs.get(expectedId) ?? 0) + 1;
+        this.issuedRefreshEpochs.set(expectedId, refreshEpoch);
         const [events, pendingMessages] = await Promise.all([db.events(expectedId), db.outbox(expectedId)]);
-        if (this.sessionGen !== gen || this.database !== db || this.state.selectedConversationId !== expectedId) return;
+        if (
+            refreshEpoch < (this.appliedRefreshEpochs.get(expectedId) ?? 0) ||
+            this.sessionGen !== gen ||
+            this.database !== db ||
+            this.state.selectedConversationId !== expectedId
+        )
+            return;
+        this.appliedRefreshEpochs.set(expectedId, refreshEpoch);
         const visiblePending = new Map(pendingMessages.map((message) => [message.localId, message]));
         for (const message of this.transientAttachmentErrors.values()) {
             if (message.convoId === expectedId) visiblePending.set(message.localId, message);
@@ -1052,14 +1218,7 @@ export class MatronJournalClient {
                 convo_id: message.convoId,
                 type: message.kind,
                 blob_ref: message.blobRef,
-                payload: {
-                    blob_ref: message.blobRef,
-                    name: message.filename,
-                    filename: message.filename,
-                    content_type: message.contentType,
-                    size: message.size,
-                    local_id: message.localId,
-                },
+                payload: this.attachmentPayload(message),
                 local_id: message.localId,
             });
             return;

@@ -17,7 +17,7 @@ import React, {
 } from "react";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
-import { errorMessage, type MatronJournalClient } from "./client";
+import { BROWSER_MEMORY_SAFETY_MAX_BYTES, errorMessage, type MatronJournalClient } from "./client";
 import {
     ArchiveIcon,
     AttachmentIcon,
@@ -45,6 +45,8 @@ import {
     type JournalEvent,
     type PendingMessage,
     type SessionStatus,
+    type StagedUploadItem,
+    type StagedUploads,
     type ToolStreamState,
 } from "./types";
 
@@ -1023,6 +1025,9 @@ function EventContent({
                     {formatBytes(event.payload.size) && (
                         <span className="mj_FileSize">{formatBytes(event.payload.size)}</span>
                     )}
+                    {asString(event.payload.caption) && (
+                        <div className="mj_FileCaption">{asString(event.payload.caption)}</div>
+                    )}
                 </div>
             );
         }
@@ -1105,6 +1110,7 @@ function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement
 }
 
 function attachmentErrorMessage(message: PendingMessage): string {
+    if (message.errorMessage) return message.errorMessage;
     switch (message.errorKind) {
         case "too_large":
             return "File too large.";
@@ -1160,6 +1166,7 @@ function PendingAttachment({
         >
             <div className="mj_AttachmentChip_content">
                 <span className="mj_AttachmentChip_name">{filename}</span>
+                {message.caption && <span className="mj_AttachmentChip_caption">{message.caption}</span>}
                 {detail && <span className="mj_AttachmentChip_size">{detail}</span>}
             </div>
             {message.attachState === "uploading" && (
@@ -1426,8 +1433,12 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
                                     }
                                 }}
                                 onPaste={(event) => {
+                                    if (state.stagedUploads) return;
                                     const files = [...event.clipboardData.files];
-                                    if (files.length > 0) void client.attachFiles(files);
+                                    if (files.length > 0) {
+                                        event.preventDefault();
+                                        client.stageFiles(files);
+                                    }
                                 }}
                                 placeholder={
                                     state.connection === "online"
@@ -1456,7 +1467,7 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
                             multiple
                             hidden
                             onChange={(event) => {
-                                if (event.target.files) void client.attachFiles([...event.target.files]);
+                                if (event.target.files) client.stageFiles([...event.target.files]);
                                 event.target.value = "";
                             }}
                         />
@@ -1484,15 +1495,180 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
     );
 }
 
+function UploadConfirmDialog({
+    client,
+    staged,
+}: {
+    client: MatronJournalClient;
+    staged: StagedUploads;
+}): React.ReactElement {
+    useEffect(() => {
+        const onPaste = (event: ClipboardEvent): void => {
+            const files = [...(event.clipboardData?.files ?? [])];
+            if (files.length > 0) {
+                event.preventDefault();
+                client.stageFiles(files);
+            }
+        };
+        const preventDropNavigation = (event: DragEvent): void => event.preventDefault();
+        document.addEventListener("paste", onPaste);
+        document.addEventListener("dragover", preventDropNavigation);
+        document.addEventListener("drop", preventDropNavigation);
+        return () => {
+            document.removeEventListener("paste", onPaste);
+            document.removeEventListener("dragover", preventDropNavigation);
+            document.removeEventListener("drop", preventDropNavigation);
+        };
+    }, [client]);
+
+    if (staged.error) {
+        return (
+            <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-label="Upload error">
+                <div className="mj_UploadConfirm">
+                    <p className="mj_UploadConfirm_error">
+                        This conversation was archived in another tab. Attachment(s) were not sent.
+                    </p>
+                    <div className="mj_UploadConfirm_actions">
+                        <button aria-label="Close" onClick={() => client.cancelStagedFiles()}>
+                            Close
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    const head = staged.items[0];
+    if (!head) return <></>;
+    return (
+        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-label={head.file.name}>
+            <UploadConfirmPage key={head.id} client={client} staged={staged} head={head} />
+        </div>
+    );
+}
+
+function UploadConfirmPage({
+    client,
+    staged,
+    head,
+}: {
+    client: MatronJournalClient;
+    staged: StagedUploads;
+    head: StagedUploadItem;
+}): React.ReactElement {
+    const isImage = head.file.type.startsWith("image/");
+    const preflight =
+        head.file.size === 0
+            ? "That file is empty."
+            : head.file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES
+              ? "This file is too large for this browser to upload safely."
+              : undefined;
+    const canSend = !preflight && !staged.confirming;
+    const [caption, setCaption] = useState("");
+    const textarea = useRef<HTMLTextAreaElement>(null);
+    const [previewUrl, setPreviewUrl] = useState<string>();
+    const position = staged.total - staged.items.length + 1;
+
+    useEffect(() => {
+        textarea.current?.focus();
+        if (!isImage || preflight) return undefined;
+        const url = URL.createObjectURL(head.file);
+        setPreviewUrl(url);
+        return () => {
+            URL.revokeObjectURL(url);
+        };
+        // Mounted once per page (keyed by head.id at the call site).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const send = (): void => {
+        if (!canSend) return;
+        void client.confirmStagedFile(head.id, caption);
+    };
+
+    return (
+        <div className="mj_UploadConfirm">
+            <h2 className="mj_UploadConfirm_title">
+                {head.file.name}
+                {staged.total > 1 && (
+                    <span className="mj_UploadConfirm_count">
+                        {" "}
+                        — File {position} of {staged.total}
+                    </span>
+                )}
+            </h2>
+            {isImage && previewUrl ? (
+                <img className="mj_UploadConfirm_preview" src={previewUrl} alt={head.file.name} />
+            ) : (
+                <div className="mj_UploadConfirm_fileMeta">
+                    <AttachmentIcon />
+                    <span>{head.file.name}</span>
+                    <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
+                </div>
+            )}
+            {preflight && <p className="mj_UploadConfirm_error">{preflight}</p>}
+            {staged.persistError && (
+                <p className="mj_UploadConfirm_error">Couldn&apos;t save this attachment — try Send again.</p>
+            )}
+            <textarea
+                ref={textarea}
+                className="mj_UploadConfirm_caption"
+                placeholder="Add a caption…"
+                maxLength={4096}
+                value={caption}
+                onChange={(event) => setCaption(event.target.value)}
+                onKeyDown={(event) => {
+                    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                    if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        send();
+                    } else if (event.key === "Escape" && !staged.confirming) {
+                        event.preventDefault();
+                        client.skipStagedFile(head.id);
+                    }
+                }}
+                aria-label="Caption"
+            />
+            <div className="mj_UploadConfirm_actions">
+                {staged.total > 1 && (
+                    <button
+                        className="mj_TextButton"
+                        aria-label="Cancel all"
+                        disabled={staged.confirming}
+                        onClick={() => client.cancelStagedFiles()}
+                    >
+                        Cancel all
+                    </button>
+                )}
+                <button aria-label="Cancel" disabled={staged.confirming} onClick={() => client.skipStagedFile(head.id)}>
+                    Cancel
+                </button>
+                <button className="mj_UploadConfirm_send" aria-label="Send" disabled={!canSend} onClick={send}>
+                    Send
+                </button>
+            </div>
+        </div>
+    );
+}
+
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const leftPanel = useLeftPanelResize();
     const [dragActive, setDragActive] = useState(state.dragActive);
+    const appContent = useRef<HTMLDivElement>(null);
+    const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
+
+    useEffect(() => {
+        if (uploadDialogWasOpen.current && !state.stagedUploads) {
+            appContent.current?.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")?.focus();
+        }
+        uploadDialogWasOpen.current = Boolean(state.stagedUploads);
+    }, [state.stagedUploads]);
 
     const isFileDrag = (event: React.DragEvent): boolean => Array.from(event.dataTransfer.types).includes("Files");
 
     return (
         <div className="mx_MatrixChat_wrapper">
-            <div className="mx_MatrixChat">
+            <div ref={appContent} className="mx_MatrixChat" inert={state.stagedUploads ? true : undefined}>
                 <ConversationList client={client} state={state} width={leftPanel.width} />
                 <div
                     className="mx_ResizeHandle mx_ResizeHandle--horizontal"
@@ -1513,9 +1689,10 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                             onDrop={(event) => {
                                 if (!isFileDrag(event)) return;
                                 event.preventDefault();
-                                const files = [...event.dataTransfer.files];
-                                if (files.length > 0) void client.attachFiles(files);
                                 setDragActive(false);
+                                if (state.stagedUploads) return;
+                                const files = [...event.dataTransfer.files];
+                                if (files.length > 0) client.stageFiles(files);
                             }}
                             onDragLeave={(event) => {
                                 const nextTarget = event.relatedTarget;
@@ -1545,6 +1722,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                     )}
                 </div>
             </div>
+            {state.stagedUploads && <UploadConfirmDialog client={client} staged={state.stagedUploads} />}
         </div>
     );
 }
