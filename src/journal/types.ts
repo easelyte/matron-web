@@ -140,6 +140,7 @@ export interface PendingMessage {
     filename?: string;
     size?: number;
     contentType?: string;
+    caption?: string;
     blobRef?: string | null;
     attachState?: "uploading" | "sending" | "error";
     errorKind?:
@@ -155,6 +156,26 @@ export interface PendingMessage {
 }
 
 export type ConnectionState = "offline" | "connecting" | "online";
+
+export interface StagedUploadItem {
+    id: string;
+    file: File;
+    /** Built on first confirm attempt; reused by persist retries so a page has ONE row identity. */
+    message?: PendingMessage;
+}
+
+export interface StagedUploads {
+    convoId: string;
+    items: StagedUploadItem[];
+    /** Cumulative count ever staged into this queue (paste-append increments). Header: "File k of N", k = total - items.length + 1. */
+    total: number;
+    /** P23 transient-submission lock: set synchronously at confirm entry; all modal actions inert while true. */
+    confirming: boolean;
+    /** Terminal invalidation notice (items cleared, error page shown). */
+    error?: "archived";
+    /** Non-terminal persist failure: page kept, inline error shown, Send retries. */
+    persistError?: boolean;
+}
 
 export interface ClientState {
     phase: "loading" | "signed-out" | "signed-in";
@@ -175,6 +196,7 @@ export interface ClientState {
     textStreams: Record<string, string>;
     toolStreams: Record<string, ToolStreamState>;
     dragActive: boolean;
+    stagedUploads?: StagedUploads;
 }
 
 export function isObject(value: unknown): value is Record<string, unknown> {
@@ -200,8 +222,8 @@ export function conversationTitle(conversation: Conversation): string {
 
 export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "text") return asString(payload.body).slice(0, 120);
-    if (type === "file") return `📎 ${asString(payload.filename, "File")}`.slice(0, 120);
-    if (type === "image") return `🖼 ${asString(payload.filename, "Image")}`.slice(0, 120);
+    if (type === "file") return `📎 ${asString(payload.caption) || asString(payload.filename, "File")}`.slice(0, 120);
+    if (type === "image") return `🖼 ${asString(payload.caption) || asString(payload.filename, "Image")}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;
     if (type === "permission_request") return `Permission: ${asString(payload.description).slice(0, 100)}`;
     if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);
