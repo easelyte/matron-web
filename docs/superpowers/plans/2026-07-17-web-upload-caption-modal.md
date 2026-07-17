@@ -1644,11 +1644,22 @@ Then replace the save-branch block construction:
       const built = buildSavedBlocks(session, { buffer, mime, isImage: type === 'image', name, dims, caption: caption || null });
       const blocks = Array.isArray(built) ? built : (built && Array.isArray(built.blocks) ? built.blocks : []);
       const ivHandled = !Array.isArray(built) && !!(built && built.ivHandled);
-      if (caption && !ivHandled) blocks.push({ type: 'text', text: caption });
+      // ROUND-3 FIX (Codex B1): the empty-media guard runs BEFORE the caption
+      // append — a caption must never turn an empty builder result into a
+      // caption-only injection with the file silently missing (P19: validate,
+      // then mutate). Regression test: captioned media + empty builder output
+      // → dropped, publishNotice fires, nothing injected.
       if (!Array.isArray(blocks) || blocks.length === 0) {
+        warn(`[journal-media] media produced no blocks for convo=${convoId} — dropping`);
+        return;
+      }
+      if (caption && !ivHandled) blocks.push({ type: 'text', text: caption });
 ```
 
-(Keep the existing empty-blocks warn/drop, queue, and inject code below unchanged — they operate on `blocks`.)
+(The existing `if (!Array.isArray(blocks) || blocks.length === 0)` warn/drop
+block at the original position is REPLACED by the guard above — delete it so
+the check runs exactly once, before the caption append. The queue and inject
+code below it stay unchanged — they operate on `blocks`.)
 
 `index.js` wiring (~5914-5921) becomes:
 
@@ -1681,7 +1692,13 @@ git -C /opt/matron/bridge-journal -c user.name=easelyte -c user.email=fantin@eas
 
 **Files:** none (git/gh only).
 
-- [ ] **Step 1: Verify remotes + suite** — `git -C /opt/matron/bridge-journal remote -v` MUST show easelyte only (per `procedure_verify_origin_before_push_external_repos`); `(cd /opt/matron/bridge-journal && npm test)` green.
+- [ ] **Step 1: Verify origin + suite** — ROUND-3 FIX (Codex B2): the checkout
+  legitimately carries `upstream` = Matronhq (never pushed); the executable
+  gate is on ORIGIN specifically:
+  `git -C /opt/matron/bridge-journal remote get-url origin` MUST equal
+  `https://github.com/easelyte/claude-matrix-bridge.git` (halt otherwise, per
+  `procedure_verify_origin_before_push_external_repos`); every push in this
+  task explicitly names `origin`. Then `(cd /opt/matron/bridge-journal && npm test)` green.
 - [ ] **Step 2: Push + PR (held)**
 
 ```bash
@@ -1701,7 +1718,28 @@ gh pr create --repo easelyte/claude-matrix-bridge --base journal-deploy --head f
 
 - [ ] **Step 1: Full web gate** — `(cd /opt/matron/web-journal && corepack pnpm test)` all green; run `corepack pnpm lint` if a lint script exists in `package.json` (check first; PR #1 era had none — skip silently if absent).
 - [ ] **Step 2: Ship via `/ship-slim --no-auto-merge`** (execute-slim's tail) — PR on `easelyte/matron-web` base `main`, head `feat/upload-caption-modal`. PR body must state: the wire contract (`payload.caption`, trim→omit), the bridge-first deploy order + link to the bridge PR, and that the operator live-tests via `webapp/` backup + `corepack pnpm build` before merging. **Do NOT merge; do NOT build/deploy `webapp/`** — both operator-gated.
-- [ ] **Step 3: File the P18 follow-up loop** (spec Risks commitment; round-1 M6 widened it) — at ship time, `add_loop` in son-of-anton: title `matron-web-journal-client-file-splits`, type `cleanup`, covering BOTH `components.tsx` (~1.8k lines post-feature) AND `client.ts` (~1.4k lines post-feature, +10 methods from this plan) — the two P18 overages this feature grows; split flagged by spec 2026-07-17.
+- [ ] **Step 3: File the P18 follow-up loop** (spec Risks commitment; round-1 M6 widened it; round-3 M1 made it executable) — run from the son-of-anton WORKSPACE ROOT (`/root/.openclaw/workspace` — canonical loop store; a worktree copy must resolve via the canonical root per the loop-store procedures):
+
+```bash
+python3 - <<'EOF'
+from scripts.lib.open_loops_store import add_loop
+add_loop({
+    "title": "matron-web-journal-client-file-splits",
+    "status": "active",
+    "priority": 4,
+    "opened": "<today ISO8601Z>",
+    "owner": "operator",
+    "description": "P18 cognitive-budget follow-up from the upload-caption-modal feature (spec matron-web docs/superpowers/specs/2026-07-17-web-upload-caption-modal-design.md): split matron-web src/journal/components.tsx (~1.8k lines post-feature) and client.ts (~1.4k lines, +10 methods) into focused modules. Repo easelyte/matron-web, /opt/matron/web-journal.",
+    "next_action": {
+        "action_id": "split-matron-web-journal-client-files",
+        "type": "cleanup",
+        "priority": 4,
+    },
+})
+EOF
+```
+
+(Commit the store change as a separate `chore(loops): ...` commit on son-of-anton main per the loop-store procedures. `next_action.type` uses the locked enum — `cleanup` is valid.)
 
 ---
 
