@@ -47,10 +47,27 @@ function emptyConversation(id: string, timestamp: number): Conversation {
     };
 }
 
-export class JournalDatabase {
-    private constructor(private readonly database: IDBDatabase) {}
+function matchesOwnPendingMessage(event: JournalEvent, pending: PendingMessage, ownSender: string): boolean {
+    const isText = event.type === "text" && typeof event.payload.body === "string";
+    const isAttachment = event.type === "file" || event.type === "image";
+    const localId = typeof event.payload.local_id === "string" ? event.payload.local_id : undefined;
+    const pendingKind = pending.kind ?? "text";
+    return (
+        (isText || isAttachment) &&
+        event.sender === ownSender &&
+        localId === pending.localId &&
+        event.convo_id === pending.convoId &&
+        pendingKind === event.type
+    );
+}
 
-    public static open(serverUrl: string, userId: number): Promise<JournalDatabase> {
+export class JournalDatabase {
+    private constructor(
+        private readonly database: IDBDatabase,
+        private readonly ownSender: string,
+    ) {}
+
+    public static open(serverUrl: string, userId: number, username: string): Promise<JournalDatabase> {
         const name = `matron-journal:${serverUrl}:${userId}`;
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(name, DATABASE_VERSION);
@@ -69,7 +86,7 @@ export class JournalDatabase {
                     outbox.createIndex("byConversation", "convoId", { unique: false });
                 }
             };
-            request.onsuccess = () => resolve(new JournalDatabase(request.result));
+            request.onsuccess = () => resolve(new JournalDatabase(request.result, `user:${username}`));
             request.onerror = () => reject(request.error ?? new Error("Could not open the local journal"));
             request.onblocked = () => reject(new Error("The local journal is open in another incompatible tab"));
         });
@@ -215,6 +232,12 @@ export class JournalDatabase {
         await transactionDone(transaction);
     }
 
+    public async deleteOutboxRow(localId: string): Promise<void> {
+        const transaction = this.database.transaction("outbox", "readwrite");
+        transaction.objectStore("outbox").delete(localId);
+        await transactionDone(transaction);
+    }
+
     public async outbox(conversationId?: string): Promise<PendingMessage[]> {
         const transaction = this.database.transaction("outbox", "readonly");
         const store = transaction.objectStore("outbox");
@@ -225,14 +248,36 @@ export class JournalDatabase {
         return values.sort((left, right) => left.createdAt - right.createdAt);
     }
 
-    public async reconcileOwnMessage(event: JournalEvent): Promise<void> {
-        if (event.type !== "text" || !event.sender.startsWith("user:") || typeof event.payload.body !== "string")
-            return;
+    public async reconcileOwnMessage(event: JournalEvent): Promise<string | null> {
         const localId = typeof event.payload.local_id === "string" ? event.payload.local_id : undefined;
-        if (!localId) return;
+        if (!localId) return null;
         const transaction = this.database.transaction("outbox", "readwrite");
-        transaction.objectStore("outbox").delete(localId);
+        const outbox = transaction.objectStore("outbox");
+        const pending = (await requestResult(outbox.get(localId))) as PendingMessage | undefined;
+        const matchesPending = pending ? matchesOwnPendingMessage(event, pending, this.ownSender) : false;
+        if (matchesPending) outbox.delete(localId);
         await transactionDone(transaction);
+        return matchesPending ? localId : null;
+    }
+
+    public async reconcilePersistedOwnMessages(): Promise<string[]> {
+        const transaction = this.database.transaction(["events", "outbox"], "readwrite");
+        const outbox = transaction.objectStore("outbox");
+        const [events, pendingMessages] = await Promise.all([
+            requestResult(transaction.objectStore("events").getAll()) as Promise<JournalEvent[]>,
+            requestResult(outbox.getAll()) as Promise<PendingMessage[]>,
+        ]);
+        const candidates = pendingMessages.filter(
+            (message) => message.attachState === "sending" || message.errorKind === "send_failed",
+        );
+        const removed: string[] = [];
+        for (const pending of candidates) {
+            if (!events.some((event) => matchesOwnPendingMessage(event, pending, this.ownSender))) continue;
+            outbox.delete(pending.localId);
+            removed.push(pending.localId);
+        }
+        await transactionDone(transaction);
+        return removed;
     }
 
     public async expireToolLogs(now = Date.now()): Promise<void> {

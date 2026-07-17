@@ -43,6 +43,7 @@ import {
     displaySender,
     type EventPayload,
     type JournalEvent,
+    type PendingMessage,
     type SessionStatus,
     type ToolStreamState,
 } from "./types";
@@ -1103,6 +1104,104 @@ function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement
     );
 }
 
+function attachmentErrorMessage(message: PendingMessage): string {
+    switch (message.errorKind) {
+        case "too_large":
+            return "File too large.";
+        case "browser_memory_limit":
+            return "This file is too large for this browser to upload safely.";
+        case "empty":
+            return "That file is empty.";
+        case "electron_binary_unsupported":
+            return message.errorMessage || "Attachments aren't supported in the desktop build yet.";
+        case "send_failed":
+            return "Couldn't send attachment.";
+        case "storage_failed":
+            return "Couldn't save attachment.";
+        case "upload_failed":
+        default:
+            return "Couldn't upload attachment.";
+    }
+}
+
+function PendingAttachment({
+    client,
+    message,
+}: {
+    client: MatronJournalClient;
+    message: PendingMessage;
+}): React.ReactElement {
+    const filename = message.filename || (message.kind === "image" ? "Image" : "Attachment");
+    const detail = formatBytes(message.size);
+    const [recoveryAction, setRecoveryAction] = useState<"retry" | "dismiss">();
+    const [recoveryError, setRecoveryError] = useState<string>();
+    const [recoveryResult, setRecoveryResult] = useState<string>();
+
+    const recover = async (action: "retry" | "dismiss"): Promise<void> => {
+        setRecoveryAction(action);
+        setRecoveryError(undefined);
+        setRecoveryResult(undefined);
+        try {
+            if (action === "retry") await client.retryAttachment(message.localId);
+            else await client.dismissAttachment(message.localId);
+            setRecoveryResult(action === "retry" ? "Retry completed." : "Dismissed.");
+        } catch (error) {
+            setRecoveryError(`${action === "retry" ? "Retry" : "Dismiss"} failed: ${errorMessage(error)}`);
+        } finally {
+            setRecoveryAction(undefined);
+        }
+    };
+
+    return (
+        <li
+            className={`mx_EventTile mx_EventTile_lastInSection mj_AttachmentChip mj_AttachmentChip_${message.attachState ?? "sending"}`}
+            data-layout="bubble"
+            data-self="true"
+        >
+            <div className="mj_AttachmentChip_content">
+                <span className="mj_AttachmentChip_name">{filename}</span>
+                {detail && <span className="mj_AttachmentChip_size">{detail}</span>}
+            </div>
+            {message.attachState === "uploading" && (
+                <span className="mj_AttachmentChip_status" role="status">
+                    <span className="mj_AttachmentChip_spinner" aria-hidden="true" />
+                    Uploading…
+                </span>
+            )}
+            {message.attachState === "sending" && (
+                <span className="mj_AttachmentChip_status" role="status">
+                    Sending…
+                </span>
+            )}
+            {message.attachState === "error" && (
+                <div className="mj_AttachmentChip_error" role="alert">
+                    <span>{attachmentErrorMessage(message)}</span>
+                    {recoveryError && <span>{recoveryError}</span>}
+                    {recoveryResult && <span role="status">{recoveryResult}</span>}
+                    <div className="mj_AttachmentChip_actions">
+                        {message.canRetry && (
+                            <button
+                                type="button"
+                                disabled={recoveryAction !== undefined}
+                                onClick={() => void recover("retry")}
+                            >
+                                {recoveryAction === "retry" ? "Retrying…" : "Retry"}
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            disabled={recoveryAction !== undefined}
+                            onClick={() => void recover("dismiss")}
+                        >
+                            {recoveryAction === "dismiss" ? "Dismissing…" : "Dismiss"}
+                        </button>
+                    </div>
+                </div>
+            )}
+        </li>
+    );
+}
+
 function Timeline({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
     const historyScrollAnchor = useRef<
@@ -1121,6 +1220,18 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
                 (event) => !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type),
             ),
         [state.events],
+    );
+    const timeline = useMemo(
+        () =>
+            [
+                ...visibleEvents.map((event) => ({ kind: "event" as const, timestamp: event.ts, event })),
+                ...state.pendingMessages.map((message) => ({
+                    kind: "pending" as const,
+                    timestamp: message.createdAt,
+                    message,
+                })),
+            ].sort((left, right) => left.timestamp - right.timestamp),
+        [visibleEvents, state.pendingMessages],
     );
     const answeredPrompts = useMemo(
         () =>
@@ -1199,34 +1310,44 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
                                 </button>
                             </li>
                         )}
-                        {visibleEvents.map((event, index) => (
-                            <EventRow
-                                key={event.seq}
-                                client={client}
-                                event={event}
-                                answeredPrompts={answeredPrompts}
-                                continuation={index > 0 && visibleEvents[index - 1].sender === event.sender}
-                                lastInSection={
-                                    index === visibleEvents.length - 1 ||
-                                    visibleEvents[index + 1].sender !== event.sender
-                                }
-                            />
-                        ))}
-                        {state.pendingMessages.map((message) => (
-                            <li
-                                className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
-                                key={message.localId}
-                                data-layout="bubble"
-                                data-self="true"
-                            >
-                                <div className="mx_EventTile_line">
-                                    <div className="mx_MTextBody mx_EventTile_content">
-                                        <div className="markdown-body mj_MessageText">{message.body}</div>
+                        {timeline.map((item, index) => {
+                            if (item.kind === "event") {
+                                const previous = timeline[index - 1];
+                                const next = timeline[index + 1];
+                                return (
+                                    <EventRow
+                                        key={item.event.seq}
+                                        client={client}
+                                        event={item.event}
+                                        answeredPrompts={answeredPrompts}
+                                        continuation={
+                                            previous?.kind === "event" && previous.event.sender === item.event.sender
+                                        }
+                                        lastInSection={
+                                            next?.kind !== "event" || next.event.sender !== item.event.sender
+                                        }
+                                    />
+                                );
+                            }
+                            const message = item.message;
+                            return message.kind === "image" || message.kind === "file" ? (
+                                <PendingAttachment key={message.localId} client={client} message={message} />
+                            ) : (
+                                <li
+                                    className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
+                                    key={message.localId}
+                                    data-layout="bubble"
+                                    data-self="true"
+                                >
+                                    <div className="mx_EventTile_line">
+                                        <div className="mx_MTextBody mx_EventTile_content">
+                                            <div className="markdown-body mj_MessageText">{message.body}</div>
+                                        </div>
                                     </div>
-                                </div>
-                                <span className="mj_SendingLabel">Sending…</span>
-                            </li>
-                        ))}
+                                    <span className="mj_SendingLabel">Sending…</span>
+                                </li>
+                            );
+                        })}
                         {Object.values(state.textStreams).map((text, index) => (
                             <li
                                 className="mx_EventTile mx_EventTile_lastInSection"
@@ -1270,6 +1391,7 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
 function Composer({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const [body, setBody] = useState("");
     const textarea = useRef<HTMLTextAreaElement>(null);
+    const fileInput = useRef<HTMLInputElement>(null);
     const send = async (): Promise<void> => {
         if (await client.sendMessage(body)) {
             setBody("");
@@ -1303,6 +1425,10 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
                                         void send();
                                     }
                                 }}
+                                onPaste={(event) => {
+                                    const files = [...event.clipboardData.files];
+                                    if (files.length > 0) void client.attachFiles(files);
+                                }}
                                 placeholder={
                                     state.connection === "online"
                                         ? "Send a message…"
@@ -1318,12 +1444,22 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
                         </button>
                         <button
                             className="mx_MessageComposer_button"
-                            title="Attachments are not supported by this journal server"
+                            title="Attach a file"
                             aria-label="Attach a file"
-                            aria-disabled="true"
+                            onClick={() => fileInput.current?.click()}
                         >
                             <AttachmentIcon />
                         </button>
+                        <input
+                            ref={fileInput}
+                            type="file"
+                            multiple
+                            hidden
+                            onChange={(event) => {
+                                if (event.target.files) void client.attachFiles([...event.target.files]);
+                                event.target.value = "";
+                            }}
+                        />
                         <button
                             className="mx_MessageComposer_button"
                             title="Voice messages are not supported by this journal server"
@@ -1350,6 +1486,9 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
 
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const leftPanel = useLeftPanelResize();
+    const [dragActive, setDragActive] = useState(state.dragActive);
+
+    const isFileDrag = (event: React.DragEvent): boolean => Array.from(event.dataTransfer.types).includes("Files");
 
     return (
         <div className="mx_MatrixChat_wrapper">
@@ -1364,7 +1503,32 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                 </div>
                 <div className={`mx_RoomView_wrapper ${state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}>
                     {state.selectedConversationId ? (
-                        <div className="mx_RoomView">
+                        <div
+                            className={`mx_RoomView${dragActive ? " mj_RoomView_dragActive" : ""}`}
+                            onDragOver={(event) => {
+                                if (!isFileDrag(event)) return;
+                                event.preventDefault();
+                                setDragActive(true);
+                            }}
+                            onDrop={(event) => {
+                                if (!isFileDrag(event)) return;
+                                event.preventDefault();
+                                const files = [...event.dataTransfer.files];
+                                if (files.length > 0) void client.attachFiles(files);
+                                setDragActive(false);
+                            }}
+                            onDragLeave={(event) => {
+                                const nextTarget = event.relatedTarget;
+                                if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+                                setDragActive(false);
+                            }}
+                            onDragEnd={() => setDragActive(false)}
+                        >
+                            {dragActive && (
+                                <div className="mj_DragOverlay" aria-hidden="true">
+                                    Drop files to attach
+                                </div>
+                            )}
                             <div className="mx_RoomView_body mx_MainSplit_timeline" data-layout="bubble">
                                 <ChatHeader client={client} state={state} />
                                 <Timeline client={client} state={state} />

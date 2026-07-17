@@ -30,6 +30,10 @@ const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v
 const ARCHIVED_CONVERSATIONS_KEY_PREFIX = "matron_journal_archived_conversations_v1";
 const HISTORY_PAGE_SIZE = 80;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
+// This is only a browser memory-safety ceiling. The server's 413 response is
+// authoritative for deployment-specific upload policy.
+const BROWSER_MEMORY_SAFETY_MAX_BYTES = 512 * 1024 * 1024;
+const UPLOAD_TIMEOUT_MS = 60_000;
 
 interface ConversationHistoryState {
     initialized: boolean;
@@ -39,6 +43,12 @@ interface ConversationHistoryState {
 
 interface ElectronBadgeBridge {
     send(channel: "setBadgeCount", count: number): void;
+}
+
+interface AttachmentOwner {
+    gen: number;
+    api: JournalApi;
+    db: JournalDatabase;
 }
 
 function deviceName(): string {
@@ -63,6 +73,7 @@ function blankState(): ClientState {
         hasOlderHistory: false,
         textStreams: {},
         toolStreams: {},
+        dragActive: false,
     };
 }
 
@@ -164,6 +175,14 @@ function capToolStream(value: string): { content: string; truncated: boolean } {
     return { content: new TextDecoder().decode(slice), truncated: true };
 }
 
+function abortPromise(signal: AbortSignal): Promise<never> {
+    return new Promise((_, reject) => {
+        const rejectAbort = (): void => reject(new DOMException("The upload timed out.", "AbortError"));
+        if (signal.aborted) rejectAbort();
+        else signal.addEventListener("abort", rejectAbort, { once: true });
+    });
+}
+
 export class MatronJournalClient {
     private state = blankState();
     private readonly listeners = new Set<() => void>();
@@ -179,6 +198,13 @@ export class MatronJournalClient {
     private readonly mediaUrls = new Map<string, string>();
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
+    private pendingFiles = new Map<string, File>();
+    private transientAttachmentErrors = new Map<string, PendingMessage>();
+    private readonly dismissedAttachments = new Set<string>();
+    private readonly attachmentOperations = new Map<string, Promise<void>>();
+    private readonly retryingAttachments = new Set<string>();
+    private inFlightUploads = new Map<string, AbortController>();
+    private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
     private historyError?: string;
@@ -243,6 +269,12 @@ export class MatronJournalClient {
     }
 
     public async logout(message?: string): Promise<void> {
+        this.sessionGen += 1;
+        for (const controller of this.inFlightUploads.values()) controller.abort();
+        this.inFlightUploads.clear();
+        this.dismissedAttachments.clear();
+        this.pendingFiles.clear();
+        this.transientAttachmentErrors.clear();
         this.connection?.stop();
         this.connection = undefined;
         if (this.storageListener) {
@@ -336,6 +368,7 @@ export class MatronJournalClient {
                 HISTORY_PAGE_SIZE,
             );
             await this.database.putHistory(response.events);
+            await this.reconcilePersistedOwnMessages(this.database);
             const minimum = response.events.reduce<number | undefined>(
                 (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
                 history.oldestSeq,
@@ -380,6 +413,236 @@ export class MatronJournalClient {
         return true;
     }
 
+    public async sendAttachment(file: File, convoId: string): Promise<void> {
+        const gen = this.sessionGen;
+        const api = this.api;
+        const db = this.database;
+        if (!api || !db) return;
+        const owner = { gen, api, db };
+
+        const localId = crypto.randomUUID();
+        const kind = file.type.startsWith("image/") ? "image" : "file";
+        const contentType = file.type || "application/octet-stream";
+        const message: PendingMessage = {
+            localId,
+            convoId,
+            body: "",
+            createdAt: Date.now(),
+            kind,
+            filename: file.name,
+            size: file.size,
+            contentType,
+            blobRef: null,
+            attachState: "uploading",
+        };
+
+        if (file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES || file.size === 0) {
+            message.attachState = "error";
+            message.errorKind = file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES ? "browser_memory_limit" : "empty";
+            if (!(await this.persistAttachment(message, db, gen))) return;
+            if (this.sessionGen !== gen) return;
+            await this.refreshSelectedConversation(convoId, db, gen);
+            if (this.sessionGen !== gen) return;
+            return;
+        }
+
+        this.pendingFiles.set(localId, file);
+        let persisted = false;
+        try {
+            persisted = await this.persistAttachment(message, db, gen);
+            if (!persisted || !this.ownsAttachment(owner, localId)) return;
+
+            const optimisticRefresh = this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+            await Promise.all([optimisticRefresh, this.uploadPendingAttachment(message, file, owner)]);
+        } catch {
+            if (
+                !persisted ||
+                !this.ownsAttachment(owner, localId) ||
+                message.attachState !== "uploading" ||
+                this.inFlightUploads.has(localId)
+            ) {
+                return;
+            }
+            message.attachState = "error";
+            message.errorKind = "upload_failed";
+            if (!(await this.persistAttachment(message, db, gen))) return;
+            try {
+                await this.refreshSelectedConversation(convoId, db, gen);
+            } catch {
+                if (this.ownsAttachment(owner, localId) && this.state.selectedConversationId === convoId) {
+                    const pendingMessages = this.state.pendingMessages.filter((pending) => pending.localId !== localId);
+                    this.patch({ pendingMessages: [...pendingMessages, { ...message, canRetry: true }] });
+                }
+            }
+        }
+    }
+
+    public async retryAttachment(localId: string): Promise<void> {
+        if (this.dismissedAttachments.has(localId) || this.retryingAttachments.has(localId)) return;
+        this.retryingAttachments.add(localId);
+        try {
+            await this.runAttachmentOperation(localId, async () => {
+                if (this.dismissedAttachments.has(localId)) return;
+                const gen = this.sessionGen;
+                const api = this.api;
+                const db = this.database;
+                if (!api || !db) return;
+                const owner = { gen, api, db };
+
+                const outbox = await db.outbox();
+                if (!this.ownsAttachment(owner, localId)) return;
+                const message =
+                    outbox.find((candidate) => candidate.localId === localId) ??
+                    this.transientAttachmentErrors.get(localId);
+                if (!message || message.attachState !== "error") return;
+                delete message.canRetry;
+
+                if (
+                    message.errorKind === "upload_failed" ||
+                    (message.errorKind === "storage_failed" && !message.blobRef)
+                ) {
+                    const file = this.pendingFiles.get(localId);
+                    if (!file) return;
+                    message.attachState = "uploading";
+                    message.blobRef = null;
+                    delete message.errorKind;
+                    if (!(await this.persistAttachment(message, db, gen))) return;
+                    if (!this.ownsAttachment(owner, localId)) return;
+                    await this.refreshSelectedConversation(message.convoId, db, gen);
+                    if (!this.ownsAttachment(owner, localId)) return;
+                    await this.uploadPendingAttachment(message, file, owner);
+                    return;
+                }
+
+                if (
+                    (message.errorKind === "send_failed" || message.errorKind === "storage_failed") &&
+                    message.blobRef
+                ) {
+                    await this.emitPendingAttachment(message, owner);
+                }
+            });
+        } finally {
+            this.retryingAttachments.delete(localId);
+        }
+    }
+
+    private async uploadPendingAttachment(message: PendingMessage, file: File, owner: AttachmentOwner): Promise<void> {
+        if (!this.ownsAttachment(owner, message.localId)) return;
+
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+        this.inFlightUploads.set(message.localId, controller);
+        let mediaId: string;
+        try {
+            const bytes = await Promise.race([file.arrayBuffer(), abortPromise(controller.signal)]);
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            const response = await owner.api.uploadMedia(bytes, message.contentType ?? file.type, controller.signal);
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            if (typeof response.media_id !== "string" || response.media_id.trim() === "") {
+                throw new Error("The journal server returned a malformed media response.");
+            }
+            mediaId = response.media_id;
+        } catch (error) {
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            message.blobRef = null;
+            message.attachState = "error";
+            message.errorKind =
+                error instanceof JournalApiError &&
+                (error.code === "too_large" || error.code === "empty" || error.code === "electron_binary_unsupported")
+                    ? error.code
+                    : "upload_failed";
+            message.errorMessage =
+                error instanceof JournalApiError && error.code === "electron_binary_unsupported"
+                    ? error.message
+                    : undefined;
+            if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+            if (message.errorKind !== "upload_failed") this.pendingFiles.delete(message.localId);
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            return;
+        } finally {
+            window.clearTimeout(timer);
+            if (this.inFlightUploads.get(message.localId) === controller) {
+                this.inFlightUploads.delete(message.localId);
+            }
+        }
+
+        message.blobRef = mediaId;
+        await this.emitPendingAttachment(message, owner);
+    }
+
+    private async emitPendingAttachment(message: PendingMessage, owner: AttachmentOwner): Promise<void> {
+        if (!message.blobRef || (message.kind !== "image" && message.kind !== "file")) return;
+        if (!this.ownsAttachment(owner, message.localId)) return;
+
+        message.attachState = "sending";
+        delete message.errorKind;
+        if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+        if (!this.ownsAttachment(owner, message.localId)) return;
+        this.pendingFiles.delete(message.localId);
+        await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+        if (!this.ownsAttachment(owner, message.localId)) return;
+
+        if (this.dismissedAttachments.has(message.localId)) return;
+        const ok = this.connection?.send({
+            op: "send",
+            convo_id: message.convoId,
+            type: message.kind,
+            blob_ref: message.blobRef,
+            payload: {
+                blob_ref: message.blobRef,
+                name: message.filename,
+                filename: message.filename,
+                content_type: message.contentType,
+                size: message.size,
+                local_id: message.localId,
+            },
+            local_id: message.localId,
+        });
+        if (ok === true) return;
+
+        message.attachState = "error";
+        message.errorKind = "send_failed";
+        if (!this.ownsAttachment(owner, message.localId)) return;
+        if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+        if (!this.ownsAttachment(owner, message.localId)) return;
+        await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+        if (!this.ownsAttachment(owner, message.localId)) return;
+    }
+
+    public async attachFiles(files: File[]): Promise<void> {
+        const gen = this.sessionGen;
+        const convoId = this.state.selectedConversationId;
+        if (!convoId) return;
+
+        for (const file of files) {
+            if (this.sessionGen !== gen) break;
+            try {
+                await this.sendAttachment(file, convoId);
+            } catch {
+                // Continue so one failed attachment does not block the rest of the batch.
+            }
+        }
+    }
+
+    public async dismissAttachment(localId: string): Promise<void> {
+        this.dismissedAttachments.add(localId);
+        this.inFlightUploads.get(localId)?.abort();
+        const gen = this.sessionGen;
+        const db = this.database;
+        if (!db) return;
+
+        await this.runAttachmentOperation(localId, async () => {
+            await db.deleteOutboxRow(localId);
+            if (this.sessionGen !== gen || this.database !== db) return;
+            this.pendingFiles.delete(localId);
+            this.transientAttachmentErrors.delete(localId);
+            const conversationId = this.state.selectedConversationId;
+            if (conversationId) await this.refreshSelectedConversation(conversationId, db, gen);
+        });
+    }
+
     public sendPromptReply(targetSeq: number, choice?: string, text?: string): boolean {
         const conversationId = this.state.selectedConversationId;
         if (!conversationId) return false;
@@ -410,10 +673,16 @@ export class MatronJournalClient {
     }
 
     private async startSession(session: Session): Promise<void> {
+        this.sessionGen += 1;
+        for (const controller of this.inFlightUploads.values()) controller.abort();
+        this.inFlightUploads.clear();
+        this.dismissedAttachments.clear();
+        this.pendingFiles.clear();
+        this.transientAttachmentErrors.clear();
         this.connection?.stop();
         this.database?.close();
         this.api = new JournalApi(session.serverUrl, session.token);
-        this.database = await JournalDatabase.open(session.serverUrl, session.userId);
+        this.database = await JournalDatabase.open(session.serverUrl, session.userId, session.username);
         await this.database.expireToolLogs();
 
         let cursor = await this.database.cursor();
@@ -422,6 +691,26 @@ export class MatronJournalClient {
             await this.database.replaceWithSnapshot(snapshot);
             cursor = snapshot.seq;
         }
+        await this.reconcilePersistedOwnMessages(this.database);
+        const outbox = await this.database.outbox();
+        for (const message of outbox) {
+            if (message.attachState !== "uploading") continue;
+            try {
+                await this.database.addToOutbox({
+                    ...message,
+                    attachState: "error",
+                    errorKind: "upload_failed",
+                });
+            } catch {
+                this.transientAttachmentErrors.set(message.localId, {
+                    ...message,
+                    attachState: "error",
+                    errorKind: "storage_failed",
+                    canRetry: false,
+                });
+            }
+        }
+
         const conversations = await this.database.conversations();
         const storedConversationId = storedSelectedConversation(session);
         const archivedIds = storedArchivedIds(session);
@@ -507,6 +796,7 @@ export class MatronJournalClient {
         });
         const snapshot = await this.api.snapshot();
         await this.database.replaceWithSnapshot(snapshot);
+        await this.reconcilePersistedOwnMessages(this.database);
         const conversations = await this.database.conversations();
         let archivedIds = this.state.archivedIds;
         const session = this.state.session;
@@ -524,18 +814,27 @@ export class MatronJournalClient {
     }
 
     private async handleReady(): Promise<void> {
-        const outbox = await this.database?.outbox();
-        for (const message of outbox ?? []) this.sendPendingMessage(message);
+        const gen = this.sessionGen;
+        const db = this.database;
+        const connection = this.connection;
+        if (!db || !connection) return;
+        const ownsReplay = (): boolean =>
+            this.sessionGen === gen && this.database === db && this.connection === connection;
+
+        const outbox = await db.outbox();
+        if (!ownsReplay()) return;
+        for (const message of outbox) this.sendPendingMessage(message, connection);
         if (this.state.selectedConversationId) {
-            this.connection?.send({ op: "viewing", convo_id: this.state.selectedConversationId });
+            connection.send({ op: "viewing", convo_id: this.state.selectedConversationId });
             const conversation = this.selectedConversation();
             if (conversation?.unread_count) this.scheduleRead(conversation.id, conversation.last_seq, 0);
         }
         for (const [conversationId, upToSeq] of this.readHighWater) {
             this.scheduleRead(conversationId, upToSeq, 0);
         }
-        const cursor = await this.database?.cursor();
-        if (cursor !== undefined) this.connection?.send({ op: "ack", cursor });
+        const cursor = await db.cursor();
+        if (!ownsReplay()) return;
+        if (cursor !== undefined) connection.send({ op: "ack", cursor });
     }
 
     private async handleFrame(frame: ServerFrame): Promise<void> {
@@ -555,9 +854,18 @@ export class MatronJournalClient {
     private async handleJournal(event: JournalEvent): Promise<void> {
         if (!this.database) return;
         const applied = await this.database.applyJournal(event);
-        if (!applied) return;
+        const removed = await this.database.reconcileOwnMessage(event);
+        if (removed) {
+            this.pendingFiles.delete(removed);
+            this.transientAttachmentErrors.delete(removed);
+        }
+        if (!applied) {
+            if (removed && event.convo_id === this.state.selectedConversationId) {
+                await this.refreshSelectedConversation(event.convo_id);
+            }
+            return;
+        }
         this.clearHistoryError();
-        await this.database.reconcileOwnMessage(event);
         this.scheduleAck(event.seq);
 
         const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
@@ -575,6 +883,14 @@ export class MatronJournalClient {
             if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
                 this.scheduleRead(event.convo_id, event.seq);
             }
+        }
+    }
+
+    private async reconcilePersistedOwnMessages(database: JournalDatabase): Promise<void> {
+        const removed = await database.reconcilePersistedOwnMessages();
+        for (const localId of removed) {
+            this.pendingFiles.delete(localId);
+            this.transientAttachmentErrors.delete(localId);
         }
     }
 
@@ -655,18 +971,100 @@ export class MatronJournalClient {
         this.patch({ conversations: await this.database.conversations() });
     }
 
-    private async refreshSelectedConversation(expectedId: string): Promise<void> {
-        if (!this.database) return;
-        const [events, pendingMessages] = await Promise.all([
-            this.database.events(expectedId),
-            this.database.outbox(expectedId),
-        ]);
-        if (this.state.selectedConversationId !== expectedId) return;
-        this.patch({ events, pendingMessages });
+    private async refreshSelectedConversation(
+        expectedId: string,
+        db = this.database,
+        gen = this.sessionGen,
+    ): Promise<void> {
+        if (!db) return;
+        const [events, pendingMessages] = await Promise.all([db.events(expectedId), db.outbox(expectedId)]);
+        if (this.sessionGen !== gen || this.database !== db || this.state.selectedConversationId !== expectedId) return;
+        const visiblePending = new Map(pendingMessages.map((message) => [message.localId, message]));
+        for (const message of this.transientAttachmentErrors.values()) {
+            if (message.convoId === expectedId) visiblePending.set(message.localId, message);
+        }
+        this.patch({
+            events,
+            pendingMessages: [...visiblePending.values()].map((message) => ({
+                ...message,
+                canRetry:
+                    (message.errorKind === "upload_failed" && this.pendingFiles.has(message.localId)) ||
+                    message.errorKind === "send_failed" ||
+                    (message.errorKind === "storage_failed" &&
+                        (this.pendingFiles.has(message.localId) || Boolean(message.blobRef))),
+            })),
+        });
     }
 
-    private sendPendingMessage(message: PendingMessage): void {
-        this.connection?.send({
+    private async persistAttachment(message: PendingMessage, db: JournalDatabase, gen: number): Promise<boolean> {
+        if (this.dismissedAttachments.has(message.localId)) return false;
+        try {
+            await db.addToOutbox(message);
+        } catch {
+            if (this.sessionGen !== gen || this.database !== db || this.dismissedAttachments.has(message.localId))
+                return false;
+            const storageError: PendingMessage = {
+                ...message,
+                attachState: "error",
+                errorKind: "storage_failed",
+                canRetry: this.pendingFiles.has(message.localId) || Boolean(message.blobRef),
+            };
+            this.transientAttachmentErrors.set(message.localId, storageError);
+            if (this.state.selectedConversationId === message.convoId) {
+                const pendingMessages = this.state.pendingMessages.filter(
+                    (pending) => pending.localId !== message.localId,
+                );
+                this.patch({ pendingMessages: [...pendingMessages, storageError] });
+            }
+            return false;
+        }
+        if (this.sessionGen !== gen || this.database !== db || this.dismissedAttachments.has(message.localId))
+            return false;
+        this.transientAttachmentErrors.delete(message.localId);
+        return true;
+    }
+
+    private ownsAttachment(owner: AttachmentOwner, localId: string): boolean {
+        return (
+            this.sessionGen === owner.gen &&
+            this.api === owner.api &&
+            this.database === owner.db &&
+            !this.dismissedAttachments.has(localId)
+        );
+    }
+
+    private async runAttachmentOperation(localId: string, operation: () => Promise<void>): Promise<void> {
+        const previous = this.attachmentOperations.get(localId);
+        const current = previous ? previous.catch(() => undefined).then(operation) : operation();
+        this.attachmentOperations.set(localId, current);
+        try {
+            await current;
+        } finally {
+            if (this.attachmentOperations.get(localId) === current) this.attachmentOperations.delete(localId);
+        }
+    }
+
+    private sendPendingMessage(message: PendingMessage, connection = this.connection): void {
+        if (message.kind === "image" || message.kind === "file") {
+            if (!message.blobRef || this.dismissedAttachments.has(message.localId)) return;
+            connection?.send({
+                op: "send",
+                convo_id: message.convoId,
+                type: message.kind,
+                blob_ref: message.blobRef,
+                payload: {
+                    blob_ref: message.blobRef,
+                    name: message.filename,
+                    filename: message.filename,
+                    content_type: message.contentType,
+                    size: message.size,
+                    local_id: message.localId,
+                },
+                local_id: message.localId,
+            });
+            return;
+        }
+        connection?.send({
             op: "send",
             convo_id: message.convoId,
             type: "text",

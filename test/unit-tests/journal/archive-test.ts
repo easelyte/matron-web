@@ -56,6 +56,7 @@ interface FakeDatabase {
     outbox(conversationId?: string): Promise<PendingMessage[]>;
     putHistory(events: []): Promise<void>;
     markLocallyRead(conversationId: string, upToSeq: number): Promise<void>;
+    reconcilePersistedOwnMessages(): Promise<string[]>;
     reset(): Promise<void>;
     close(): void;
 }
@@ -102,6 +103,7 @@ function fakeDatabase(conversations = CONVERSATIONS): FakeDatabase {
         outbox: jest.fn().mockResolvedValue([]),
         putHistory: jest.fn().mockResolvedValue(undefined),
         markLocallyRead: jest.fn().mockResolvedValue(undefined),
+        reconcilePersistedOwnMessages: jest.fn().mockResolvedValue([]),
         reset: jest.fn().mockResolvedValue(undefined),
         close: jest.fn(),
     };

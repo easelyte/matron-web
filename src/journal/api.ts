@@ -30,6 +30,12 @@ interface JournalElectron {
     }): Promise<ElectronJournalResponse>;
 }
 
+interface UploadMediaResponse {
+    media_id: string;
+    size: number;
+    content_type: string;
+}
+
 export class JournalApiError extends Error {
     public constructor(
         message: string,
@@ -75,6 +81,10 @@ function messageForCode(code: string | undefined, status: number): string {
             return "This device is not allowed to perform that action.";
         case "not_found":
             return "The requested item was not found.";
+        case "too_large":
+            return "File too large.";
+        case "empty":
+            return "That file is empty.";
         default:
             return `The journal server returned HTTP ${status}.`;
     }
@@ -114,6 +124,46 @@ export class JournalApi {
         return new Blob([response.body], { type: contentType });
     }
 
+    public async uploadMedia(
+        bytes: ArrayBuffer,
+        contentType: string,
+        signal?: AbortSignal,
+    ): Promise<UploadMediaResponse> {
+        const response = await this.request("/media", {
+            method: "POST",
+            rawBody: bytes,
+            contentType,
+            signal,
+        });
+        const text = new TextDecoder().decode(response.body);
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(text) as unknown;
+        } catch {
+            throw new JournalApiError("The journal server returned malformed JSON.", response.status);
+        }
+        if (
+            typeof parsed !== "object" ||
+            parsed === null ||
+            Array.isArray(parsed) ||
+            !("media_id" in parsed) ||
+            typeof parsed.media_id !== "string" ||
+            parsed.media_id.trim() === "" ||
+            !("size" in parsed) ||
+            typeof parsed.size !== "number" ||
+            !Number.isFinite(parsed.size) ||
+            !("content_type" in parsed) ||
+            typeof parsed.content_type !== "string"
+        ) {
+            throw new JournalApiError("The journal server returned a malformed media response.", response.status);
+        }
+        return {
+            media_id: parsed.media_id,
+            size: parsed.size,
+            content_type: parsed.content_type,
+        };
+    }
+
     private async json<T>(
         path: string,
         options: {
@@ -137,14 +187,25 @@ export class JournalApi {
             method?: "GET" | "POST";
             body?: Record<string, unknown>;
             authenticated?: boolean;
+            rawBody?: ArrayBuffer;
+            contentType?: string;
+            signal?: AbortSignal;
         } = {},
     ): Promise<{ status: number; headers: Headers; body: ArrayBuffer }> {
         const method = options.method ?? "GET";
         const authenticated = options.authenticated ?? true;
         if (authenticated && !this.token) throw new JournalApiError("Not signed in.", 401, "unauthenticated");
 
-        const body = options.body ? JSON.stringify(options.body) : undefined;
+        const jsonBody = options.rawBody === undefined && options.body ? JSON.stringify(options.body) : undefined;
+        const body = options.rawBody ?? jsonBody;
         const electron = electronBridge();
+        if (electron && options.rawBody !== undefined) {
+            throw new JournalApiError(
+                "Attachments aren't supported in the desktop build yet.",
+                0,
+                "electron_binary_unsupported",
+            );
+        }
         let status: number;
         let headers: Headers;
         let responseBody: ArrayBuffer;
@@ -155,7 +216,7 @@ export class JournalApi {
                 path,
                 method,
                 token: authenticated ? this.token : undefined,
-                body,
+                body: jsonBody,
             });
             status = response.status;
             headers = new Headers(response.headers);
@@ -166,10 +227,17 @@ export class JournalApi {
                 response = await fetch(endpointUrl(this.serverUrl, path), {
                     method,
                     headers: {
-                        ...(body ? { "Content-Type": "application/json" } : {}),
+                        ...(options.rawBody !== undefined
+                            ? options.contentType
+                                ? { "Content-Type": options.contentType }
+                                : {}
+                            : jsonBody
+                              ? { "Content-Type": "application/json" }
+                              : {}),
                         ...(authenticated ? { Authorization: `Bearer ${this.token}` } : {}),
                     },
                     body,
+                    signal: options.signal,
                 });
             } catch (error) {
                 throw new JournalApiError(

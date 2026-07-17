@@ -136,6 +136,22 @@ export interface PendingMessage {
     convoId: string;
     body: string;
     createdAt: number;
+    kind?: "text" | "image" | "file";
+    filename?: string;
+    size?: number;
+    contentType?: string;
+    blobRef?: string | null;
+    attachState?: "uploading" | "sending" | "error";
+    errorKind?:
+        | "upload_failed"
+        | "send_failed"
+        | "storage_failed"
+        | "too_large"
+        | "empty"
+        | "browser_memory_limit"
+        | "electron_binary_unsupported";
+    errorMessage?: string;
+    canRetry?: boolean;
 }
 
 export type ConnectionState = "offline" | "connecting" | "online";
@@ -158,6 +174,7 @@ export interface ClientState {
     sessionStatus?: SessionStatus;
     textStreams: Record<string, string>;
     toolStreams: Record<string, ToolStreamState>;
+    dragActive: boolean;
 }
 
 export function isObject(value: unknown): value is Record<string, unknown> {
@@ -183,6 +200,8 @@ export function conversationTitle(conversation: Conversation): string {
 
 export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "text") return asString(payload.body).slice(0, 120);
+    if (type === "file") return `📎 ${asString(payload.filename, "File")}`.slice(0, 120);
+    if (type === "image") return `🖼 ${asString(payload.filename, "Image")}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;
     if (type === "permission_request") return `Permission: ${asString(payload.description).slice(0, 100)}`;
     if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);
