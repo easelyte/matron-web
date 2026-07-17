@@ -1025,6 +1025,9 @@ function EventContent({
                     {formatBytes(event.payload.size) && (
                         <span className="mj_FileSize">{formatBytes(event.payload.size)}</span>
                     )}
+                    {asString(event.payload.caption) && (
+                        <div className="mj_FileCaption">{asString(event.payload.caption)}</div>
+                    )}
                 </div>
             );
         }
@@ -1107,6 +1110,7 @@ function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement
 }
 
 function attachmentErrorMessage(message: PendingMessage): string {
+    if (message.errorMessage) return message.errorMessage;
     switch (message.errorKind) {
         case "too_large":
             return "File too large.";
@@ -1162,6 +1166,7 @@ function PendingAttachment({
         >
             <div className="mj_AttachmentChip_content">
                 <span className="mj_AttachmentChip_name">{filename}</span>
+                {message.caption && <span className="mj_AttachmentChip_caption">{message.caption}</span>}
                 {detail && <span className="mj_AttachmentChip_size">{detail}</span>}
             </div>
             {message.attachState === "uploading" && (

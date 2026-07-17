@@ -311,6 +311,49 @@ describe("attachment composer", () => {
         expect(rendered.container.querySelector(".mj_AttachmentChip")).toBeNull();
     });
 
+    it("renders the caption under file tiles and pending chips, and prefers errorMessage on error chips", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "user:dan",
+                    type: "file",
+                    payload: {
+                        blob_ref: "m1",
+                        filename: "notes.txt",
+                        size: 10,
+                        caption: "read this first",
+                    },
+                },
+            ],
+            pendingMessages: [
+                {
+                    localId: "p1",
+                    convoId: "c1",
+                    body: "",
+                    createdAt: 2,
+                    kind: "image",
+                    filename: "shot.png",
+                    size: 5,
+                    contentType: "image/png",
+                    blobRef: null,
+                    attachState: "error",
+                    errorKind: "upload_failed",
+                    canRetry: true,
+                    caption: "look at this",
+                    errorMessage: "Conversation was archived in another tab — unarchive to retry.",
+                },
+            ],
+        });
+        rendered = await renderClient(client);
+
+        expect(rendered.container.textContent).toContain("read this first");
+        expect(rendered.container.textContent).toContain("look at this");
+        expect(rendered.container.textContent).toContain("unarchive to retry");
+    });
+
     it("shows Retry only when canRetry is true and dispatches the retry", async () => {
         const errorMessage: PendingMessage = {
             localId: "failed",
