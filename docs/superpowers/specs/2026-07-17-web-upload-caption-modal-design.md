@@ -632,16 +632,24 @@ bridge runs non-iv mode, so this exercises the tail-append path).
      the misleading state Delivery §5 forbids (captions render but silently
      never reach Claude). Bridge-only rollback is permitted only if the web
      deploy has not happened yet.
-7. **Web deploy (explicit — the live client is the `webapp/` dir of this
-   checkout, served by nginx):** after the web PR merges:
-   `git -C /opt/matron/web-journal checkout main && git -C /opt/matron/web-journal pull`
-   → `mv webapp webapp.bak.$(date -u +%Y%m%dT%H%M%SZ)` (the build is
-   rimraf-destructive; the backup IS the rollback artifact) →
-   `corepack pnpm build` (subshell `cd`, never the session) → health:
-   `https://vmi3096107.taild3d6c4.ts.net:8443` loads and login works → run
-   the Manual acceptance captioned send (which also completes the bridge
-   health gate's end-to-end half). Rollback: swap the `webapp.bak.<ts>` dir
-   back (§6 step 1).
+7. **Web deploy (explicit, ATOMIC — the live client is the `webapp/` dir of
+   this checkout, served by nginx; final-review r2 amendment: never leave the
+   served path missing mid-build):** after the web PR merges:
+   1. `git -C /opt/matron/web-journal checkout main && git -C /opt/matron/web-journal pull`
+   2. Build INTO STAGING, live tree untouched: `(cd /opt/matron/web-journal && corepack pnpm build)`
+      builds `webapp/` — so first park the live tree ONLY after the build is
+      verified. Concretely: `mv webapp webapp.live.$(date -u +%Y%m%dT%H%M%SZ)`
+      is WRONG mid-serve; instead run the build, which rimrafs and recreates
+      `webapp/`, during a maintenance moment, OR (preferred, zero-gap):
+      `cp -a webapp webapp.bak.<ts>` (backup without unlinking the served
+      dir), then `corepack pnpm build` (rebuild in place — nginx keeps
+      serving old assets from page caches; the swap window is the build's
+      write, not a missing directory), then verify.
+   3. Verify: `https://vmi3096107.taild3d6c4.ts.net:8443` loads, login works,
+      then the Manual acceptance captioned send (completing the bridge health
+      gate's end-to-end half).
+   4. Failure at any step → restore: `rm -rf webapp && mv webapp.bak.<ts> webapp`
+      (single rename back = atomic restore; this IS the rollback artifact).
 
 ## Risks
 
