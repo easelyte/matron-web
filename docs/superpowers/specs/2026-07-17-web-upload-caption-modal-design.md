@@ -2,8 +2,8 @@
 title: Upload confirmation modal with caption (file + caption as one message)
 date: 2026-07-17
 status: draft
-revision: 4
-review_rounds: 3
+revision: 5
+review_rounds: 4
 author: claude (brainstorm-slim)
 target_repo: easelyte/matron-web (journal client), PR base main
 related_repos:
@@ -117,7 +117,22 @@ an outbox row.
 Entry points stop calling `attachFiles()` directly and instead stage:
 
 - `ClientState` gains
-  `stagedUploads?: { convoId: string; items: Array<{ id: string; file: File }>; total: number }`.
+  `stagedUploads?: { convoId: string; items: Array<{ id: string; file: File }>; total: number; confirming: boolean; error?: string }`.
+  - `confirming` — the explicit P23 transient-submission state: set
+    **synchronously, in the same tick, before any `await`** when a confirm
+    begins; cleared when the page advances (or the confirm aborts). While
+    `true`, Send, Enter, Escape, Cancel and Cancel-all are all inert — the
+    modal is mid-transition. This is what makes the double-click contract
+    real: the second activation hits `confirming === true` and no-ops (an id
+    compare alone cannot provide this — both activations would observe the
+    same un-popped head across the awaited persist).
+  - `error` — the representable invalidation state (without it the "swap to
+    an error notice" contract is impossible: discarding the queue would
+    remove the modal's only render condition). On confirm-time invalidation:
+    `items` is cleared, `error` is set (e.g. `"archived"`); the modal renders
+    the error notice while `stagedUploads` is present with `error` set; Close
+    clears `stagedUploads` entirely. Render condition for the modal:
+    `stagedUploads` present AND (`items.length > 0` OR `error`).
   - `id` = `crypto.randomUUID()` assigned at stage time — the **stable page
     identity** used as the modal body's React `key` and as the argument to
     confirm/skip (P5: key on item identity, not on a shifting array index).
@@ -134,28 +149,37 @@ Entry points stop calling `attachFiles()` directly and instead stage:
   from the modal's own paste handler plus the structurally guarded entry
   points (see Modal UI); there is no different-convo replace branch.
 - `client.confirmStagedFile(itemId: string, caption?: string): Promise<void>` —
-  1. **Head guard (P23):** no-op unless `itemId` equals the current head
-     item's id — a double-click or stale Enter cannot consume the next page
-     with the previous page's caption.
+  1. **Atomic reservation (P23/P32):** synchronously, in one tick, before any
+     `await`: no-op if `confirming` is already `true` OR `itemId` differs from
+     the current head item's id; otherwise set `confirming = true`. This is
+     the idempotency lock — a double-click, Enter-then-click, or stale Enter
+     cannot start a second confirm while the first is mid-persist, so exactly
+     one row/upload/send per page is structural, not hoped-for.
   2. **Confirm-time check (P19, first of two):** re-check the staged `convoId`
      at this boundary — it must still exist in `state.conversations` and not
      be in `state.archivedIds`. If invalidated (cross-tab archive — see Edge
-     cases), do NOT proceed: discard the queue and swap the modal to a visible
-     error notice (fail visible).
-  3. **Persist-then-advance (P3):** synchronously create and persist the
-     `PendingMessage` outbox row (`attachState: "uploading"`, caption
-     included) and **await that persist** before popping the head and
-     advancing the modal — one IndexedDB put, imperceptible. This requires
-     splitting today's `sendAttachment` into its two existing phases:
-     **(a) persist** (build the `PendingMessage`, run the size/empty guards,
-     `persistAttachment`) and **(b) upload+emit**
-     (`uploadPendingAttachment` → `emitPendingAttachment`). `attachFiles`
-     keeps its current behavior by calling both phases in sequence. The
-     payoff: **every confirmed file has a persisted row from the moment the
-     modal advances** — a refresh at any later point leaves error-chip
-     evidence (the existing `startSession` uploading→`upload_failed`
-     conversion) instead of silently vanishing a confirmed file whose upload
-     had not yet started.
+     cases): clear `items`, set `stagedUploads.error`, clear `confirming` —
+     the modal renders the visible error notice (fail visible; the `error`
+     field is what makes this state representable).
+  3. **Persist-then-advance (P3):** create the `PendingMessage` outbox row
+     (`attachState: "uploading"`, caption included, `File` stashed in
+     `pendingFiles`) and **await the persist**; **pop the head and advance
+     (clearing `confirming`) ONLY when the persist succeeds** — one IndexedDB
+     put, imperceptible. **Persist-failure branch (explicit):** if
+     `persistAttachment` returns `false` (IndexedDB failure — its internal
+     `storage_failed` path has already surfaced a visible transient chip —
+     or session change mid-await), do NOT pop: clear `confirming`, keep the
+     page (Send re-enabled; pressing Send again retries the persist). The
+     modal never advances past an unpersisted confirm — that is the entire
+     point of this step. Mechanically this splits today's `sendAttachment`
+     into its two existing phases: **(a) persist** (build + size/empty guards
+     + `pendingFiles.set` + `persistAttachment`) and **(b) upload+emit**
+     (`uploadPendingAttachment` → `emitPendingAttachment`); `attachFiles`
+     keeps its behavior by calling both in sequence. Payoff: **every advanced
+     page corresponds to a persisted row** — a refresh at any later point
+     leaves error-chip evidence (the existing `startSession`
+     uploading→`upload_failed` conversion) instead of silently vanishing a
+     confirmed file whose upload had not yet started.
   4. **Deferred upload on the serialized send chain, with execution-time
      guards:** enqueue phase (b) on an internal chain so uploads run **one at
      a time in confirm order** (the serialization today's `attachFiles` loop
@@ -174,8 +198,20 @@ Entry points stop calling `attachFiles()` directly and instead stage:
        between enqueue and execution is unbounded for items queued behind a
        slow upload. If the conversation was archived/removed in the gap, do
        not upload: mark the persisted row `attachState: "error"`,
-       `errorKind: "send_failed"`, `canRetry: true` (fail visible; retry
-       works after unarchiving).
+       **`errorKind: "upload_failed"`** (NOT `send_failed` — a `send_failed`
+       row with `blobRef: null` matches neither `retryAttachment` branch and
+       would render a Retry button that no-ops forever; `upload_failed` with
+       the `File` still in `pendingFiles` routes through the existing
+       re-upload branch, so Retry genuinely works after unarchiving), plus
+       `errorMessage: "Conversation was archived in another tab — unarchive
+       to retry."` The chip renderer's `attachmentErrorMessage` **prefers
+       `message.errorMessage` when set** (one-line additive change; today
+       only the electron case uses it) so the user sees the real reason, not
+       generic upload-failure copy.
+     - **Rejection isolation:** each enqueued thunk absorbs its own rejection
+       (`try/catch` inside the thunk; the chain link never rejects) — one
+       failed upload must not poison the chain and strand later confirmed
+       files' persisted rows in `uploading` limbo.
      Upload progress/errors surface through the existing pending-chip
      machinery (`PendingAttachment` rows in the timeline).
 - `client.skipStagedFile(itemId: string): void` — same head guard; pops the
@@ -241,9 +277,11 @@ blocked for the seconds a caption takes) is nil in the operator's workflow.
   event.keyCode === 229` (right-sized; the full Safari composition-flag
   replication from the Matrix-era spec is not warranted in this small custom
   app — noted as a known limitation).
-- **Buttons:** primary **Send** (disabled only by pre-flight error, see below),
-  **Cancel** (skip current file). When more than one file is staged: header
-  shows "File k of N" and a **Cancel all** action appears.
+- **Buttons:** primary **Send** (disabled by pre-flight error, see below, and
+  while `confirming` is true — the P23 transient state; Enter/Escape/Cancel/
+  Cancel-all are equally inert during it), **Cancel** (skip current file).
+  When more than one file is staged: header shows "File k of N" and a
+  **Cancel all** action appears.
 - **Focus contract:** focus lives in the caption textarea (via remount) while
   the modal is open; Tab cycles within the modal (focus trap). Focus returns to
   the composer textarea **only when the modal closes** (last file
@@ -375,10 +413,12 @@ why deployment is **bridge-first** (see Delivery), not order-free.
   the modal stays open over the collapsed room view. Caught **twice** (P19,
   check at the act, not only before the queue): the confirm-time check refuses
   new confirms into an archived/absent conversation (visible modal error
-  state), and the execution-time re-check inside the send chain catches items
-  that were queued *before* the archive landed (row marked `send_failed`,
-  `canRetry` — visible chip, retryable after unarchiving). No queue depth
-  produces a silent send into an archived conversation.
+  state via `stagedUploads.error`), and the execution-time re-check inside
+  the send chain catches items that were queued *before* the archive landed
+  (row marked `upload_failed` with an explanatory `errorMessage` — visible
+  chip whose Retry genuinely re-uploads via the `pendingFiles`-backed branch
+  after unarchiving). No queue depth produces a silent send into an archived
+  conversation.
 - **Pre-flight-invalid file (empty / >512MB):** inline modal error, Send +
   Enter disabled; **no outbox row, no timeline chip** (deliberate change from
   today — feedback moves into the modal, before any state exists).
@@ -427,18 +467,27 @@ why deployment is **bridge-first** (see Delivery), not order-free.
    `uploading` rows for BOTH; simulate restart (`startSession` resume) and
    assert both surface as `upload_failed` chips (no silent loss of a
    confirmed-but-unstarted file).
-7. `client-test.ts`: **head guard** — calling `confirmStagedFile` twice with
-   the same `itemId` (double-click) produces exactly one persisted row / send.
-8. `client-test.ts`: **check-act at confirm** — archive the staged
+7. `client-test.ts`: **atomic confirm** — two `confirmStagedFile` calls with
+   the same `itemId` fired back-to-back (second lands while the first is
+   awaiting persist) produce exactly ONE persisted row / upload / send (the
+   `confirming` reservation, not just the id compare, is what this exercises).
+8. `client-test.ts`: **persist-failure branch** — make the outbox put fail;
+   assert the modal does NOT advance (head unchanged, `confirming` cleared)
+   and no upload is queued; a second Send after the fault clears succeeds.
+9. `client-test.ts`: **check-act at confirm** — archive the staged
    conversation (simulate the cross-tab `storage` event) then confirm: nothing
-   is persisted or sent and the staged state reflects the error (fail visible).
-9. `client-test.ts`: **check-act at execution (queued item)** — confirm A
-   (slow upload) then B; archive the conversation while B is queued; assert
-   B's row is marked `send_failed`/`canRetry` and no upload/WS send fires
-   for B.
-10. `client-test.ts`: **session guard on the chain** — confirm A (slow) then
+   is persisted or sent; `stagedUploads.error` is set (modal error notice).
+10. `client-test.ts`: **check-act at execution (queued item)** — confirm A
+    (slow upload) then B; archive the conversation while B is queued; assert
+    B's row is marked `upload_failed` with the archived `errorMessage`, no
+    upload/WS send fires for B, and — after unarchiving — `retryAttachment`
+    on B genuinely re-uploads and emits (guards the retryable claim against
+    the state machine's actual branches).
+11. `client-test.ts`: **session guard on the chain** — confirm A (slow) then
     B; run `startSession` (new session gen) before B executes; assert B's
     thunk aborts (no upload, no WS send under the new session).
+12. `client-test.ts`: **rejection isolation** — A's upload rejects; assert B's
+    upload still starts and completes (chain not poisoned).
 11. `components-test.ts`: staging files renders the modal; image file shows an
     `img` preview; non-image shows name + size; typed caption + Send calls
     `confirmStagedFile(headId, "caption")`; Enter confirms; Shift+Enter does
@@ -500,7 +549,9 @@ bridge runs non-iv mode, so this exercises the tail-append path).
    live-test** (operator backs up `webapp/` and runs `corepack pnpm build` to
    try it; merge is operator-gated).
 4. Bridge PR: `easelyte/claude-matrix-bridge` base `journal-deploy` — held the
-   same way.
+   same way. **Both PRs merge via merge commit (`gh pr merge --merge`, no
+   squash/rebase)** — the rollback recipe's `git revert -m 1` depends on
+   merge-commit topology (this matches the repos' existing history).
 5. **Deploy order (not order-free): bridge first.** Deploying web-first would
    render captions in the timeline while silently dropping them before Claude —
    a misleading success state (P3). Order: merge bridge PR → deploy bridge →
@@ -530,8 +581,10 @@ bridge runs non-iv mode, so this exercises the tail-append path).
         don't checkout a raw SHA (a detached HEAD silently breaks the next
         `git pull` deploy):
         `git -C /opt/matron/bridge-journal revert -m 1 <merge-sha> --no-edit`
-        → push the revert to `origin journal-deploy` →
-        `systemctl restart matron-bridge-journal.service`.
+        → **re-run the §2 bridge test gate on the reverted tree (R702 — a
+        revert is a deploy too)** → push the revert to `origin journal-deploy`
+        → `systemctl restart matron-bridge-journal.service` → re-run the §6
+        health gate (service active, HEAD = reverted tip).
         The repo stays on `journal-deploy` and the documented deploy recipe
         keeps working for the next attempt.
      Rolling back only the bridge while the new web stays live would recreate
