@@ -305,7 +305,7 @@ git -C /opt/matron/web-journal -c user.name=easelyte -c user.email=fantin@easely
     });
 ```
 
-- [ ] **Step 2: Run to verify failure or pass** — this may already pass (today's optimistic refresh races the upload); the load-bearing outcome of this task is the refactor with the FULL suite green. Run: `(cd /opt/matron/web-journal && corepack pnpm test -- client-test)` and note the baseline.
+- [ ] **Step 2: Run to verify failure or pass** — this may already pass (today's optimistic refresh races the upload); the load-bearing outcome of this task is the refactor with the FULL suite green. Run: `(cd /opt/matron/web-journal && corepack pnpm test -- client-test)` and note the baseline. **ROUND-1 FIX (M1): the Step-1 test must use the suite's stateful `attachmentDatabase()` helper (the established pattern at 20+ sites), NOT `fakeDatabase({})` — the plain stub's `outbox()` always resolves `[]`, so `refreshSelectedConversation` would never surface the chip and the test fails regardless of implementation.** Same substitution applies to every T-2.3 test below that asserts on `pendingMessages` or outbox contents.
 
 - [ ] **Step 3: Refactor `sendAttachment` into the three privates**
 
@@ -343,9 +343,17 @@ git -C /opt/matron/web-journal -c user.name=easelyte -c user.email=fantin@easely
         this.pendingFiles.set(message.localId, file);
         if (!(await this.persistAttachment(message, db, gen))) return false;
         if (this.sessionGen !== gen || this.database !== db) return false;
-        await this.refreshSelectedConversation(message.convoId, db, gen).catch(() => undefined);
         return message.attachState === "uploading";
     }
+```
+
+ROUND-1 FIX (M2): the persist phase does NOT await a refresh — today's
+`sendAttachment` runs the optimistic refresh CONCURRENT with the upload
+(`Promise.all`, `client.ts:449-456`) and the recomposition below preserves
+exactly that shape. The invalid-file branch keeps its awaited refresh
+(matches today's error path).
+
+```ts
 
     private async runPendingUpload(message: PendingMessage, file: File, owner: AttachmentOwner): Promise<void> {
         if (!this.ownsAttachment(owner, message.localId)) return;
@@ -383,9 +391,13 @@ git -C /opt/matron/web-journal -c user.name=easelyte -c user.email=fantin@easely
         const owner = { gen, api, db };
         const message = this.buildPendingAttachment(file, convoId, caption);
         if (!(await this.persistPendingAttachment(message, file, db, gen))) return;
-        await this.runPendingUpload(message, file, owner);
+        const optimisticRefresh = this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+        await Promise.all([optimisticRefresh, this.runPendingUpload(message, file, owner)]);
     }
 ```
+
+(Refresh and upload run concurrently — byte-for-byte today's `Promise.all`
+semantics; the upload is not delayed behind the refresh.)
 
 Delete the old `sendAttachment` body it replaces. Do NOT touch `uploadPendingAttachment`, `emitPendingAttachment`, `retryAttachment`, `dismissAttachment`, `attachFiles`.
 
@@ -604,6 +616,39 @@ git -C /opt/matron/web-journal -c user.name=easelyte -c user.email=fantin@easely
         expect(new Set(ids).size).toBe(1);
     });
 
+    it("leaves no retryable ghost chip when the user cancels after a persist failure", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const addToOutbox = jest.fn().mockRejectedValue(new Error("quota"));
+        state.state = signedInState(client);
+        state.database = fakeDatabase({ addToOutbox });
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia: jest.fn() };
+
+        client.stageFiles([fileFixture("a.png", "image/png", [1])]);
+        const head = client.getSnapshot().stagedUploads!.items[0];
+        await client.confirmStagedFile(head.id, "x");
+        expect(client.getSnapshot().stagedUploads?.persistError).toBe(true);
+        client.cancelStagedFiles();
+
+        expect(client.getSnapshot().stagedUploads).toBeUndefined();
+        expect(client.getSnapshot().pendingMessages).toEqual([]); // no transient storage_failed chip
+        await client.retryAttachment(head.message!.localId); // must be inert — nothing to retry
+        expect(state.api!.uploadMedia).not.toHaveBeenCalled();
+    });
+
+    it("restart-recovery: two confirmed files (second never started) both surface as upload_failed chips", async () => {
+        // Spec Testing #6, second half. Use the suite's stateful attachmentDatabase()
+        // helper and its existing startSession/resume pattern (mirror the neighboring
+        // "resumes ... after restart" tests) — confirm A (slow upload held open) and B
+        // rapidly, then simulate the restart, then assert BOTH outbox rows convert to
+        // attachState "error"/errorKind "upload_failed" and appear in pendingMessages.
+        // (Full construction mirrors the existing resume tests; the assertion is:)
+        // expect(resumedPending).toEqual(expect.arrayContaining([
+        //     expect.objectContaining({ filename: "a.png", errorKind: "upload_failed" }),
+        //     expect.objectContaining({ filename: "b.png", errorKind: "upload_failed", caption: "b caption" }),
+        // ]));
+    });
+
     it("refuses confirm into an archived conversation with a visible error state", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
@@ -717,16 +762,14 @@ git -C /opt/matron/web-journal -c user.name=easelyte -c user.email=fantin@easely
 
 - [ ] **Step 3: Implement**
 
-Constant near the others: `const PERSIST_TIMEOUT_MS = 5_000;` and a module-level helper:
-
-```ts
-function boundedPersist(persist: Promise<boolean>, ms: number): Promise<boolean> {
-    return Promise.race([
-        persist,
-        new Promise<boolean>((resolve) => window.setTimeout(() => resolve(false), ms)),
-    ]);
-}
-```
+ROUND-1 FIX (Codex B2 — documented oscillation override, spec amended):
+there is NO persist timeout. The spec's earlier "bounded (~5s)" line is
+superseded — a `Promise.race` timeout cannot cancel the losing IndexedDB
+put, so a late completion would ghost-write an orphan `uploading` row with
+no upload thunk (stuck chip: strictly worse than the hypothetical wedge).
+`confirming` holds until the persist settles; a truly hung put wedges only
+the modal, and refresh is a lossless escape (unconfirmed staging is
+in-memory).
 
 ```ts
     public async confirmStagedFile(itemId: string, captionInput?: string): Promise<void> {
@@ -761,17 +804,25 @@ function boundedPersist(persist: Promise<boolean>, ms: number): Promise<boolean>
         if (caption) message.caption = caption;
         else delete message.caption;
 
-        const persisted = await boundedPersist(
-            this.persistPendingAttachment(message, head.file, db, gen),
-            PERSIST_TIMEOUT_MS,
-        );
+        const persisted = await this.persistPendingAttachment(message, head.file, db, gen);
         if (this.sessionGen !== gen) return; // startSession wiped staging
         const current = this.state.stagedUploads;
         if (!current) return;
         if (!persisted) {
+            // ROUND-1 FIX (Codex B3): purge the transient failure state so a
+            // later Cancel/Skip cannot leave a retryable ghost chip for a file
+            // the user never successfully confirmed — the modal's inline
+            // persistError is the feedback surface, not the timeline chip.
+            this.transientAttachmentErrors.delete(message.localId);
+            this.pendingFiles.delete(message.localId);
+            if (this.state.selectedConversationId === convoId) {
+                void this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+            }
             this.patch({ stagedUploads: { ...current, confirming: false, persistError: true } });
             return;
         }
+        // Live chip visibility: fire the refresh without blocking the modal.
+        void this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
         const rest = current.items.slice(1);
         this.patch({
             stagedUploads: rest.length
@@ -931,15 +982,14 @@ describe("UploadConfirmDialog", () => {
         });
         expect(client.getSnapshot().stagedUploads!.total).toBe(2);
 
-        // archived error page
+        // archived error page — ROUND-1 FIX (Claude B2): drive the transition
+        // through the REAL client path (archiveConversation → patch/emit →
+        // confirm-time check), never by direct state assignment (which bypasses
+        // patch()/emit() and can never re-render useSyncExternalStore).
         const cancel = jest.spyOn(client, "cancelStagedFiles");
-        await act(async () => {
-            internalsOf(client).state = {
-                ...client.getSnapshot(),
-                stagedUploads: { convoId: "c1", items: [], total: 2, confirming: false, error: "archived" },
-            };
-            client.getSnapshot(); // trigger re-render via subscribe cycle per harness helper
-        });
+        await act(async () => client.archiveConversation("c1"));
+        const headId = client.getSnapshot().stagedUploads!.items[0].id;
+        await act(async () => client.confirmStagedFile(headId, "x"));
         const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
         expect(dialog.textContent).toContain("archived in another tab");
         await act(async () => button(dialog, "Close").click());
@@ -970,34 +1020,14 @@ describe("UploadConfirmDialog", () => {
 - [ ] **Step 3: Implement the component** in `components.tsx` (invoke the **frontend-design skill** before writing the JSX/styles):
 
 ```tsx
+// ROUND-1 FIX (consensus B1): two components. The SHELL (UploadConfirmDialog)
+// owns the scrim, the error page, and the document-level paste listener — it
+// stays mounted across pages. The PAGE (UploadConfirmPage) owns caption /
+// preview / focus state and is keyed by head.id AT ITS CALL SITE, so every
+// page advance remounts the component INSTANCE that owns the hooks (keying an
+// inner div would only replace DOM and leak the caption across pages).
+
 function UploadConfirmDialog({ client, staged }: { client: MatronJournalClient; staged: StagedUploads }): React.ReactElement {
-    const head = staged.items[0];
-    const isImage = head ? head.file.type.startsWith("image/") : false;
-    const preflight =
-        head === undefined
-            ? undefined
-            : head.file.size === 0
-              ? "That file is empty."
-              : head.file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES
-                ? "This file is too large for this browser to upload safely."
-                : undefined;
-    const canSend = head !== undefined && !preflight && !staged.confirming;
-    const [caption, setCaption] = useState("");
-    const textarea = useRef<HTMLTextAreaElement>(null);
-    const [previewUrl, setPreviewUrl] = useState<string>();
-
-    useEffect(() => {
-        textarea.current?.focus();
-        if (!head || !isImage) return undefined;
-        const url = URL.createObjectURL(head.file);
-        setPreviewUrl(url);
-        return () => {
-            URL.revokeObjectURL(url);
-            setPreviewUrl(undefined);
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [head?.id]);
-
     useEffect(() => {
         const onPaste = (event: ClipboardEvent): void => {
             const files = [...(event.clipboardData?.files ?? [])];
@@ -1009,11 +1039,6 @@ function UploadConfirmDialog({ client, staged }: { client: MatronJournalClient; 
         document.addEventListener("paste", onPaste);
         return () => document.removeEventListener("paste", onPaste);
     }, [client]);
-
-    const send = (): void => {
-        if (!canSend || !head) return;
-        void client.confirmStagedFile(head.id, caption);
-    };
 
     if (staged.error) {
         return (
@@ -1029,68 +1054,111 @@ function UploadConfirmDialog({ client, staged }: { client: MatronJournalClient; 
             </div>
         );
     }
+    const head = staged.items[0];
     if (!head) return <></>;
-
-    const position = staged.total - staged.items.length + 1;
     return (
         <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-label={head.file.name}>
-            <div className="mj_UploadConfirm" key={head.id}>
-                <h2 className="mj_UploadConfirm_title">
-                    {head.file.name}
-                    {staged.total > 1 && <span className="mj_UploadConfirm_count"> — File {position} of {staged.total}</span>}
-                </h2>
-                {isImage && previewUrl ? (
-                    <img className="mj_UploadConfirm_preview" src={previewUrl} alt={head.file.name} />
-                ) : (
-                    <div className="mj_UploadConfirm_fileMeta">
-                        <AttachmentIcon />
-                        <span>{head.file.name}</span>
-                        <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
-                    </div>
-                )}
-                {preflight && <p className="mj_UploadConfirm_error">{preflight}</p>}
-                {staged.persistError && (
-                    <p className="mj_UploadConfirm_error">Couldn&apos;t save this attachment — try Send again.</p>
-                )}
-                <textarea
-                    ref={textarea}
-                    className="mj_UploadConfirm_caption"
-                    placeholder="Add a caption…"
-                    maxLength={4096}
-                    value={caption}
-                    onChange={(event) => setCaption(event.target.value)}
-                    onKeyDown={(event) => {
-                        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                        if (event.key === "Enter" && !event.shiftKey) {
-                            event.preventDefault();
-                            send();
-                        } else if (event.key === "Escape" && !staged.confirming) {
-                            event.preventDefault();
-                            client.skipStagedFile(head.id);
-                        }
-                    }}
-                    aria-label="Caption"
-                />
-                <div className="mj_UploadConfirm_actions">
-                    {staged.total > 1 && (
-                        <button className="mj_TextButton" disabled={staged.confirming} onClick={() => client.cancelStagedFiles()}>
-                            Cancel all
-                        </button>
-                    )}
-                    <button disabled={staged.confirming} onClick={() => client.skipStagedFile(head.id)}>
-                        Cancel
-                    </button>
-                    <button className="mj_UploadConfirm_send" disabled={!canSend} onClick={send}>
-                        Send
-                    </button>
+            <UploadConfirmPage key={head.id} client={client} staged={staged} head={head} />
+        </div>
+    );
+}
+
+function UploadConfirmPage({
+    client,
+    staged,
+    head,
+}: {
+    client: MatronJournalClient;
+    staged: StagedUploads;
+    head: StagedUploadItem;
+}): React.ReactElement {
+    const isImage = head.file.type.startsWith("image/");
+    const preflight =
+        head.file.size === 0
+            ? "That file is empty."
+            : head.file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES
+              ? "This file is too large for this browser to upload safely."
+              : undefined;
+    const canSend = !preflight && !staged.confirming;
+    const [caption, setCaption] = useState("");
+    const textarea = useRef<HTMLTextAreaElement>(null);
+    const [previewUrl, setPreviewUrl] = useState<string>();
+    const position = staged.total - staged.items.length + 1;
+
+    useEffect(() => {
+        textarea.current?.focus();
+        if (!isImage) return undefined;
+        const url = URL.createObjectURL(head.file);
+        setPreviewUrl(url);
+        return () => {
+            URL.revokeObjectURL(url);
+        };
+        // Mounted once per page (keyed by head.id at the call site).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const send = (): void => {
+        if (!canSend) return;
+        void client.confirmStagedFile(head.id, caption);
+    };
+
+    return (
+        <div className="mj_UploadConfirm">
+            <h2 className="mj_UploadConfirm_title">
+                {head.file.name}
+                {staged.total > 1 && <span className="mj_UploadConfirm_count"> — File {position} of {staged.total}</span>}
+            </h2>
+            {isImage && previewUrl ? (
+                <img className="mj_UploadConfirm_preview" src={previewUrl} alt={head.file.name} />
+            ) : (
+                <div className="mj_UploadConfirm_fileMeta">
+                    <AttachmentIcon />
+                    <span>{head.file.name}</span>
+                    <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
                 </div>
+            )}
+            {preflight && <p className="mj_UploadConfirm_error">{preflight}</p>}
+            {staged.persistError && (
+                <p className="mj_UploadConfirm_error">Couldn&apos;t save this attachment — try Send again.</p>
+            )}
+            <textarea
+                ref={textarea}
+                className="mj_UploadConfirm_caption"
+                placeholder="Add a caption…"
+                maxLength={4096}
+                value={caption}
+                onChange={(event) => setCaption(event.target.value)}
+                onKeyDown={(event) => {
+                    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                    if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        send();
+                    } else if (event.key === "Escape" && !staged.confirming) {
+                        event.preventDefault();
+                        client.skipStagedFile(head.id);
+                    }
+                }}
+                aria-label="Caption"
+            />
+            <div className="mj_UploadConfirm_actions">
+                {staged.total > 1 && (
+                    <button className="mj_TextButton" disabled={staged.confirming} onClick={() => client.cancelStagedFiles()}>
+                        Cancel all
+                    </button>
+                )}
+                <button disabled={staged.confirming} onClick={() => client.skipStagedFile(head.id)}>
+                    Cancel
+                </button>
+                <button className="mj_UploadConfirm_send" disabled={!canSend} onClick={send}>
+                    Send
+                </button>
             </div>
         </div>
     );
 }
 ```
 
-Wiring: `SignedInApp` renders `{state.stagedUploads && <UploadConfirmDialog client={client} staged={state.stagedUploads} />}` as the LAST child of `mx_MatrixChat_wrapper` (full-viewport sibling above both panels). Imports: add `StagedUploads` to the types import, `BROWSER_MEMORY_SAFETY_MAX_BYTES` to the client import. The `key={head.id}` remount is what resets `caption` state and re-fires autofocus per page (P5/P31); the per-`head.id` effect handles object-URL revoke on advance/close/unmount.
+Wiring: `SignedInApp` renders `{state.stagedUploads && <UploadConfirmDialog client={client} staged={state.stagedUploads} />}` as the LAST child of `mx_MatrixChat_wrapper` (full-viewport sibling above both panels). Imports: add `StagedUploads`/`StagedUploadItem` to the types import, `BROWSER_MEMORY_SAFETY_MAX_BYTES` to the client import. The keyed `UploadConfirmPage` remount resets caption state and re-fires autofocus per page (P5/P31) and its effect cleanup revokes the object URL on advance/close/unmount.
 
 Styles in `journal.pcss` (echo `mj_DragOverlay`'s scrim tokens and the auth-panel look; exact values from the frontend-design pass at execute time):
 
@@ -1207,7 +1275,8 @@ onPaste={(event) => {
     if (state.stagedUploads) return; // modal's document listener owns pastes while open
     const files = [...event.clipboardData.files];
     if (files.length > 0) {
-        event.preventDefault();
+        event.preventDefault(); // deliberate addition (round-1 Mn1): keeps a pasted
+        // file's name/text out of the textarea now that the file goes to the modal
         client.stageFiles(files);
     }
 }}
@@ -1249,9 +1318,10 @@ git -C /opt/matron/web-journal -c user.name=easelyte -c user.email=fantin@easely
 
 ```ts
     it("renders the caption under file tiles and pending chips, and prefers errorMessage on error chips", async () => {
-        const client = signedInClient();
-        rendered = await renderClient(client);
-        await applyState(client, {
+        // ROUND-1 FIX (Claude M5): no applyState helper exists — pass events/
+        // pendingMessages into signedInClient(...) BEFORE rendering (the
+        // suite's established construction pattern, components-test.ts:38-55).
+        const client = signedInClient({
             events: [
                 {
                     seq: 1, convo_id: "c1", ts: 1, sender: "user:dan", type: "file",
@@ -1268,13 +1338,12 @@ git -C /opt/matron/web-journal -c user.name=easelyte -c user.email=fantin@easely
                 },
             ],
         });
+        rendered = await renderClient(client);
         expect(rendered.container.textContent).toContain("read this first");
         expect(rendered.container.textContent).toContain("look at this");
         expect(rendered.container.textContent).toContain("unarchive to retry");
     });
 ```
-
-(`applyState` = whatever state-injection helper the existing components tests use; mirror it.)
 
 - [ ] **Step 2: Run to verify failure** — FAIL (file tile drops caption; chip shows generic copy).
 
@@ -1332,34 +1401,36 @@ Branch setup (once, before T-4.1): `git -C /opt/matron/bridge-journal checkout -
 - Consumes: journal `file`/`image` frames with optional `payload.caption`.
 - Produces: media object gains `caption: string | null` (trimmed, clamped to 4096; `null` when absent/blank).
 
-- [ ] **Step 1: Write the failing tests** — in `test/journal-input-router.test.js`, locate the existing media-routing tests (grep `routeMediaToSession`) and add, mirroring their consumer-construction pattern:
+- [ ] **Step 1: Write the failing tests** — in `test/journal-input-router.test.js`. **ROUND-1 FIX (Claude M4): `createJournalInputConsumer(deps)` returns a BARE CALLABLE invoked as `consumer(frame)` — there is no `.onEvent()` method.** The file's real helpers are `makeDeps` / `fileFrame` / `baseFrame` (~line 698+). Add, mirroring the existing media-routing tests:
 
 ```js
   it('extracts, trims, and clamps payload.caption into the media object', () => {
-    const routeMediaToSession = vi.fn();
-    const consumer = makeConsumer({ routeMediaToSession }); // reuse the file's existing factory helper
-    consumer.onEvent(mediaFrame({ caption: '  look at this  ' }));
-    expect(routeMediaToSession).toHaveBeenCalledWith(
+    const deps = makeDeps();               // file's existing deps factory (includes routeMediaToSession mock)
+    const consumer = createJournalInputConsumer(deps);
+    const framed = (payload) => fileFrame({ payload: { ...fileFrame().payload, ...payload } });
+
+    consumer(framed({ caption: '  look at this  ' }));
+    expect(deps.routeMediaToSession).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ caption: 'look at this' }),
       expect.anything(),
     );
 
-    routeMediaToSession.mockClear();
-    consumer.onEvent(mediaFrame({ caption: 'x'.repeat(5000) }));
-    expect(routeMediaToSession.mock.calls[0][1].caption).toHaveLength(4096);
+    deps.routeMediaToSession.mockClear();
+    consumer(framed({ caption: 'x'.repeat(5000) }));
+    expect(deps.routeMediaToSession.mock.calls[0][1].caption).toHaveLength(4096);
 
-    routeMediaToSession.mockClear();
-    consumer.onEvent(mediaFrame({}));
-    expect(routeMediaToSession.mock.calls[0][1].caption).toBeNull();
+    deps.routeMediaToSession.mockClear();
+    consumer(framed({}));
+    expect(deps.routeMediaToSession.mock.calls[0][1].caption).toBeNull();
 
-    routeMediaToSession.mockClear();
-    consumer.onEvent(mediaFrame({ caption: '   ' }));
-    expect(routeMediaToSession.mock.calls[0][1].caption).toBeNull();
+    deps.routeMediaToSession.mockClear();
+    consumer(framed({ caption: '   ' }));
+    expect(deps.routeMediaToSession.mock.calls[0][1].caption).toBeNull();
   });
 ```
 
-(`makeConsumer` / `mediaFrame` stand for the file's actual helpers — reuse the existing media-frame fixture, adding `caption` into its `payload`.)
+(Adapt `makeDeps`/`fileFrame` call shapes to their exact local signatures — the invocation form `consumer(frame)` is the verified contract.)
 
 - [ ] **Step 2: Run to verify failure** — `(cd /opt/matron/bridge-journal && npm test -- journal-input-router)` → FAIL (`caption` undefined).
 
@@ -1525,7 +1596,7 @@ gh pr create --repo easelyte/claude-matrix-bridge --base journal-deploy --head f
 
 - [ ] **Step 1: Full web gate** — `(cd /opt/matron/web-journal && corepack pnpm test)` all green; run `corepack pnpm lint` if a lint script exists in `package.json` (check first; PR #1 era had none — skip silently if absent).
 - [ ] **Step 2: Ship via `/ship-slim --no-auto-merge`** (execute-slim's tail) — PR on `easelyte/matron-web` base `main`, head `feat/upload-caption-modal`. PR body must state: the wire contract (`payload.caption`, trim→omit), the bridge-first deploy order + link to the bridge PR, and that the operator live-tests via `webapp/` backup + `corepack pnpm build` before merging. **Do NOT merge; do NOT build/deploy `webapp/`** — both operator-gated.
-- [ ] **Step 3: File the P18 follow-up loop** (spec Risks commitment) — at ship time, `add_loop` in son-of-anton: title `matron-web-components-tsx-split`, type `cleanup`, noting `components.tsx` ~1.8k lines post-feature, split flagged by spec 2026-07-17.
+- [ ] **Step 3: File the P18 follow-up loop** (spec Risks commitment; round-1 M6 widened it) — at ship time, `add_loop` in son-of-anton: title `matron-web-journal-client-file-splits`, type `cleanup`, covering BOTH `components.tsx` (~1.8k lines post-feature) AND `client.ts` (~1.4k lines post-feature, +10 methods from this plan) — the two P18 overages this feature grows; split flagged by spec 2026-07-17.
 
 ---
 
@@ -1556,3 +1627,17 @@ Deliberate exceptions (right-sizing): focus-trap is the modal's autofocus + iner
 - No placeholders; every code step carries real code. Helper names referenced from existing tests (`fakeDatabase`, `signedInState`, `fileFixture`, `internals`, `renderClient`, `button`) exist in the current suites — implementers adapt call shapes to the exact local helpers rather than inventing new harnesses.
 - Type consistency: `confirmStagedFile(itemId, caption?)` / `skipStagedFile(itemId)` / `stageFiles(files)` / `cancelStagedFiles()` used identically in T-2.3, T-3.1, T-3.2 tests and implementations; `StagedUploads`/`StagedUploadItem` defined once (T-1.1).
 - Principles: P2 (one size-constant owner, one payload builder), P3 (in-modal errors, persisted evidence), P5/P31 (`key` on item id), P19 (check at confirm AND at act), P23 (`confirming` lock + `persistError`/`error` explicit states), P32 (head-id + lock idempotency), P35 (all code coordinates grep-confirmed 2026-07-17 against the live checkouts), P38 (spec/tests/delivery aligned), R702 (bridge suite gates deploy).
+
+---
+
+## Appendix: Verified Claims (research pass 2026-07-17)
+
+No externally verifiable load-bearing claims required web research. All load-bearing grounding is INTERNAL and was grep-confirmed against the live checkouts on 2026-07-17 during spec review rounds 1-5:
+
+✓ Journal server passes `payload` through opaquely on the `send` op — verified `/opt/matron/journal/src/ws.js` ~388-402.
+✓ `buildSavedMediaBlocks` returns `{ blocks, ivHandled }` and folds `ivCaption` only in the `session.iv` branch — verified `/opt/matron/bridge-journal/index.js` ~4365-4418.
+✓ Live bridge default is non-iv (`MATRON_INTERACTIVE_MODE=0` in `/opt/matron/bridge-journal/.env`).
+✓ `retryAttachment` branch coverage (`upload_failed`/`storage_failed` re-upload vs `blobRef`-required re-emit) — verified `client.ts` ~480-527; drives the `upload_failed` classification for archived-mid-queue items.
+✓ Bridge repo merges are true merge commits (`git log --graph`), so `git revert -m 1` topology holds; plan pins `gh pr merge --merge` regardless.
+
+? Platform idioms treated as standard (not researched): DOM `textarea.maxLength`, `isComposing || keyCode === 229` IME guard, `URL.createObjectURL`/`revokeObjectURL` lifecycle, React `key`-remount semantics. Reviewers: challenge if any is load-bearing in a way that isn't actually standard — note the existing components-test suite already exercises synthetic paste/drag events under this jest environment.

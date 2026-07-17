@@ -171,10 +171,16 @@ Entry points stop calling `attachFiles()` directly and instead stage:
      page** (the row and its `localId` are cached on the staged item — a
      persist retry re-persists the SAME row, never mints a second identity,
      so no stale `storage_failed`/`pendingFiles` state is stranded by a
-     retry), stash the `File` in `pendingFiles`, and **await the persist,
-     bounded** (a put that neither resolves nor rejects within ~5s is treated
-     as failure — the `confirming` lock must have a ceiling, or a wedged
-     IndexedDB permanently freezes every modal control). **Pop the head and
+     retry), stash the `File` in `pendingFiles`, and **await the persist to
+     settlement** — no artificial timeout. *Implementation revision
+     (plan-review round 1, supersedes the round-5 bounded-await
+     requirement — reviewer-oscillation override, documented):* an
+     uncancellable IndexedDB put racing a timeout would ghost-write an
+     orphan `uploading` row after the modal gave up (no upload thunk ever
+     scheduled — a stuck chip), which is a worse failure than the
+     hypothetical wedge the ceiling guarded. A truly hung put wedges only
+     the modal, and refresh is a lossless escape (unconfirmed staging is
+     in-memory). **Pop the head and
      advance (clearing `confirming`) ONLY when the persist succeeds**; on
      success also refresh the pending list (`refreshSelectedConversation`) so
      the item's chip exists in the timeline immediately — otherwise items
@@ -593,7 +599,8 @@ bridge runs non-iv mode, so this exercises the tail-append path).
         `journal-deploy` tip SHA (deterministic caption-aware evidence,
         checkable before the web deploy);
      2. `systemctl is-active matron-bridge-journal` is `active` and the log
-        shows the agent reconnected (head_seq resume).
+        shows the agent reconnected (head_seq resume) within ~60s of restart
+        — no reconnect line by then = failed deploy, go to rollback.
      The captioned end-to-end test necessarily runs AFTER the web deploy (the
      old web client cannot author captions); the SHA check is what licenses
      proceeding to the web deploy.
