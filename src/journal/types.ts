@@ -145,6 +145,8 @@ export interface ClientState {
     config: MatronConfig;
     session?: Session;
     conversations: Conversation[];
+    archivedIds: Set<string>;
+    archiveError?: string;
     selectedConversationId?: string;
     events: JournalEvent[];
     pendingMessages: PendingMessage[];
