@@ -2,10 +2,12 @@
 title: Upload confirmation modal with caption (file + caption as one message)
 date: 2026-07-17
 status: draft
+revision: 2
+review_rounds: 1
 author: claude (brainstorm-slim)
 target_repo: easelyte/matron-web (journal client), PR base main
 related_repos:
-  - easelyte/claude-matrix-bridge @ journal-deploy (consumer — folds caption into the media annotation Claude sees)
+  - easelyte/claude-matrix-bridge @ journal-deploy (consumer — folds caption into the media blocks Claude sees)
 approach: B — end-to-end caption (web modal + bridge consumer)
 rejected_alternatives:
   - "A (web-only): caption stored + rendered in the timeline but never reaches Claude — guts the primary use (caption = instruction about the file). Saves only a ~3-file bridge PR."
@@ -32,7 +34,7 @@ When the user picks, drags, or pastes a file, show a **confirmation modal** with
 a **preview** (image thumbnail, or icon + name + size for other files) and a
 **caption text field**. On Send, the file and the typed caption ship as **one
 journal event** (one timeline bubble), and the bridge delivers file + caption to
-Claude in **one turn**.
+Claude in **one turn** — in both bridge session modes (see Part 2).
 
 ### Non-goals (v1)
 
@@ -48,33 +50,45 @@ Claude in **one turn**.
 - **Upstream PR to Matronhq.** This ships to the easelyte fork's `main` (the
   deployed client). Upstreaming is a separate operator decision.
 - **Voice notes.** No web recording UI exists; bridge transcription path untouched.
+- **Resumable uploads across refresh.** A refresh that interrupts an in-flight
+  upload still loses the `File` bytes (PR #1 known limitation, unchanged — see
+  Edge cases).
 
-## Verified grounding (2026-07-17)
+## Verified grounding (2026-07-17, re-verified after review round 1)
 
 - **Wire format already half-exists.** The web renderer displays
   `payload.caption` on images (`components.tsx` `EventContent` case `"image"` →
   `AuthenticatedMedia caption=` → `<figcaption>`). The `file` tile does not
   render a caption yet (gap closed by this spec).
 - **Journal server needs zero change.** The `send` op passes `msg.payload`
-  through opaquely (`/opt/matron/journal/src/ws.js` ~line 392–402: validates
+  through opaquely (`/opt/matron/journal/src/ws.js` ~388–402: validates
   `payload` is an object and `blob_ref` present for media, stores payload as-is).
-- **Bridge has caption plumbing but the journal path drops it.**
+- **Bridge has caption plumbing in ONE of two branches.** In
   `/opt/matron/bridge-journal` (repo `easelyte/claude-matrix-bridge`, branch
-  `journal-deploy`): `lib/iv-uploads.js` `ivUploadAnnotation({caption})` folds
-  `${caption}\n\n${annotation}` into the text block Claude sees — but
-  `index.js` `journalMediaRouter.buildSavedBlocks` wiring hardcodes
-  `ivCaption: null`, and `lib/journal-input-router.js` extracts no caption from
-  the payload. Small additive consumer change required (Part 2).
+  `journal-deploy`), `buildSavedMediaBlocks` (`index.js` ~4365) returns
+  `{ blocks, ivHandled }` and folds `ivCaption` into the annotation **only in
+  the `session.iv` branch** (via `ivUploadAnnotation`, `lib/iv-uploads.js`).
+  The non-iv (SDK) image/file branches never reference caption; the Matrix-era
+  caller that tail-appended the caption for SDK mode was removed with the
+  Matrix code on `journal-deploy`. The **live deployment default is non-iv**
+  (`MATRON_INTERACTIVE_MODE=0` in `.env`), so the journal wiring must do the
+  SDK-mode tail-append itself (Part 2 §3) — passing `ivCaption` alone would be
+  inert in the deployed configuration.
+- **The web client has TWO attachment payload builders.**
+  `emitPendingAttachment` (`client.ts` ~575, normal send + retry) and
+  `sendPendingMessage` (`client.ts` ~1047, reconnect-replay from `handleReady`
+  for outbox rows with `blobRef` set) construct the same payload literal
+  independently. Both must carry the caption (Part 1 unifies them).
 - **PR #1 pipeline is the substrate.** `sendAttachment(file, convoId)` in
   `client.ts` owns validation (512MB browser cap / empty), the outbox
-  `PendingMessage`, upload (`api.uploadMedia`), and the WS `send` emit
-  (`emitPendingAttachment`). This spec threads one optional field through it.
+  `PendingMessage`, upload (`api.uploadMedia`), and the WS `send` emit. This
+  spec threads one optional field through it.
 
 ## Part 1 — matron-web (primary PR)
 
 ### Wire shape
 
-`emitPendingAttachment` payload gains one optional key:
+The attachment `send` payload gains one optional key:
 
 ```
 payload: {
@@ -84,9 +98,19 @@ payload: {
 ```
 
 No `caption` key when the field was left empty — a no-caption send is
-byte-identical to today's. Trim → omit is decided **once**, in the modal
-confirm handler (authoritative owner); downstream code never re-interprets
-whitespace.
+byte-identical to today's. Trim → omit is decided **once on the web side**, in
+the modal confirm handler (authoritative owner); web code downstream of the
+modal never re-interprets whitespace. (The bridge additionally re-trims and
+clamps at its own input boundary — boundary hygiene per P8, not distrust of
+this contract; see Part 2 §1.)
+
+**Single payload builder.** Extract a private
+`attachmentPayload(message: PendingMessage)` helper in `client.ts` returning the
+payload object above (caption included when `message.caption` is set), and use
+it from **both** emit sites: `emitPendingAttachment` and `sendPendingMessage`
+(reconnect-replay). This removes the existing duplicated payload literal
+(canonical-source) and guarantees the caption survives every path that re-sends
+an outbox row.
 
 ### Staging state (`types.ts`, `client.ts`)
 
@@ -98,17 +122,17 @@ Entry points stop calling `attachFiles()` directly and instead stage:
   nothing is lost or orphaned.
 - `client.stageFiles(files: File[]): void` — no-op when no conversation is
   selected (same guard as today's `attachFiles`). Captures
-  `selectedConversationId` at stage time; appends to an existing staging queue
-  if one is open **for the same conversation** (pasting more files while the
-  modal is up adds pages). If a stale staging exists for a *different*
-  conversation (possible only via a programmatic race — the modal blocks the
-  UI), it is replaced.
+  `selectedConversationId` at stage time. If a staging queue is already open,
+  **appends** to it (reachable only from the modal's own paste handler — the
+  modal is app-modal, see Modal UI, so no other entry point can fire while it
+  is open, and the selected conversation cannot change; there is no
+  different-convo replace branch).
 - `client.confirmStagedFile(caption?: string): Promise<void>` — pops the head
   file, calls `sendAttachment(file, stagedConvoId, caption)` (fire-and-forget
   like today's loop in `attachFiles`), advances the modal to the next file;
   clears `stagedUploads` when empty.
 - `client.skipStagedFile(): void` — pops the head file without sending
-  (modal Cancel), advances; clears when empty.
+  (modal Cancel / Escape), advances; clears when empty.
 - `client.cancelStagedFiles(): void` — clears the whole queue ("Cancel all").
 - `startSession()` clears `stagedUploads` (session teardown already clears the
   sibling attachment maps).
@@ -120,46 +144,70 @@ caption).
 ### `sendAttachment(file, convoId, caption?)` (`client.ts`)
 
 - `PendingMessage` (`types.ts`) gains `caption?: string`. It rides the outbox
-  row, so it **persists across refresh** and survives the existing
-  resume/retry/reconcile paths with zero extra handling (the outbox row is
-  re-serialized whole by `persistAttachment`).
+  row, so it persists across refresh and flows through retry / reconcile /
+  reconnect-replay with zero extra handling (the outbox row is re-serialized
+  whole by `persistAttachment`, and both emit sites use `attachmentPayload`).
 - `sendAttachment` stores `caption` (already-trimmed, or absent) on the
-  `PendingMessage`; `emitPendingAttachment` adds `caption` to the payload when
-  present. No other state-machine change — validation, upload, retry, dismiss,
-  reconcile all untouched.
+  `PendingMessage`. No other state-machine change — validation, upload, retry,
+  dismiss, reconcile all untouched.
 - `matchesOwnPendingMessage` (`database.ts`) matches by `local_id` — unchanged.
 
 ### Modal UI (`components.tsx`, `journal.pcss`) — new `UploadConfirmDialog`
 
-New component rendered by `SignedInApp` whenever `state.stagedUploads` is
-non-empty (above the room view, overlay + centered panel; new `mj_UploadConfirm*`
-classes — the app has no dialog primitive, style echoes the auth-modal look and
-`mj_DragOverlay` scrim).
+New component rendered by `SignedInApp` **at the top level of the signed-in
+tree, as a full-viewport overlay covering the conversation list AND the room
+view** whenever `state.stagedUploads` is non-empty. The app has no dialog
+primitive; new `mj_UploadConfirm*` classes, visual style echoing the auth-modal
+panel look with a full-screen scrim.
+
+**App-modal semantics (deliberate, resolves round-1 B2/M3):** while the modal
+is open, everything beneath it is inert — no conversation switching, no
+composer text send, no second staging entry point. This makes
+`aria-modal="true"` truthful, guarantees the staged `convoId` cannot go stale,
+and reduces `stagedUploads` to a single append-only queue. The cost (left panel
+blocked for the seconds a caption takes) is nil in the operator's workflow.
 
 - **Preview:** for `file.type.startsWith("image/")`, an `<img>` from
   `URL.createObjectURL(file)`, object-fit contain, max height ~50vh; object URL
   revoked on advance/close (effect cleanup). For other files: attachment icon +
   filename + `formatBytes(size)`.
+- **Per-file remount (P5/P31):** the modal body (preview + caption field) is
+  rendered with `key` = the current queue index (monotonic — pops advance it),
+  so advancing to the next file **remounts** the body: caption state resets and
+  autofocus re-fires by construction, not by manual effect. A test asserts
+  file 1's caption text does not leak into file 2's field.
 - **Caption field:** `<textarea>`, placeholder "Add a caption…", `maxLength`
-  4096, autofocused on mount and on page advance, cleared per file.
-- **Keyboard:** Enter confirms (send), Shift+Enter inserts a newline, Escape
-  skips the current file (same as Cancel). IME guard: ignore Enter when
-  `event.nativeEvent.isComposing || event.keyCode === 229` (right-sized; the
-  full Safari composition-flag replication from the Matrix-era spec is not
-  warranted in this small custom app — noted as a known limitation).
-- **Buttons:** primary **Send** (always enabled unless pre-flight error, see
-  below), **Cancel** (skip current file). When more than one file is staged:
-  header shows "File k of N" and a **Cancel all** action appears.
+  4096, autofocused on mount (per remount above).
+- **Keyboard:** Enter confirms **iff the same `canSend` condition that enables
+  the Send button holds** (pre-flight-invalid file ⇒ Enter does nothing);
+  Shift+Enter inserts a newline; Escape skips the current file (same as
+  Cancel). IME guard: ignore Enter when `event.nativeEvent.isComposing ||
+  event.keyCode === 229` (right-sized; the full Safari composition-flag
+  replication from the Matrix-era spec is not warranted in this small custom
+  app — noted as a known limitation).
+- **Buttons:** primary **Send** (disabled only by pre-flight error, see below),
+  **Cancel** (skip current file). When more than one file is staged: header
+  shows "File k of N" and a **Cancel all** action appears.
+- **Focus contract:** focus lives in the caption textarea (via remount) while
+  the modal is open; Tab cycles within the modal (focus trap). Focus returns to
+  the composer textarea **only when the modal closes** (last file
+  sent/skipped, or Cancel all) — never while a next page exists.
+- **Paste while open:** the modal registers the document-level paste target
+  while open; pasted files append to the staged queue as additional pages
+  (same conversation by construction).
 - **Pre-flight validation (deterministic client-side only):** `size === 0` or
-  `size > BROWSER_MEMORY_SAFETY_MAX_BYTES` (512MB) shows the existing error
-  copy inline in the modal and disables Send for that file (Cancel advances).
-  This *pre-empts* the same checks in `sendAttachment` — files that pass still
-  go through them (defense-in-depth). Server-side caps (journal 50MB media cap)
-  are **not** pre-checked client-side (server config is not client knowledge);
-  an over-cap upload fails into the existing `too_large` error chip.
-- **Focus/ARIA:** `role="dialog"`, `aria-modal="true"`, labelled by the
-  filename heading. Focus moves into the caption field on open; Escape path
-  returns focus to the composer textarea.
+  `size > BROWSER_MEMORY_SAFETY_MAX_BYTES` (512MB) shows the error copy inline
+  in the modal and disables Send (and Enter) for that file; Cancel advances.
+  **This replaces the timeline error chip for these two pre-flight-detectable
+  failures** — deliberate UX change (feedback moves earlier, before any outbox
+  row exists), resolving the round-1 P3 note explicitly: no outbox row and no
+  chip is created for a file the modal refused. `sendAttachment`'s own checks
+  remain as defense-in-depth for non-modal callers. Server-side caps (journal
+  50MB media cap) are **not** pre-checked client-side (server config is not
+  client knowledge); an over-cap upload fails into the existing `too_large`
+  error chip after confirm, exactly as today.
+- **ARIA:** `role="dialog"`, `aria-modal="true"` (truthful under app-modal
+  semantics), labelled by the filename heading.
 
 ### Entry-point rewires (`components.tsx`)
 
@@ -176,53 +224,86 @@ All three call `client.stageFiles([...])` instead of `client.attachFiles([...])`
 - `PendingAttachment` chip: show the caption under the filename while
   uploading/sending, so the optimistic row matches the final bubble.
 - `eventSnippet` (`types.ts`): `file`/`image` snippets prefer the caption —
-  `🖼 ${caption || filename}` — so the conversation list shows the meaningful
-  text. (`eventSnippet` feeds both the left panel and `database.ts` snippet
-  updates; one change covers both.)
+  e.g. `🖼 ${caption || filename}` — so the conversation list shows the
+  meaningful text. (`eventSnippet` feeds both the left panel and `database.ts`
+  snippet updates; one change covers both.)
 
 ## Part 2 — bridge consumer (small PR, `easelyte/claude-matrix-bridge` base `journal-deploy`)
 
 Checkout `/opt/matron/bridge-journal`, service `matron-bridge-journal.service`.
 
-1. **`lib/journal-input-router.js`:** extract
-   `caption: typeof payload?.caption === "string" && payload.caption.trim() ? payload.caption.trim() : null`
-   into the media object handed to `routeMediaToSession` (alongside
-   `type/blobRef/contentType/name/size/dims`).
+1. **`lib/journal-input-router.js`:** extract the caption at the input
+   boundary — trim, then clamp:
+   `caption: typeof payload?.caption === "string" && payload.caption.trim() ? payload.caption.trim().slice(0, 4096) : null`
+   — into the media object handed to `routeMediaToSession` (alongside
+   `type/blobRef/contentType/name/size/dims`). The clamp mirrors the web
+   textarea's `maxLength` so a non-web producer or modified client cannot push
+   an unbounded string into the model prompt (P8 Guard Boundary Inputs; the
+   web UI cap alone is not a wire boundary).
 2. **`lib/journal-media.js`:** `routeOne` destructures `caption` from `media`
    and passes it through to `buildSavedBlocks(session, { buffer, mime, isImage,
    name, dims, caption })`. Audio path ignores it (no web voice notes).
-3. **`index.js`:** the `createJournalMediaRouter` `buildSavedBlocks` wiring
-   passes `ivCaption: caption ?? null` instead of the hardcoded `null` (and
-   accepts `caption` in its destructured arg). `ivUploadAnnotation` then folds
-   `${caption}\n\n${annotation}` into the injected text block — the identical
-   contract the Matrix MSC2530 path uses, so Claude sees file + caption in one
-   turn whether the session is idle (immediate inject) or busy (queued blocks,
-   built eagerly — caption is inside the built blocks, so the queue path needs
+3. **`index.js`:** the `createJournalMediaRouter` `buildSavedBlocks` wiring is
+   where **both** session modes get covered — `buildSavedMediaBlocks` returns
+   `{ blocks, ivHandled }` and folds the caption only in its iv branch, so the
+   wiring re-creates the tail-append the removed Matrix caller used to do for
+   SDK mode:
+   ```js
+   buildSavedBlocks: (session, { buffer, mime, isImage, name, dims, caption }) => {
+     const safeName = safeMediaFilename(name);
+     const { blocks, ivHandled } = buildSavedMediaBlocks(session, {
+       buffer, mime, dims: dims || undefined, isImage,
+       ivFilename: safeName, ivCaption: caption ?? null, workdirName: safeName,
+     });
+     if (caption && !ivHandled) blocks.push({ type: "text", text: caption });
+     return blocks;
+   },
+   ```
+   - `session.iv` truthy (interactive PTY mode): `ivUploadAnnotation` folds
+     `${caption}\n\n${annotation}` — existing plumbing, now fed.
+   - `session.iv` falsy (**the live default** — `MATRON_INTERACTIVE_MODE=0`):
+     the explicit tail-append adds the caption as a text block after the saved
+     image/file blocks.
+   Claude therefore sees file + caption in one turn in **both** modes, whether
+   the session is idle (immediate inject) or busy (queued blocks are built
+   eagerly — the caption is inside the built blocks, so the queue path needs
    nothing extra).
 
-Additive and backwards-compatible in both directions: an old web client sends no
-`caption` (bridge sees `null`, behavior identical); an old bridge ignores the
-unknown payload key (caption still renders in the timeline — graceful
-degradation, no kill-switch needed).
+Backwards compatibility: an old web client sends no `caption` (bridge sees
+`null`, behavior identical). An old bridge ignores the unknown payload key —
+the caption still renders in the timeline but does NOT reach Claude, which is
+why deployment is **bridge-first** (see Delivery), not order-free.
 
 ## Edge cases
 
 - **Empty / whitespace caption** → no `caption` key → exactly today's send.
-- **Caption bounds:** textarea `maxLength` 4096. WS frame size is nowhere near
-  any limit (payload is small JSON; media bytes went via POST /media).
-- **Multi-file:** sequential modal pages, per-file caption; Cancel skips one,
-  Cancel-all clears the queue. Order preserved (head-of-queue send matches
-  today's sequential `attachFiles` ordering).
-- **Paste while modal open (same convo):** files append as additional pages.
-- **Convo switch while modal open:** staged `convoId` was captured at stage
-  time; sends still target the original conversation (matches `sendAttachment`'s
-  existing signature contract). The modal stays up until resolved.
-- **Offline / upload failure / oversize:** unchanged — after modal confirm, the
-  existing pending-chip state machine handles error/retry/dismiss; retry reuses
-  the outbox row, which now carries the caption.
+- **Caption bounds:** web textarea `maxLength` 4096; bridge re-clamps at its
+  boundary (Part 2 §1). WS frame size is nowhere near any limit (payload is
+  small JSON; media bytes went via POST /media).
+- **Multi-file:** sequential modal pages, per-file caption, per-file remount;
+  Cancel/Escape skips one, Cancel-all clears the queue. Order preserved
+  (head-of-queue send matches today's sequential `attachFiles` ordering).
+- **Paste while modal open:** files append as additional pages (same convo by
+  construction — the modal is app-modal).
+- **Convo switching while modal open:** impossible — the overlay covers the
+  conversation list; the staged `convoId` cannot go stale.
+- **Pre-flight-invalid file (empty / >512MB):** inline modal error, Send +
+  Enter disabled; **no outbox row, no timeline chip** (deliberate change from
+  today — feedback moves into the modal, before any state exists).
+- **Offline / upload failure / server oversize — after confirm:** unchanged —
+  the existing pending-chip state machine handles error/retry/dismiss; retry
+  re-emits via `emitPendingAttachment` → `attachmentPayload`, caption intact.
 - **Refresh mid-modal:** staging (in-memory `File`s) is discarded; nothing was
-  uploaded; user re-picks. Refresh *after* confirm: outbox row persists caption;
-  existing resume path re-uploads with caption intact.
+  uploaded; user re-picks.
+- **Refresh after confirm, upload still in flight:** the `File` bytes are gone
+  (in-memory only) — `startSession` converts the persisted `uploading` row to
+  an `upload_failed` error chip whose retry cannot proceed without the file
+  (PR #1 known limitation, **unchanged by this feature**). The caption is lost
+  with the file; the user re-picks and re-captions. This spec does NOT claim
+  resumable uploads.
+- **Refresh / reconnect after upload completed (`blobRef` set, awaiting ack):**
+  the reconnect-replay (`handleReady` → `sendPendingMessage`) re-sends the
+  outbox row **with** the caption via the shared `attachmentPayload` helper.
 - **Electron:** modal works, upload fails with the existing
   `electron_binary_unsupported` chip (unchanged from today).
 - **Agent-published media** (bridge → journal `image` events): rendering path is
@@ -236,23 +317,42 @@ degradation, no kill-switch needed).
    contains `caption`; without caption → no `caption` key (regression guard).
 2. `client-test.ts`: outbox row persists `caption`; retry after `send_failed`
    re-emits with the same caption.
-3. `client-test.ts`: `stageFiles`/`confirmStagedFile`/`skipStagedFile`/
-   `cancelStagedFiles` queue semantics incl. convoId capture and clear-on-empty.
-4. `components-test.ts`: staging files renders the modal; image file shows an
+3. `client-test.ts`: **reconnect-replay** — an outbox row with `blobRef` and
+   `caption` replayed via `handleReady`/`sendPendingMessage` includes `caption`
+   in the payload (guards the second emit site).
+4. `client-test.ts`: `stageFiles`/`confirmStagedFile`/`skipStagedFile`/
+   `cancelStagedFiles` queue semantics incl. convoId capture, append-while-open,
+   and clear-on-empty.
+5. `components-test.ts`: staging files renders the modal; image file shows an
    `img` preview; non-image shows name + size; typed caption + Send calls
    `confirmStagedFile("caption")`; Enter confirms; Shift+Enter does not; Escape
-   skips; multi-file shows "File 1 of 2" and pages; zero-byte file disables Send.
-5. `components-test.ts`: `file` tile renders `payload.caption`; pending chip
+   skips; multi-file shows "File 1 of 2" and pages.
+6. `components-test.ts`: **caption isolation** — type a caption on file 1,
+   advance, assert file 2's field is empty (per-file remount).
+7. `components-test.ts`: zero-byte file disables Send AND Enter does not
+   confirm it.
+8. `components-test.ts`: `file` tile renders `payload.caption`; pending chip
    shows caption; `eventSnippet` prefers caption.
+9. `components-test.ts`: modal overlay covers the app shell (conversation list
+   not interactive while open — assert overlay mount point / inertness).
 
-**bridge** (existing jest suite in the bridge repo): router test — media frame
-with `payload.caption` reaches `routeMediaToSession` with `caption`; blank/absent
-→ `null`. Media test — `routeOne` passes `caption` through to `buildSavedBlocks`.
+**bridge** (existing jest suite in the bridge repo):
+
+1. Router test — media frame with `payload.caption` reaches
+   `routeMediaToSession` with the trimmed, clamped caption; blank/absent →
+   `null`; >4096 chars → clamped to 4096.
+2. Media test — `routeOne` passes `caption` through to `buildSavedBlocks`.
+3. **Blocks-content test (both modes)** — with a caption, the final returned
+   blocks **contain the caption text**: iv-mode (annotation includes
+   `${caption}`) and non-iv mode (trailing `{type:"text", text: caption}`
+   block). Asserting on final block content, not argument forwarding, is the
+   point — argument-forwarding tests stay green while dropping the caption.
 
 **Manual acceptance (operator, live):** pick a screenshot → modal with preview →
 type "what's wrong with this layout?" → Send → one bubble (image + caption) in
 web timeline → Claude's next turn shows it received the image *and* the caption
-text together (after bridge deploy + `matron-bridge-journal` restart).
+text together (after bridge deploy + `matron-bridge-journal` restart; the live
+bridge runs non-iv mode, so this exercises the tail-append path).
 
 ## Delivery
 
@@ -265,16 +365,34 @@ text together (after bridge deploy + `matron-bridge-journal` restart).
    live-test** (operator backs up `webapp/` and runs `corepack pnpm build` to
    try it; merge is operator-gated).
 4. Bridge PR: `easelyte/claude-matrix-bridge` base `journal-deploy` — held the
-   same way; deploy = merge + `systemctl restart matron-bridge-journal.service`
-   (does not affect the live Matrix bridge this session runs on).
+   same way.
+5. **Deploy order (not order-free): bridge first.** Deploying web-first would
+   render captions in the timeline while silently dropping them before Claude —
+   a misleading success state (P3). Order: merge bridge PR → deploy bridge →
+   merge web PR → deploy web. In practice the operator merges both in one
+   sitting; the constraint is only "web must not go live while the old bridge
+   runs."
+6. **Bridge deploy + health gate + rollback:**
+   - Deploy: `git -C /opt/matron/bridge-journal pull` (fast-forward to merged
+     `journal-deploy`) → `systemctl restart matron-bridge-journal.service`.
+   - Health gate: `systemctl is-active matron-bridge-journal` is `active`, and
+     the journal log shows the agent reconnected (bridge logs its agent
+     connection / head_seq resume on startup). Then send a captioned test image.
+   - Rollback: `git -C /opt/matron/bridge-journal checkout <previous-sha> &&
+     systemctl restart matron-bridge-journal.service` (record `<previous-sha>`
+     = `git rev-parse HEAD` before pulling). Web rollback: restore the
+     `webapp.bak.<timestamp>` directory taken before the build.
 
 ## Risks
 
 - **IME Enter-guard is the simplified form** (`isComposing || 229`), not
   Element's stateful Safari composition flag. Acceptable for this client's user
   base; revisit only if Safari IME captions misfire.
-- **`components.tsx` is 1.5k lines and growing.** The modal adds ~150 lines. A
-  file split is deliberately out of scope (PR noise); flagged for a future
-  refactor loop if the next features keep landing here.
-- **Two-repo coordination:** web PR is independently shippable (caption renders,
-  degrades gracefully); bridge PR unlocks the Claude-delivery half. Order-free.
+- **`components.tsx` is 1.5k lines and growing.** The modal adds ~150-200
+  lines. A file split is deliberately out of scope (PR noise); flagged for a
+  future refactor loop if the next features keep landing here.
+- **Two-repo coordination:** web PR is buildable/testable independently, but
+  deployment is ordered (bridge first — Delivery §5). The web PR alone is NOT
+  the full feature; treating it as independently shippable was rejected in
+  review round 1 (it reproduces rejected Approach A with a misleading success
+  state).
