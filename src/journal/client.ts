@@ -199,6 +199,7 @@ export class MatronJournalClient {
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
+    private stagedSendChain: Promise<void> = Promise.resolve();
     private transientAttachmentErrors = new Map<string, PendingMessage>();
     private readonly dismissedAttachments = new Set<string>();
     private readonly attachmentOperations = new Map<string, Promise<void>>();
@@ -643,6 +644,47 @@ export class MatronJournalClient {
         }
     }
 
+    public stageFiles(files: File[]): void {
+        if (files.length === 0) return;
+        const staged = this.state.stagedUploads;
+        if (staged) {
+            if (staged.error) return;
+            this.patch({
+                stagedUploads: {
+                    ...staged,
+                    items: [...staged.items, ...files.map((file) => ({ id: crypto.randomUUID(), file }))],
+                    total: staged.total + files.length,
+                },
+            });
+            return;
+        }
+        const convoId = this.state.selectedConversationId;
+        if (!convoId) return;
+        this.patch({
+            stagedUploads: {
+                convoId,
+                items: files.map((file) => ({ id: crypto.randomUUID(), file })),
+                total: files.length,
+                confirming: false,
+            },
+        });
+    }
+
+    public cancelStagedFiles(): void {
+        const staged = this.state.stagedUploads;
+        if (!staged) return;
+        // The confirming lock guards all mutations at the client boundary.
+        if (staged.confirming) return;
+        this.patch({ stagedUploads: undefined });
+    }
+
+    private stagedConvoValid(convoId: string): boolean {
+        return (
+            this.state.conversations.some((conversation) => conversation.id === convoId) &&
+            !this.state.archivedIds.has(convoId)
+        );
+    }
+
     public async dismissAttachment(localId: string): Promise<void> {
         this.dismissedAttachments.add(localId);
         this.inFlightUploads.get(localId)?.abort();
@@ -695,6 +737,7 @@ export class MatronJournalClient {
         this.inFlightUploads.clear();
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
+        this.stagedSendChain = Promise.resolve();
         this.transientAttachmentErrors.clear();
         this.connection?.stop();
         this.database?.close();

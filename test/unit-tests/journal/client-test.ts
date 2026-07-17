@@ -1668,3 +1668,42 @@ describe("MatronJournalClient attachment send state machine", () => {
         expect(state.pendingFiles.size).toBe(0);
     });
 });
+
+describe("staged uploads queue", () => {
+    const stagedFile = (name: string): File => fileFixture(name, "image/png", [1]);
+
+    it("opens a queue for the selected conversation and appends while open (ignoring live selection)", () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client); // selectedConversationId: "c1"
+
+        client.stageFiles([stagedFile("a.png"), stagedFile("b.png")]);
+        let staged = client.getSnapshot().stagedUploads;
+        expect(staged?.convoId).toBe("c1");
+        expect(staged?.items).toHaveLength(2);
+        expect(staged?.total).toBe(2);
+        expect(staged?.confirming).toBe(false);
+        expect(new Set(staged?.items.map((item) => item.id)).size).toBe(2);
+
+        // cross-tab clearSelection must not break paste-append
+        state.state = { ...state.state, selectedConversationId: undefined, stagedUploads: staged };
+        client.stageFiles([stagedFile("c.png")]);
+        staged = client.getSnapshot().stagedUploads;
+        expect(staged?.items).toHaveLength(3);
+        expect(staged?.total).toBe(3);
+        expect(staged?.convoId).toBe("c1");
+    });
+
+    it("no-ops when opening with no conversation selected, and cancel-all clears the queue", () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = { ...signedInState(client), selectedConversationId: undefined };
+        client.stageFiles([stagedFile("a.png")]);
+        expect(client.getSnapshot().stagedUploads).toBeUndefined();
+
+        state.state = signedInState(client);
+        client.stageFiles([stagedFile("a.png")]);
+        client.cancelStagedFiles();
+        expect(client.getSnapshot().stagedUploads).toBeUndefined();
+    });
+});
