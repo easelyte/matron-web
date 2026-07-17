@@ -413,69 +413,80 @@ export class MatronJournalClient {
         return true;
     }
 
+    private buildPendingAttachment(file: File, convoId: string, caption?: string): PendingMessage {
+        return {
+            localId: crypto.randomUUID(),
+            convoId,
+            body: "",
+            createdAt: Date.now(),
+            kind: file.type.startsWith("image/") ? "image" : "file",
+            filename: file.name,
+            size: file.size,
+            contentType: file.type || "application/octet-stream",
+            blobRef: null,
+            attachState: "uploading",
+            ...(caption ? { caption } : {}),
+        };
+    }
+
+    private async persistPendingAttachment(
+        message: PendingMessage,
+        file: File,
+        db: JournalDatabase,
+        gen: number,
+    ): Promise<boolean> {
+        if (file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES || file.size === 0) {
+            message.attachState = "error";
+            message.errorKind = file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES ? "browser_memory_limit" : "empty";
+            if (!(await this.persistAttachment(message, db, gen))) return false;
+            if (this.sessionGen !== gen) return false;
+            await this.refreshSelectedConversation(message.convoId, db, gen).catch(() => undefined);
+            return false;
+        }
+        this.pendingFiles.set(message.localId, file);
+        if (!(await this.persistAttachment(message, db, gen))) return false;
+        if (this.sessionGen !== gen || this.database !== db) return false;
+        return message.attachState === "uploading";
+    }
+
+    private async runPendingUpload(message: PendingMessage, file: File, owner: AttachmentOwner): Promise<void> {
+        if (!this.ownsAttachment(owner, message.localId)) return;
+        try {
+            await this.uploadPendingAttachment(message, file, owner);
+        } catch {
+            if (
+                !this.ownsAttachment(owner, message.localId) ||
+                message.attachState !== "uploading" ||
+                this.inFlightUploads.has(message.localId)
+            ) {
+                return;
+            }
+            message.attachState = "error";
+            message.errorKind = "upload_failed";
+            if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+            try {
+                await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+            } catch {
+                if (this.ownsAttachment(owner, message.localId) && this.state.selectedConversationId === message.convoId) {
+                    const pendingMessages = this.state.pendingMessages.filter(
+                        (pending) => pending.localId !== message.localId,
+                    );
+                    this.patch({ pendingMessages: [...pendingMessages, { ...message, canRetry: true }] });
+                }
+            }
+        }
+    }
+
     public async sendAttachment(file: File, convoId: string, caption?: string): Promise<void> {
         const gen = this.sessionGen;
         const api = this.api;
         const db = this.database;
         if (!api || !db) return;
         const owner = { gen, api, db };
-
-        const localId = crypto.randomUUID();
-        const kind = file.type.startsWith("image/") ? "image" : "file";
-        const contentType = file.type || "application/octet-stream";
-        const message: PendingMessage = {
-            localId,
-            convoId,
-            body: "",
-            createdAt: Date.now(),
-            kind,
-            filename: file.name,
-            size: file.size,
-            contentType,
-            blobRef: null,
-            attachState: "uploading",
-            ...(caption ? { caption } : {}),
-        };
-
-        if (file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES || file.size === 0) {
-            message.attachState = "error";
-            message.errorKind = file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES ? "browser_memory_limit" : "empty";
-            if (!(await this.persistAttachment(message, db, gen))) return;
-            if (this.sessionGen !== gen) return;
-            await this.refreshSelectedConversation(convoId, db, gen);
-            if (this.sessionGen !== gen) return;
-            return;
-        }
-
-        this.pendingFiles.set(localId, file);
-        let persisted = false;
-        try {
-            persisted = await this.persistAttachment(message, db, gen);
-            if (!persisted || !this.ownsAttachment(owner, localId)) return;
-
-            const optimisticRefresh = this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-            await Promise.all([optimisticRefresh, this.uploadPendingAttachment(message, file, owner)]);
-        } catch {
-            if (
-                !persisted ||
-                !this.ownsAttachment(owner, localId) ||
-                message.attachState !== "uploading" ||
-                this.inFlightUploads.has(localId)
-            ) {
-                return;
-            }
-            message.attachState = "error";
-            message.errorKind = "upload_failed";
-            if (!(await this.persistAttachment(message, db, gen))) return;
-            try {
-                await this.refreshSelectedConversation(convoId, db, gen);
-            } catch {
-                if (this.ownsAttachment(owner, localId) && this.state.selectedConversationId === convoId) {
-                    const pendingMessages = this.state.pendingMessages.filter((pending) => pending.localId !== localId);
-                    this.patch({ pendingMessages: [...pendingMessages, { ...message, canRetry: true }] });
-                }
-            }
-        }
+        const message = this.buildPendingAttachment(file, convoId, caption);
+        if (!(await this.persistPendingAttachment(message, file, db, gen))) return;
+        const optimisticRefresh = this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+        await Promise.all([optimisticRefresh, this.runPendingUpload(message, file, owner)]);
     }
 
     public async retryAttachment(localId: string): Promise<void> {

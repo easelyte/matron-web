@@ -806,6 +806,35 @@ describe("MatronJournalClient attachment send state machine", () => {
         );
     });
 
+    it("persists and shows a pending chip before the upload phase runs", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        let releaseUpload: (() => void) | undefined;
+        const uploadMedia = jest.fn().mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    releaseUpload = () => resolve({ media_id: "media-1" });
+                }),
+        );
+        state.state = signedInState(client);
+        const { database } = attachmentDatabase();
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        const inFlight = client.sendAttachment(
+            fileFixture("slow.bin", "application/octet-stream", [1]),
+            "c1",
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(client.getSnapshot().pendingMessages).toEqual([
+            expect.objectContaining({ filename: "slow.bin", attachState: "uploading" }),
+        ]);
+        releaseUpload?.();
+        await inFlight;
+    });
+
     it("moves uploading to sending and removes the pending row on its own echo", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
