@@ -32,7 +32,7 @@ const HISTORY_PAGE_SIZE = 80;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 // This is only a browser memory-safety ceiling. The server's 413 response is
 // authoritative for deployment-specific upload policy.
-const BROWSER_MEMORY_SAFETY_MAX_BYTES = 512 * 1024 * 1024;
+export const BROWSER_MEMORY_SAFETY_MAX_BYTES = 512 * 1024 * 1024;
 const UPLOAD_TIMEOUT_MS = 60_000;
 
 interface ConversationHistoryState {
@@ -413,7 +413,7 @@ export class MatronJournalClient {
         return true;
     }
 
-    public async sendAttachment(file: File, convoId: string): Promise<void> {
+    public async sendAttachment(file: File, convoId: string, caption?: string): Promise<void> {
         const gen = this.sessionGen;
         const api = this.api;
         const db = this.database;
@@ -434,6 +434,7 @@ export class MatronJournalClient {
             contentType,
             blobRef: null,
             attachState: "uploading",
+            ...(caption ? { caption } : {}),
         };
 
         if (file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES || file.size === 0) {
@@ -572,6 +573,18 @@ export class MatronJournalClient {
         await this.emitPendingAttachment(message, owner);
     }
 
+    private attachmentPayload(message: PendingMessage): Record<string, unknown> {
+        return {
+            blob_ref: message.blobRef,
+            name: message.filename,
+            filename: message.filename,
+            content_type: message.contentType,
+            size: message.size,
+            local_id: message.localId,
+            ...(message.caption ? { caption: message.caption } : {}),
+        };
+    }
+
     private async emitPendingAttachment(message: PendingMessage, owner: AttachmentOwner): Promise<void> {
         if (!message.blobRef || (message.kind !== "image" && message.kind !== "file")) return;
         if (!this.ownsAttachment(owner, message.localId)) return;
@@ -590,14 +603,7 @@ export class MatronJournalClient {
             convo_id: message.convoId,
             type: message.kind,
             blob_ref: message.blobRef,
-            payload: {
-                blob_ref: message.blobRef,
-                name: message.filename,
-                filename: message.filename,
-                content_type: message.contentType,
-                size: message.size,
-                local_id: message.localId,
-            },
+            payload: this.attachmentPayload(message),
             local_id: message.localId,
         });
         if (ok === true) return;
@@ -1052,14 +1058,7 @@ export class MatronJournalClient {
                 convo_id: message.convoId,
                 type: message.kind,
                 blob_ref: message.blobRef,
-                payload: {
-                    blob_ref: message.blobRef,
-                    name: message.filename,
-                    filename: message.filename,
-                    content_type: message.contentType,
-                    size: message.size,
-                    local_id: message.localId,
-                },
+                payload: this.attachmentPayload(message),
                 local_id: message.localId,
             });
             return;

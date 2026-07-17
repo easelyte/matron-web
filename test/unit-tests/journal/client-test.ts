@@ -750,6 +750,62 @@ describe("MatronJournalClient attachment send state machine", () => {
         delete (globalThis as { fetch?: typeof fetch }).fetch;
     });
 
+    it("includes the caption in the WS payload and omits the key when absent", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const send = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client);
+        state.database = fakeDatabase({});
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            uploadMedia: jest.fn().mockResolvedValue({ media_id: "media-1" }),
+        };
+        state.connection = { send };
+
+        await client.sendAttachment(fileFixture("shot.png", "image/png", [1, 2]), "c1", "look at this");
+        await client.sendAttachment(fileFixture("plain.png", "image/png", [3]), "c1");
+
+        const framesWithCaption = send.mock.calls.filter(([frame]) => frame.op === "send" && frame.payload?.caption);
+        expect(framesWithCaption).toHaveLength(1);
+        expect(framesWithCaption[0][0].payload).toEqual(
+            expect.objectContaining({ caption: "look at this", filename: "shot.png" }),
+        );
+        const bare = send.mock.calls.find(([frame]) => frame.payload?.filename === "plain.png");
+        expect(bare?.[0].payload).not.toHaveProperty("caption");
+    });
+
+    it("re-sends the caption on reconnect replay (sendPendingMessage path)", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const send = jest.fn().mockReturnValue(true);
+        const row: PendingMessage = {
+            localId: "L1",
+            convoId: "c1",
+            body: "",
+            createdAt: 1,
+            kind: "image",
+            filename: "shot.png",
+            size: 2,
+            contentType: "image/png",
+            blobRef: "media-1",
+            attachState: "sending",
+            caption: "look at this",
+        };
+        state.state = signedInState(client);
+        state.database = fakeDatabase({ outbox: jest.fn().mockResolvedValue([row]) });
+        state.connection = { send };
+
+        await (client as unknown as { handleReady: () => Promise<void> }).handleReady();
+
+        expect(send).toHaveBeenCalledWith(
+            expect.objectContaining({
+                op: "send",
+                type: "image",
+                payload: expect.objectContaining({ caption: "look at this", local_id: "L1" }),
+            }),
+        );
+    });
+
     it("moves uploading to sending and removes the pending row on its own echo", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
