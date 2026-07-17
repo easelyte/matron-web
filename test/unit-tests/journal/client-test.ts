@@ -462,6 +462,39 @@ describe("MatronJournalClient state handling", () => {
         expect(client.getSnapshot().pendingMessages).toEqual([retained]);
     });
 
+    it("does not let an older refresh overwrite a newer pending-message snapshot", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        let resolveOlderEvents!: (events: []) => void;
+        const older = { localId: "attachment-a", convoId: "c1", body: "", createdAt: 1 };
+        const newer = { localId: "attachment-b", convoId: "c1", body: "", createdAt: 2 };
+        const database = fakeDatabase({
+            events: jest
+                .fn()
+                .mockReturnValueOnce(new Promise<[]>((resolve) => (resolveOlderEvents = resolve)))
+                .mockResolvedValueOnce([]),
+            outbox: jest.fn().mockResolvedValueOnce([older]).mockResolvedValueOnce([older, newer]),
+        });
+        state.state = signedInState(client);
+        state.database = database;
+
+        const olderRefresh = state.refreshSelectedConversation("c1", database, state.sessionGen);
+        const newerRefresh = state.refreshSelectedConversation("c1", database, state.sessionGen);
+        await newerRefresh;
+        expect(client.getSnapshot().pendingMessages.map((message) => message.localId)).toEqual([
+            older.localId,
+            newer.localId,
+        ]);
+
+        resolveOlderEvents([]);
+        await olderRefresh;
+
+        expect(client.getSnapshot().pendingMessages.map((message) => message.localId)).toEqual([
+            older.localId,
+            newer.localId,
+        ]);
+    });
+
     it("surfaces an attachment storage failure per item and retains retry bytes", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
@@ -920,6 +953,7 @@ describe("MatronJournalClient attachment send state machine", () => {
         expect(staged).toBeUndefined();
         const ids = addToOutbox.mock.calls.map(([row]) => row.localId);
         expect(new Set(ids).size).toBe(1);
+        expect(state.api!.uploadMedia).toHaveBeenCalledTimes(1);
     });
 
     it.each([
@@ -1044,32 +1078,47 @@ describe("MatronJournalClient attachment send state machine", () => {
     it("marks a queued item upload_failed (retryable, with errorMessage) when the convo archives before its turn", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
-        const addToOutbox = jest.fn().mockResolvedValue(undefined);
+        const { database, rows } = attachmentDatabase();
         let releaseA: (() => void) | undefined;
-        const uploadMedia = jest.fn().mockImplementationOnce(
-            () =>
-                new Promise((resolve) => {
-                    releaseA = () => resolve({ media_id: "m-a" });
-                }),
-        );
+        const uploadMedia = jest
+            .fn()
+            .mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        releaseA = () => resolve({ media_id: "m-a" });
+                    }),
+            )
+            .mockResolvedValueOnce({ media_id: "m-b" });
+        const send = jest.fn().mockReturnValue(true);
         state.state = signedInState(client);
-        state.database = fakeDatabase({ addToOutbox });
+        state.database = database;
         state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
-        state.connection = { send: jest.fn().mockReturnValue(true) };
+        state.connection = { send };
 
         client.stageFiles([fileFixture("a.png", "image/png", [1]), fileFixture("b.png", "image/png", [2])]);
         await client.confirmStagedFile(client.getSnapshot().stagedUploads!.items[0].id);
         await client.confirmStagedFile(client.getSnapshot().stagedUploads!.items[0].id, "b caption");
-        state.state = { ...state.state, archivedIds: new Set(["c1"]) };
+        client.archiveConversation("c1");
         releaseA?.();
         await PERSIST_TICK();
         await PERSIST_TICK();
 
         expect(uploadMedia).toHaveBeenCalledTimes(1);
-        const bFailure = addToOutbox.mock.calls
-            .map(([row]) => row)
-            .find((row) => row.errorKind === "upload_failed" && row.errorMessage);
+        const bFailure = [...rows.values()].find((row) => row.errorKind === "upload_failed" && row.errorMessage);
         expect(bFailure).toEqual(expect.objectContaining({ caption: "b caption", attachState: "error" }));
+
+        client.unarchiveConversation("c1");
+        await client.retryAttachment(bFailure!.localId);
+
+        expect(uploadMedia).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenCalledWith(
+            expect.objectContaining({
+                op: "send",
+                local_id: bFailure!.localId,
+                blob_ref: "m-b",
+                payload: expect.objectContaining({ caption: "b caption" }),
+            }),
+        );
     });
 
     it("aborts a queued thunk when the session changes before it executes", async () => {
