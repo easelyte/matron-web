@@ -1510,8 +1510,15 @@ function UploadConfirmDialog({
                 client.stageFiles(files);
             }
         };
+        const preventDropNavigation = (event: DragEvent): void => event.preventDefault();
         document.addEventListener("paste", onPaste);
-        return () => document.removeEventListener("paste", onPaste);
+        document.addEventListener("dragover", preventDropNavigation);
+        document.addEventListener("drop", preventDropNavigation);
+        return () => {
+            document.removeEventListener("paste", onPaste);
+            document.removeEventListener("dragover", preventDropNavigation);
+            document.removeEventListener("drop", preventDropNavigation);
+        };
     }, [client]);
 
     if (staged.error) {
@@ -1564,7 +1571,7 @@ function UploadConfirmPage({
 
     useEffect(() => {
         textarea.current?.focus();
-        if (!isImage) return undefined;
+        if (!isImage || preflight) return undefined;
         const url = URL.createObjectURL(head.file);
         setPreviewUrl(url);
         return () => {
@@ -1647,12 +1654,21 @@ function UploadConfirmPage({
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const leftPanel = useLeftPanelResize();
     const [dragActive, setDragActive] = useState(state.dragActive);
+    const appContent = useRef<HTMLDivElement>(null);
+    const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
+
+    useEffect(() => {
+        if (uploadDialogWasOpen.current && !state.stagedUploads) {
+            appContent.current?.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")?.focus();
+        }
+        uploadDialogWasOpen.current = Boolean(state.stagedUploads);
+    }, [state.stagedUploads]);
 
     const isFileDrag = (event: React.DragEvent): boolean => Array.from(event.dataTransfer.types).includes("Files");
 
     return (
         <div className="mx_MatrixChat_wrapper">
-            <div className="mx_MatrixChat">
+            <div ref={appContent} className="mx_MatrixChat" inert={state.stagedUploads ? true : undefined}>
                 <ConversationList client={client} state={state} width={leftPanel.width} />
                 <div
                     className="mx_ResizeHandle mx_ResizeHandle--horizontal"

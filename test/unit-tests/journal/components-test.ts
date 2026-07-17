@@ -220,9 +220,13 @@ describe("attachment composer", () => {
         await act(async () => client.stageFiles([new File(["a"], "a.txt", { type: "text/plain" })]));
         const stageFiles = jest.spyOn(client, "stageFiles");
 
-        const room = rendered.container.querySelector<HTMLElement>(".mx_RoomView")!;
+        const scrim = rendered.container.querySelector<HTMLElement>(".mj_UploadConfirm_scrim")!;
+        const dragOver = fileDragEvent("dragover", new File(["d"], "d.txt", { type: "text/plain" }));
+        await act(async () => scrim.dispatchEvent(dragOver));
+        expect(dragOver.defaultPrevented).toBe(true);
+
         const drop = fileDragEvent("drop", new File(["d"], "d.txt", { type: "text/plain" }));
-        await act(async () => room.dispatchEvent(drop));
+        await act(async () => scrim.dispatchEvent(drop));
         expect(drop.defaultPrevented).toBe(true);
         expect(stageFiles).not.toHaveBeenCalled();
     });
@@ -506,6 +510,30 @@ describe("UploadConfirmDialog", () => {
         expect(confirm).toHaveBeenCalledWith(headId, "look here");
     });
 
+    it("makes background keyboard controls inert and restores composer focus when the dialog closes", async () => {
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        const composer = rendered.container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")!;
+        composer.focus();
+
+        await stage(client, [new File(["a"], "a.txt", { type: "text/plain" })]);
+
+        const appContent = rendered.container.querySelector<HTMLElement>(".mx_MatrixChat")!;
+        const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
+        expect(appContent.hasAttribute("inert")).toBe(true);
+        expect(
+            rendered.container.querySelectorAll(".mx_MatrixChat button, .mx_MatrixChat textarea").length,
+        ).toBeGreaterThan(0);
+        for (const control of rendered.container.querySelectorAll(".mx_MatrixChat button, .mx_MatrixChat textarea")) {
+            expect(control.closest("[inert]")).toBe(appContent);
+        }
+        expect(document.activeElement).toBe(dialog.querySelector<HTMLTextAreaElement>("textarea"));
+
+        await act(async () => button(dialog, "Cancel").click());
+        expect(appContent.hasAttribute("inert")).toBe(false);
+        expect(document.activeElement).toBe(composer);
+    });
+
     it("shows name+size (no img) for non-images, pages 'File k of N', and isolates captions per page", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
@@ -576,6 +604,21 @@ describe("UploadConfirmDialog", () => {
             expect(confirm).not.toHaveBeenCalled();
             await act(async () => client.skipStagedFile(client.getSnapshot().stagedUploads!.items[0].id));
         }
+    });
+
+    it("does not create or render a preview for an over-cap image", async () => {
+        const createObjectURL = jest.spyOn(URL, "createObjectURL");
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        const bigImage = new File(["image"], "big.png", { type: "image/png" });
+        Object.defineProperty(bigImage, "size", { value: BROWSER_MEMORY_SAFETY_MAX_BYTES + 1 });
+
+        await stage(client, [bigImage]);
+
+        const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
+        expect(createObjectURL).not.toHaveBeenCalled();
+        expect(dialog.querySelector("img")).toBeNull();
+        expect(dialog.textContent).toContain("too large");
     });
 
     it("shows the archived error state with Close, and pasted files append as pages", async () => {
