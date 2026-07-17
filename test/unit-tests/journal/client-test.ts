@@ -495,6 +495,31 @@ describe("MatronJournalClient state handling", () => {
         ]);
     });
 
+    it("applies an older successful refresh when a newer refresh fails", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        let resolveOlderEvents!: (events: []) => void;
+        const persisted = { localId: "attachment-a", convoId: "c1", body: "", createdAt: 1 };
+        const database = fakeDatabase({
+            events: jest
+                .fn()
+                .mockReturnValueOnce(new Promise<[]>((resolve) => (resolveOlderEvents = resolve)))
+                .mockRejectedValueOnce(new Error("read failed")),
+            outbox: jest.fn().mockResolvedValueOnce([persisted]).mockResolvedValueOnce([]),
+        });
+        state.state = signedInState(client);
+        state.database = database;
+
+        const olderRefresh = state.refreshSelectedConversation("c1", database, state.sessionGen);
+        const newerRefresh = state.refreshSelectedConversation("c1", database, state.sessionGen);
+        await expect(newerRefresh).rejects.toThrow("read failed");
+
+        resolveOlderEvents([]);
+        await olderRefresh;
+
+        expect(client.getSnapshot().pendingMessages).toEqual([expect.objectContaining({ localId: persisted.localId })]);
+    });
+
     it("surfaces an attachment storage failure per item and retains retry bytes", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);

@@ -210,7 +210,8 @@ export class MatronJournalClient {
     private readonly attachmentOperations = new Map<string, Promise<void>>();
     private readonly retryingAttachments = new Set<string>();
     private inFlightUploads = new Map<string, AbortController>();
-    private readonly refreshEpochs = new Map<string, number>();
+    private readonly issuedRefreshEpochs = new Map<string, number>();
+    private readonly appliedRefreshEpochs = new Map<string, number>();
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
@@ -1133,16 +1134,17 @@ export class MatronJournalClient {
         gen = this.sessionGen,
     ): Promise<void> {
         if (!db) return;
-        const refreshEpoch = (this.refreshEpochs.get(expectedId) ?? 0) + 1;
-        this.refreshEpochs.set(expectedId, refreshEpoch);
+        const refreshEpoch = (this.issuedRefreshEpochs.get(expectedId) ?? 0) + 1;
+        this.issuedRefreshEpochs.set(expectedId, refreshEpoch);
         const [events, pendingMessages] = await Promise.all([db.events(expectedId), db.outbox(expectedId)]);
         if (
-            this.refreshEpochs.get(expectedId) !== refreshEpoch ||
+            refreshEpoch < (this.appliedRefreshEpochs.get(expectedId) ?? 0) ||
             this.sessionGen !== gen ||
             this.database !== db ||
             this.state.selectedConversationId !== expectedId
         )
             return;
+        this.appliedRefreshEpochs.set(expectedId, refreshEpoch);
         const visiblePending = new Map(pendingMessages.map((message) => [message.localId, message]));
         for (const message of this.transientAttachmentErrors.values()) {
             if (message.convoId === expectedId) visiblePending.set(message.localId, message);
