@@ -105,7 +105,7 @@ describe("attachment composer", () => {
 
     it("opens the picker, dispatches files, and resets it so the same file can be selected again", async () => {
         const client = signedInClient();
-        const attachFiles = jest.spyOn(client, "attachFiles").mockResolvedValue(undefined);
+        const stageFiles = jest.spyOn(client, "stageFiles").mockImplementation(() => undefined);
         rendered = await renderClient(client);
         const input = rendered.container.querySelector<HTMLInputElement>('input[type="file"]');
         if (!input) throw new Error("Missing file input");
@@ -127,14 +127,14 @@ describe("attachment composer", () => {
         input.value = "selected";
         await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
 
-        expect(attachFiles).toHaveBeenNthCalledWith(1, [file]);
-        expect(attachFiles).toHaveBeenNthCalledWith(2, [file]);
+        expect(stageFiles).toHaveBeenNthCalledWith(1, [file]);
+        expect(stageFiles).toHaveBeenNthCalledWith(2, [file]);
         expect(input.value).toBe("");
     });
 
     it("accepts file drops, prevents browser navigation, and clears the overlay", async () => {
         const client = signedInClient();
-        const attachFiles = jest.spyOn(client, "attachFiles").mockResolvedValue(undefined);
+        const stageFiles = jest.spyOn(client, "stageFiles").mockImplementation(() => undefined);
         rendered = await renderClient(client);
         const room = rendered.container.querySelector<HTMLElement>(".mx_RoomView");
         if (!room) throw new Error("Missing conversation pane");
@@ -149,7 +149,7 @@ describe("attachment composer", () => {
         await act(async () => room.dispatchEvent(drop));
 
         expect(drop.defaultPrevented).toBe(true);
-        expect(attachFiles).toHaveBeenCalledWith([file]);
+        expect(stageFiles).toHaveBeenCalledWith([file]);
         expect(rendered.container.textContent).not.toContain("Drop files to attach");
     });
 
@@ -183,7 +183,7 @@ describe("attachment composer", () => {
 
     it("dispatches pasted clipboard files", async () => {
         const client = signedInClient();
-        const attachFiles = jest.spyOn(client, "attachFiles").mockResolvedValue(undefined);
+        const stageFiles = jest.spyOn(client, "stageFiles").mockImplementation(() => undefined);
         rendered = await renderClient(client);
         const textarea = rendered.container.querySelector<HTMLTextAreaElement>("textarea");
         if (!textarea) throw new Error("Missing composer textarea");
@@ -193,7 +193,38 @@ describe("attachment composer", () => {
 
         await act(async () => textarea.dispatchEvent(paste));
 
-        expect(attachFiles).toHaveBeenCalledWith([screenshot]);
+        expect(stageFiles).toHaveBeenCalledWith([screenshot]);
+    });
+
+    it("paste while the modal is open appends exactly once (composer handler inert)", async () => {
+        const client = signedInClient();
+        const stageFiles = jest.spyOn(client, "stageFiles");
+        rendered = await renderClient(client);
+        await act(async () => client.stageFiles([new File(["a"], "a.txt", { type: "text/plain" })]));
+        stageFiles.mockClear();
+
+        const textareaEl = rendered.container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")!;
+        const pasted = new File(["p"], "p.png", { type: "image/png" });
+        await act(async () => {
+            textareaEl.dispatchEvent(
+                Object.assign(new Event("paste", { bubbles: true }), { clipboardData: { files: [pasted] } }),
+            );
+        });
+        expect(stageFiles).toHaveBeenCalledTimes(1);
+        expect(client.getSnapshot().stagedUploads!.total).toBe(2);
+    });
+
+    it("file drop while the modal is open prevents navigation and stages nothing extra", async () => {
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await act(async () => client.stageFiles([new File(["a"], "a.txt", { type: "text/plain" })]));
+        const stageFiles = jest.spyOn(client, "stageFiles");
+
+        const room = rendered.container.querySelector<HTMLElement>(".mx_RoomView")!;
+        const drop = fileDragEvent("drop", new File(["d"], "d.txt", { type: "text/plain" }));
+        await act(async () => room.dispatchEvent(drop));
+        expect(drop.defaultPrevented).toBe(true);
+        expect(stageFiles).not.toHaveBeenCalled();
     });
 
     it("renders uploading and sending attachments as chips rather than empty text bubbles", async () => {

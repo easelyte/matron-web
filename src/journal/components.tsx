@@ -1428,8 +1428,12 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
                                     }
                                 }}
                                 onPaste={(event) => {
+                                    if (state.stagedUploads) return;
                                     const files = [...event.clipboardData.files];
-                                    if (files.length > 0) void client.attachFiles(files);
+                                    if (files.length > 0) {
+                                        event.preventDefault();
+                                        client.stageFiles(files);
+                                    }
                                 }}
                                 placeholder={
                                     state.connection === "online"
@@ -1458,7 +1462,7 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
                             multiple
                             hidden
                             onChange={(event) => {
-                                if (event.target.files) void client.attachFiles([...event.target.files]);
+                                if (event.target.files) client.stageFiles([...event.target.files]);
                                 event.target.value = "";
                             }}
                         />
@@ -1664,9 +1668,10 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                             onDrop={(event) => {
                                 if (!isFileDrag(event)) return;
                                 event.preventDefault();
-                                const files = [...event.dataTransfer.files];
-                                if (files.length > 0) void client.attachFiles(files);
                                 setDragActive(false);
+                                if (state.stagedUploads) return;
+                                const files = [...event.dataTransfer.files];
+                                if (files.length > 0) client.stageFiles(files);
                             }}
                             onDragLeave={(event) => {
                                 const nextTarget = event.relatedTarget;
