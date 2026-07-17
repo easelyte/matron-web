@@ -1,9 +1,10 @@
 ---
 title: Upload confirmation modal with caption (file + caption as one message)
 date: 2026-07-17
-status: draft
-revision: 5
-review_rounds: 4
+status: approved
+revision: 6
+review_rounds: 5
+status_note: converged at round 5 (findings-tier — remaining items polish/completeness; drift signals flagged by both reviewers)
 author: claude (brainstorm-slim)
 target_repo: easelyte/matron-web (journal client), PR base main
 related_repos:
@@ -142,12 +143,17 @@ Entry points stop calling `attachFiles()` directly and instead stage:
   - In-memory only (`File` objects are not serializable — never persisted to
     IndexedDB). A refresh mid-modal discards staging; nothing was uploaded yet,
     so nothing is lost or orphaned.
-- `client.stageFiles(files: File[]): void` — no-op when no conversation is
-  selected (same guard as today's `attachFiles`). Captures
-  `selectedConversationId` at stage time. If a staging queue is already open,
-  **appends** items (with fresh ids, incrementing `total`) — reachable only
-  from the modal's own paste handler plus the structurally guarded entry
-  points (see Modal UI); there is no different-convo replace branch.
+- `client.stageFiles(files: File[]): void` — **branch precedence (explicit):**
+  1. If a staging queue is already open (`stagedUploads` present): if
+     `stagedUploads.error` is set the call is inert (error page showing);
+     otherwise **append** items (fresh ids, incrementing `total`), keyed off
+     `stagedUploads.convoId` — the live `selectedConversationId` is NOT
+     consulted, so a cross-tab `clearSelection()` cannot silently turn
+     paste-append into a no-op.
+  2. Only when no queue is open does the opening guard apply: no-op when no
+     conversation is selected (same guard as today's `attachFiles`);
+     otherwise capture `selectedConversationId` and open the queue.
+  There is no different-convo replace branch.
 - `client.confirmStagedFile(itemId: string, caption?: string): Promise<void>` —
   1. **Atomic reservation (P23/P32):** synchronously, in one tick, before any
      `await`: no-op if `confirming` is already `true` OR `itemId` differs from
@@ -161,17 +167,26 @@ Entry points stop calling `attachFiles()` directly and instead stage:
      cases): clear `items`, set `stagedUploads.error`, clear `confirming` —
      the modal renders the visible error notice (fail visible; the `error`
      field is what makes this state representable).
-  3. **Persist-then-advance (P3):** create the `PendingMessage` outbox row
-     (`attachState: "uploading"`, caption included, `File` stashed in
-     `pendingFiles`) and **await the persist**; **pop the head and advance
-     (clearing `confirming`) ONLY when the persist succeeds** — one IndexedDB
-     put, imperceptible. **Persist-failure branch (explicit):** if
-     `persistAttachment` returns `false` (IndexedDB failure — its internal
-     `storage_failed` path has already surfaced a visible transient chip —
-     or session change mid-await), do NOT pop: clear `confirming`, keep the
-     page (Send re-enabled; pressing Send again retries the persist). The
-     modal never advances past an unpersisted confirm — that is the entire
-     point of this step. Mechanically this splits today's `sendAttachment`
+  3. **Persist-then-advance (P3):** build the `PendingMessage` **once per
+     page** (the row and its `localId` are cached on the staged item — a
+     persist retry re-persists the SAME row, never mints a second identity,
+     so no stale `storage_failed`/`pendingFiles` state is stranded by a
+     retry), stash the `File` in `pendingFiles`, and **await the persist,
+     bounded** (a put that neither resolves nor rejects within ~5s is treated
+     as failure — the `confirming` lock must have a ceiling, or a wedged
+     IndexedDB permanently freezes every modal control). **Pop the head and
+     advance (clearing `confirming`) ONLY when the persist succeeds**; on
+     success also refresh the pending list (`refreshSelectedConversation`) so
+     the item's chip exists in the timeline immediately — otherwise items
+     queued behind a slow upload would be persisted but invisible until the
+     chain reached them once the modal closes. **Persist-failure branch
+     (explicit, in-modal):** if the persist fails or times out, do NOT pop:
+     clear `confirming`, keep the page, and show an **inline error in the
+     modal** ("Couldn't save this attachment — try Send again."). The
+     timeline `storage_failed` chip alone is NOT the feedback surface here —
+     it renders behind the full-viewport overlay this same spec mandates
+     (both reviewers, independently). The modal never advances past an
+     unpersisted confirm — that is the entire point of this step. Mechanically this splits today's `sendAttachment`
      into its two existing phases: **(a) persist** (build + size/empty guards
      + `pendingFiles.set` + `persistAttachment`) and **(b) upload+emit**
      (`uploadPendingAttachment` → `emitPendingAttachment`); `attachFiles`
@@ -314,6 +329,8 @@ blocked for the seconds a caption takes) is nil in the operator's workflow.
 - **Pre-flight validation (deterministic client-side only):** `size === 0` or
   `size > BROWSER_MEMORY_SAFETY_MAX_BYTES` (512MB) shows the error copy inline
   in the modal and disables Send (and Enter) for that file; Cancel advances.
+  The constant is **exported from `client.ts`** and imported by the modal —
+  one owner (P2), no duplicated literal to drift.
   **This replaces the timeline error chip for these two pre-flight-detectable
   failures** — deliberate UX change (feedback moves earlier, before any outbox
   row exists), resolving the round-1 P3 note explicitly: no outbox row and no
@@ -417,8 +434,12 @@ why deployment is **bridge-first** (see Delivery), not order-free.
   the send chain catches items that were queued *before* the archive landed
   (row marked `upload_failed` with an explanatory `errorMessage` — visible
   chip whose Retry genuinely re-uploads via the `pendingFiles`-backed branch
-  after unarchiving). No queue depth produces a silent send into an archived
-  conversation.
+  after unarchiving). **Honest scope:** these two checks close the *queued*
+  gap this feature introduces. An archive landing after a thunk's check but
+  during its upload still results in a send — identical to today's behavior
+  for any in-flight attachment or text send (the pre-existing window for ALL
+  sends, not a regression of this feature); closing it client-side is
+  impossible (the race extends to the WS frame itself) and out of scope.
 - **Pre-flight-invalid file (empty / >512MB):** inline modal error, Send +
   Enter disabled; **no outbox row, no timeline chip** (deliberate change from
   today — feedback moves into the modal, before any state exists).
@@ -464,16 +485,19 @@ why deployment is **bridge-first** (see Delivery), not order-free.
    emit order is A then B.
 6. `client-test.ts`: **persist-then-advance** — after confirming A and B
    rapidly (B's upload not yet started), the outbox contains persisted
-   `uploading` rows for BOTH; simulate restart (`startSession` resume) and
-   assert both surface as `upload_failed` chips (no silent loss of a
-   confirmed-but-unstarted file).
+   `uploading` rows for BOTH **and `state.pendingMessages` shows both chips
+   live** (no-refresh visibility, not just restart recovery); then simulate
+   restart (`startSession` resume) and assert both surface as `upload_failed`
+   chips (no silent loss of a confirmed-but-unstarted file).
 7. `client-test.ts`: **atomic confirm** — two `confirmStagedFile` calls with
    the same `itemId` fired back-to-back (second lands while the first is
    awaiting persist) produce exactly ONE persisted row / upload / send (the
    `confirming` reservation, not just the id compare, is what this exercises).
 8. `client-test.ts`: **persist-failure branch** — make the outbox put fail;
-   assert the modal does NOT advance (head unchanged, `confirming` cleared)
-   and no upload is queued; a second Send after the fault clears succeeds.
+   assert the modal does NOT advance (head unchanged, `confirming` cleared,
+   in-modal error shown) and no upload is queued; a second Send after the
+   fault clears succeeds **reusing the same `localId`** (no duplicate row
+   identity, no stranded transient state).
 9. `client-test.ts`: **check-act at confirm** — archive the staged
    conversation (simulate the cross-tab `storage` event) then confirm: nothing
    is persisted or sent; `stagedUploads.error` is set (modal error notice).
@@ -495,7 +519,8 @@ why deployment is **bridge-first** (see Delivery), not order-free.
 12. `components-test.ts`: **caption isolation** — type a caption on file 1,
     advance, assert file 2's field is empty (per-file remount keyed by item id).
 13. `components-test.ts`: zero-byte file disables Send AND Enter does not
-    confirm it.
+    confirm it; a file over the imported `BROWSER_MEMORY_SAFETY_MAX_BYTES`
+    boundary is likewise blocked in-modal (both owners enforce one constant).
 14. `components-test.ts`: `file` tile renders `payload.caption`; pending chip
     shows caption; `eventSnippet` prefers caption.
 15. `components-test.ts`: modal overlay covers the app shell (conversation list
@@ -591,6 +616,16 @@ bridge runs non-iv mode, so this exercises the tail-append path).
      the misleading state Delivery §5 forbids (captions render but silently
      never reach Claude). Bridge-only rollback is permitted only if the web
      deploy has not happened yet.
+7. **Web deploy (explicit — the live client is the `webapp/` dir of this
+   checkout, served by nginx):** after the web PR merges:
+   `git -C /opt/matron/web-journal checkout main && git -C /opt/matron/web-journal pull`
+   → `mv webapp webapp.bak.$(date -u +%Y%m%dT%H%M%SZ)` (the build is
+   rimraf-destructive; the backup IS the rollback artifact) →
+   `corepack pnpm build` (subshell `cd`, never the session) → health:
+   `https://vmi3096107.taild3d6c4.ts.net:8443` loads and login works → run
+   the Manual acceptance captioned send (which also completes the bridge
+   health gate's end-to-end half). Rollback: swap the `webapp.bak.<ts>` dir
+   back (§6 step 1).
 
 ## Risks
 
