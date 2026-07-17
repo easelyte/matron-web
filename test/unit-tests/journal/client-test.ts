@@ -922,6 +922,41 @@ describe("MatronJournalClient attachment send state machine", () => {
         expect(new Set(ids).size).toBe(1);
     });
 
+    it.each([
+        ["empty", fileFixture("empty.txt", "text/plain", [])],
+        [
+            "browser memory limit",
+            {
+                name: "oversized.bin",
+                type: "application/octet-stream",
+                size: 512 * 1024 * 1024 + 1,
+                arrayBuffer: jest.fn(),
+            } as unknown as File,
+        ],
+    ])("advances past a persisted %s validation row without retrying its write", async (_label, file) => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows, writes } = attachmentDatabase();
+        const uploadMedia = jest.fn();
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+
+        client.stageFiles([file]);
+        const head = client.getSnapshot().stagedUploads!.items[0];
+        await client.confirmStagedFile(head.id, "caption");
+        await client.confirmStagedFile(head.id, "caption");
+
+        expect(client.getSnapshot().stagedUploads).toBeUndefined();
+        expect(writes).toHaveLength(1);
+        expect([...rows.values()][0]).toMatchObject({
+            localId: head.message!.localId,
+            attachState: "error",
+            errorKind: file.size === 0 ? "empty" : "browser_memory_limit",
+        });
+        expect(uploadMedia).not.toHaveBeenCalled();
+    });
+
     it("leaves no retryable ghost chip when the user cancels after a persist failure", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);

@@ -51,6 +51,11 @@ interface AttachmentOwner {
     db: JournalDatabase;
 }
 
+type PersistPendingAttachmentOutcome =
+    | { kind: "persisted-uploadable" }
+    | { kind: "persisted-terminal" }
+    | { kind: "persist-failed" };
+
 function deviceName(): string {
     if ((window as Window & { electron?: unknown }).electron) {
         const platform = navigator.platform || "computer";
@@ -435,19 +440,21 @@ export class MatronJournalClient {
         file: File,
         db: JournalDatabase,
         gen: number,
-    ): Promise<boolean> {
+    ): Promise<PersistPendingAttachmentOutcome> {
         if (file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES || file.size === 0) {
             message.attachState = "error";
             message.errorKind = file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES ? "browser_memory_limit" : "empty";
-            if (!(await this.persistAttachment(message, db, gen))) return false;
-            if (this.sessionGen !== gen) return false;
+            if (!(await this.persistAttachment(message, db, gen))) return { kind: "persist-failed" };
+            if (this.sessionGen !== gen) return { kind: "persist-failed" };
             await this.refreshSelectedConversation(message.convoId, db, gen).catch(() => undefined);
-            return false;
+            return { kind: "persisted-terminal" };
         }
         this.pendingFiles.set(message.localId, file);
-        if (!(await this.persistAttachment(message, db, gen))) return false;
-        if (this.sessionGen !== gen || this.database !== db) return false;
-        return message.attachState === "uploading";
+        if (!(await this.persistAttachment(message, db, gen))) return { kind: "persist-failed" };
+        if (this.sessionGen !== gen || this.database !== db) return { kind: "persist-failed" };
+        return message.attachState === "uploading"
+            ? { kind: "persisted-uploadable" }
+            : { kind: "persisted-terminal" };
     }
 
     private async runPendingUpload(message: PendingMessage, file: File, owner: AttachmentOwner): Promise<void> {
@@ -488,7 +495,8 @@ export class MatronJournalClient {
         if (!api || !db) return;
         const owner = { gen, api, db };
         const message = this.buildPendingAttachment(file, convoId, caption);
-        if (!(await this.persistPendingAttachment(message, file, db, gen))) return;
+        const persistOutcome = await this.persistPendingAttachment(message, file, db, gen);
+        if (persistOutcome.kind !== "persisted-uploadable") return;
         const optimisticRefresh = this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
         await Promise.all([optimisticRefresh, this.runPendingUpload(message, file, owner)]);
     }
@@ -702,11 +710,11 @@ export class MatronJournalClient {
         if (caption) message.caption = caption;
         else delete message.caption;
 
-        const persisted = await this.persistPendingAttachment(message, head.file, db, gen);
+        const persistOutcome = await this.persistPendingAttachment(message, head.file, db, gen);
         if (this.sessionGen !== gen) return;
         const current = this.state.stagedUploads;
         if (!current) return;
-        if (!persisted) {
+        if (persistOutcome.kind === "persist-failed") {
             this.transientAttachmentErrors.delete(message.localId);
             this.pendingFiles.delete(message.localId);
             if (this.state.selectedConversationId === convoId) {
@@ -724,6 +732,8 @@ export class MatronJournalClient {
                 ? { ...current, items: rest, confirming: false, persistError: false }
                 : undefined,
         });
+
+        if (persistOutcome.kind === "persisted-terminal") return;
 
         this.stagedSendChain = this.stagedSendChain.then(async () => {
             try {
