@@ -50,7 +50,12 @@ Claude in **one turn** — in both bridge session modes (see Part 2).
   error chip exactly as today.
 - **Upstream PR to Matronhq.** This ships to the easelyte fork's `main` (the
   deployed client). Upstreaming is a separate operator decision.
-- **Voice notes.** No web recording UI exists; bridge transcription path untouched.
+- **Voice notes.** No web recording UI exists; bridge transcription path
+  untouched. *Execution amendment (phase-4 review):* a caption on an `audio/*`
+  FILE renders on the journal media row but is NOT injected into Claude's
+  turn — the transcript injection text is journal-mirrored, and including the
+  caption there would duplicate it in the journal (the media row already
+  carries it). Picker-only edge (no voice UI); accepted scope fence.
 - **Resumable uploads across refresh.** A refresh that interrupts an in-flight
   upload still loses the `File` bytes (PR #1 known limitation, unchanged — see
   Edge cases).
