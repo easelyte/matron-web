@@ -309,8 +309,12 @@ blocked for the seconds a caption takes) is nil in the operator's workflow.
   When more than one file is staged: header shows "File k of N" and a
   **Cancel all** action appears.
 - **Focus contract:** focus lives in the caption textarea (via remount) while
-  the modal is open; Tab cycles within the modal (focus trap). Focus returns to
-  the composer textarea **only when the modal closes** (last file
+  the modal is open; background content is made `inert` while the modal is up
+  (unfocusable/unclickable — this, not a roving-tabindex focus trap, is the
+  containment mechanism; Tab past the last action may reach browser chrome,
+  which is standard dialog behavior. *Execution amendment, final review M1:*
+  supersedes the earlier "Tab cycles within the modal" phrasing). Focus
+  returns to the composer textarea **only when the modal closes** (last file
   sent/skipped, or Cancel all) — never while a next page exists.
 - **Paste while open + structural entry-point guards (exactly-once
   contract):** while the modal is open, a paste **anywhere** is handled by the

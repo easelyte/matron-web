@@ -1622,20 +1622,15 @@ git -C /opt/matron/bridge-journal -c user.name=easelyte -c user.email=fantin@eas
 
 `lib/journal-media.js` `routeOne`: destructure `caption` — `const { type, blobRef, contentType, name, dims, caption } = media || {};`.
 
-**Audio branch (round-2 Codex B2 — captions must survive transcription):** the
-`audioMime` branch returns before `buildSavedBlocks`, so thread the caption
-there too — both delivery shapes:
-
-```js
-        const injected = caption
-          ? `${caption}\n\n[Voice note transcription]: ${transcript}`
-          : `[Voice note transcription]: ${transcript}`;
-```
-
-(the busy-queue path already queues `injected` inside its text block, so both
-immediate `injectText` and queued delivery carry the caption). Add a test:
-captioned `audio/*` media → the injected/queued text starts with the caption
-and contains the transcript.
+**Audio branch (SUPERSEDED at phase-4 review — scope fence, spec amended):**
+audio captions are deliberately NOT injected. The transcript injection text is
+journal-mirrored (immediate `injectText` and queued `mirrorToJournal` alike),
+and the caption already lives on the client's own media event — injecting it
+would duplicate it in the journal. The audio branch keeps today's
+transcript-only `injected` string; tests assert the caption is ABSENT from
+both immediate and queued audio injections. (Round-2's caption-prepend
+directive was implemented, found to double-mirror at phase-4 review, and
+reverted; spec Non-goals carries the execution amendment.)
 
 Then replace the save-branch block construction:
 
@@ -1718,7 +1713,7 @@ gh pr create --repo easelyte/claude-matrix-bridge --base journal-deploy --head f
 
 - [ ] **Step 1: Full web gate** — `(cd /opt/matron/web-journal && corepack pnpm test)` all green; run `corepack pnpm lint` if a lint script exists in `package.json` (check first; PR #1 era had none — skip silently if absent).
 - [ ] **Step 2: Ship via `/ship-slim --no-auto-merge`** (execute-slim's tail) — PR on `easelyte/matron-web` base `main`, head `feat/upload-caption-modal`. PR body must state: the wire contract (`payload.caption`, trim→omit), the bridge-first deploy order + link to the bridge PR, and that the operator live-tests via `webapp/` backup + `corepack pnpm build` before merging. **Do NOT merge; do NOT build/deploy `webapp/`** — both operator-gated.
-- [ ] **Step 3: File the P18 follow-up loop** (spec Risks commitment; round-1 M6 widened it; round-3 M1 made it executable) — run from the son-of-anton WORKSPACE ROOT (`/root/.openclaw/workspace` — canonical loop store; a worktree copy must resolve via the canonical root per the loop-store procedures):
+- [ ] **Step 3: File the P18 follow-up loop** (spec Risks commitment; round-1 M6 widened it; round-3 M1 made it executable; final-review B1 fixed the lane) — R100: do NOT run this inline in the main chat. Dispatch it via the approved spawn lane (Agent tool, `isolation: worktree`, per `procedure_subagent_followup_filing_via_agent_tool_spawn`): the spawned agent runs the snippet below from the son-of-anton workspace root and commits the store change as its own `chore(loops)` commit:
 
 ```bash
 python3 - <<'EOF'
