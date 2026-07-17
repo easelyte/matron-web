@@ -739,6 +739,10 @@ describe("MatronJournalClient state handling", () => {
 });
 
 describe("MatronJournalClient attachment send state machine", () => {
+    const PERSIST_TICK = async (): Promise<void> => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
     beforeEach(() => {
         localStorage.clear();
         globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
@@ -822,10 +826,7 @@ describe("MatronJournalClient attachment send state machine", () => {
         state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
         state.connection = { send: jest.fn().mockReturnValue(true) };
 
-        const inFlight = client.sendAttachment(
-            fileFixture("slow.bin", "application/octet-stream", [1]),
-            "c1",
-        );
+        const inFlight = client.sendAttachment(fileFixture("slow.bin", "application/octet-stream", [1]), "c1");
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(client.getSnapshot().pendingMessages).toEqual([
@@ -833,6 +834,267 @@ describe("MatronJournalClient attachment send state machine", () => {
         ]);
         releaseUpload?.();
         await inFlight;
+    });
+
+    it("confirms head-only, advances pages, and serializes uploads in confirm order", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const uploadStarts: string[] = [];
+        let releaseA: (() => void) | undefined;
+        const uploadMedia = jest.fn().mockImplementation((_bytes: ArrayBuffer, contentType: string) => {
+            uploadStarts.push(contentType);
+            if (uploadStarts.length === 1) {
+                return new Promise((resolve) => {
+                    releaseA = () => resolve({ media_id: "m-a" });
+                });
+            }
+            return Promise.resolve({ media_id: "m-b" });
+        });
+        state.state = signedInState(client);
+        state.database = fakeDatabase({});
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        client.stageFiles([fileFixture("a.png", "image/a", [1]), fileFixture("b.png", "image/b", [2])]);
+        const first = client.getSnapshot().stagedUploads!.items[0];
+        await client.confirmStagedFile(first.id, "caption A");
+        const second = client.getSnapshot().stagedUploads!.items[0];
+        expect(second.id).not.toBe(first.id);
+        await client.confirmStagedFile(second.id);
+        expect(client.getSnapshot().stagedUploads).toBeUndefined();
+        await PERSIST_TICK();
+
+        expect(uploadStarts).toEqual(["image/a"]);
+        releaseA?.();
+        await PERSIST_TICK();
+        await PERSIST_TICK();
+        expect(uploadStarts).toEqual(["image/a", "image/b"]);
+    });
+
+    it("is atomic against double activation (one row per page)", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const addToOutbox = jest.fn().mockResolvedValue(undefined);
+        state.state = signedInState(client);
+        state.database = fakeDatabase({ addToOutbox });
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            uploadMedia: jest.fn().mockResolvedValue({ media_id: "m" }),
+        };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        client.stageFiles([fileFixture("a.png", "image/png", [1])]);
+        const head = client.getSnapshot().stagedUploads!.items[0];
+        const uploadingPersists = new Set<string>();
+        addToOutbox.mockImplementation(async (row: PendingMessage) => {
+            if (row.attachState === "uploading") uploadingPersists.add(row.localId);
+        });
+        await Promise.all([client.confirmStagedFile(head.id, "x"), client.confirmStagedFile(head.id, "x")]);
+        await PERSIST_TICK();
+        expect(uploadingPersists.size).toBe(1);
+    });
+
+    it("keeps the page with persistError on a failed put, and retries with the SAME localId", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const addToOutbox = jest.fn().mockRejectedValueOnce(new Error("quota")).mockResolvedValue(undefined);
+        state.state = signedInState(client);
+        state.database = fakeDatabase({ addToOutbox });
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            uploadMedia: jest.fn().mockResolvedValue({ media_id: "m" }),
+        };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        client.stageFiles([fileFixture("a.png", "image/png", [1])]);
+        const head = client.getSnapshot().stagedUploads!.items[0];
+        await client.confirmStagedFile(head.id, "x");
+        let staged = client.getSnapshot().stagedUploads;
+        expect(staged?.items[0]?.id).toBe(head.id);
+        expect(staged?.persistError).toBe(true);
+        expect(staged?.confirming).toBe(false);
+
+        await client.confirmStagedFile(head.id, "x");
+        await PERSIST_TICK();
+        staged = client.getSnapshot().stagedUploads;
+        expect(staged).toBeUndefined();
+        const ids = addToOutbox.mock.calls.map(([row]) => row.localId);
+        expect(new Set(ids).size).toBe(1);
+    });
+
+    it("leaves no retryable ghost chip when the user cancels after a persist failure", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database } = attachmentDatabase();
+        const addToOutbox = jest.fn().mockRejectedValue(new Error("quota"));
+        database.addToOutbox = addToOutbox;
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia: jest.fn() };
+
+        client.stageFiles([fileFixture("a.png", "image/png", [1])]);
+        const head = client.getSnapshot().stagedUploads!.items[0];
+        await client.confirmStagedFile(head.id, "x");
+        expect(client.getSnapshot().stagedUploads?.persistError).toBe(true);
+        client.cancelStagedFiles();
+
+        expect(client.getSnapshot().stagedUploads).toBeUndefined();
+        expect(client.getSnapshot().pendingMessages).toEqual([]);
+        await client.retryAttachment(head.message!.localId);
+        expect(state.api!.uploadMedia).not.toHaveBeenCalled();
+    });
+
+    it("restart-recovery: two confirmed rows (second never uploaded) both surface as upload_failed after startSession", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        rows.set("row-a", {
+            localId: "row-a",
+            convoId: "c1",
+            body: "",
+            createdAt: 1,
+            kind: "image",
+            filename: "a.png",
+            blobRef: null,
+            attachState: "uploading",
+        });
+        rows.set("row-b", {
+            localId: "row-b",
+            convoId: "c1",
+            body: "",
+            createdAt: 2,
+            kind: "image",
+            filename: "b.png",
+            blobRef: null,
+            attachState: "uploading",
+            caption: "b caption",
+        });
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+
+        await state.startSession(SESSION);
+
+        expect(rows.get("row-a")).toMatchObject({ attachState: "error", errorKind: "upload_failed" });
+        expect(rows.get("row-b")).toMatchObject({
+            attachState: "error",
+            errorKind: "upload_failed",
+            caption: "b caption",
+        });
+        expect(client.getSnapshot().pendingMessages).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ localId: "row-a", attachState: "error" }),
+                expect.objectContaining({ localId: "row-b", attachState: "error", caption: "b caption" }),
+            ]),
+        );
+    });
+
+    it("refuses confirm into an archived conversation with a visible error state", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.database = fakeDatabase({});
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia: jest.fn() };
+
+        client.stageFiles([fileFixture("a.png", "image/png", [1])]);
+        state.state = { ...state.state, archivedIds: new Set(["c1"]) };
+        const head = client.getSnapshot().stagedUploads!.items[0];
+        await client.confirmStagedFile(head.id, "x");
+
+        const staged = client.getSnapshot().stagedUploads;
+        expect(staged?.error).toBe("archived");
+        expect(staged?.items).toHaveLength(0);
+        expect(state.api!.uploadMedia).not.toHaveBeenCalled();
+    });
+
+    it("marks a queued item upload_failed (retryable, with errorMessage) when the convo archives before its turn", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const addToOutbox = jest.fn().mockResolvedValue(undefined);
+        let releaseA: (() => void) | undefined;
+        const uploadMedia = jest.fn().mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    releaseA = () => resolve({ media_id: "m-a" });
+                }),
+        );
+        state.state = signedInState(client);
+        state.database = fakeDatabase({ addToOutbox });
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        client.stageFiles([fileFixture("a.png", "image/png", [1]), fileFixture("b.png", "image/png", [2])]);
+        await client.confirmStagedFile(client.getSnapshot().stagedUploads!.items[0].id);
+        await client.confirmStagedFile(client.getSnapshot().stagedUploads!.items[0].id, "b caption");
+        state.state = { ...state.state, archivedIds: new Set(["c1"]) };
+        releaseA?.();
+        await PERSIST_TICK();
+        await PERSIST_TICK();
+
+        expect(uploadMedia).toHaveBeenCalledTimes(1);
+        const bFailure = addToOutbox.mock.calls
+            .map(([row]) => row)
+            .find((row) => row.errorKind === "upload_failed" && row.errorMessage);
+        expect(bFailure).toEqual(expect.objectContaining({ caption: "b caption", attachState: "error" }));
+    });
+
+    it("aborts a queued thunk when the session changes before it executes", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        let releaseA: (() => void) | undefined;
+        const uploadMedia = jest.fn().mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    releaseA = () => resolve({ media_id: "m-a" });
+                }),
+        );
+        state.state = signedInState(client);
+        state.database = fakeDatabase({});
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        client.stageFiles([fileFixture("a.png", "image/png", [1]), fileFixture("b.png", "image/png", [2])]);
+        await client.confirmStagedFile(client.getSnapshot().stagedUploads!.items[0].id);
+        await client.confirmStagedFile(client.getSnapshot().stagedUploads!.items[0].id);
+        state.sessionGen += 1;
+        releaseA?.();
+        await PERSIST_TICK();
+        await PERSIST_TICK();
+        expect(uploadMedia).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not poison the chain when an upload rejects (B still runs after A fails)", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const uploadMedia = jest.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValue({ media_id: "m-b" });
+        state.state = signedInState(client);
+        state.database = fakeDatabase({});
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        client.stageFiles([fileFixture("a.png", "image/png", [1]), fileFixture("b.png", "image/png", [2])]);
+        await client.confirmStagedFile(client.getSnapshot().stagedUploads!.items[0].id);
+        await client.confirmStagedFile(client.getSnapshot().stagedUploads!.items[0].id);
+        await PERSIST_TICK();
+        await PERSIST_TICK();
+        expect(uploadMedia).toHaveBeenCalledTimes(2);
+    });
+
+    it("skip advances without sending; cancel-all leaves confirmed items alone", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.database = fakeDatabase({});
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia: jest.fn() };
+
+        client.stageFiles([fileFixture("a.png", "image/png", [1]), fileFixture("b.png", "image/png", [2])]);
+        const first = client.getSnapshot().stagedUploads!.items[0];
+        client.skipStagedFile(first.id);
+        expect(client.getSnapshot().stagedUploads!.items[0].id).not.toBe(first.id);
+        client.skipStagedFile("not-the-head");
+        expect(client.getSnapshot().stagedUploads!.items).toHaveLength(1);
+        client.cancelStagedFiles();
+        expect(client.getSnapshot().stagedUploads).toBeUndefined();
+        expect(state.api!.uploadMedia).not.toHaveBeenCalled();
     });
 
     it("moves uploading to sending and removes the pending row on its own echo", async () => {

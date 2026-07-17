@@ -468,7 +468,10 @@ export class MatronJournalClient {
             try {
                 await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
             } catch {
-                if (this.ownsAttachment(owner, message.localId) && this.state.selectedConversationId === message.convoId) {
+                if (
+                    this.ownsAttachment(owner, message.localId) &&
+                    this.state.selectedConversationId === message.convoId
+                ) {
                     const pendingMessages = this.state.pendingMessages.filter(
                         (pending) => pending.localId !== message.localId,
                     );
@@ -667,6 +670,88 @@ export class MatronJournalClient {
                 total: files.length,
                 confirming: false,
             },
+        });
+    }
+
+    public async confirmStagedFile(itemId: string, captionInput?: string): Promise<void> {
+        const staged = this.state.stagedUploads;
+        if (!staged || staged.confirming || staged.error) return;
+        const head = staged.items[0];
+        if (!head || head.id !== itemId) return;
+        this.patch({ stagedUploads: { ...staged, confirming: true } });
+
+        const gen = this.sessionGen;
+        const api = this.api;
+        const db = this.database;
+        if (!api || !db) {
+            const current = this.state.stagedUploads;
+            if (current) this.patch({ stagedUploads: { ...current, confirming: false } });
+            return;
+        }
+        const owner: AttachmentOwner = { gen, api, db };
+        const convoId = staged.convoId;
+
+        if (!this.stagedConvoValid(convoId)) {
+            this.patch({ stagedUploads: { ...staged, items: [], confirming: false, error: "archived" } });
+            return;
+        }
+
+        const caption = captionInput?.trim() ? captionInput.trim() : undefined;
+        const message = head.message ?? this.buildPendingAttachment(head.file, convoId, caption);
+        head.message = message;
+        if (caption) message.caption = caption;
+        else delete message.caption;
+
+        const persisted = await this.persistPendingAttachment(message, head.file, db, gen);
+        if (this.sessionGen !== gen) return;
+        const current = this.state.stagedUploads;
+        if (!current) return;
+        if (!persisted) {
+            this.transientAttachmentErrors.delete(message.localId);
+            this.pendingFiles.delete(message.localId);
+            if (this.state.selectedConversationId === convoId) {
+                await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+            }
+            const afterPurge = this.state.stagedUploads;
+            if (!afterPurge) return;
+            this.patch({ stagedUploads: { ...afterPurge, confirming: false, persistError: true } });
+            return;
+        }
+        void this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+        const rest = current.items.slice(1);
+        this.patch({
+            stagedUploads: rest.length
+                ? { ...current, items: rest, confirming: false, persistError: false }
+                : undefined,
+        });
+
+        this.stagedSendChain = this.stagedSendChain.then(async () => {
+            try {
+                if (this.sessionGen !== gen || this.database !== db) return;
+                if (!this.stagedConvoValid(convoId)) {
+                    message.attachState = "error";
+                    message.errorKind = "upload_failed";
+                    message.errorMessage = "Conversation was archived in another tab — unarchive to retry.";
+                    if (await this.persistAttachment(message, db, gen)) {
+                        await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
+                    }
+                    return;
+                }
+                await this.runPendingUpload(message, head.file, owner);
+            } catch {
+                // Rejection isolation: one failed upload must not poison the chain.
+            }
+        });
+    }
+
+    public skipStagedFile(itemId: string): void {
+        const staged = this.state.stagedUploads;
+        if (!staged || staged.confirming || staged.error) return;
+        const head = staged.items[0];
+        if (!head || head.id !== itemId) return;
+        const rest = staged.items.slice(1);
+        this.patch({
+            stagedUploads: rest.length ? { ...staged, items: rest, persistError: false } : undefined,
         });
     }
 
