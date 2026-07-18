@@ -72,6 +72,40 @@ export function MarkReadIcon(props: IconProps): React.ReactElement {
     );
 }
 
+export function PinIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M9 4h6l-1 6 3 3H7l3-3-1-6Z" />
+            <path d="M12 16v4" />
+        </Icon>
+    );
+}
+
+export function StarIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.9 7.2 19l.9-5.4L4.2 9.7l5.4-.8L12 4Z" />
+        </Icon>
+    );
+}
+
+export function StarFilledIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props} fill="currentColor">
+            <path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.9 7.2 19l.9-5.4L4.2 9.7l5.4-.8L12 4Z" />
+        </Icon>
+    );
+}
+
+export function MarkUnreadIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <circle cx="17" cy="7" r="3" fill="currentColor" stroke="none" />
+            <path d="M4 7h7M4 12h16M4 17h16" />
+        </Icon>
+    );
+}
+
 export function ArchiveIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>
