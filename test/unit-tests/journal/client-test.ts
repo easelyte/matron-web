@@ -2184,6 +2184,30 @@ describe("session-controls flags", () => {
         expect(unreadStore.read(SESSION).ids.has("c1")).toBe(true);
     });
 
+    it("user-initiated select clears the unread override (clearUnread defaults true)", async () => {
+        const { client } = withConvos(CONVERSATIONS);
+        client.markConversationUnread("c1");
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+        await client.selectConversation("c1");
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(false);
+    });
+
+    it("explicit clearUnread:false keeps the override (the programmatic restore contract)", async () => {
+        const { client } = withConvos(CONVERSATIONS);
+        client.markConversationUnread("c1");
+        await client.selectConversation("c1", { clearUnread: false });
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+    });
+
+    it("startSession restore does not clear a persisted override (drives the real bootstrap path)", async () => {
+        unreadStore.write(SESSION, new Set(["c1"]));
+        const client = new MatronJournalClient();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        await internals(client).startSession(SESSION);
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+    });
+
     it("setFlag aborts on read failure without clobbering the stored set", () => {
         const { client } = withConvos(CONVERSATIONS);
         pinnedStore.write(SESSION, new Set(["a", "b"]));

@@ -301,8 +301,9 @@ export class MatronJournalClient {
         this.emit();
     }
 
-    public async selectConversation(conversationId: string): Promise<void> {
+    public async selectConversation(conversationId: string, opts?: { clearUnread?: boolean }): Promise<void> {
         if (!this.database || !this.state.session) return;
+        if (opts?.clearUnread ?? true) this.clearUnreadOverride(conversationId);
         storeSelectedConversation(this.state.session, conversationId);
         this.patch({
             selectedConversationId: conversationId,
@@ -929,7 +930,7 @@ export class MatronJournalClient {
         };
         window.addEventListener("storage", this.storageListener);
         this.emit();
-        if (selectedConversation) await this.selectConversation(selectedConversation.id);
+        if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
 
         this.connection = new JournalConnection(session.serverUrl, session.token, {
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
@@ -1041,7 +1042,7 @@ export class MatronJournalClient {
             unreadOverrideIds,
             selectedConversationId: selectedConversation?.id,
         });
-        if (selectedConversation) await this.selectConversation(selectedConversation.id);
+        if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
         else if (this.state.session) storeSelectedConversation(this.state.session, undefined);
     }
 
