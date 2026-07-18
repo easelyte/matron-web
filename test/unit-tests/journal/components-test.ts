@@ -8,9 +8,16 @@ Please see LICENSE files in the repository root for full details.
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { BROWSER_MEMORY_SAFETY_MAX_BYTES, MatronJournalClient } from "../../../src/journal/client";
+import {
+    archiveStore,
+    BROWSER_MEMORY_SAFETY_MAX_BYTES,
+    favoriteStore,
+    MatronJournalClient,
+    pinnedStore,
+    unreadStore,
+} from "../../../src/journal/client";
 import { MatronApp } from "../../../src/journal/components";
-import type { ClientState, JournalEvent, PendingMessage } from "../../../src/journal/types";
+import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -23,6 +30,14 @@ const CONVERSATION = {
     snippet: "",
     created_at: 1,
     read_up_to_seq: 0,
+};
+
+const SESSION: Session = {
+    serverUrl: "https://journal.example",
+    token: "t",
+    deviceId: 1,
+    userId: 2,
+    username: "dan",
 };
 
 interface ClientInternals {
@@ -45,11 +60,25 @@ function signedInClient(
     internals(client).state = {
         ...client.getSnapshot(),
         phase: "signed-in",
+        session: SESSION,
         conversations: [CONVERSATION],
         selectedConversationId: CONVERSATION.id,
         events: options.events ?? [],
         pendingMessages: options.pendingMessages ?? [],
         connection: "online",
+        archivedIds: archiveStore.read(SESSION).ids,
+        pinnedIds: pinnedStore.read(SESSION).ids,
+        favoriteIds: favoriteStore.read(SESSION).ids,
+        unreadOverrideIds: unreadStore.read(SESSION).ids,
+    };
+    return client;
+}
+
+function signedInWithRooms(conversations: Conversation[]): MatronJournalClient {
+    const client = signedInClient();
+    internals(client).state = {
+        ...client.getSnapshot(),
+        conversations,
     };
     return client;
 }
@@ -72,6 +101,22 @@ function button(container: HTMLElement, label: string): HTMLButtonElement {
     if (!match) throw new Error(`Missing button: ${label}`);
     return match;
 }
+
+function menuItem(container: HTMLElement, text: string): Element | undefined {
+    return [...container.querySelectorAll('[role="menuitem"]')].find((element) => element.textContent?.includes(text));
+}
+
+function tabButton(container: HTMLElement, text: "All" | "Favorites"): HTMLButtonElement {
+    return [...container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].find(
+        (candidate) => candidate.textContent === text,
+    )!;
+}
+
+async function openMenu(container: HTMLElement): Promise<void> {
+    await act(async () => button(container, "Conversation options").click());
+}
+
+beforeEach(() => localStorage.clear());
 
 function fileDragEvent(type: string, file: File): Event {
     const event = new Event(type, { bubbles: true, cancelable: true });
@@ -668,5 +713,234 @@ describe("UploadConfirmDialog", () => {
         expect(revoke).toHaveBeenCalledWith("blob:preview");
         await act(async () => client.cancelStagedFiles());
         expect(revoke).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe("conversation menu controls", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+        jest.useRealTimers();
+    });
+
+    it("menu shows Pin when unpinned and Unpin when pinned", async () => {
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await openMenu(rendered.container);
+        expect(menuItem(rendered.container, "Pin")).toBeTruthy();
+        expect(menuItem(rendered.container, "Unpin")).toBeFalsy();
+        await act(async () => (menuItem(rendered!.container, "Pin") as HTMLElement).click());
+        await openMenu(rendered.container);
+        expect(menuItem(rendered.container, "Unpin")).toBeTruthy();
+    });
+
+    it("menu shows Add to Favorites when unfavorited and Remove from Favorites when favorited", async () => {
+        favoriteStore.write(SESSION, new Set([CONVERSATION.id]));
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await openMenu(rendered.container);
+        expect(menuItem(rendered.container, "Remove from Favorites")).toBeTruthy();
+    });
+
+    it("menu shows Mark as unread (not Mark as read) for a read, non-archived row", async () => {
+        rendered = await renderClient(signedInClient());
+        await openMenu(rendered.container);
+        expect(menuItem(rendered.container, "Mark as unread")).toBeTruthy();
+        expect(menuItem(rendered.container, "Mark as read")).toBeFalsy();
+    });
+
+    it("menu shows Mark as read (not Mark as unread) for an override-only unread row, and clicking it clears the override", async () => {
+        unreadStore.write(SESSION, new Set([CONVERSATION.id]));
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await openMenu(rendered.container);
+        expect(menuItem(rendered.container, "Mark as read")).toBeTruthy();
+        expect(menuItem(rendered.container, "Mark as unread")).toBeFalsy();
+        await act(async () => (menuItem(rendered!.container, "Mark as read") as HTMLElement).click());
+        expect(client.getSnapshot().unreadOverrideIds.has(CONVERSATION.id)).toBe(false);
+    });
+
+    it("menu offers neither Mark-read nor Mark-unread for an archived row (read affordances are active-only)", async () => {
+        archiveStore.write(SESSION, new Set([CONVERSATION.id]));
+        rendered = await renderClient(signedInClient());
+        const toggle = rendered.container.querySelector<HTMLButtonElement>(".mj_RoomList_archivedToggle")!;
+        await act(async () => toggle.click());
+        await openMenu(rendered.container);
+        expect(menuItem(rendered.container, "Mark as unread")).toBeFalsy();
+        expect(menuItem(rendered.container, "Mark as read")).toBeFalsy();
+        expect(menuItem(rendered.container, "Unarchive")).toBeTruthy();
+    });
+
+    it("keeps the selected conversation when unfavoriting hides it from the Favorites tab", async () => {
+        favoriteStore.write(SESSION, new Set([CONVERSATION.id]));
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        await openMenu(rendered.container);
+        await act(async () => (menuItem(rendered!.container, "Remove from Favorites") as HTMLElement).click());
+
+        expect(rendered.container.querySelector('[data-testid="room-name"]')).toBeNull();
+        expect(client.getSnapshot().selectedConversationId).toBe(CONVERSATION.id);
+    });
+
+    it("moves keyboard focus through every menu item with arrow keys and wraps", async () => {
+        rendered = await renderClient(signedInClient());
+        await openMenu(rendered.container);
+        const menu = rendered.container.querySelector<HTMLElement>('[role="menu"]')!;
+        const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+        expect(items.map((item) => item.textContent?.trim())).toEqual([
+            "Pin",
+            "Add to Favorites",
+            "Mark as unread",
+            "Archive",
+        ]);
+        expect(document.activeElement).toBe(items[0]);
+
+        for (const expected of [...items.slice(1), items[0]]) {
+            await act(async () => {
+                menu.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+            });
+            expect(document.activeElement).toBe(expected);
+        }
+        await act(async () => {
+            menu.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+        });
+        expect(document.activeElement).toBe(items.at(-1));
+    });
+
+    it("opens the conversation menu on right-click", async () => {
+        rendered = await renderClient(signedInClient());
+        const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]')!;
+
+        await act(async () => {
+            row.dispatchEvent(
+                new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 24, clientY: 32 }),
+            );
+        });
+
+        expect(rendered.container.querySelector('[role="menu"]')).not.toBeNull();
+        expect(menuItem(rendered.container, "Pin")).toBeTruthy();
+    });
+
+    it("opens the conversation menu after a touch long-press", async () => {
+        jest.useFakeTimers();
+        rendered = await renderClient(signedInClient());
+        const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]')!;
+        const pointerDown = new MouseEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            clientX: 12,
+            clientY: 18,
+        });
+        Object.defineProperty(pointerDown, "pointerType", { value: "touch" });
+
+        await act(async () => {
+            row.dispatchEvent(pointerDown);
+            jest.advanceTimersByTime(500);
+        });
+
+        expect(rendered.container.querySelector('[role="menu"]')).not.toBeNull();
+        expect(menuItem(rendered.container, "Pin")).toBeTruthy();
+    });
+});
+
+describe("conversation row affordances", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    it("renders pinned rows before unpinned in the active list", async () => {
+        const roomA = { ...CONVERSATION, id: "room-a", title: "Room A" };
+        const roomB = { ...CONVERSATION, id: "room-b", title: "Room B" };
+        pinnedStore.write(SESSION, new Set(["room-b"]));
+        rendered = await renderClient(signedInWithRooms([roomA, roomB]));
+        const names = [...rendered.container.querySelectorAll('[data-testid="room-name"]')].map(
+            (element) => element.textContent,
+        );
+        expect(names[0]).toBe("Room B");
+        expect(names[1]).toBe("Room A");
+    });
+
+    it("override-unread row announces marked-unread in the row button's accessible name and renders no numeric badge", async () => {
+        unreadStore.write(SESSION, new Set([CONVERSATION.id]));
+        rendered = await renderClient(signedInClient());
+        const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]');
+        expect(row?.getAttribute("aria-label")).toContain("marked unread");
+        expect(rendered.container.querySelector(".mj_UnreadBadge")).toBeNull();
+    });
+});
+
+describe("conversation list tabs", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    it("renders All + Favorites buttons with aria-pressed tracking the active view", async () => {
+        rendered = await renderClient(signedInClient());
+        expect(tabButton(rendered.container, "All").getAttribute("aria-pressed")).toBe("true");
+        expect(tabButton(rendered.container, "Favorites").getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("clicking Favorites filters to favorited rows, sets aria-pressed, focuses the tab, hides archived section", async () => {
+        const fav = { ...CONVERSATION, id: "fav", title: "Fav Room" };
+        const other = { ...CONVERSATION, id: "other", title: "Other Room" };
+        favoriteStore.write(SESSION, new Set(["fav"]));
+        rendered = await renderClient(signedInWithRooms([fav, other]));
+        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        expect(tabButton(rendered.container, "Favorites").getAttribute("aria-pressed")).toBe("true");
+        expect(document.activeElement).toBe(tabButton(rendered.container, "Favorites"));
+        const names = [...rendered.container.querySelectorAll('[data-testid="room-name"]')].map(
+            (element) => element.textContent,
+        );
+        expect(names).toEqual(["Fav Room"]);
+        expect(rendered.container.querySelector(".mj_RoomList_archivedToggle")).toBeNull();
+    });
+
+    it("shows the no-favorites-yet state when nothing is starred", async () => {
+        rendered = await renderClient(signedInClient());
+        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        expect(rendered.container.textContent).toContain("No favorite conversations yet.");
+    });
+
+    it("distinguishes 'no favorites match search' from 'no favorites yet'", async () => {
+        const fav = { ...CONVERSATION, id: "fav", title: "Alpha" };
+        favoriteStore.write(SESSION, new Set(["fav"]));
+        rendered = await renderClient(signedInWithRooms([fav]));
+        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+            setter?.call(search, "zzz-no-match");
+            search.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        expect(rendered.container.textContent).toContain("No favorites match your search.");
+        expect(rendered.container.textContent).not.toContain("No favorite conversations yet.");
+    });
+
+    it("switching tabs leaves selectedConversationId unchanged when the selected row is filtered out", async () => {
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        expect(client.getSnapshot().selectedConversationId).toBe(CONVERSATION.id);
     });
 });

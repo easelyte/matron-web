@@ -18,6 +18,7 @@ import React, {
 
 import matronLogo from "../../res/matron-logo-simple.svg";
 import { BROWSER_MEMORY_SAFETY_MAX_BYTES, errorMessage, type MatronJournalClient } from "./client";
+import { effectiveUnread } from "./conversation-flags";
 import {
     ArchiveIcon,
     AttachmentIcon,
@@ -26,11 +27,15 @@ import {
     KebabIcon,
     MarkAllReadIcon,
     MarkReadIcon,
+    MarkUnreadIcon,
     MicOnIcon,
+    PinIcon,
     ReactionIcon,
     SearchIcon,
     SendIcon,
     SettingsIcon,
+    StarFilledIcon,
+    StarIcon,
     UnarchiveIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
@@ -249,6 +254,7 @@ function ConversationList({
     width: number;
 }): React.ReactElement {
     const [query, setQuery] = useState("");
+    const [tab, setTab] = useState<"all" | "favorites">("all");
     const [accountOpen, setAccountOpen] = useState(false);
     const [composeHint, setComposeHint] = useState(false);
     const [archivedExpanded, setArchivedExpanded] = useState(false);
@@ -376,13 +382,23 @@ function ConversationList({
                     .includes(normalized),
         );
     }, [query, state.conversations]);
-    const active = conversations.filter((conversation) => !state.archivedIds.has(conversation.id));
+    const activeAll = conversations.filter((conversation) => !state.archivedIds.has(conversation.id));
+    const active = [
+        ...activeAll.filter((conversation) => state.pinnedIds.has(conversation.id)),
+        ...activeAll.filter((conversation) => !state.pinnedIds.has(conversation.id)),
+    ];
+    const visibleActive =
+        tab === "favorites" ? active.filter((conversation) => state.favoriteIds.has(conversation.id)) : active;
+    const hasAnyFavorite = state.conversations.some(
+        (conversation) => state.favoriteIds.has(conversation.id) && !state.archivedIds.has(conversation.id),
+    );
     const archived = conversations.filter((conversation) => state.archivedIds.has(conversation.id));
     // Visibility is computed from the UNFILTERED conversation set (minus archived), NOT the
     // search-filtered `active` — mark-all operates on the full active partition regardless of
     // the search box, so the button must not vanish just because the search hides the unread rows.
     const hasActiveUnread = state.conversations.some(
-        (conversation) => conversation.unread_count > 0 && !state.archivedIds.has(conversation.id),
+        (conversation) =>
+            effectiveUnread(conversation, state.unreadOverrideIds) && !state.archivedIds.has(conversation.id),
     );
     const menuConversation = roomMenu
         ? state.conversations.find((conversation) => conversation.id === roomMenu.conversationId)
@@ -399,7 +415,8 @@ function ConversationList({
 
     const renderConversation = (conversation: ClientState["conversations"][number]): React.ReactElement => {
         const selected = state.selectedConversationId === conversation.id;
-        const unread = conversation.unread_count > 0;
+        const overrideUnread = state.unreadOverrideIds.has(conversation.id) && conversation.unread_count === 0;
+        const unread = effectiveUnread(conversation, state.unreadOverrideIds);
         const name = conversationTitle(conversation);
         return (
             <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
@@ -407,7 +424,7 @@ function ConversationList({
                     className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open room ${name}`}
+                    aria-label={`Open room ${name}${overrideUnread ? ", marked unread" : ""}`}
                     onClick={(event) => {
                         if (longPressFiredRef.current) {
                             longPressFiredRef.current = false;
@@ -451,6 +468,11 @@ function ConversationList({
                         if (event.pointerType === "touch") cancelLongPress();
                     }}
                 >
+                    {state.pinnedIds.has(conversation.id) && (
+                        <span className="mj_RoomListPinGlyph">
+                            <PinIcon aria-hidden />
+                        </span>
+                    )}
                     <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
                         <span className="mj_RoomListName" title={name} data-testid="room-name">
                             {name}
@@ -459,11 +481,18 @@ function ConversationList({
                             {conversation.snippet}
                         </span>
                     </span>
-                    {unread && (
+                    {state.favoriteIds.has(conversation.id) && (
+                        <span className="mj_RoomListStarGlyph">
+                            <StarFilledIcon aria-hidden />
+                        </span>
+                    )}
+                    {conversation.unread_count > 0 ? (
                         <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
                             {conversation.unread_count}
                         </span>
-                    )}
+                    ) : overrideUnread ? (
+                        <span className="mj_UnreadDot" aria-hidden />
+                    ) : null}
                 </button>
                 <button
                     className="mj_RoomItemMenu_trigger"
@@ -537,6 +566,30 @@ function ConversationList({
                                         </button>
                                     </div>
                                 </header>
+                                <div className="mj_RoomListTabs" aria-label="Filter conversations">
+                                    <button
+                                        type="button"
+                                        className={`mj_RoomListTab${tab === "all" ? " mj_RoomListTab_active" : ""}`}
+                                        aria-pressed={tab === "all"}
+                                        onClick={(event) => {
+                                            setTab("all");
+                                            event.currentTarget.focus({ preventScroll: true });
+                                        }}
+                                    >
+                                        All
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`mj_RoomListTab${tab === "favorites" ? " mj_RoomListTab_active" : ""}`}
+                                        aria-pressed={tab === "favorites"}
+                                        onClick={(event) => {
+                                            setTab("favorites");
+                                            event.currentTarget.focus({ preventScroll: true });
+                                        }}
+                                    >
+                                        Favorites
+                                    </button>
+                                </div>
                                 <div data-testid="room-list-search" className="mx_RoomListSearch" role="search">
                                     <label
                                         className="mx_RoomListSearch_inputWrapper mx_no_textinput"
@@ -555,9 +608,9 @@ function ConversationList({
                                         />
                                     </label>
                                 </div>
-                                {state.archiveError && (
+                                {state.controlError && (
                                     <div className="mj_ConnectionError" role="status">
-                                        {state.archiveError}
+                                        {state.controlError}
                                     </div>
                                 )}
                                 <div
@@ -566,12 +619,18 @@ function ConversationList({
                                     role="list"
                                     aria-label="Conversations"
                                 >
-                                    {active.map((conversation) => renderConversation(conversation))}
-                                    {!active.length && !archived.length && (
+                                    {visibleActive.map((conversation) => renderConversation(conversation))}
+                                    {tab === "favorites" && !hasAnyFavorite && (
+                                        <p className="mj_RoomListEmpty">No favorite conversations yet.</p>
+                                    )}
+                                    {tab === "favorites" && hasAnyFavorite && !visibleActive.length && (
+                                        <p className="mj_RoomListEmpty">No favorites match your search.</p>
+                                    )}
+                                    {tab === "all" && !active.length && !archived.length && (
                                         <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
                                     )}
                                 </div>
-                                {archived.length > 0 && (
+                                {tab === "all" && archived.length > 0 && (
                                     <>
                                         <button
                                             className="mj_RoomList_archivedToggle"
@@ -644,21 +703,96 @@ function ConversationList({
                             }
                         }}
                     >
-                        {!state.archivedIds.has(menuConversation.id) && menuConversation.unread_count > 0 && (
+                        {state.pinnedIds.has(menuConversation.id) ? (
                             <button
                                 className="mj_RoomItemMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
                                     closeRoomMenu();
-                                    client.markConversationRead(menuConversation.id);
+                                    client.unpinConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
                             >
-                                <MarkReadIcon aria-hidden />
-                                Mark as read
+                                <PinIcon aria-hidden />
+                                Unpin
+                            </button>
+                        ) : (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.pinConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <PinIcon aria-hidden />
+                                Pin
                             </button>
                         )}
+                        {state.favoriteIds.has(menuConversation.id) ? (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.unfavoriteConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <StarFilledIcon aria-hidden />
+                                Remove from Favorites
+                            </button>
+                        ) : (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.favoriteConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <StarIcon aria-hidden />
+                                Add to Favorites
+                            </button>
+                        )}
+                        {!state.archivedIds.has(menuConversation.id) &&
+                            !effectiveUnread(menuConversation, state.unreadOverrideIds) && (
+                                <button
+                                    className="mj_RoomItemMenu_item"
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => {
+                                        closeRoomMenu();
+                                        client.markConversationUnread(menuConversation.id);
+                                        restoreFocusAfterMenuAction();
+                                    }}
+                                >
+                                    <MarkUnreadIcon aria-hidden />
+                                    Mark as unread
+                                </button>
+                            )}
+                        {!state.archivedIds.has(menuConversation.id) &&
+                            effectiveUnread(menuConversation, state.unreadOverrideIds) && (
+                                <button
+                                    className="mj_RoomItemMenu_item"
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => {
+                                        closeRoomMenu();
+                                        client.markConversationRead(menuConversation.id);
+                                        restoreFocusAfterMenuAction();
+                                    }}
+                                >
+                                    <MarkReadIcon aria-hidden />
+                                    Mark as read
+                                </button>
+                            )}
                         {state.archivedIds.has(menuConversation.id) ? (
                             <button
                                 className="mj_RoomItemMenu_item"

@@ -5,7 +5,13 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { MatronJournalClient } from "../../../src/journal/client";
+import {
+    archiveStore,
+    favoriteStore,
+    MatronJournalClient,
+    pinnedStore,
+    unreadStore,
+} from "../../../src/journal/client";
 import { JournalApi, JournalApiError } from "../../../src/journal/api";
 import { JournalConnection } from "../../../src/journal/connection";
 import { JournalDatabase } from "../../../src/journal/database";
@@ -2076,5 +2082,244 @@ describe("staged uploads queue", () => {
         client.stageFiles([stagedFile("a.png")]);
         client.cancelStagedFiles();
         expect(client.getSnapshot().stagedUploads).toBeUndefined();
+    });
+});
+
+describe("session-controls flags", () => {
+    function withConvos(convos: Conversation[]): { client: MatronJournalClient; state: ClientInternals } {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = { ...signedInState(client), conversations: convos, selectedConversationId: undefined };
+        state.database = fakeDatabase({ conversations: jest.fn().mockResolvedValue(convos) });
+        return { client, state };
+    }
+
+    beforeEach(() => localStorage.clear());
+
+    afterEach(() => jest.restoreAllMocks());
+
+    it("seeds pinned/favorite/unread sets from storage on startSession", async () => {
+        pinnedStore.write(SESSION, new Set(["c1"]));
+        favoriteStore.write(SESSION, new Set(["c2"]));
+        unreadStore.write(SESSION, new Set(["c3"]));
+        const client = new MatronJournalClient();
+        const database = fakeDatabase();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        await internals(client).startSession(SESSION);
+        const snapshot = client.getSnapshot();
+        expect(snapshot.pinnedIds).toEqual(new Set(["c1"]));
+        expect(snapshot.favoriteIds).toEqual(new Set(["c2"]));
+        expect(snapshot.unreadOverrideIds).toEqual(new Set(["c3"]));
+    });
+
+    it("sets controlError when a bootstrap flag read fails", async () => {
+        const client = new MatronJournalClient();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+            throw new Error("unavailable");
+        });
+        await internals(client).startSession(SESSION);
+        getItem.mockRestore();
+        expect(client.getSnapshot().controlError).toBe("Couldn't load saved preferences — device storage unavailable.");
+    });
+
+    it("preserves prior in-memory flag sets when replaceSnapshot re-read throws", async () => {
+        const { client, state } = withConvos(CONVERSATIONS);
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            snapshot: jest.fn().mockResolvedValue({ seq: 1, conversations: CONVERSATIONS }),
+        };
+        state.state = { ...client.getSnapshot(), pinnedIds: new Set(["c1"]) };
+        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+            throw new Error("unavailable");
+        });
+        await state.replaceSnapshot();
+        getItem.mockRestore();
+        expect(client.getSnapshot().pinnedIds).toEqual(new Set(["c1"]));
+    });
+
+    it("patches the matching set when a foreign-tab storage event fires for each of the four keys", async () => {
+        const client = new MatronJournalClient();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        await internals(client).startSession(SESSION);
+        const fire = (key: string, ids: string[]): void => {
+            window.dispatchEvent(new StorageEvent("storage", { key, newValue: JSON.stringify(ids) }));
+        };
+        fire(archiveStore.storageKey(SESSION), ["c2"]);
+        expect(client.getSnapshot().archivedIds).toEqual(new Set(["c2"]));
+        fire(pinnedStore.storageKey(SESSION), ["c1"]);
+        expect(client.getSnapshot().pinnedIds).toEqual(new Set(["c1"]));
+        fire(favoriteStore.storageKey(SESSION), ["c1"]);
+        expect(client.getSnapshot().favoriteIds).toEqual(new Set(["c1"]));
+        fire(unreadStore.storageKey(SESSION), ["c1"]);
+        expect(client.getSnapshot().unreadOverrideIds).toEqual(new Set(["c1"]));
+    });
+
+    it("pins/unpins, persisting to the pinned store and patching pinnedIds", () => {
+        const { client } = withConvos(CONVERSATIONS);
+        client.pinConversation("c1");
+        expect(client.getSnapshot().pinnedIds.has("c1")).toBe(true);
+        expect(pinnedStore.read(SESSION).ids.has("c1")).toBe(true);
+        client.unpinConversation("c1");
+        expect(client.getSnapshot().pinnedIds.has("c1")).toBe(false);
+        expect(pinnedStore.read(SESSION).ids.has("c1")).toBe(false);
+    });
+
+    it("favorites/unfavorites symmetrically", () => {
+        const { client } = withConvos(CONVERSATIONS);
+        client.favoriteConversation("c1");
+        expect(client.getSnapshot().favoriteIds.has("c1")).toBe(true);
+        expect(favoriteStore.read(SESSION).ids.has("c1")).toBe(true);
+        client.unfavoriteConversation("c1");
+        expect(client.getSnapshot().favoriteIds.has("c1")).toBe(false);
+    });
+
+    it("markConversationUnread adds to unreadOverrideIds and persists", () => {
+        const { client } = withConvos(CONVERSATIONS);
+        client.markConversationUnread("c1");
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+        expect(unreadStore.read(SESSION).ids.has("c1")).toBe(true);
+    });
+
+    it("marks an override-only row (unread_count 0) read by clearing the override; returns true", () => {
+        const { client } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 0 }]);
+        client.markConversationUnread("c1");
+        const ok = client.markConversationRead("c1");
+        expect(ok).toBe(true);
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(false);
+    });
+
+    it("on a server-unread row, flushes the read marker AND clears any override", async () => {
+        jest.useFakeTimers();
+        const { client, state } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 3, last_seq: 9 }]);
+        const send = jest.fn().mockReturnValue(true);
+        state.connection = { send };
+        client.markConversationUnread("c1");
+        client.markConversationRead("c1");
+        await jest.runAllTimersAsync();
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(false);
+        expect(send).toHaveBeenCalledWith(expect.objectContaining({ op: "read_marker", convo_id: "c1" }));
+        jest.useRealTimers();
+    });
+
+    it("compound failure: setItem throw while clearing override still flushes read, sets controlError, keeps override", async () => {
+        jest.useFakeTimers();
+        const { client, state } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 3, last_seq: 9 }]);
+        const send = jest.fn().mockReturnValue(true);
+        state.connection = { send };
+        client.markConversationUnread("c1");
+        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+            throw new Error("full");
+        });
+        const ok = client.markConversationRead("c1");
+        setItem.mockRestore();
+        await jest.runAllTimersAsync();
+        expect(ok).toBe(false);
+        expect(client.getSnapshot().controlError).toBeDefined();
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+        expect(send).toHaveBeenCalledWith(expect.objectContaining({ op: "read_marker", convo_id: "c1" }));
+        jest.useRealTimers();
+    });
+
+    it("marks active override-only rows read (unread_count 0) that the old gate skipped", () => {
+        const { client } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 0 }]);
+        client.markConversationUnread("c1");
+        client.markAllRead();
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(false);
+    });
+
+    it("leaves an archived conversation's override intact (mark unread → archive → mark-all)", () => {
+        const { client } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 0 }]);
+        client.markConversationUnread("c1");
+        client.archiveConversation("c1");
+        client.markAllRead();
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+    });
+
+    it("aggregates batch errors: one row's setItem throws → controlError set to the batch message", () => {
+        const { client } = withConvos([
+            { ...CONVERSATIONS[0], id: "c1", unread_count: 0 },
+            { ...CONVERSATIONS[0], id: "c2", unread_count: 0 },
+        ]);
+        client.markConversationUnread("c1");
+        client.markConversationUnread("c2");
+        const originalSetItem = Storage.prototype.setItem;
+        let throws = 1;
+        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+            this: Storage,
+            key,
+            value,
+        ) {
+            if (throws-- > 0) throw new Error("full");
+            return originalSetItem.call(this, key, value);
+        });
+        client.markAllRead();
+        setItem.mockRestore();
+        expect(client.getSnapshot().controlError).toBe(
+            "Some conversations couldn't be updated — device storage is full or unavailable.",
+        );
+    });
+
+    it("preserves a pin write error after a successful server-only mark-all", () => {
+        jest.useFakeTimers();
+        const { client } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 1 }]);
+        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+            throw new Error("full");
+        });
+        client.pinConversation("c1");
+        setItem.mockRestore();
+        const pinError = client.getSnapshot().controlError;
+
+        client.markAllRead();
+
+        expect(pinError).toBe("Couldn't save — device storage is full or unavailable.");
+        expect(client.getSnapshot().controlError).toBe(pinError);
+        jest.useRealTimers();
+    });
+
+    it("user-initiated select clears the unread override (clearUnread defaults true)", async () => {
+        const { client } = withConvos(CONVERSATIONS);
+        client.markConversationUnread("c1");
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+        await client.selectConversation("c1");
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(false);
+    });
+
+    it("explicit clearUnread:false keeps the override (the programmatic restore contract)", async () => {
+        const { client } = withConvos(CONVERSATIONS);
+        client.markConversationUnread("c1");
+        await client.selectConversation("c1", { clearUnread: false });
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+    });
+
+    it("startSession restore does not clear a persisted override (drives the real bootstrap path)", async () => {
+        unreadStore.write(SESSION, new Set(["c1"]));
+        const client = new MatronJournalClient();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        await internals(client).startSession(SESSION);
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+    });
+
+    it("setFlag aborts on read failure without clobbering the stored set", () => {
+        const { client } = withConvos(CONVERSATIONS);
+        pinnedStore.write(SESSION, new Set(["a", "b"]));
+        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+            throw new Error("unavailable");
+        });
+        client.pinConversation("c1");
+        getItem.mockRestore();
+        expect(client.getSnapshot().controlError).toBeDefined();
+        expect(pinnedStore.read(SESSION).ids).toEqual(new Set(["a", "b"]));
+    });
+
+    it("clears a persisted override even when the in-memory mirror is stale-empty", () => {
+        const { client } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 0 }]);
+        unreadStore.write(SESSION, new Set(["c1"]));
+        client.markConversationRead("c1");
+        expect(unreadStore.read(SESSION).ids.has("c1")).toBe(false);
     });
 });

@@ -213,11 +213,11 @@ describe("archiving conversations", () => {
         client.archiveConversation("c1");
 
         expect(client.getSnapshot().archivedIds).toBe(before);
-        expect(client.getSnapshot().archiveError).toBe("Couldn't save — device storage is full or unavailable.");
+        expect(client.getSnapshot().controlError).toBe("Couldn't save — device storage is full or unavailable.");
         expect(client.getSnapshot().connectionError).toBeUndefined();
 
         connectionInternals(state.connection!).callbacks.onState("offline", "network unavailable");
-        expect(client.getSnapshot().archiveError).toBe("Couldn't save — device storage is full or unavailable.");
+        expect(client.getSnapshot().controlError).toBe("Couldn't save — device storage is full or unavailable.");
         expect(client.getSnapshot().connectionError).toBe("network unavailable");
         await client.logout();
     });
@@ -235,7 +235,7 @@ describe("archiving conversations", () => {
 
         expect(write).not.toHaveBeenCalled();
         expect(client.getSnapshot().archivedIds).toEqual(new Set());
-        expect(client.getSnapshot().archiveError).toBe("Couldn't read saved archive — device storage unavailable.");
+        expect(client.getSnapshot().controlError).toBe("Couldn't read saved archive — device storage unavailable.");
     });
 
     it("clears selection when archiving the selected conversation", () => {
@@ -259,7 +259,7 @@ describe("archiving conversations", () => {
 
         expect(storedArchivedIds(SESSION)).toEqual(new Set(["c1"]));
         expect(client.getSnapshot().archivedIds).toEqual(new Set(["c1"]));
-        expect(client.getSnapshot().archiveError).toBeUndefined();
+        expect(client.getSnapshot().controlError).toBeUndefined();
     });
 });
 

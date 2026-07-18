@@ -5,7 +5,13 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { endpointUrl, enforceToolLogTtl, eventSnippet, normalizeServerUrl, websocketUrl } from "../../../src/journal/types";
+import {
+    endpointUrl,
+    enforceToolLogTtl,
+    eventSnippet,
+    normalizeServerUrl,
+    websocketUrl,
+} from "../../../src/journal/types";
 
 describe("matron-journal wire helpers", () => {
     it("normalizes secure and loopback server URLs", () => {
@@ -47,9 +53,7 @@ describe("eventSnippet captions", () => {
         expect(eventSnippet("image", { filename: "shot.png", caption: "what is wrong here?" })).toBe(
             "🖼 what is wrong here?",
         );
-        expect(eventSnippet("file", { filename: "notes.txt", caption: "read this first" })).toBe(
-            "📎 read this first",
-        );
+        expect(eventSnippet("file", { filename: "notes.txt", caption: "read this first" })).toBe("📎 read this first");
     });
 
     it("falls back to the filename when no caption is present", () => {

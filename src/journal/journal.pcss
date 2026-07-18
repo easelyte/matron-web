@@ -272,6 +272,52 @@ textarea {
     padding-right: calc(var(--cpd-space-5x) + var(--cpd-space-4x));
 }
 
+.mj_RoomListTabs {
+    display: flex;
+    gap: var(--cpd-space-1x);
+    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+}
+
+.mj_RoomListTab {
+    flex: 1 1 0;
+    border: 0;
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--cpd-color-text-secondary);
+    cursor: pointer;
+    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_RoomListTab_active {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_RoomListTab:focus-visible {
+    outline: 2px solid var(--cpd-color-border-interactive-primary);
+}
+
+.mj_UnreadDot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: var(--cpd-color-icon-accent-primary);
+}
+
+.mj_RoomListPinGlyph,
+.mj_RoomListStarGlyph {
+    flex: 0 0 auto;
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_RoomListPinGlyph svg,
+.mj_RoomListStarGlyph svg {
+    width: 14px;
+    height: 14px;
+}
+
 .mj_RoomItemMenu_trigger {
     position: absolute;
     top: 50%;

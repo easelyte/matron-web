@@ -7,6 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 import { JournalApi, JournalApiError, loadMatronConfig } from "./api";
 import { JournalConnection } from "./connection";
+import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { JournalDatabase } from "./database";
 import { mergeSessionStatus } from "./status";
 import {
@@ -27,13 +28,25 @@ import {
 const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
-const ARCHIVED_CONVERSATIONS_KEY_PREFIX = "matron_journal_archived_conversations_v1";
 const HISTORY_PAGE_SIZE = 80;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
+const MARK_ALL_READ_ERROR = "Some conversations couldn't be updated — device storage is full or unavailable.";
 // This is only a browser memory-safety ceiling. The server's 413 response is
 // authoritative for deployment-specific upload policy.
 export const BROWSER_MEMORY_SAFETY_MAX_BYTES = 512 * 1024 * 1024;
 const UPLOAD_TIMEOUT_MS = 60_000;
+
+// Client-local per-session flag stores. Archive key string is UNCHANGED (zero migration).
+export const archiveStore: IdSetStore = makeIdSetStore(
+    "matron_journal_archived_conversations_v1",
+    "archived-conversations",
+);
+export const pinnedStore: IdSetStore = makeIdSetStore("matron_journal_pinned_conversations_v1", "pinned-conversations");
+export const favoriteStore: IdSetStore = makeIdSetStore(
+    "matron_journal_favorite_conversations_v1",
+    "favorite-conversations",
+);
+export const unreadStore: IdSetStore = makeIdSetStore("matron_journal_unread_conversations_v1", "unread-conversations");
 
 interface ConversationHistoryState {
     initialized: boolean;
@@ -70,7 +83,10 @@ function blankState(): ClientState {
         config: {},
         conversations: [],
         archivedIds: new Set(),
-        archiveError: undefined,
+        pinnedIds: new Set(),
+        favoriteIds: new Set(),
+        unreadOverrideIds: new Set(),
+        controlError: undefined,
         events: [],
         pendingMessages: [],
         connection: "offline",
@@ -114,41 +130,15 @@ function storedSelectedConversation(session: Session): string | undefined {
 }
 
 export function archivedStorageKey(session: Session): string {
-    return `${ARCHIVED_CONVERSATIONS_KEY_PREFIX}:${encodeURIComponent(session.serverUrl)}:${session.userId}`;
-}
-
-function parseArchivedValue(raw: string | null): Set<string> {
-    if (raw === null) return new Set();
-
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(raw);
-    } catch {
-        console.warn("matron: malformed archived-conversations value, ignoring");
-        return new Set();
-    }
-
-    if (!Array.isArray(parsed)) {
-        console.warn("matron: archived-conversations value not an array, ignoring");
-        return new Set();
-    }
-
-    return new Set(parsed.filter((value): value is string => typeof value === "string"));
+    return archiveStore.storageKey(session);
 }
 
 export function storedArchivedIds(session: Session): Set<string> {
-    let raw: string | null;
-    try {
-        raw = localStorage.getItem(archivedStorageKey(session));
-    } catch {
-        console.warn("matron: archived-conversations read failed (storage unavailable)");
-        return new Set();
-    }
-    return parseArchivedValue(raw);
+    return archiveStore.read(session).ids;
 }
 
 export function storeArchivedIds(session: Session, ids: Set<string>): void {
-    localStorage.setItem(archivedStorageKey(session), JSON.stringify([...ids]));
+    archiveStore.write(session, ids);
 }
 
 function firstSelectableConversation(
@@ -217,6 +207,7 @@ export class MatronJournalClient {
     private pendingAck = 0;
     private historyError?: string;
     private storageListener?: (event: StorageEvent) => void;
+    private unreadHydrated = false;
 
     public readonly subscribe = (listener: () => void): (() => void) => {
         this.listeners.add(listener);
@@ -311,8 +302,9 @@ export class MatronJournalClient {
         this.emit();
     }
 
-    public async selectConversation(conversationId: string): Promise<void> {
+    public async selectConversation(conversationId: string, opts?: { clearUnread?: boolean }): Promise<void> {
         if (!this.database || !this.state.session) return;
+        if (opts?.clearUnread ?? true) this.clearUnreadOverride(conversationId);
         storeSelectedConversation(this.state.session, conversationId);
         this.patch({
             selectedConversationId: conversationId,
@@ -337,7 +329,7 @@ export class MatronJournalClient {
     public clearSelection(): void {
         this.connection?.send({ op: "viewing", convo_id: null });
         if (this.state.session) storeSelectedConversation(this.state.session, undefined);
-        this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [], archiveError: undefined });
+        this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [] });
     }
 
     public archiveConversation(conversationId: string): void {
@@ -348,18 +340,50 @@ export class MatronJournalClient {
         this.setArchived(conversationId, false);
     }
 
-    public markConversationRead(conversationId: string): void {
+    public pinConversation(id: string): void {
+        this.setFlag(pinnedStore, "pinnedIds", id, true);
+    }
+
+    public unpinConversation(id: string): void {
+        this.setFlag(pinnedStore, "pinnedIds", id, false);
+    }
+
+    public favoriteConversation(id: string): void {
+        this.setFlag(favoriteStore, "favoriteIds", id, true);
+    }
+
+    public unfavoriteConversation(id: string): void {
+        this.setFlag(favoriteStore, "favoriteIds", id, false);
+    }
+
+    public markConversationUnread(id: string): void {
+        this.setFlag(unreadStore, "unreadOverrideIds", id, true);
+    }
+
+    public markConversationRead(conversationId: string): boolean {
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
-        if (!conversation?.unread_count) return;
-        this.scheduleRead(conversationId, conversation.last_seq, 0);
+        if (!conversation) return true;
+        const cleared = this.clearUnreadOverride(conversationId);
+        if (conversation.unread_count > 0) this.scheduleRead(conversationId, conversation.last_seq, 0);
+        return cleared;
     }
 
     public markAllRead(): void {
+        const previousControlError = this.state.controlError;
+        let anyFailed = false;
         for (const conversation of this.state.conversations) {
-            if (conversation.unread_count > 0 && !this.state.archivedIds.has(conversation.id)) {
-                this.markConversationRead(conversation.id);
-            }
+            if (this.state.archivedIds.has(conversation.id)) continue;
+            if (!effectiveUnread(conversation, this.state.unreadOverrideIds)) continue;
+            // Single canonical mark-read path; it clears the override and flushes the server read.
+            if (!this.markConversationRead(conversation.id)) anyFailed = true;
         }
+        this.patch({
+            controlError: anyFailed
+                ? MARK_ALL_READ_ERROR
+                : previousControlError === MARK_ALL_READ_ERROR
+                  ? undefined
+                  : previousControlError,
+        });
     }
 
     public async loadOlderHistory(): Promise<void> {
@@ -454,9 +478,7 @@ export class MatronJournalClient {
         this.pendingFiles.set(message.localId, file);
         if (!(await this.persistAttachment(message, db, gen))) return { kind: "persist-failed" };
         if (this.sessionGen !== gen || this.database !== db) return { kind: "persist-failed" };
-        return message.attachState === "uploading"
-            ? { kind: "persisted-uploadable" }
-            : { kind: "persisted-terminal" };
+        return message.attachState === "uploading" ? { kind: "persisted-uploadable" } : { kind: "persisted-terminal" };
     }
 
     private async runPendingUpload(message: PendingMessage, file: File, owner: AttachmentOwner): Promise<void> {
@@ -870,7 +892,16 @@ export class MatronJournalClient {
 
         const conversations = await this.database.conversations();
         const storedConversationId = storedSelectedConversation(session);
-        const archivedIds = storedArchivedIds(session);
+        const archiveRead = archiveStore.read(session);
+        const pinnedRead = pinnedStore.read(session);
+        const favoriteRead = favoriteStore.read(session);
+        const unreadRead = unreadStore.read(session);
+        this.unreadHydrated = unreadRead.ok;
+        const bootstrapReadFailed = !archiveRead.ok || !pinnedRead.ok || !favoriteRead.ok || !unreadRead.ok;
+        const archivedIds = archiveRead.ids;
+        const pinnedIds = pinnedRead.ids;
+        const favoriteIds = favoriteRead.ids;
+        const unreadOverrideIds = unreadRead.ids;
         const selectedConversation = firstSelectableConversation(conversations, storedConversationId, archivedIds);
         this.state = {
             ...blankState(),
@@ -879,23 +910,36 @@ export class MatronJournalClient {
             session,
             conversations,
             archivedIds,
+            pinnedIds,
+            favoriteIds,
+            unreadOverrideIds,
+            controlError: bootstrapReadFailed
+                ? "Couldn't load saved preferences — device storage unavailable."
+                : undefined,
             selectedConversationId: selectedConversation?.id,
         };
         if (this.storageListener) window.removeEventListener("storage", this.storageListener);
         this.storageListener = (event: StorageEvent): void => {
             const currentSession = this.state.session;
-            if (!currentSession || event.key !== archivedStorageKey(currentSession) || event.newValue === null) return;
-            const archivedIds = parseArchivedValue(event.newValue);
-            this.patch({ archivedIds });
-            // Mirror the local archive path: if another tab archived the convo we're viewing,
-            // don't keep it selected (else this tab reads/marks/sends to an archived room).
-            if (this.state.selectedConversationId && archivedIds.has(this.state.selectedConversationId)) {
-                this.clearSelection();
+            if (!currentSession || event.newValue === null) return;
+            if (event.key === archiveStore.storageKey(currentSession)) {
+                const archivedIds = archiveStore.parse(event.newValue);
+                this.patch({ archivedIds });
+                if (this.state.selectedConversationId && archivedIds.has(this.state.selectedConversationId)) {
+                    this.clearSelection();
+                }
+            } else if (event.key === pinnedStore.storageKey(currentSession)) {
+                this.patch({ pinnedIds: pinnedStore.parse(event.newValue) });
+            } else if (event.key === favoriteStore.storageKey(currentSession)) {
+                this.patch({ favoriteIds: favoriteStore.parse(event.newValue) });
+            } else if (event.key === unreadStore.storageKey(currentSession)) {
+                if (!this.unreadHydrated) this.unreadHydrated = true;
+                this.patch({ unreadOverrideIds: unreadStore.parse(event.newValue) });
             }
         };
         window.addEventListener("storage", this.storageListener);
         this.emit();
-        if (selectedConversation) await this.selectConversation(selectedConversation.id);
+        if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
 
         this.connection = new JournalConnection(session.serverUrl, session.token, {
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
@@ -911,28 +955,56 @@ export class MatronJournalClient {
     private setArchived(conversationId: string, archived: boolean): void {
         const session = this.state.session;
         if (!session) return;
-
-        let current: Set<string>;
-        try {
-            current = parseArchivedValue(localStorage.getItem(archivedStorageKey(session)));
-        } catch {
-            this.patch({ archiveError: "Couldn't read saved archive — device storage unavailable." });
+        const current = archiveStore.read(session);
+        if (!current.ok) {
+            this.patch({ controlError: "Couldn't read saved archive — device storage unavailable." });
             return;
         }
-
-        const next = new Set(current);
+        const next = new Set(current.ids);
         if (archived) next.add(conversationId);
         else next.delete(conversationId);
-
         try {
-            storeArchivedIds(session, next);
+            archiveStore.write(session, next);
         } catch {
-            this.patch({ archiveError: "Couldn't save — device storage is full or unavailable." });
+            this.patch({ controlError: "Couldn't save — device storage is full or unavailable." });
             return;
         }
-
-        this.patch({ archivedIds: next, archiveError: undefined });
+        this.patch({ archivedIds: next, controlError: undefined });
         if (archived && conversationId === this.state.selectedConversationId) this.clearSelection();
+    }
+
+    private setFlag(
+        store: IdSetStore,
+        stateKey: "pinnedIds" | "favoriteIds" | "unreadOverrideIds",
+        id: string,
+        on: boolean,
+    ): boolean {
+        const session = this.state.session;
+        if (!session) return false;
+
+        const current = store.read(session);
+        if (!current.ok) {
+            this.patch({ controlError: "Couldn't read saved preference — device storage unavailable." });
+            return false;
+        }
+        const next = new Set(current.ids);
+        if (on) next.add(id);
+        else next.delete(id);
+        try {
+            store.write(session, next);
+        } catch {
+            this.patch({ controlError: "Couldn't save — device storage is full or unavailable." });
+            return false;
+        }
+        this.patch({ [stateKey]: next, controlError: undefined } as Partial<ClientState>);
+        return true;
+    }
+
+    private clearUnreadOverride(id: string): boolean {
+        // The in-memory no-op shortcut is only safe after the unread store has hydrated successfully.
+        // Otherwise a stale-empty mirror may mask a persisted override, so re-read before deleting.
+        if (this.unreadHydrated && !this.state.unreadOverrideIds.has(id)) return true;
+        return this.setFlag(unreadStore, "unreadOverrideIds", id, false);
     }
 
     private async replaceSnapshot(): Promise<void> {
@@ -955,18 +1027,31 @@ export class MatronJournalClient {
         await this.database.replaceWithSnapshot(snapshot);
         await this.reconcilePersistedOwnMessages(this.database);
         const conversations = await this.database.conversations();
-        let archivedIds = this.state.archivedIds;
+        let { archivedIds, pinnedIds, favoriteIds, unreadOverrideIds } = this.state;
         const session = this.state.session;
         if (session) {
-            try {
-                archivedIds = parseArchivedValue(localStorage.getItem(archivedStorageKey(session)));
-            } catch {
-                // Keep the in-memory set when storage is temporarily unavailable.
+            const archiveRead = archiveStore.read(session);
+            if (archiveRead.ok) archivedIds = archiveRead.ids;
+            const pinnedRead = pinnedStore.read(session);
+            if (pinnedRead.ok) pinnedIds = pinnedRead.ids;
+            const favoriteRead = favoriteStore.read(session);
+            if (favoriteRead.ok) favoriteIds = favoriteRead.ids;
+            const unreadRead = unreadStore.read(session);
+            if (unreadRead.ok) {
+                unreadOverrideIds = unreadRead.ids;
+                this.unreadHydrated = true;
             }
         }
         const selectedConversation = firstSelectableConversation(conversations, previousSelection, archivedIds);
-        this.patch({ conversations, archivedIds, selectedConversationId: selectedConversation?.id });
-        if (selectedConversation) await this.selectConversation(selectedConversation.id);
+        this.patch({
+            conversations,
+            archivedIds,
+            pinnedIds,
+            favoriteIds,
+            unreadOverrideIds,
+            selectedConversationId: selectedConversation?.id,
+        });
+        if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
         else if (this.state.session) storeSelectedConversation(this.state.session, undefined);
     }
 
