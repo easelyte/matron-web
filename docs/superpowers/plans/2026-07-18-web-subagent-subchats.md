@@ -221,6 +221,8 @@ git commit -m "feat(subchat): derivation helpers (isSubChat/childrenOf/runningCh
 //   expect(convo.parent_convo_id).toBe("p1")
 // replaceWithSnapshot whose summary omits parent_convo_id for an already-linked child keeps the link:
 //   expect(afterResync.parent_convo_id).toBe("p1")
+// self-parent (convo_meta / snapshot with parent_convo_id === the convo's own id) → stored as null (top-level):
+//   expect(convo.parent_convo_id).toBeNull()
 // emptyConversation defaults parent_convo_id null.
 ```
 
@@ -233,16 +235,18 @@ Expected: FAIL (link null / cleared).
 
 `emptyConversation` (~36): add `parent_convo_id: null,` to the returned object.
 
-`applyJournal` `convo_meta` branch — **relax the `&& title` guard** so a titleless meta is processed (`database.ts:190`):
+`applyJournal` `convo_meta` branch — **relax the `&& title` guard** so a titleless meta is processed, and **reject self-parent** (`database.ts:190`):
 ```ts
 if (event.type === "convo_meta") {
     if (typeof event.payload.title === "string") conversation.title = event.payload.title;
-    const incoming = coerceParentId(event.payload.parent_convo_id);
+    let incoming = coerceParentId(event.payload.parent_convo_id);
+    if (incoming === conversation.id) incoming = null; // self-parent → top-level (Codex R2)
     if (conversation.parent_convo_id == null && incoming) {
         conversation.parent_convo_id = incoming;
     }
 }
 ```
+Apply the same `incoming === <id> → null` self-reject in `replaceWithSnapshot` and `backfillParentLinks` (both have the summary id + incoming in scope).
 (The `else if (event.type === "session_status" ...)` chain that follows is preserved — `convo_meta` never carries state/message semantics.)
 
 `replaceWithSnapshot` (~106): before `conversations.clear()`, read existing parent ids into a `Map<string,string|null>`; when re-`put`-ting each summary, coalesce **existing-first** so a non-null incoming never moves an established link (true immutability, matches the live `applyJournal` rule):
@@ -338,12 +342,21 @@ if (cursor !== undefined && !(await this.database.backfillDone())) {
     try {
         await this.database.backfillParentLinks(await this.api.snapshot());
     } catch (err) {
-        // transient (fetch) OR permanent (malformed, rejected pre-write): leave key unset, retry next
-        // startup, do NOT wedge — startup proceeds on the incremental cursor path below.
-        console.warn("matron: subchat backfill deferred", err);
+        // Classify (V6): a malformed snapshot rejects with an Error message starting "malformed"
+        // (permanent); anything else is a transient fetch/IDB failure. Persist a diagnostic for the
+        // permanent case (observable, human-reviewable) rather than only console.warn.
+        const permanent = err instanceof Error && err.message.startsWith("malformed");
+        if (permanent) await this.database.recordBackfillError(String(err)).catch(() => undefined);
+        console.warn(`matron: subchat backfill deferred (${permanent ? "permanent" : "transient"})`, err);
+        // Deliberate: leave the done-key unset either way, so the backfill retries next startup. Bounded
+        // to one snapshot fetch per launch; the real journal server is well-formed, so a permanent
+        // malformed payload is a server bug that self-heals once fixed — giving up forever would instead
+        // strand a client on a transient server hiccup. The persisted subchat_backfill_error meta key
+        // (via recordBackfillError) is the V6 "flag for human review" surface without a give-up path.
     }
 }
 ```
+Add `recordBackfillError(reason: string)` to `database.ts` (writes `{ ts, reason }` to `meta` key `subchat_backfill_error` via a `readwrite` `meta` tx + `transactionDone`).
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -436,8 +449,9 @@ const unread = this.state.conversations.reduce(
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/components.tsx src/journal/client.ts test/unit-tests/subchat-list.test.tsx test/unit-tests/subchat-select.test.ts
-git commit -m "feat(subchat): exclude linked children from unread/markAll/auto-select (both branches)"
+git add src/journal/components.tsx src/journal/client.ts test/unit-tests/subchat-list.test.tsx test/unit-tests/subchat-select.test.ts test/unit-tests/subchat-badge.test.ts
+git status --porcelain test/unit-tests/subchat-badge.test.ts  # assert the badge test is tracked, not left untracked
+git commit -m "feat(subchat): exclude linked children from unread/markAll/badge/auto-select (both branches)"
 ```
 
 **Acceptance:** no linked child contributes to unread/favorite aggregation, `markAllRead`, or auto-selection (preferred or fallback); orphan remains selectable (spec §4.3, §7.3).
@@ -493,6 +507,21 @@ if (this.isChildConvo(message.convoId)) {
 }
 ```
 Do **not** modify the `Timeline` text-pending branch.
+
+**`handleReady` replay purge — the reconnect path is the ONLY reachable one, so purge undeliverable child-targeted TEXT records there (Claude R2-M1/M2; DESIGN LOCKED — no further flips per the reviewer-oscillation stop rule).** In `handleReady` (`client.ts:1058`, async, `db` in scope), before the replay loop at `client.ts:1068`, partition the outbox: a child-targeted **text** record is provably undeliverable (permanent read-only target) — remove it from the outbox via `db` and, if any were removed, set `controlError` **once** for this reconnect. This prevents the retained-forever record from re-firing `controlError` on every reconnect (Claude M2) and from stranding a stuck row (M1). Child-targeted **attachment** records are left to replay → `emitPendingAttachment`'s guard marks them errored+dismissable (existing UI). Non-child records replay normally.
+```ts
+const kept: PendingMessage[] = [];
+let purged = 0;
+for (const message of outbox) {
+    if (this.isChildConvo(message.convoId) && message.kind !== "image" && message.kind !== "file") {
+        await db.removeFromOutbox(message.localId); purged++;      // undeliverable text → drop (after the notice below)
+    } else kept.push(message);
+}
+if (purged > 0) this.patch({ controlError: "Couldn't send to a read-only subagent transcript." });
+if (!ownsReplay()) return;
+for (const message of kept) this.sendPendingMessage(message, connection);
+```
+(`removeFromOutbox(localId)` mirrors the existing outbox-delete used by `dismissAttachment`; if a distinctly-named method exists, reuse it.) The sync `sendPendingMessage` text guard from above stays as a pure backstop for any non-replay path (never reached in practice, but keeps the invariant total). This one-time-notice-then-purge is P3-compliant (the loss is surfaced before removal, not silent) and is the FINAL word on blocked-text handling.
 
 - [ ] **Step 4: Run to verify pass** → PASS.
 
@@ -697,7 +726,7 @@ const childMode = selected != null && isSubChat(selected);
     {childMode ? <ReadOnlyHint /> : <Composer client={client} state={state} />}
 </div>
 ```
-`SubChatHeader`: reuse `mj_ChatHeader` chrome + `sessionStatus`; back button → `const p = selected.parent_convo_id; p && state.conversations.some(c=>c.id===p) ? client.selectConversation(p) : client.clearSelection()`; running/finished label from `selected.session_state`.
+`SubChatHeader`: reuse `mj_ChatHeader` chrome + `sessionStatus`; back button → `const p = selected.parent_convo_id; p && p !== selected.id && state.conversations.some(c=>c.id===p) ? client.selectConversation(p) : client.clearSelection()` (the `p !== selected.id` backstop guarantees Back never re-selects a self-parented child even if ingestion missed it, Codex R2-B2); running/finished label from `selected.session_state`.
 
 - [ ] **Step 4: Run to verify pass** → PASS.
 
@@ -809,11 +838,11 @@ git commit -m "feat(subchat): isNearBottom pure helper (80px threshold)"
 
 - [ ] **Step 1: Write the failing tests**
 
-Assertions: `sendMessage`/`confirmStagedFile`/`retryAttachment` each increment `state.sendTick`; an incoming journal event routed through `refreshSelectedConversation` does NOT change `sendTick`.
+Assertions: a **successful** `sendMessage` (non-empty body, non-child convo), `confirmStagedFile` (valid staged head), and `retryAttachment` (record found) each increment `state.sendTick`. **Negative (Codex R2-M3):** each method's early-return / rejection paths leave `sendTick` UNCHANGED — empty-body `sendMessage`, child-blocked send, missing/invalid staged head in `confirmStagedFile`, and `retryAttachment` with no matching outbox record. An incoming journal event through `refreshSelectedConversation` also does NOT change `sendTick`.
 
 - [ ] **Step 2: Run to verify fail** → FAIL.
 
-- [ ] **Step 3: Implement** — add the field, init in `blankState`, and the three explicit `patch({sendTick: this.state.sendTick + 1})` bumps. **Do not** bump inside `refreshSelectedConversation`.
+- [ ] **Step 3: Implement** — add the field, init `sendTick: 0` in `blankState`. Place `this.patch({ sendTick: this.state.sendTick + 1 })` **only past the success boundary** in each method, NOT at the top: in `sendMessage` after the `if (!body || !conversationId || !this.database) return false;` guard AND after the child-block guard (so a blocked/empty send never bumps); in `confirmStagedFile` after the head/validity checks pass (durable stage confirmed); in `retryAttachment` after the outbox record is found and not child-blocked. **Never** bump inside `refreshSelectedConversation`. This makes `sendTick` a *successful-own-send* signal, not an invocation counter — so no-op or blocked calls don't yank the reader to the tail.
 
 - [ ] **Step 4: Run to verify pass** → PASS.
 
@@ -883,21 +912,24 @@ git commit -m "style(subchat): strip, pills, spinner, sub-chat header, switcher,
 - [ ] **Step 1:** `pnpm lint && pnpm test` → all green (tsc clean, prettier clean, jest suite passes).
 - [ ] **Step 2: Build** — `corepack pnpm build` succeeds.
 - [ ] **Step 3: Manual matrix against the live journal server** (per §9 acceptance): spawn a session, run a subagent; confirm — child hidden from list; running pill appears + parent switcher lists finished children; tapping opens a read-only child (no composer); **drag a file onto a child pane → rejected, no upload**; prompt/permission cards non-interactive in a child; switcher across parallel subagents; back returns to parent; rapid sibling switch has no stale view; jump-to-bottom appears on scroll-up and re-follows; own message re-follows; incoming agent output while scrolled up does NOT yank down; existing-client (with history) shows previously-flat children now grouped (backfill).
-- [ ] **Step 4: Deploy (R102-safe atomic runbook — no unconfirmed destructive delete).**
+- [ ] **Step 4: Deploy — OPERATOR-EXECUTED manual step (not autonomous; the operator running it IS the R102 confirmation).** The deploy target is the nginx-served static dir `/opt/matron/web-journal/webapp` (per the CLAUDE.local.md web deploy runbook), NOT the repo root — the plan's build/verify tasks run in the worktree, but deployment copies into the live dir. Preflight-asserted, R102-safe (no unconfirmed destructive delete):
 
 ```bash
+DEPLOY_DIR=/opt/matron/web-journal          # nginx vhost root; served subdir is $DEPLOY_DIR/webapp
+[ -d "$DEPLOY_DIR/webapp" ] || { echo "ABORT: $DEPLOY_DIR/webapp missing"; exit 1; }   # resolved-path preflight
+cd "$DEPLOY_DIR"
 TS=$(date -u +%Y%m%dT%H%M%SZ)
-cp -a webapp "webapp.bak.$TS"          # explicit, resolved timestamp
-corepack pnpm build                     # build in place
+cp -a webapp "webapp.bak.$TS"               # explicit resolved timestamp; backup BEFORE any mutation
+# build the new bundle into place (from the built worktree artifacts per the runbook), then:
 # verify https://vmi3096107.taild3d6c4.ts.net:8443 loads + sub-chat features work
-# --- rollback (ONLY if verification fails) — reversible rename-swap, never rm the live dir first:
+# --- rollback (ONLY if verification fails) — reversible rename-swap, validated backup, never rm live first:
 [ -d "webapp.bak.$TS" ] || { echo "ABORT: backup webapp.bak.$TS missing"; exit 1; }
-mv webapp "webapp.failed.$TS"           # set the bad build ASIDE (retained for inspection), not deleted
-mv "webapp.bak.$TS" webapp              # restore the known-good backup
-# webapp.failed.$TS is kept for post-mortem; prune manually only after confirming the restore is healthy.
+mv webapp "webapp.failed.$TS"               # set the bad build ASIDE (retained), not deleted
+mv "webapp.bak.$TS" webapp                  # restore the known-good backup
+# webapp.failed.$TS kept for post-mortem; prune manually only after confirming the restore is healthy.
 ```
 
-This satisfies R102: the only removal of the live tree is a rename (`mv` aside), gated on a validated backup; no `rm -rf` runs against production before the good build is restored. Prune old `webapp.bak.*` / `webapp.failed.*` manually once confident (per the CLAUDE.local.md deploy runbook).
+R102-compliant: this is an operator-run step (the human executing it is the confirmation), the target path is resolved + preflight-asserted, and the only removal of the live tree is a reversible `mv` gated on a validated backup — no `rm -rf` against production. Prune old `webapp.bak.*` / `webapp.failed.*` manually once confident.
 
 **Acceptance:** every §9 criterion verified live; deploy reversible; rollback R102-compliant (validated backup, atomic rename-swap, no unconfirmed destructive delete).
 
