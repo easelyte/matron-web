@@ -8,9 +8,16 @@ Please see LICENSE files in the repository root for full details.
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { BROWSER_MEMORY_SAFETY_MAX_BYTES, MatronJournalClient } from "../../../src/journal/client";
+import {
+    archiveStore,
+    BROWSER_MEMORY_SAFETY_MAX_BYTES,
+    favoriteStore,
+    MatronJournalClient,
+    pinnedStore,
+    unreadStore,
+} from "../../../src/journal/client";
 import { MatronApp } from "../../../src/journal/components";
-import type { ClientState, JournalEvent, PendingMessage } from "../../../src/journal/types";
+import type { ClientState, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -23,6 +30,14 @@ const CONVERSATION = {
     snippet: "",
     created_at: 1,
     read_up_to_seq: 0,
+};
+
+const SESSION: Session = {
+    serverUrl: "https://journal.example",
+    token: "t",
+    deviceId: 1,
+    userId: 2,
+    username: "dan",
 };
 
 interface ClientInternals {
@@ -45,11 +60,16 @@ function signedInClient(
     internals(client).state = {
         ...client.getSnapshot(),
         phase: "signed-in",
+        session: SESSION,
         conversations: [CONVERSATION],
         selectedConversationId: CONVERSATION.id,
         events: options.events ?? [],
         pendingMessages: options.pendingMessages ?? [],
         connection: "online",
+        archivedIds: archiveStore.read(SESSION).ids,
+        pinnedIds: pinnedStore.read(SESSION).ids,
+        favoriteIds: favoriteStore.read(SESSION).ids,
+        unreadOverrideIds: unreadStore.read(SESSION).ids,
     };
     return client;
 }
@@ -72,6 +92,16 @@ function button(container: HTMLElement, label: string): HTMLButtonElement {
     if (!match) throw new Error(`Missing button: ${label}`);
     return match;
 }
+
+function menuItem(container: HTMLElement, text: string): Element | undefined {
+    return [...container.querySelectorAll('[role="menuitem"]')].find((element) => element.textContent?.includes(text));
+}
+
+async function openMenu(container: HTMLElement): Promise<void> {
+    await act(async () => button(container, "Conversation options").click());
+}
+
+beforeEach(() => localStorage.clear());
 
 function fileDragEvent(type: string, file: File): Event {
     const event = new Event(type, { bubbles: true, cancelable: true });
@@ -668,5 +698,66 @@ describe("UploadConfirmDialog", () => {
         expect(revoke).toHaveBeenCalledWith("blob:preview");
         await act(async () => client.cancelStagedFiles());
         expect(revoke).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe("conversation menu controls", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    it("menu shows Pin when unpinned and Unpin when pinned", async () => {
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await openMenu(rendered.container);
+        expect(menuItem(rendered.container, "Pin")).toBeTruthy();
+        expect(menuItem(rendered.container, "Unpin")).toBeFalsy();
+        await act(async () => (menuItem(rendered!.container, "Pin") as HTMLElement).click());
+        await openMenu(rendered.container);
+        expect(menuItem(rendered.container, "Unpin")).toBeTruthy();
+    });
+
+    it("menu shows Add to Favorites when unfavorited and Remove from Favorites when favorited", async () => {
+        favoriteStore.write(SESSION, new Set([CONVERSATION.id]));
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await openMenu(rendered.container);
+        expect(menuItem(rendered.container, "Remove from Favorites")).toBeTruthy();
+    });
+
+    it("menu shows Mark as unread (not Mark as read) for a read, non-archived row", async () => {
+        rendered = await renderClient(signedInClient());
+        await openMenu(rendered.container);
+        expect(menuItem(rendered.container, "Mark as unread")).toBeTruthy();
+        expect(menuItem(rendered.container, "Mark as read")).toBeFalsy();
+    });
+
+    it("menu shows Mark as read (not Mark as unread) for an override-only unread row, and clicking it clears the override", async () => {
+        unreadStore.write(SESSION, new Set([CONVERSATION.id]));
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await openMenu(rendered.container);
+        expect(menuItem(rendered.container, "Mark as read")).toBeTruthy();
+        expect(menuItem(rendered.container, "Mark as unread")).toBeFalsy();
+        await act(async () => (menuItem(rendered!.container, "Mark as read") as HTMLElement).click());
+        expect(client.getSnapshot().unreadOverrideIds.has(CONVERSATION.id)).toBe(false);
+    });
+
+    it("menu offers neither Mark-read nor Mark-unread for an archived row (read affordances are active-only)", async () => {
+        archiveStore.write(SESSION, new Set([CONVERSATION.id]));
+        rendered = await renderClient(signedInClient());
+        const toggle = rendered.container.querySelector<HTMLButtonElement>(".mj_RoomList_archivedToggle")!;
+        await act(async () => toggle.click());
+        await openMenu(rendered.container);
+        expect(menuItem(rendered.container, "Mark as unread")).toBeFalsy();
+        expect(menuItem(rendered.container, "Mark as read")).toBeFalsy();
+        expect(menuItem(rendered.container, "Unarchive")).toBeTruthy();
     });
 });

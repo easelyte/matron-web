@@ -18,6 +18,7 @@ import React, {
 
 import matronLogo from "../../res/matron-logo-simple.svg";
 import { BROWSER_MEMORY_SAFETY_MAX_BYTES, errorMessage, type MatronJournalClient } from "./client";
+import { effectiveUnread } from "./conversation-flags";
 import {
     ArchiveIcon,
     AttachmentIcon,
@@ -26,11 +27,15 @@ import {
     KebabIcon,
     MarkAllReadIcon,
     MarkReadIcon,
+    MarkUnreadIcon,
     MicOnIcon,
+    PinIcon,
     ReactionIcon,
     SearchIcon,
     SendIcon,
     SettingsIcon,
+    StarFilledIcon,
+    StarIcon,
     UnarchiveIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
@@ -644,21 +649,96 @@ function ConversationList({
                             }
                         }}
                     >
-                        {!state.archivedIds.has(menuConversation.id) && menuConversation.unread_count > 0 && (
+                        {state.pinnedIds.has(menuConversation.id) ? (
                             <button
                                 className="mj_RoomItemMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
                                     closeRoomMenu();
-                                    client.markConversationRead(menuConversation.id);
+                                    client.unpinConversation(menuConversation.id);
                                     restoreFocusAfterMenuAction();
                                 }}
                             >
-                                <MarkReadIcon aria-hidden />
-                                Mark as read
+                                <PinIcon aria-hidden />
+                                Unpin
+                            </button>
+                        ) : (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.pinConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <PinIcon aria-hidden />
+                                Pin
                             </button>
                         )}
+                        {state.favoriteIds.has(menuConversation.id) ? (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.unfavoriteConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <StarFilledIcon aria-hidden />
+                                Remove from Favorites
+                            </button>
+                        ) : (
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeRoomMenu();
+                                    client.favoriteConversation(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <StarIcon aria-hidden />
+                                Add to Favorites
+                            </button>
+                        )}
+                        {!state.archivedIds.has(menuConversation.id) &&
+                            !effectiveUnread(menuConversation, state.unreadOverrideIds) && (
+                                <button
+                                    className="mj_RoomItemMenu_item"
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => {
+                                        closeRoomMenu();
+                                        client.markConversationUnread(menuConversation.id);
+                                        restoreFocusAfterMenuAction();
+                                    }}
+                                >
+                                    <MarkUnreadIcon aria-hidden />
+                                    Mark as unread
+                                </button>
+                            )}
+                        {!state.archivedIds.has(menuConversation.id) &&
+                            effectiveUnread(menuConversation, state.unreadOverrideIds) && (
+                                <button
+                                    className="mj_RoomItemMenu_item"
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => {
+                                        closeRoomMenu();
+                                        client.markConversationRead(menuConversation.id);
+                                        restoreFocusAfterMenuAction();
+                                    }}
+                                >
+                                    <MarkReadIcon aria-hidden />
+                                    Mark as read
+                                </button>
+                            )}
                         {state.archivedIds.has(menuConversation.id) ? (
                             <button
                                 className="mj_RoomItemMenu_item"
