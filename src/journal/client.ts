@@ -338,9 +338,33 @@ export class MatronJournalClient {
         this.setArchived(conversationId, false);
     }
 
+    public pinConversation(id: string): void {
+        this.setFlag(pinnedStore, "pinnedIds", id, true);
+    }
+
+    public unpinConversation(id: string): void {
+        this.setFlag(pinnedStore, "pinnedIds", id, false);
+    }
+
+    public favoriteConversation(id: string): void {
+        this.setFlag(favoriteStore, "favoriteIds", id, true);
+    }
+
+    public unfavoriteConversation(id: string): void {
+        this.setFlag(favoriteStore, "favoriteIds", id, false);
+    }
+
+    public markConversationUnread(id: string): void {
+        this.setFlag(unreadStore, "unreadOverrideIds", id, true);
+    }
+
     public markConversationRead(conversationId: string): void {
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
-        if (!conversation?.unread_count) return;
+        if (!conversation) return;
+        if (!conversation.unread_count) {
+            this.clearUnreadOverride(conversationId);
+            return;
+        }
         this.scheduleRead(conversationId, conversation.last_seq, 0);
     }
 
@@ -937,6 +961,40 @@ export class MatronJournalClient {
         }
         this.patch({ archivedIds: next, controlError: undefined });
         if (archived && conversationId === this.state.selectedConversationId) this.clearSelection();
+    }
+
+    private setFlag(
+        store: IdSetStore,
+        stateKey: "pinnedIds" | "favoriteIds" | "unreadOverrideIds",
+        id: string,
+        on: boolean,
+    ): boolean {
+        const session = this.state.session;
+        if (!session) return false;
+
+        const current = store.read(session);
+        if (!current.ok) {
+            this.patch({ controlError: "Couldn't read saved preference — device storage unavailable." });
+            return false;
+        }
+        const next = new Set(current.ids);
+        if (on) next.add(id);
+        else next.delete(id);
+        try {
+            store.write(session, next);
+        } catch {
+            this.patch({ controlError: "Couldn't save — device storage is full or unavailable." });
+            return false;
+        }
+        this.patch({ [stateKey]: next, controlError: undefined } as Partial<ClientState>);
+        return true;
+    }
+
+    private clearUnreadOverride(id: string): boolean {
+        // The in-memory no-op shortcut is only safe after the unread store has hydrated successfully.
+        // Otherwise a stale-empty mirror may mask a persisted override, so re-read before deleting.
+        if (this.unreadHydrated && !this.state.unreadOverrideIds.has(id)) return true;
+        return this.setFlag(unreadStore, "unreadOverrideIds", id, false);
     }
 
     private async replaceSnapshot(): Promise<void> {

@@ -2157,4 +2157,49 @@ describe("session-controls flags", () => {
         fire(unreadStore.storageKey(SESSION), ["c1"]);
         expect(client.getSnapshot().unreadOverrideIds).toEqual(new Set(["c1"]));
     });
+
+    it("pins/unpins, persisting to the pinned store and patching pinnedIds", () => {
+        const { client } = withConvos(CONVERSATIONS);
+        client.pinConversation("c1");
+        expect(client.getSnapshot().pinnedIds.has("c1")).toBe(true);
+        expect(pinnedStore.read(SESSION).ids.has("c1")).toBe(true);
+        client.unpinConversation("c1");
+        expect(client.getSnapshot().pinnedIds.has("c1")).toBe(false);
+        expect(pinnedStore.read(SESSION).ids.has("c1")).toBe(false);
+    });
+
+    it("favorites/unfavorites symmetrically", () => {
+        const { client } = withConvos(CONVERSATIONS);
+        client.favoriteConversation("c1");
+        expect(client.getSnapshot().favoriteIds.has("c1")).toBe(true);
+        expect(favoriteStore.read(SESSION).ids.has("c1")).toBe(true);
+        client.unfavoriteConversation("c1");
+        expect(client.getSnapshot().favoriteIds.has("c1")).toBe(false);
+    });
+
+    it("markConversationUnread adds to unreadOverrideIds and persists", () => {
+        const { client } = withConvos(CONVERSATIONS);
+        client.markConversationUnread("c1");
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+        expect(unreadStore.read(SESSION).ids.has("c1")).toBe(true);
+    });
+
+    it("setFlag aborts on read failure without clobbering the stored set", () => {
+        const { client } = withConvos(CONVERSATIONS);
+        pinnedStore.write(SESSION, new Set(["a", "b"]));
+        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+            throw new Error("unavailable");
+        });
+        client.pinConversation("c1");
+        getItem.mockRestore();
+        expect(client.getSnapshot().controlError).toBeDefined();
+        expect(pinnedStore.read(SESSION).ids).toEqual(new Set(["a", "b"]));
+    });
+
+    it("clears a persisted override even when the in-memory mirror is stale-empty", () => {
+        const { client } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 0 }]);
+        unreadStore.write(SESSION, new Set(["c1"]));
+        client.markConversationRead("c1");
+        expect(unreadStore.read(SESSION).ids.has("c1")).toBe(false);
+    });
 });
