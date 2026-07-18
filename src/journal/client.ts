@@ -30,6 +30,7 @@ const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
 const HISTORY_PAGE_SIZE = 80;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
+const MARK_ALL_READ_ERROR = "Some conversations couldn't be updated — device storage is full or unavailable.";
 // This is only a browser memory-safety ceiling. The server's 413 response is
 // authoritative for deployment-specific upload policy.
 export const BROWSER_MEMORY_SAFETY_MAX_BYTES = 512 * 1024 * 1024;
@@ -368,6 +369,7 @@ export class MatronJournalClient {
     }
 
     public markAllRead(): void {
+        const previousControlError = this.state.controlError;
         let anyFailed = false;
         for (const conversation of this.state.conversations) {
             if (this.state.archivedIds.has(conversation.id)) continue;
@@ -377,8 +379,10 @@ export class MatronJournalClient {
         }
         this.patch({
             controlError: anyFailed
-                ? "Some conversations couldn't be updated — device storage is full or unavailable."
-                : undefined,
+                ? MARK_ALL_READ_ERROR
+                : previousControlError === MARK_ALL_READ_ERROR
+                  ? undefined
+                  : previousControlError,
         });
     }
 

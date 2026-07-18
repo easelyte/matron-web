@@ -2263,6 +2263,23 @@ describe("session-controls flags", () => {
         );
     });
 
+    it("preserves a pin write error after a successful server-only mark-all", () => {
+        jest.useFakeTimers();
+        const { client } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 1 }]);
+        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+            throw new Error("full");
+        });
+        client.pinConversation("c1");
+        setItem.mockRestore();
+        const pinError = client.getSnapshot().controlError;
+
+        client.markAllRead();
+
+        expect(pinError).toBe("Couldn't save — device storage is full or unavailable.");
+        expect(client.getSnapshot().controlError).toBe(pinError);
+        jest.useRealTimers();
+    });
+
     it("user-initiated select clears the unread override (clearUnread defaults true)", async () => {
         const { client } = withConvos(CONVERSATIONS);
         client.markConversationUnread("c1");
