@@ -555,9 +555,9 @@ function ConversationList({
                                         />
                                     </label>
                                 </div>
-                                {state.archiveError && (
+                                {state.controlError && (
                                     <div className="mj_ConnectionError" role="status">
-                                        {state.archiveError}
+                                        {state.controlError}
                                     </div>
                                 )}
                                 <div

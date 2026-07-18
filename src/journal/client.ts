@@ -82,7 +82,10 @@ function blankState(): ClientState {
         config: {},
         conversations: [],
         archivedIds: new Set(),
-        archiveError: undefined,
+        pinnedIds: new Set(),
+        favoriteIds: new Set(),
+        unreadOverrideIds: new Set(),
+        controlError: undefined,
         events: [],
         pendingMessages: [],
         connection: "offline",
@@ -342,7 +345,7 @@ export class MatronJournalClient {
     public clearSelection(): void {
         this.connection?.send({ op: "viewing", convo_id: null });
         if (this.state.session) storeSelectedConversation(this.state.session, undefined);
-        this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [], archiveError: undefined });
+        this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [] });
     }
 
     public archiveConversation(conversationId: string): void {
@@ -921,7 +924,7 @@ export class MatronJournalClient {
         try {
             current = parseArchivedValue(localStorage.getItem(archivedStorageKey(session)));
         } catch {
-            this.patch({ archiveError: "Couldn't read saved archive — device storage unavailable." });
+            this.patch({ controlError: "Couldn't read saved archive — device storage unavailable." });
             return;
         }
 
@@ -932,11 +935,11 @@ export class MatronJournalClient {
         try {
             storeArchivedIds(session, next);
         } catch {
-            this.patch({ archiveError: "Couldn't save — device storage is full or unavailable." });
+            this.patch({ controlError: "Couldn't save — device storage is full or unavailable." });
             return;
         }
 
-        this.patch({ archivedIds: next, archiveError: undefined });
+        this.patch({ archivedIds: next, controlError: undefined });
         if (archived && conversationId === this.state.selectedConversationId) this.clearSelection();
     }
 

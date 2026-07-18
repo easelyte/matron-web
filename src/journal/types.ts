@@ -183,7 +183,10 @@ export interface ClientState {
     session?: Session;
     conversations: Conversation[];
     archivedIds: Set<string>;
-    archiveError?: string;
+    pinnedIds: Set<string>;
+    favoriteIds: Set<string>;
+    unreadOverrideIds: Set<string>;
+    controlError?: string;
     selectedConversationId?: string;
     events: JournalEvent[];
     pendingMessages: PendingMessage[];
