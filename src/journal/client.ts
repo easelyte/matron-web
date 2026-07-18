@@ -359,14 +359,12 @@ export class MatronJournalClient {
         this.setFlag(unreadStore, "unreadOverrideIds", id, true);
     }
 
-    public markConversationRead(conversationId: string): void {
+    public markConversationRead(conversationId: string): boolean {
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
-        if (!conversation) return;
-        if (!conversation.unread_count) {
-            this.clearUnreadOverride(conversationId);
-            return;
-        }
-        this.scheduleRead(conversationId, conversation.last_seq, 0);
+        if (!conversation) return true;
+        const cleared = this.clearUnreadOverride(conversationId);
+        if (conversation.unread_count > 0) this.scheduleRead(conversationId, conversation.last_seq, 0);
+        return cleared;
     }
 
     public markAllRead(): void {

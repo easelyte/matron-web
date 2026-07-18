@@ -2184,6 +2184,46 @@ describe("session-controls flags", () => {
         expect(unreadStore.read(SESSION).ids.has("c1")).toBe(true);
     });
 
+    it("marks an override-only row (unread_count 0) read by clearing the override; returns true", () => {
+        const { client } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 0 }]);
+        client.markConversationUnread("c1");
+        const ok = client.markConversationRead("c1");
+        expect(ok).toBe(true);
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(false);
+    });
+
+    it("on a server-unread row, flushes the read marker AND clears any override", async () => {
+        jest.useFakeTimers();
+        const { client, state } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 3, last_seq: 9 }]);
+        const send = jest.fn().mockReturnValue(true);
+        state.connection = { send };
+        client.markConversationUnread("c1");
+        client.markConversationRead("c1");
+        await jest.runAllTimersAsync();
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(false);
+        expect(send).toHaveBeenCalledWith(expect.objectContaining({ op: "read_marker", convo_id: "c1" }));
+        jest.useRealTimers();
+    });
+
+    it("compound failure: setItem throw while clearing override still flushes read, sets controlError, keeps override", async () => {
+        jest.useFakeTimers();
+        const { client, state } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 3, last_seq: 9 }]);
+        const send = jest.fn().mockReturnValue(true);
+        state.connection = { send };
+        client.markConversationUnread("c1");
+        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+            throw new Error("full");
+        });
+        const ok = client.markConversationRead("c1");
+        setItem.mockRestore();
+        await jest.runAllTimersAsync();
+        expect(ok).toBe(false);
+        expect(client.getSnapshot().controlError).toBeDefined();
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+        expect(send).toHaveBeenCalledWith(expect.objectContaining({ op: "read_marker", convo_id: "c1" }));
+        jest.useRealTimers();
+    });
+
     it("user-initiated select clears the unread override (clearUnread defaults true)", async () => {
         const { client } = withConvos(CONVERSATIONS);
         client.markConversationUnread("c1");
