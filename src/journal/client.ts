@@ -7,6 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 import { JournalApi, JournalApiError, loadMatronConfig } from "./api";
 import { JournalConnection } from "./connection";
+import { makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { JournalDatabase } from "./database";
 import { mergeSessionStatus } from "./status";
 import {
@@ -27,13 +28,24 @@ import {
 const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
-const ARCHIVED_CONVERSATIONS_KEY_PREFIX = "matron_journal_archived_conversations_v1";
 const HISTORY_PAGE_SIZE = 80;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 // This is only a browser memory-safety ceiling. The server's 413 response is
 // authoritative for deployment-specific upload policy.
 export const BROWSER_MEMORY_SAFETY_MAX_BYTES = 512 * 1024 * 1024;
 const UPLOAD_TIMEOUT_MS = 60_000;
+
+// Client-local per-session flag stores. Archive key string is UNCHANGED (zero migration).
+export const archiveStore: IdSetStore = makeIdSetStore(
+    "matron_journal_archived_conversations_v1",
+    "archived-conversations",
+);
+export const pinnedStore: IdSetStore = makeIdSetStore("matron_journal_pinned_conversations_v1", "pinned-conversations");
+export const favoriteStore: IdSetStore = makeIdSetStore(
+    "matron_journal_favorite_conversations_v1",
+    "favorite-conversations",
+);
+export const unreadStore: IdSetStore = makeIdSetStore("matron_journal_unread_conversations_v1", "unread-conversations");
 
 interface ConversationHistoryState {
     initialized: boolean;
@@ -114,7 +126,7 @@ function storedSelectedConversation(session: Session): string | undefined {
 }
 
 export function archivedStorageKey(session: Session): string {
-    return `${ARCHIVED_CONVERSATIONS_KEY_PREFIX}:${encodeURIComponent(session.serverUrl)}:${session.userId}`;
+    return archiveStore.storageKey(session);
 }
 
 function parseArchivedValue(raw: string | null): Set<string> {
@@ -137,18 +149,11 @@ function parseArchivedValue(raw: string | null): Set<string> {
 }
 
 export function storedArchivedIds(session: Session): Set<string> {
-    let raw: string | null;
-    try {
-        raw = localStorage.getItem(archivedStorageKey(session));
-    } catch {
-        console.warn("matron: archived-conversations read failed (storage unavailable)");
-        return new Set();
-    }
-    return parseArchivedValue(raw);
+    return archiveStore.read(session).ids;
 }
 
 export function storeArchivedIds(session: Session, ids: Set<string>): void {
-    localStorage.setItem(archivedStorageKey(session), JSON.stringify([...ids]));
+    archiveStore.write(session, ids);
 }
 
 function firstSelectableConversation(
