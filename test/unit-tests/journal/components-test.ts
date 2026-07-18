@@ -726,6 +726,7 @@ describe("conversation menu controls", () => {
             rendered = undefined;
         }
         jest.restoreAllMocks();
+        jest.useRealTimers();
     });
 
     it("menu shows Pin when unpinned and Unpin when pinned", async () => {
@@ -774,6 +775,78 @@ describe("conversation menu controls", () => {
         expect(menuItem(rendered.container, "Mark as unread")).toBeFalsy();
         expect(menuItem(rendered.container, "Mark as read")).toBeFalsy();
         expect(menuItem(rendered.container, "Unarchive")).toBeTruthy();
+    });
+
+    it("keeps the selected conversation when unfavoriting hides it from the Favorites tab", async () => {
+        favoriteStore.write(SESSION, new Set([CONVERSATION.id]));
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        await openMenu(rendered.container);
+        await act(async () => (menuItem(rendered!.container, "Remove from Favorites") as HTMLElement).click());
+
+        expect(rendered.container.querySelector('[data-testid="room-name"]')).toBeNull();
+        expect(client.getSnapshot().selectedConversationId).toBe(CONVERSATION.id);
+    });
+
+    it("moves keyboard focus through every menu item with arrow keys and wraps", async () => {
+        rendered = await renderClient(signedInClient());
+        await openMenu(rendered.container);
+        const menu = rendered.container.querySelector<HTMLElement>('[role="menu"]')!;
+        const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+        expect(items.map((item) => item.textContent?.trim())).toEqual([
+            "Pin",
+            "Add to Favorites",
+            "Mark as unread",
+            "Archive",
+        ]);
+        expect(document.activeElement).toBe(items[0]);
+
+        for (const expected of [...items.slice(1), items[0]]) {
+            await act(async () => {
+                menu.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+            });
+            expect(document.activeElement).toBe(expected);
+        }
+        await act(async () => {
+            menu.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+        });
+        expect(document.activeElement).toBe(items.at(-1));
+    });
+
+    it("opens the conversation menu on right-click", async () => {
+        rendered = await renderClient(signedInClient());
+        const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]')!;
+
+        await act(async () => {
+            row.dispatchEvent(
+                new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 24, clientY: 32 }),
+            );
+        });
+
+        expect(rendered.container.querySelector('[role="menu"]')).not.toBeNull();
+        expect(menuItem(rendered.container, "Pin")).toBeTruthy();
+    });
+
+    it("opens the conversation menu after a touch long-press", async () => {
+        jest.useFakeTimers();
+        rendered = await renderClient(signedInClient());
+        const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]')!;
+        const pointerDown = new MouseEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            clientX: 12,
+            clientY: 18,
+        });
+        Object.defineProperty(pointerDown, "pointerType", { value: "touch" });
+
+        await act(async () => {
+            row.dispatchEvent(pointerDown);
+            jest.advanceTimersByTime(500);
+        });
+
+        expect(rendered.container.querySelector('[role="menu"]')).not.toBeNull();
+        expect(menuItem(rendered.container, "Pin")).toBeTruthy();
     });
 });
 
