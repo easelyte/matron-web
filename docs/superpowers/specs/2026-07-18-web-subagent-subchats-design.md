@@ -33,7 +33,7 @@ Verified against the journal server (`/opt/matron/journal`, Node) and the bridge
 
 - **Snapshot payload** — every convo in `GET /snapshot` carries `parent_convo_id` (`journal.js:139-144`). NULL for normal convos; set for children.
 - **Live `convo_meta` event** — emitted on child creation/title change with `payload: { title, parent_convo_id }` (`ws.js:557-562`). The bridge forces this even titleless so a live client links the child immediately rather than waiting for the next snapshot.
-- **`session_state`** on each convo = `"running"` | `"done"` — drives the running/finished distinction.
+- **`session_state`** on each convo = `"running"` | `"done"` — drives the running/finished distinction. The web client already updates it **live** from a durable `session_status` journal event (`database.ts:192-193`, `conversation.session_state = payload.state`), so a child's running→done transition propagates without new plumbing — the same mechanism the apple client's `isRunning` relies on. **Assumption to confirm in review/T9:** the bridge emits a `session_status: done` into the child convo when a subagent finishes (parity with apple, which filters running children by `session_state`).
 - **Server already treats children as silent** — no unread badge bump, no push, read-marker recompute skips them (`journal.js:109-117, 193`; `push.js:160-167`). The client mirrors this defensively but does not depend on it.
 - **Linkage is child→parent only** (structural). The parent timeline's `🔀 Subtask` line is cosmetic text with no child id — which is exactly why inline tappable markers (alternative C) are out of scope.
 
@@ -73,7 +73,7 @@ export interface Conversation {
 **Ingestion (`database.ts`):**
 
 - `emptyConversation` (`database.ts:36`) initializes `parent_convo_id: null`.
-- `applyJournal` `convo_meta` branch (`database.ts:190`): extract `parent_convo_id` from the payload and apply the **immutability rule** — set only when not already set; a later `convo_meta` lacking the field (or carrying null) must **not** clear a previously-set value:
+- `applyJournal` `convo_meta` branch (`database.ts:190`): **the current guard is `if (event.type === "convo_meta" && typeof event.payload.title === "string")` — it skips a titleless `convo_meta` entirely.** But the bridge deliberately sends a **titleless** `convo_meta` carrying only `parent_convo_id` as the primary live child-link signal (§2). So the guard must be relaxed to `event.type === "convo_meta"`, with the title check moved inside. Then extract `parent_convo_id` and apply the **immutability rule** — set only when not already set; a later `convo_meta` lacking the field (or carrying null) must **not** clear a previously-set value:
 
   ```ts
   if (event.type === "convo_meta") {
