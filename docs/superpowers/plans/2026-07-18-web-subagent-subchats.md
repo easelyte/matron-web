@@ -245,9 +245,9 @@ if (event.type === "convo_meta") {
 ```
 (The `else if (event.type === "session_status" ...)` chain that follows is preserved — `convo_meta` never carries state/message semantics.)
 
-`replaceWithSnapshot` (~106): before `conversations.clear()`, read existing parent ids into a `Map<string,string|null>`; when re-`put`-ting each summary, set
+`replaceWithSnapshot` (~106): before `conversations.clear()`, read existing parent ids into a `Map<string,string|null>`; when re-`put`-ting each summary, coalesce **existing-first** so a non-null incoming never moves an established link (true immutability, matches the live `applyJournal` rule):
 ```ts
-parent_convo_id: coerceParentId(summary.parent_convo_id) ?? existingParents.get(summary.id) ?? null,
+parent_convo_id: existingParents.get(summary.id) ?? coerceParentId(summary.parent_convo_id) ?? null,
 ```
 
 - [ ] **Step 4: Run to verify pass**
@@ -277,10 +277,13 @@ git commit -m "feat(subchat): ingest parent_convo_id (set-once, resync-coalesced
 - [ ] **Step 1: Write the failing tests** (assertions):
 
 ```ts
-// cursor present + key absent → snapshot fetched, existing child records get parent_convo_id + session_state,
-//   events untouched, key set. Second startup: no re-fetch (api.snapshot not called again).
+// cursor present + key absent → snapshot fetched, existing child records get parent_convo_id (existing-first)
+//   + session_state, events untouched, key set. Second startup: no re-fetch (api.snapshot not called again).
 // transient snapshot throw → key stays unset, startSession still resolves, incremental path proceeds.
-// malformed snapshot (missing .conversations) → key stays unset, no throw out of startSession.
+// malformed snapshot (missing .conversations) → rejected pre-write, key unset, no throw out of startSession.
+// mid-array malformed element (valid summary, then a null/no-id element) → validation rejects BEFORE any
+//   store.put, so NO record is mutated and the key stays unset (atomic all-or-nothing).
+// existing non-null parent + snapshot reports a DIFFERENT non-null parent → existing link preserved (immutable).
 ```
 
 - [ ] **Step 2: Run to verify fail**
@@ -290,37 +293,57 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
-In `database.ts`, add:
+In `database.ts`, add. **Validate the whole snapshot BEFORE opening the write transaction** (Codex R1-M2) so a mid-array malformed element can never leave records partially written with the key unset; existing-first coalesce; abort the tx on any error:
 ```ts
 public async backfillParentLinks(snapshot: SnapshotResponse): Promise<void> {
-    const tx = this.database.transaction(["conversations", "meta"], "readwrite");
-    const store = tx.objectStore("conversations");
-    for (const summary of snapshot.conversations) {
-        const existing = (await requestResult(store.get(summary.id))) as Conversation | undefined;
-        if (!existing) continue;
-        existing.parent_convo_id = coerceParentId(summary.parent_convo_id) ?? existing.parent_convo_id ?? null;
-        if (typeof summary.session_state === "string") existing.session_state = summary.session_state;
-        store.put(existing);
+    // Validate first — a malformed element must reject before any write.
+    if (!snapshot || !Array.isArray(snapshot.conversations)) throw new Error("malformed snapshot");
+    const summaries = snapshot.conversations;
+    for (const s of summaries) {
+        if (!s || typeof s.id !== "string") throw new Error("malformed snapshot element");
     }
-    tx.objectStore("meta").put(true, "subchat_backfill_v1");
-    await transactionDone(tx); // atomic: records + key commit together
+    const tx = this.database.transaction(["conversations", "meta"], "readwrite");
+    try {
+        const store = tx.objectStore("conversations");
+        for (const summary of summaries) {
+            const existing = (await requestResult(store.get(summary.id))) as Conversation | undefined;
+            if (!existing) continue;
+            existing.parent_convo_id = existing.parent_convo_id ?? coerceParentId(summary.parent_convo_id) ?? null; // existing-first
+            if (typeof summary.session_state === "string") existing.session_state = summary.session_state;
+            store.put(existing);
+        }
+        tx.objectStore("meta").put(true, BACKFILL_KEY); // atomic: records + key commit together
+        await transactionDone(tx);
+    } catch (err) {
+        try { tx.abort(); } catch { /* already aborting */ }
+        throw err;
+    }
+}
+public async markBackfillDone(): Promise<void> {
+    const tx = this.database.transaction("meta", "readwrite");
+    tx.objectStore("meta").put(true, BACKFILL_KEY);
+    await transactionDone(tx);
 }
 public async backfillDone(): Promise<boolean> {
-    return Boolean(await requestResult(this.database.transaction("meta").objectStore("meta").get("subchat_backfill_v1")));
+    const tx = this.database.transaction("meta");
+    const done = Boolean(await requestResult(tx.objectStore("meta").get(BACKFILL_KEY)));
+    await transactionDone(tx); // match the file's read-method idiom (surfaces tx-level errors)
+    return done;
 }
 ```
-In `client.ts` `startSession`, after `cursor` is resolved and the `cursor === undefined` fresh-install branch (which should also set the key), add:
+Add a module const near the other `meta` keys: `const BACKFILL_KEY = "subchat_backfill_v1";`.
+In `client.ts` `startSession`, at the `cursor === undefined` fresh branch (right after `await this.database.replaceWithSnapshot(snapshot)`) call `await this.database.markBackfillDone();` so fresh installs never backfill. For existing clients:
 ```ts
 if (cursor !== undefined && !(await this.database.backfillDone())) {
     try {
         await this.database.backfillParentLinks(await this.api.snapshot());
     } catch (err) {
-        // transient or malformed: leave key unset, retry next startup; do not wedge.
+        // transient (fetch) OR permanent (malformed, rejected pre-write): leave key unset, retry next
+        // startup, do NOT wedge — startup proceeds on the incremental cursor path below.
         console.warn("matron: subchat backfill deferred", err);
     }
 }
 ```
-(For the `cursor === undefined` fresh path, call `this.database` meta-set `subchat_backfill_v1=true` inside/after `replaceWithSnapshot` so fresh installs don't backfill.)
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -381,15 +404,15 @@ git commit -m "feat(subchat): hide linked children from conversation list (orpha
 
 **Files:**
 - Modify: `src/journal/components.tsx` — `hasAnyFavorite` (~392), `hasActiveUnread` (~399)
-- Modify: `src/journal/client.ts` — `markAllRead` (~373), `firstSelectableConversation` (~144-153, BOTH preferred + fallback branches)
-- Test: extend `test/unit-tests/subchat-list.test.tsx` + `test/unit-tests/subchat-select.test.ts` (create)
+- Modify: `src/journal/client.ts` — `markAllRead` (~373), `emit()` badge reduce (~1381), `firstSelectableConversation` (~144-153, BOTH preferred + fallback branches)
+- Test: extend `test/unit-tests/subchat-list.test.tsx` + `test/unit-tests/subchat-select.test.ts` (create) + `test/unit-tests/subchat-badge.test.ts` (create)
 
 **Interfaces:**
 - Consumes: `parentPresent`, `isSubChat`.
 
 - [ ] **Step 1: Write the failing tests**
 
-Assertions: a linked child with an unread override does not surface in `hasActiveUnread`; `markAllRead` does not mark it; `firstSelectableConversation` returns neither a linked child stored as `preferredId` NOR a linked child via fallback, but DOES return an orphan.
+Assertions: a linked child with an unread override does not surface in `hasActiveUnread`; `markAllRead` does not mark it; the Electron `setBadgeCount` value excludes a linked child's `unread_count` (root + orphan counted, linked child not); `firstSelectableConversation` returns neither a linked child stored as `preferredId` NOR a linked child via fallback, but DOES return an orphan.
 
 - [ ] **Step 2: Run to verify fail** → FAIL.
 
@@ -399,7 +422,14 @@ Assertions: a linked child with an unread override does not surface in `hasActiv
 
 `markAllRead` (`client.ts:373`): build `const ids = new Set(this.state.conversations.map(c=>c.id))`; add `if (parentPresent(conversation, ids)) continue;` at the top of the loop.
 
-`firstSelectableConversation` (`client.ts:144`): thread a `parentIds: ReadonlySet<string>` param (or compute inside from the passed `conversations`), and add `!parentPresent(c, ids)` to BOTH the `preferred` `find` predicate and the fallback `find` predicate. Update its two call sites (`startSession` ~905, `replaceSnapshot` ~1045) to pass the set.
+`emit()` Electron badge (`client.ts:1381`) — the `setBadgeCount` reduce sums `unread_count` over ALL conversations, so hidden children inflate the desktop badge (Codex R1-B2). Change the reduce to exclude linked children:
+```ts
+const ids = new Set(this.state.conversations.map((c) => c.id));
+const unread = this.state.conversations.reduce(
+    (total, c) => total + (parentPresent(c, ids) ? 0 : c.unread_count), 0);
+```
+
+`firstSelectableConversation` (`client.ts:144`): compute `const ids = new Set(conversations.map((c) => c.id))` at the top from its existing `conversations` param (no new param, no call-site changes at `startSession` ~905 / `replaceSnapshot` ~1045), and add `!parentPresent(c, ids)` to BOTH the `preferred` `find` predicate and the fallback `find` predicate.
 
 - [ ] **Step 4: Run to verify pass** → PASS.
 
@@ -424,32 +454,45 @@ git commit -m "feat(subchat): exclude linked children from unread/markAll/auto-s
 
 **Interfaces:**
 - Consumes: `isSubChat`.
-- Produces: no `op:"send"` transmits for a child; blocked outbox records marked `attachState:"error"`, `canRetry:false`, kept in outbox (not dropped).
+- Produces: no `op:"send"` transmits for a child; blocked records **retained** (never deleted); text → visible `controlError` notice; attachment → errored dismissable row via the existing persist+refresh path. (Right-sized fail-visible per spec §4.5 implementation revision — the text-pending branch, `components.tsx:1474-1490`, has no error render and this edge is unreachable, so no net-new text-error UI.)
 
 - [ ] **Step 1: Write the failing tests**
 
-Assertions: with a child convo in state, calling `sendPendingMessage({convoId: child})` and `emitPendingAttachment(...)` results in zero `connection.send({op:"send"})` calls; the record is marked errored + retained.
+Assertions: with a child convo in state — (a) `sendPendingMessage({convoId: child, kind: undefined/text})` fires zero `connection.send({op:"send"})`, leaves the record in the outbox, and sets `state.controlError` to the read-only message; (b) `emitPendingAttachment({convoId: child, ...})` fires zero sends and marks the record `attachState:"error"` (via the existing persist+refresh path, so it survives a `refreshSelectedConversation`).
 
 - [ ] **Step 2: Run to verify fail** → FAIL (send fires).
 
 - [ ] **Step 3: Implement**
 
-Add helper:
+Add the classifier helper:
 ```ts
 private isChildConvo(convoId: string): boolean {
     const c = this.state.conversations.find((x) => x.id === convoId);
     return !!c && isSubChat(c);
 }
-private markChildBlocked(message: PendingMessage): void {
-    // fail-visible, do NOT drop; keep in outbox, mark permanent error
-    message.attachState = "error";
-    message.canRetry = false;
-    message.errorMessage = "Can't send to a read-only subagent transcript.";
-    // persist + patch pendingMessages so the row shows the error (mirror existing error-mark path)
+```
+`sendPendingMessage` (`client.ts:1298`, synchronous — text + attachment-replay) — guard at the very top, before either `connection.send`:
+```ts
+if (this.isChildConvo(message.convoId)) {
+    // retain the outbox record; surface a visible notice (no per-row text-error UI — unreachable edge)
+    this.patch({ controlError: "Couldn't send to a read-only subagent transcript." });
+    return;
 }
 ```
-At the top of `sendPendingMessage` (before either `connection.send`): `if (this.isChildConvo(message.convoId)) { this.markChildBlocked(message); return; }`
-At the top of `emitPendingAttachment` (before the `op:"send"` at ~649): same guard.
+`emitPendingAttachment` (`client.ts:635`, async — has `owner.db`/`owner.gen`) — guard at the top, marking the attachment errored via the **existing** mechanism (mirror `client.ts:658-664`):
+```ts
+if (this.isChildConvo(message.convoId)) {
+    message.attachState = "error";
+    message.errorKind = "send_failed";
+    message.errorMessage = "Can't send to a read-only subagent transcript.";
+    if (!this.ownsAttachment(owner, message.localId)) return;
+    if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+    if (!this.ownsAttachment(owner, message.localId)) return;
+    await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+    return;
+}
+```
+Do **not** modify the `Timeline` text-pending branch.
 
 - [ ] **Step 4: Run to verify pass** → PASS.
 
@@ -457,10 +500,10 @@ At the top of `emitPendingAttachment` (before the `op:"send"` at ~649): same gua
 
 ```bash
 git add src/journal/client.ts test/unit-tests/readonly-egress.test.ts
-git commit -m "feat(subchat): gate both transmit fns for child convos, fail-visible not dropped"
+git commit -m "feat(subchat): gate both transmit fns for child convos (retain + fail-visible)"
 ```
 
-**Acceptance:** neither transmit function sends to a child; blocked records visible + retained (spec §4.5 layers 2 & fail-visible, §7.6, §7.7).
+**Acceptance:** neither transmit sends to a child; text → retained + `controlError` notice; attachment → errored dismissable row (spec §4.5 revision, §7.6, §7.7).
 
 ### T-3.2: guard the media upload before bytes egress
 
@@ -468,15 +511,16 @@ git commit -m "feat(subchat): gate both transmit fns for child convos, fail-visi
 - Modify: `src/journal/client.ts` — `sendAttachment` (~515) and `retryAttachment` (~528): early-return before any `uploadMedia`
 - Test: extend `test/unit-tests/readonly-egress.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
-Assertion: `retryAttachment` on a child-targeted record with no `blobRef` calls `api.uploadMedia` **zero** times (bytes never leave), and the record is marked errored.
+Assertions: (a) `sendAttachment(file, childConvoId)` calls `api.uploadMedia` **zero** times and creates no outbox record (nothing to preserve — it's a fresh call, blocked before staging); (b) `retryAttachment(localId)` on a child-targeted record with no `blobRef` calls `uploadMedia` zero times and marks the loaded record errored (retained).
 
 - [ ] **Step 2: Run to verify fail** → FAIL (uploadMedia called).
 
 - [ ] **Step 3: Implement**
 
-At the entry of `sendAttachment(file, convoId, ...)` and `retryAttachment(localId)` (after resolving the record's `convoId`): `if (this.isChildConvo(convoId)) { this.markChildBlocked(message); return; }` — before the branch that reaches `uploadPendingAttachment`/`uploadMedia`.
+`sendAttachment(file, convoId, caption?)` (`client.ts:515`) — `convoId` is a **parameter**, available at entry. Guard immediately after the `if (!api || !db) return;` (`client.ts:519`), before `buildPendingAttachment` (`client.ts:521`): `if (this.isChildConvo(convoId)) return;` (a fresh send with nothing yet built/staged — early-return, nothing to retain).
+`retryAttachment(localId)` (`client.ts:528`) — after the outbox record is loaded (the record has `.convoId`), before the `uploadPendingAttachment`/`emitPendingAttachment` branch: `if (this.isChildConvo(record.convoId)) { /* mark errored via existing path or set controlError, retain */ return; }`. The `emitPendingAttachment` guard (T-3.1) is the backstop for the with-`blobRef` branch.
 
 - [ ] **Step 4: Run to verify pass** → PASS.
 
@@ -503,8 +547,9 @@ Assertions: `sendPromptReply` no-ops when the selected convo is a child; `stageF
 
 - [ ] **Step 3: Implement**
 
-`sendPromptReply` (~824): `if (this.isChildConvo(this.state.selectedConversationId ?? "")) return false;` at the top.
-`stageFiles`/`confirmStagedFile`: guard on the STAGED target — `if (this.isChildConvo(staged.convoId)) return;` (never on `selectedConversation()`).
+`sendPromptReply` (`client.ts:824`): `if (this.isChildConvo(this.state.selectedConversationId ?? "")) return false;` at the top.
+`stageFiles` (`client.ts:682`) has two sub-paths: (i) **append** to an existing staged queue (`staged` truthy) → guard `if (this.isChildConvo(staged.convoId)) return;` inside that branch; (ii) **new** stage where `const convoId = this.state.selectedConversationId` (`client.ts:696`) → immediately after resolving `convoId` (and its `if (!convoId) return`), add `if (this.isChildConvo(convoId)) return;`.
+`confirmStagedFile` (`client.ts:708`): guard on `staged.convoId` **before** the `this.patch({ stagedUploads: { ...staged, confirming: true } })` at `client.ts:713` — insert right after the `if (!staged || staged.confirming || staged.error) return;` / head checks, so a child-targeted confirm returns without ever stranding the dialog in `confirming:true`.
 
 - [ ] **Step 4: Run to verify pass** → PASS.
 
@@ -838,20 +883,36 @@ git commit -m "style(subchat): strip, pills, spinner, sub-chat header, switcher,
 - [ ] **Step 1:** `pnpm lint && pnpm test` → all green (tsc clean, prettier clean, jest suite passes).
 - [ ] **Step 2: Build** — `corepack pnpm build` succeeds.
 - [ ] **Step 3: Manual matrix against the live journal server** (per §9 acceptance): spawn a session, run a subagent; confirm — child hidden from list; running pill appears + parent switcher lists finished children; tapping opens a read-only child (no composer); **drag a file onto a child pane → rejected, no upload**; prompt/permission cards non-interactive in a child; switcher across parallel subagents; back returns to parent; rapid sibling switch has no stale view; jump-to-bottom appears on scroll-up and re-follows; own message re-follows; incoming agent output while scrolled up does NOT yank down; existing-client (with history) shows previously-flat children now grouped (backfill).
-- [ ] **Step 4: Deploy (atomic runbook)** — `cp -a webapp webapp.bak.<ts>` → `corepack pnpm build` in place → verify `https://vmi3096107.taild3d6c4.ts.net:8443` → on failure `rm -rf webapp && mv webapp.bak.<ts> webapp`.
+- [ ] **Step 4: Deploy (R102-safe atomic runbook — no unconfirmed destructive delete).**
 
-**Acceptance:** every §9 criterion verified live; deploy atomic + reversible.
+```bash
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+cp -a webapp "webapp.bak.$TS"          # explicit, resolved timestamp
+corepack pnpm build                     # build in place
+# verify https://vmi3096107.taild3d6c4.ts.net:8443 loads + sub-chat features work
+# --- rollback (ONLY if verification fails) — reversible rename-swap, never rm the live dir first:
+[ -d "webapp.bak.$TS" ] || { echo "ABORT: backup webapp.bak.$TS missing"; exit 1; }
+mv webapp "webapp.failed.$TS"           # set the bad build ASIDE (retained for inspection), not deleted
+mv "webapp.bak.$TS" webapp              # restore the known-good backup
+# webapp.failed.$TS is kept for post-mortem; prune manually only after confirming the restore is healthy.
+```
+
+This satisfies R102: the only removal of the live tree is a rename (`mv` aside), gated on a validated backup; no `rm -rf` runs against production before the good build is restored. Prune old `webapp.bak.*` / `webapp.failed.*` manually once confident (per the CLAUDE.local.md deploy runbook).
+
+**Acceptance:** every §9 criterion verified live; deploy reversible; rollback R102-compliant (validated backup, atomic rename-swap, no unconfirmed destructive delete).
 
 ### T-7.2: file follow-up loops
 
 **Files:** son-of-anton loop store (via `/close` or `add_loop`)
 
-- [ ] **Step 1:** File three follow-up loops referencing this work:
-  - **Server-side authoritative child-write rejection** — `easelyte/matron-journal` `ws.js` `send` handler rejects `op:"send"` where the target convo has `parent_convo_id` set (~2 lines); + Matronhq upstream proposal (spec §5, Codex R3/R4-B1).
-  - **Desktop split-view (rejected alt B)** — if parallel-subagent monitoring proves valuable (spec §5).
-  - **Inline tappable subtask markers (rejected alt C)** — blocked on the bridge wire-gap (parent `🔀 Subtask` event carries no child id); bridge change + upstream proposal (spec §5).
+- [ ] **Step 1:** File three follow-up loops (each with `owner` + a valid `next_action.type` from the locked enum `{analysis, brainstorm, implementation, cleanup, verification, operator}` — R203):
+  - **Server-side authoritative child-write rejection** — `owner: easelyte`, `next_action.type: implementation`. `easelyte/matron-journal` `ws.js` `send` handler rejects `op:"send"` where the target convo has `parent_convo_id` set (~2 lines) + Matronhq upstream proposal (spec §5, Codex R3/R4-B1). Priority: this closes the P1 authoritative gap the client-side layers only mitigate.
+  - **Desktop split-view (rejected alt B)** — `owner: easelyte`, `next_action.type: brainstorm`. Re-evaluate only if parallel-subagent monitoring proves valuable (spec §5).
+  - **Inline tappable subtask markers (rejected alt C)** — `owner: easelyte`, `next_action.type: analysis`. Blocked on the bridge wire-gap (parent `🔀 Subtask` event carries no child id); scope a bridge change + upstream proposal (spec §5).
 
-**Acceptance:** deferred scope captured as loops, not lost.
+File via `add_loop` (canonical store, from the son-of-anton workspace) or defer to `/close`. Each references loop #453 as the parent.
+
+**Acceptance:** deferred scope captured as three valid loops (owner + next_action present), not lost.
 
 ---
 
@@ -861,3 +922,13 @@ git commit -m "style(subchat): strip, pills, spinner, sub-chat header, switcher,
 - **No placeholders:** every code step shows concrete code or exact assertions; test-only steps state the assertion set explicitly.
 - **Type consistency:** `coerceParentId`, `isSubChat`, `childrenOf`, `runningChildrenOf`, `parentPresent`, `isNearBottom`, `isChildConvo`, `markChildBlocked`, `sendTick`, `isReadOnly`, `childMode` are used consistently across tasks with the signatures defined in T-1.1/T-1.2/T-3.1/T-5.1/T-5.2.
 - **Principles pass:** P2 (single source — links derived, not stored), P8/P33 (`coerceParentId` boundary parse), P1/P29 (read-only enforced at data-layer choke points, not UI hiding; server-side authoritative deferred + documented), P3 (fail-visible blocked sends), P15 (upload guarded before bytes egress), P17 (grep ratchet, acknowledged backstop), P18 (no split — accepted exception, loop #448), P23 (explicit follow-state), V6 (backfill transient/permanent classification). No new hardcoded path literals, no prose-to-machine-stream, no duplicate logic.
+
+---
+
+## Appendix: Verified Claims (research pass 2026-07-18)
+
+Tavily batch was unavailable this session; the two load-bearing external claims are textbook-certain and grounded from spec + codebase evidence rather than web search:
+
+✓ **Claim:** An IndexedDB transaction spanning multiple object stores commits atomically (all writes persist or none). **Verified:** Core W3C IndexedDB semantics — a transaction is the atomic unit; on `abort()` or an uncaught error all writes in the transaction roll back. T-1.3/T-1.4 rely on this to key-set the backfill flag atomically with the record merge (open the tx over both `conversations` + `meta`, commit together).
+✓ **Claim:** React 18 `useSyncExternalStore(subscribe, getSnapshot)` re-renders subscribers when `getSnapshot` returns a new value after a `subscribe` notification. **Verified:** Documented React 18 behavior AND already the working store binding in this codebase (`components.tsx:1865`, `MatronJournalClient.subscribe`/`getSnapshot` → `patch()`). New `ClientState` fields (`sendTick`) propagate through the same mechanism.
+? None — no uncertain external claim remains; all other plan references are internal (grep-verified `file:line`) or standard framework idioms already in use.
