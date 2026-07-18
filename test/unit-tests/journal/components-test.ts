@@ -17,7 +17,7 @@ import {
     unreadStore,
 } from "../../../src/journal/client";
 import { MatronApp } from "../../../src/journal/components";
-import type { ClientState, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
+import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -70,6 +70,15 @@ function signedInClient(
         pinnedIds: pinnedStore.read(SESSION).ids,
         favoriteIds: favoriteStore.read(SESSION).ids,
         unreadOverrideIds: unreadStore.read(SESSION).ids,
+    };
+    return client;
+}
+
+function signedInWithRooms(conversations: Conversation[]): MatronJournalClient {
+    const client = signedInClient();
+    internals(client).state = {
+        ...client.getSnapshot(),
+        conversations,
     };
     return client;
 }
@@ -759,5 +768,38 @@ describe("conversation menu controls", () => {
         expect(menuItem(rendered.container, "Mark as unread")).toBeFalsy();
         expect(menuItem(rendered.container, "Mark as read")).toBeFalsy();
         expect(menuItem(rendered.container, "Unarchive")).toBeTruthy();
+    });
+});
+
+describe("conversation row affordances", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    it("renders pinned rows before unpinned in the active list", async () => {
+        const roomA = { ...CONVERSATION, id: "room-a", title: "Room A" };
+        const roomB = { ...CONVERSATION, id: "room-b", title: "Room B" };
+        pinnedStore.write(SESSION, new Set(["room-b"]));
+        rendered = await renderClient(signedInWithRooms([roomA, roomB]));
+        const names = [...rendered.container.querySelectorAll('[data-testid="room-name"]')].map(
+            (element) => element.textContent,
+        );
+        expect(names[0]).toBe("Room B");
+        expect(names[1]).toBe("Room A");
+    });
+
+    it("override-unread row announces marked-unread in the row button's accessible name and renders no numeric badge", async () => {
+        unreadStore.write(SESSION, new Set([CONVERSATION.id]));
+        rendered = await renderClient(signedInClient());
+        const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]');
+        expect(row?.getAttribute("aria-label")).toContain("marked unread");
+        expect(rendered.container.querySelector(".mj_UnreadBadge")).toBeNull();
     });
 });

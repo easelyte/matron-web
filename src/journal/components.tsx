@@ -381,7 +381,11 @@ function ConversationList({
                     .includes(normalized),
         );
     }, [query, state.conversations]);
-    const active = conversations.filter((conversation) => !state.archivedIds.has(conversation.id));
+    const activeAll = conversations.filter((conversation) => !state.archivedIds.has(conversation.id));
+    const active = [
+        ...activeAll.filter((conversation) => state.pinnedIds.has(conversation.id)),
+        ...activeAll.filter((conversation) => !state.pinnedIds.has(conversation.id)),
+    ];
     const archived = conversations.filter((conversation) => state.archivedIds.has(conversation.id));
     // Visibility is computed from the UNFILTERED conversation set (minus archived), NOT the
     // search-filtered `active` — mark-all operates on the full active partition regardless of
@@ -404,7 +408,8 @@ function ConversationList({
 
     const renderConversation = (conversation: ClientState["conversations"][number]): React.ReactElement => {
         const selected = state.selectedConversationId === conversation.id;
-        const unread = conversation.unread_count > 0;
+        const overrideUnread = state.unreadOverrideIds.has(conversation.id) && conversation.unread_count === 0;
+        const unread = effectiveUnread(conversation, state.unreadOverrideIds);
         const name = conversationTitle(conversation);
         return (
             <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
@@ -412,7 +417,7 @@ function ConversationList({
                     className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open room ${name}`}
+                    aria-label={`Open room ${name}${overrideUnread ? ", marked unread" : ""}`}
                     onClick={(event) => {
                         if (longPressFiredRef.current) {
                             longPressFiredRef.current = false;
@@ -456,6 +461,11 @@ function ConversationList({
                         if (event.pointerType === "touch") cancelLongPress();
                     }}
                 >
+                    {state.pinnedIds.has(conversation.id) && (
+                        <span className="mj_RoomListPinGlyph">
+                            <PinIcon aria-hidden />
+                        </span>
+                    )}
                     <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
                         <span className="mj_RoomListName" title={name} data-testid="room-name">
                             {name}
@@ -464,11 +474,18 @@ function ConversationList({
                             {conversation.snippet}
                         </span>
                     </span>
-                    {unread && (
+                    {state.favoriteIds.has(conversation.id) && (
+                        <span className="mj_RoomListStarGlyph">
+                            <StarFilledIcon aria-hidden />
+                        </span>
+                    )}
+                    {conversation.unread_count > 0 ? (
                         <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
                             {conversation.unread_count}
                         </span>
-                    )}
+                    ) : overrideUnread ? (
+                        <span className="mj_UnreadDot" aria-hidden />
+                    ) : null}
                 </button>
                 <button
                     className="mj_RoomItemMenu_trigger"
