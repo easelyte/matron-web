@@ -7,7 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 import { JournalApi, JournalApiError, loadMatronConfig } from "./api";
 import { JournalConnection } from "./connection";
-import { makeIdSetStore, type IdSetStore } from "./conversation-flags";
+import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { JournalDatabase } from "./database";
 import { mergeSessionStatus } from "./status";
 import {
@@ -368,11 +368,18 @@ export class MatronJournalClient {
     }
 
     public markAllRead(): void {
+        let anyFailed = false;
         for (const conversation of this.state.conversations) {
-            if (conversation.unread_count > 0 && !this.state.archivedIds.has(conversation.id)) {
-                this.markConversationRead(conversation.id);
-            }
+            if (this.state.archivedIds.has(conversation.id)) continue;
+            if (!effectiveUnread(conversation, this.state.unreadOverrideIds)) continue;
+            // Single canonical mark-read path; it clears the override and flushes the server read.
+            if (!this.markConversationRead(conversation.id)) anyFailed = true;
         }
+        this.patch({
+            controlError: anyFailed
+                ? "Some conversations couldn't be updated — device storage is full or unavailable."
+                : undefined,
+        });
     }
 
     public async loadOlderHistory(): Promise<void> {

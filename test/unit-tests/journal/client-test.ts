@@ -2224,6 +2224,45 @@ describe("session-controls flags", () => {
         jest.useRealTimers();
     });
 
+    it("marks active override-only rows read (unread_count 0) that the old gate skipped", () => {
+        const { client } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 0 }]);
+        client.markConversationUnread("c1");
+        client.markAllRead();
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(false);
+    });
+
+    it("leaves an archived conversation's override intact (mark unread → archive → mark-all)", () => {
+        const { client } = withConvos([{ ...CONVERSATIONS[0], id: "c1", unread_count: 0 }]);
+        client.markConversationUnread("c1");
+        client.archiveConversation("c1");
+        client.markAllRead();
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+    });
+
+    it("aggregates batch errors: one row's setItem throws → controlError set to the batch message", () => {
+        const { client } = withConvos([
+            { ...CONVERSATIONS[0], id: "c1", unread_count: 0 },
+            { ...CONVERSATIONS[0], id: "c2", unread_count: 0 },
+        ]);
+        client.markConversationUnread("c1");
+        client.markConversationUnread("c2");
+        const originalSetItem = Storage.prototype.setItem;
+        let throws = 1;
+        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+            this: Storage,
+            key,
+            value,
+        ) {
+            if (throws-- > 0) throw new Error("full");
+            return originalSetItem.call(this, key, value);
+        });
+        client.markAllRead();
+        setItem.mockRestore();
+        expect(client.getSnapshot().controlError).toBe(
+            "Some conversations couldn't be updated — device storage is full or unavailable.",
+        );
+    });
+
     it("user-initiated select clears the unread override (clearUnread defaults true)", async () => {
         const { client } = withConvos(CONVERSATIONS);
         client.markConversationUnread("c1");
