@@ -5,7 +5,13 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { MatronJournalClient } from "../../../src/journal/client";
+import {
+    archiveStore,
+    favoriteStore,
+    MatronJournalClient,
+    pinnedStore,
+    unreadStore,
+} from "../../../src/journal/client";
 import { JournalApi, JournalApiError } from "../../../src/journal/api";
 import { JournalConnection } from "../../../src/journal/connection";
 import { JournalDatabase } from "../../../src/journal/database";
@@ -2076,5 +2082,79 @@ describe("staged uploads queue", () => {
         client.stageFiles([stagedFile("a.png")]);
         client.cancelStagedFiles();
         expect(client.getSnapshot().stagedUploads).toBeUndefined();
+    });
+});
+
+describe("session-controls flags", () => {
+    function withConvos(convos: Conversation[]): { client: MatronJournalClient; state: ClientInternals } {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = { ...signedInState(client), conversations: convos, selectedConversationId: undefined };
+        state.database = fakeDatabase({ conversations: jest.fn().mockResolvedValue(convos) });
+        return { client, state };
+    }
+
+    beforeEach(() => localStorage.clear());
+
+    afterEach(() => jest.restoreAllMocks());
+
+    it("seeds pinned/favorite/unread sets from storage on startSession", async () => {
+        pinnedStore.write(SESSION, new Set(["c1"]));
+        favoriteStore.write(SESSION, new Set(["c2"]));
+        unreadStore.write(SESSION, new Set(["c3"]));
+        const client = new MatronJournalClient();
+        const database = fakeDatabase();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        await internals(client).startSession(SESSION);
+        const snapshot = client.getSnapshot();
+        expect(snapshot.pinnedIds).toEqual(new Set(["c1"]));
+        expect(snapshot.favoriteIds).toEqual(new Set(["c2"]));
+        expect(snapshot.unreadOverrideIds).toEqual(new Set(["c3"]));
+    });
+
+    it("sets controlError when a bootstrap flag read fails", async () => {
+        const client = new MatronJournalClient();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+            throw new Error("unavailable");
+        });
+        await internals(client).startSession(SESSION);
+        getItem.mockRestore();
+        expect(client.getSnapshot().controlError).toBe("Couldn't load saved preferences — device storage unavailable.");
+    });
+
+    it("preserves prior in-memory flag sets when replaceSnapshot re-read throws", async () => {
+        const { client, state } = withConvos(CONVERSATIONS);
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            snapshot: jest.fn().mockResolvedValue({ seq: 1, conversations: CONVERSATIONS }),
+        };
+        state.state = { ...client.getSnapshot(), pinnedIds: new Set(["c1"]) };
+        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+            throw new Error("unavailable");
+        });
+        await state.replaceSnapshot();
+        getItem.mockRestore();
+        expect(client.getSnapshot().pinnedIds).toEqual(new Set(["c1"]));
+    });
+
+    it("patches the matching set when a foreign-tab storage event fires for each of the four keys", async () => {
+        const client = new MatronJournalClient();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        await internals(client).startSession(SESSION);
+        const fire = (key: string, ids: string[]): void => {
+            window.dispatchEvent(new StorageEvent("storage", { key, newValue: JSON.stringify(ids) }));
+        };
+        fire(archiveStore.storageKey(SESSION), ["c2"]);
+        expect(client.getSnapshot().archivedIds).toEqual(new Set(["c2"]));
+        fire(pinnedStore.storageKey(SESSION), ["c1"]);
+        expect(client.getSnapshot().pinnedIds).toEqual(new Set(["c1"]));
+        fire(favoriteStore.storageKey(SESSION), ["c1"]);
+        expect(client.getSnapshot().favoriteIds).toEqual(new Set(["c1"]));
+        fire(unreadStore.storageKey(SESSION), ["c1"]);
+        expect(client.getSnapshot().unreadOverrideIds).toEqual(new Set(["c1"]));
     });
 });

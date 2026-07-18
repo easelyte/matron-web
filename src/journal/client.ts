@@ -132,25 +132,6 @@ export function archivedStorageKey(session: Session): string {
     return archiveStore.storageKey(session);
 }
 
-function parseArchivedValue(raw: string | null): Set<string> {
-    if (raw === null) return new Set();
-
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(raw);
-    } catch {
-        console.warn("matron: malformed archived-conversations value, ignoring");
-        return new Set();
-    }
-
-    if (!Array.isArray(parsed)) {
-        console.warn("matron: archived-conversations value not an array, ignoring");
-        return new Set();
-    }
-
-    return new Set(parsed.filter((value): value is string => typeof value === "string"));
-}
-
 export function storedArchivedIds(session: Session): Set<string> {
     return archiveStore.read(session).ids;
 }
@@ -225,6 +206,7 @@ export class MatronJournalClient {
     private pendingAck = 0;
     private historyError?: string;
     private storageListener?: (event: StorageEvent) => void;
+    private unreadHydrated = false;
 
     public readonly subscribe = (listener: () => void): (() => void) => {
         this.listeners.add(listener);
@@ -462,9 +444,7 @@ export class MatronJournalClient {
         this.pendingFiles.set(message.localId, file);
         if (!(await this.persistAttachment(message, db, gen))) return { kind: "persist-failed" };
         if (this.sessionGen !== gen || this.database !== db) return { kind: "persist-failed" };
-        return message.attachState === "uploading"
-            ? { kind: "persisted-uploadable" }
-            : { kind: "persisted-terminal" };
+        return message.attachState === "uploading" ? { kind: "persisted-uploadable" } : { kind: "persisted-terminal" };
     }
 
     private async runPendingUpload(message: PendingMessage, file: File, owner: AttachmentOwner): Promise<void> {
@@ -878,7 +858,16 @@ export class MatronJournalClient {
 
         const conversations = await this.database.conversations();
         const storedConversationId = storedSelectedConversation(session);
-        const archivedIds = storedArchivedIds(session);
+        const archiveRead = archiveStore.read(session);
+        const pinnedRead = pinnedStore.read(session);
+        const favoriteRead = favoriteStore.read(session);
+        const unreadRead = unreadStore.read(session);
+        this.unreadHydrated = unreadRead.ok;
+        const bootstrapReadFailed = !archiveRead.ok || !pinnedRead.ok || !favoriteRead.ok || !unreadRead.ok;
+        const archivedIds = archiveRead.ids;
+        const pinnedIds = pinnedRead.ids;
+        const favoriteIds = favoriteRead.ids;
+        const unreadOverrideIds = unreadRead.ids;
         const selectedConversation = firstSelectableConversation(conversations, storedConversationId, archivedIds);
         this.state = {
             ...blankState(),
@@ -887,18 +876,31 @@ export class MatronJournalClient {
             session,
             conversations,
             archivedIds,
+            pinnedIds,
+            favoriteIds,
+            unreadOverrideIds,
+            controlError: bootstrapReadFailed
+                ? "Couldn't load saved preferences — device storage unavailable."
+                : undefined,
             selectedConversationId: selectedConversation?.id,
         };
         if (this.storageListener) window.removeEventListener("storage", this.storageListener);
         this.storageListener = (event: StorageEvent): void => {
             const currentSession = this.state.session;
-            if (!currentSession || event.key !== archivedStorageKey(currentSession) || event.newValue === null) return;
-            const archivedIds = parseArchivedValue(event.newValue);
-            this.patch({ archivedIds });
-            // Mirror the local archive path: if another tab archived the convo we're viewing,
-            // don't keep it selected (else this tab reads/marks/sends to an archived room).
-            if (this.state.selectedConversationId && archivedIds.has(this.state.selectedConversationId)) {
-                this.clearSelection();
+            if (!currentSession || event.newValue === null) return;
+            if (event.key === archiveStore.storageKey(currentSession)) {
+                const archivedIds = archiveStore.parse(event.newValue);
+                this.patch({ archivedIds });
+                if (this.state.selectedConversationId && archivedIds.has(this.state.selectedConversationId)) {
+                    this.clearSelection();
+                }
+            } else if (event.key === pinnedStore.storageKey(currentSession)) {
+                this.patch({ pinnedIds: pinnedStore.parse(event.newValue) });
+            } else if (event.key === favoriteStore.storageKey(currentSession)) {
+                this.patch({ favoriteIds: favoriteStore.parse(event.newValue) });
+            } else if (event.key === unreadStore.storageKey(currentSession)) {
+                if (!this.unreadHydrated) this.unreadHydrated = true;
+                this.patch({ unreadOverrideIds: unreadStore.parse(event.newValue) });
             }
         };
         window.addEventListener("storage", this.storageListener);
@@ -919,26 +921,20 @@ export class MatronJournalClient {
     private setArchived(conversationId: string, archived: boolean): void {
         const session = this.state.session;
         if (!session) return;
-
-        let current: Set<string>;
-        try {
-            current = parseArchivedValue(localStorage.getItem(archivedStorageKey(session)));
-        } catch {
+        const current = archiveStore.read(session);
+        if (!current.ok) {
             this.patch({ controlError: "Couldn't read saved archive — device storage unavailable." });
             return;
         }
-
-        const next = new Set(current);
+        const next = new Set(current.ids);
         if (archived) next.add(conversationId);
         else next.delete(conversationId);
-
         try {
-            storeArchivedIds(session, next);
+            archiveStore.write(session, next);
         } catch {
             this.patch({ controlError: "Couldn't save — device storage is full or unavailable." });
             return;
         }
-
         this.patch({ archivedIds: next, controlError: undefined });
         if (archived && conversationId === this.state.selectedConversationId) this.clearSelection();
     }
@@ -963,17 +959,30 @@ export class MatronJournalClient {
         await this.database.replaceWithSnapshot(snapshot);
         await this.reconcilePersistedOwnMessages(this.database);
         const conversations = await this.database.conversations();
-        let archivedIds = this.state.archivedIds;
+        let { archivedIds, pinnedIds, favoriteIds, unreadOverrideIds } = this.state;
         const session = this.state.session;
         if (session) {
-            try {
-                archivedIds = parseArchivedValue(localStorage.getItem(archivedStorageKey(session)));
-            } catch {
-                // Keep the in-memory set when storage is temporarily unavailable.
+            const archiveRead = archiveStore.read(session);
+            if (archiveRead.ok) archivedIds = archiveRead.ids;
+            const pinnedRead = pinnedStore.read(session);
+            if (pinnedRead.ok) pinnedIds = pinnedRead.ids;
+            const favoriteRead = favoriteStore.read(session);
+            if (favoriteRead.ok) favoriteIds = favoriteRead.ids;
+            const unreadRead = unreadStore.read(session);
+            if (unreadRead.ok) {
+                unreadOverrideIds = unreadRead.ids;
+                this.unreadHydrated = true;
             }
         }
         const selectedConversation = firstSelectableConversation(conversations, previousSelection, archivedIds);
-        this.patch({ conversations, archivedIds, selectedConversationId: selectedConversation?.id });
+        this.patch({
+            conversations,
+            archivedIds,
+            pinnedIds,
+            favoriteIds,
+            unreadOverrideIds,
+            selectedConversationId: selectedConversation?.id,
+        });
         if (selectedConversation) await this.selectConversation(selectedConversation.id);
         else if (this.state.session) storeSelectedConversation(this.state.session, undefined);
     }
