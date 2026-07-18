@@ -106,6 +106,12 @@ function menuItem(container: HTMLElement, text: string): Element | undefined {
     return [...container.querySelectorAll('[role="menuitem"]')].find((element) => element.textContent?.includes(text));
 }
 
+function tabButton(container: HTMLElement, text: "All" | "Favorites"): HTMLButtonElement {
+    return [...container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].find(
+        (candidate) => candidate.textContent === text,
+    )!;
+}
+
 async function openMenu(container: HTMLElement): Promise<void> {
     await act(async () => button(container, "Conversation options").click());
 }
@@ -801,5 +807,67 @@ describe("conversation row affordances", () => {
         const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]');
         expect(row?.getAttribute("aria-label")).toContain("marked unread");
         expect(rendered.container.querySelector(".mj_UnreadBadge")).toBeNull();
+    });
+});
+
+describe("conversation list tabs", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    it("renders All + Favorites buttons with aria-pressed tracking the active view", async () => {
+        rendered = await renderClient(signedInClient());
+        expect(tabButton(rendered.container, "All").getAttribute("aria-pressed")).toBe("true");
+        expect(tabButton(rendered.container, "Favorites").getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("clicking Favorites filters to favorited rows, sets aria-pressed, focuses the tab, hides archived section", async () => {
+        const fav = { ...CONVERSATION, id: "fav", title: "Fav Room" };
+        const other = { ...CONVERSATION, id: "other", title: "Other Room" };
+        favoriteStore.write(SESSION, new Set(["fav"]));
+        rendered = await renderClient(signedInWithRooms([fav, other]));
+        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        expect(tabButton(rendered.container, "Favorites").getAttribute("aria-pressed")).toBe("true");
+        expect(document.activeElement).toBe(tabButton(rendered.container, "Favorites"));
+        const names = [...rendered.container.querySelectorAll('[data-testid="room-name"]')].map(
+            (element) => element.textContent,
+        );
+        expect(names).toEqual(["Fav Room"]);
+        expect(rendered.container.querySelector(".mj_RoomList_archivedToggle")).toBeNull();
+    });
+
+    it("shows the no-favorites-yet state when nothing is starred", async () => {
+        rendered = await renderClient(signedInClient());
+        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        expect(rendered.container.textContent).toContain("No favorite conversations yet.");
+    });
+
+    it("distinguishes 'no favorites match search' from 'no favorites yet'", async () => {
+        const fav = { ...CONVERSATION, id: "fav", title: "Alpha" };
+        favoriteStore.write(SESSION, new Set(["fav"]));
+        rendered = await renderClient(signedInWithRooms([fav]));
+        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+            setter?.call(search, "zzz-no-match");
+            search.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        expect(rendered.container.textContent).toContain("No favorites match your search.");
+        expect(rendered.container.textContent).not.toContain("No favorite conversations yet.");
+    });
+
+    it("switching tabs leaves selectedConversationId unchanged when the selected row is filtered out", async () => {
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        expect(client.getSnapshot().selectedConversationId).toBe(CONVERSATION.id);
     });
 });
