@@ -227,6 +227,15 @@ export function parentPresent(c: Conversation, ids: ReadonlySet<string>): boolea
     return isSubChat(c) && c.parent_convo_id !== c.id && c.parent_convo_id != null && ids.has(c.parent_convo_id);
 }
 
+export function isNearBottom(
+    scrollTop: number,
+    scrollHeight: number,
+    clientHeight: number,
+    thresholdPx = 80,
+): boolean {
+    return scrollHeight - scrollTop - clientHeight <= thresholdPx;
+}
+
 export function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
