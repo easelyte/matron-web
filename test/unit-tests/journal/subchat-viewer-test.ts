@@ -24,7 +24,7 @@ const SESSION: Session = {
 
 const conversation = (id: string, session_state: string, parent_convo_id?: string): Conversation => ({
     id,
-    title: id === "child" ? "Research child" : "Parent",
+    title: id === "child" ? "Research child" : id === "parent" ? "Parent" : id,
     session_state,
     last_seq: 0,
     unread_count: 0,
@@ -145,6 +145,47 @@ describe("read-only subchat viewer", () => {
 
         expect(selectConversation).not.toHaveBeenCalled();
         expect(clearSelection).toHaveBeenCalledTimes(1);
+    });
+
+    it("hides the sibling switcher when the child is the parent's only child", async () => {
+        const client = signedInClient(
+            [conversation("parent", "running"), conversation("child", "running", "parent")],
+            "child",
+        );
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_SubagentSwitcher")).toBeNull();
+    });
+
+    it("switches between siblings and marks their current and session states", async () => {
+        const client = signedInClient(
+            [
+                conversation("parent", "running"),
+                conversation("child", "running", "parent"),
+                conversation("sibling-a-running", "running", "parent"),
+                conversation("sibling-b-finished", "done", "parent"),
+            ],
+            "child",
+        );
+        const selectConversation = jest.spyOn(client, "selectConversation").mockResolvedValue();
+        rendered = await renderClient(client);
+
+        const switcher = rendered.container.querySelector(".mj_SubagentSwitcher");
+        expect(switcher).not.toBeNull();
+        await act(async () => switcher?.querySelector<HTMLButtonElement>(".mj_SubagentSwitcherButton")?.click());
+
+        const entries = [...(switcher?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])];
+        expect(entries).toHaveLength(3);
+        expect(entries[0].disabled).toBe(true);
+        expect(entries[0].textContent).toContain("✓");
+        expect(entries[0].textContent).toContain("Research child");
+        expect(entries[1].textContent).toContain("●");
+        expect(entries[1].textContent).toContain("sibling-a-running");
+        expect(entries[2].textContent).toContain("○");
+        expect(entries[2].textContent).toContain("sibling-b-finished");
+
+        await act(async () => entries[2].click());
+        expect(selectConversation).toHaveBeenCalledWith("sibling-b-finished");
     });
 
     it("suppresses prompt replies and attachment retry while retaining dismiss", async () => {

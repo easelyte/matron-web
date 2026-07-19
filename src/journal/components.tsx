@@ -972,6 +972,8 @@ function ChatHeader({ client, state }: { client: MatronJournalClient; state: Cli
 
 function SubChatHeader({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const selected = client.selectedConversation();
+    const siblings = childrenOf(state.conversations, selected?.parent_convo_id);
+    const [siblingsOpen, setSiblingsOpen] = useState(false);
     const status = state.sessionStatus;
     const hasModelContext = Boolean(status?.model || status?.context);
     const limits = status?.limits?.filter((limit) => limit.label.trim());
@@ -1021,6 +1023,41 @@ function SubChatHeader({ client, state }: { client: MatronJournalClient; state: 
                     {selected?.session_state === "running" && <span className="mj_Spinner" aria-hidden="true" />}
                     {selected?.session_state === "running" ? "Running" : "Finished"}
                 </span>
+                {siblings.length > 1 && (
+                    <div className="mj_SubagentSwitcher">
+                        <button
+                            type="button"
+                            className="mj_SubagentSwitcherButton"
+                            aria-haspopup="menu"
+                            aria-expanded={siblingsOpen}
+                            onClick={() => setSiblingsOpen((open) => !open)}
+                        >
+                            {siblings.length} subagents ▾
+                        </button>
+                        {siblingsOpen && (
+                            <div className="mj_HeaderMenu mj_SubagentSwitcherMenu" role="menu">
+                                {siblings.map((sibling) => {
+                                    const isCurrent = sibling.id === selected?.id;
+                                    const glyph = isCurrent ? "✓" : sibling.session_state === "running" ? "●" : "○";
+                                    return (
+                                        <button
+                                            key={sibling.id}
+                                            type="button"
+                                            role="menuitem"
+                                            disabled={isCurrent}
+                                            onClick={() => {
+                                                setSiblingsOpen(false);
+                                                void client.selectConversation(sibling.id);
+                                            }}
+                                        >
+                                            <span aria-hidden="true">{glyph}</span> {conversationTitle(sibling)}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
             <div
                 className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
