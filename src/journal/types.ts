@@ -208,6 +208,25 @@ export function coerceParentId(x: unknown): string | null {
     return s || null;
 }
 
+export function isSubChat(c: Pick<Conversation, "parent_convo_id">): boolean {
+    return c.parent_convo_id != null && c.parent_convo_id !== "";
+}
+
+export function childrenOf(conversations: Conversation[], parentId: string | null | undefined): Conversation[] {
+    if (!parentId) return [];
+    return conversations
+        .filter((c) => c.parent_convo_id === parentId)
+        .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+export function runningChildrenOf(conversations: Conversation[], parentId: string | null | undefined): Conversation[] {
+    return childrenOf(conversations, parentId).filter((c) => c.session_state === "running");
+}
+
+export function parentPresent(c: Conversation, ids: ReadonlySet<string>): boolean {
+    return isSubChat(c) && c.parent_convo_id !== c.id && c.parent_convo_id != null && ids.has(c.parent_convo_id);
+}
+
 export function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
