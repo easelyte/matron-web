@@ -43,12 +43,17 @@ import { compactTokens, resetDisplay, usageBarLabel, usageLevel } from "./status
 import {
     asNumber,
     asString,
+    childrenOf,
     type ClientState,
     conversationTitle,
     displaySender,
     type EventPayload,
+    isNearBottom,
     type JournalEvent,
     type PendingMessage,
+    parentPresent,
+    runningChildrenOf,
+    isSubChat,
     type SessionStatus,
     type StagedUploadItem,
     type StagedUploads,
@@ -372,16 +377,23 @@ function ConversationList({
         if (!roomMenu) return;
         roomMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     }, [roomMenu]);
+    const ids = new Set(
+        state.conversations
+            .filter((conversation) => !state.archivedIds.has(conversation.id))
+            .map((conversation) => conversation.id),
+    );
     const conversations = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
-        return state.conversations.filter(
-            (conversation) =>
-                !normalized ||
-                `${conversation.title} ${conversation.id} ${conversation.snippet}`
-                    .toLocaleLowerCase()
-                    .includes(normalized),
-        );
-    }, [query, state.conversations]);
+        return state.conversations
+            .filter((conversation) => !parentPresent(conversation, ids))
+            .filter(
+                (conversation) =>
+                    !normalized ||
+                    `${conversation.title} ${conversation.id} ${conversation.snippet}`
+                        .toLocaleLowerCase()
+                        .includes(normalized),
+            );
+    }, [query, state.archivedIds, state.conversations]);
     const activeAll = conversations.filter((conversation) => !state.archivedIds.has(conversation.id));
     const active = [
         ...activeAll.filter((conversation) => state.pinnedIds.has(conversation.id)),
@@ -390,7 +402,10 @@ function ConversationList({
     const visibleActive =
         tab === "favorites" ? active.filter((conversation) => state.favoriteIds.has(conversation.id)) : active;
     const hasAnyFavorite = state.conversations.some(
-        (conversation) => state.favoriteIds.has(conversation.id) && !state.archivedIds.has(conversation.id),
+        (conversation) =>
+            state.favoriteIds.has(conversation.id) &&
+            !state.archivedIds.has(conversation.id) &&
+            !parentPresent(conversation, ids),
     );
     const archived = conversations.filter((conversation) => state.archivedIds.has(conversation.id));
     // Visibility is computed from the UNFILTERED conversation set (minus archived), NOT the
@@ -398,7 +413,9 @@ function ConversationList({
     // the search box, so the button must not vanish just because the search hides the unread rows.
     const hasActiveUnread = state.conversations.some(
         (conversation) =>
-            effectiveUnread(conversation, state.unreadOverrideIds) && !state.archivedIds.has(conversation.id),
+            effectiveUnread(conversation, state.unreadOverrideIds) &&
+            !state.archivedIds.has(conversation.id) &&
+            !parentPresent(conversation, ids),
     );
     const menuConversation = roomMenu
         ? state.conversations.find((conversation) => conversation.id === roomMenu.conversationId)
@@ -875,6 +892,8 @@ function UsageBars({ limits }: { limits: NonNullable<SessionStatus["limits"]> })
 function ChatHeader({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const conversation = client.selectedConversation();
     const title = conversation ? conversationTitle(conversation) : "Conversation";
+    const children = childrenOf(state.conversations, conversation?.id);
+    const [subagentsOpen, setSubagentsOpen] = useState(false);
     const status = state.sessionStatus;
     const hasModelContext = Boolean(status?.model || status?.context);
     const limits = status?.limits?.filter((limit) => limit.label.trim());
@@ -910,6 +929,37 @@ function ChatHeader({ client, state }: { client: MatronJournalClient; state: Cli
                         {status.email}
                     </span>
                 )}
+                {children.length > 0 && (
+                    <div className="mj_SubagentSwitcher">
+                        <button
+                            type="button"
+                            className="mj_SubagentSwitcherButton"
+                            aria-haspopup="menu"
+                            aria-expanded={subagentsOpen}
+                            onClick={() => setSubagentsOpen((open) => !open)}
+                        >
+                            {children.length} {children.length === 1 ? "subagent" : "subagents"} ▾
+                        </button>
+                        {subagentsOpen && (
+                            <div className="mj_HeaderMenu mj_SubagentSwitcherMenu" role="menu">
+                                {children.map((child) => (
+                                    <button
+                                        key={child.id}
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() => {
+                                            setSubagentsOpen(false);
+                                            void client.selectConversation(child.id);
+                                        }}
+                                    >
+                                        <span aria-hidden="true">{child.session_state === "running" ? "●" : "○"}</span>{" "}
+                                        {conversationTitle(child)}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
             <div
                 className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
@@ -921,16 +971,121 @@ function ChatHeader({ client, state }: { client: MatronJournalClient; state: Cli
     );
 }
 
+function SubChatHeader({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
+    const selected = client.selectedConversation();
+    const siblings = childrenOf(state.conversations, selected?.parent_convo_id);
+    const [siblingsOpen, setSiblingsOpen] = useState(false);
+    const status = state.sessionStatus;
+    const hasModelContext = Boolean(status?.model || status?.context);
+    const limits = status?.limits?.filter((limit) => limit.label.trim());
+    const goBack = (): void => {
+        if (!selected) {
+            client.clearSelection();
+            return;
+        }
+        const parentId = selected.parent_convo_id;
+        if (
+            parentId &&
+            parentId !== selected.id &&
+            state.conversations.some((conversation) => conversation.id === parentId)
+        ) {
+            void client.selectConversation(parentId);
+        } else {
+            client.clearSelection();
+        }
+    };
+
+    return (
+        <header className="mx_RoomHeader light-panel mj_ChatHeader mj_SubChatHeader">
+            <button type="button" className="mj_BackButton" onClick={goBack} aria-label="Back to parent">
+                <ChevronLeftIcon />
+            </button>
+            <div
+                className={`mj_HeaderCluster mj_ModelContextCluster${hasModelContext ? "" : " mj_HeaderCluster_empty"}`}
+                aria-hidden={!hasModelContext}
+            >
+                {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
+                {status?.context && (
+                    <span
+                        className="mj_HeaderContext"
+                        title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
+                    >
+                        Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
+                    </span>
+                )}
+            </div>
+            <div className="mj_HeaderCluster mj_HeaderTitleCluster">
+                <div dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
+                    <span className="mx_RoomHeader_truncated mx_lineClamp">
+                        {selected ? conversationTitle(selected) : "Subagent"}
+                    </span>
+                </div>
+                <span className="mj_SubChatState">
+                    {selected?.session_state === "running" && <span className="mj_Spinner" aria-hidden="true" />}
+                    {selected?.session_state === "running" ? "Running" : "Finished"}
+                </span>
+                {siblings.length > 1 && (
+                    <div className="mj_SubagentSwitcher">
+                        <button
+                            type="button"
+                            className="mj_SubagentSwitcherButton"
+                            aria-haspopup="menu"
+                            aria-expanded={siblingsOpen}
+                            onClick={() => setSiblingsOpen((open) => !open)}
+                        >
+                            {siblings.length} subagents ▾
+                        </button>
+                        {siblingsOpen && (
+                            <div className="mj_HeaderMenu mj_SubagentSwitcherMenu" role="menu">
+                                {siblings.map((sibling) => {
+                                    const isCurrent = sibling.id === selected?.id;
+                                    const glyph = isCurrent ? "✓" : sibling.session_state === "running" ? "●" : "○";
+                                    return (
+                                        <button
+                                            key={sibling.id}
+                                            type="button"
+                                            role="menuitem"
+                                            disabled={isCurrent}
+                                            onClick={() => {
+                                                setSiblingsOpen(false);
+                                                void client.selectConversation(sibling.id);
+                                            }}
+                                        >
+                                            <span aria-hidden="true">{glyph}</span> {conversationTitle(sibling)}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+            <div
+                className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
+                aria-hidden={!limits?.length}
+            >
+                {limits?.length ? <UsageBars limits={limits} /> : null}
+            </div>
+        </header>
+    );
+}
+
+function ReadOnlyHint(): React.ReactElement {
+    return <div className="mj_ReadOnlyHint">Read-only — subagent transcript</div>;
+}
+
 function PromptCard({
     client,
     event,
     answered,
     permission = false,
+    isReadOnly = false,
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
     answered: boolean;
     permission?: boolean;
+    isReadOnly?: boolean;
 }): React.ReactElement {
     const [freeText, setFreeText] = useState("");
     const [locallyAnswered, setLocallyAnswered] = useState(false);
@@ -960,7 +1115,7 @@ function PromptCard({
         <div className="mj_PromptCard">
             <div className="mj_PromptLabel">{permission ? "Permission needed" : "Question"}</div>
             <p>{question}</p>
-            {!disabled && options.length > 0 && (
+            {!isReadOnly && !disabled && options.length > 0 && (
                 <div className="mj_PromptOptions">
                     {options.map((option) => (
                         <button key={`${option.label}:${option.value}`} onClick={() => answer(option.value)}>
@@ -969,7 +1124,7 @@ function PromptCard({
                     ))}
                 </div>
             )}
-            {!disabled && (event.payload.allows_free_text === true || options.length === 0) && (
+            {!isReadOnly && !disabled && (event.payload.allows_free_text === true || options.length === 0) && (
                 <form
                     className="mj_PromptText"
                     onSubmit={(submitEvent) => {
@@ -1105,18 +1260,35 @@ function EventContent({
     client,
     event,
     answeredPrompts,
+    isReadOnly = false,
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
     answeredPrompts: Set<number>;
+    isReadOnly?: boolean;
 }): React.ReactElement {
     switch (event.type) {
         case "text":
             return <div className="mj_MessageText">{asString(event.payload.body)}</div>;
         case "prompt":
-            return <PromptCard client={client} event={event} answered={answeredPrompts.has(event.seq)} />;
+            return (
+                <PromptCard
+                    client={client}
+                    event={event}
+                    answered={answeredPrompts.has(event.seq)}
+                    isReadOnly={isReadOnly}
+                />
+            );
         case "permission_request":
-            return <PromptCard client={client} event={event} answered={answeredPrompts.has(event.seq)} permission />;
+            return (
+                <PromptCard
+                    client={client}
+                    event={event}
+                    answered={answeredPrompts.has(event.seq)}
+                    permission
+                    isReadOnly={isReadOnly}
+                />
+            );
         case "prompt_reply":
             return (
                 <div className="mj_MessageText">
@@ -1179,12 +1351,14 @@ function EventRow({
     client,
     event,
     answeredPrompts,
+    isReadOnly = false,
     continuation = false,
     lastInSection = true,
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
     answeredPrompts: Set<number>;
+    isReadOnly?: boolean;
     continuation?: boolean;
     lastInSection?: boolean;
 }): React.ReactElement {
@@ -1212,7 +1386,12 @@ function EventRow({
                 </a>
                 <div className="mx_MTextBody mx_EventTile_content">
                     <div className="markdown-body">
-                        <EventContent client={client} event={event} answeredPrompts={answeredPrompts} />
+                        <EventContent
+                            client={client}
+                            event={event}
+                            answeredPrompts={answeredPrompts}
+                            isReadOnly={isReadOnly}
+                        />
                     </div>
                 </div>
             </div>
@@ -1267,9 +1446,11 @@ function attachmentErrorMessage(message: PendingMessage): string {
 function PendingAttachment({
     client,
     message,
+    isReadOnly = false,
 }: {
     client: MatronJournalClient;
     message: PendingMessage;
+    isReadOnly?: boolean;
 }): React.ReactElement {
     const filename = message.filename || (message.kind === "image" ? "Image" : "Attachment");
     const detail = formatBytes(message.size);
@@ -1320,7 +1501,7 @@ function PendingAttachment({
                     {recoveryError && <span>{recoveryError}</span>}
                     {recoveryResult && <span role="status">{recoveryResult}</span>}
                     <div className="mj_AttachmentChip_actions">
-                        {message.canRetry && (
+                        {!isReadOnly && message.canRetry && (
                             <button
                                 type="button"
                                 disabled={recoveryAction !== undefined}
@@ -1343,8 +1524,20 @@ function PendingAttachment({
     );
 }
 
-function Timeline({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
+function Timeline({
+    client,
+    state,
+    isReadOnly = false,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    isReadOnly?: boolean;
+}): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
+    const pendingScrollFrame = useRef<number | undefined>(undefined);
+    const selectedConversationId = useRef(state.selectedConversationId);
+    const [isFollowingTail, setFollow] = useState(true);
+    selectedConversationId.current = state.selectedConversationId;
     const historyScrollAnchor = useRef<
         | {
               conversationId?: string;
@@ -1384,6 +1577,40 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
             ),
         [state.events],
     );
+    const scrollToBottom = useCallback((): void => {
+        const node = scrollRef.current;
+        if (node) node.scrollTop = node.scrollHeight;
+    }, []);
+    const cancelPendingScrollFrame = useCallback((): void => {
+        if (pendingScrollFrame.current === undefined) return;
+        cancelAnimationFrame(pendingScrollFrame.current);
+        pendingScrollFrame.current = undefined;
+    }, []);
+    const onScroll = (): void => {
+        const node = scrollRef.current;
+        if (!node) return;
+        cancelPendingScrollFrame();
+        const queuedConversationId = state.selectedConversationId;
+        pendingScrollFrame.current = requestAnimationFrame(() => {
+            pendingScrollFrame.current = undefined;
+            if (selectedConversationId.current !== queuedConversationId) return;
+            setFollow(isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight));
+        });
+    };
+
+    useEffect(() => {
+        setFollow(true);
+        return cancelPendingScrollFrame;
+    }, [state.selectedConversationId, cancelPendingScrollFrame]);
+
+    useEffect(() => {
+        cancelPendingScrollFrame();
+        historyScrollAnchor.current = undefined;
+        historyScrollRestored.current = false;
+        setFollow(true);
+        scrollToBottom();
+    }, [state.sendTick, cancelPendingScrollFrame, scrollToBottom]);
+
     useLayoutEffect(() => {
         const node = scrollRef.current;
         if (!node) return;
@@ -1412,7 +1639,7 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
             return;
         }
 
-        node.scrollTop = node.scrollHeight;
+        if (isFollowingTail) node.scrollTop = node.scrollHeight;
     }, [
         state.selectedConversationId,
         visibleEvents,
@@ -1420,6 +1647,7 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
         state.textStreams,
         state.toolStreams,
         state.loadingHistory,
+        isFollowingTail,
     ]);
 
     const loadEarlierMessages = (): void => {
@@ -1437,7 +1665,7 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
 
     return (
         <main className="mx_RoomView_timeline" data-testid="timeline">
-            <div className="mx_RoomView_messagePanel mx_AutoHideScrollbar" ref={scrollRef}>
+            <div className="mx_RoomView_messagePanel mx_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
                 <div className="mx_RoomView_messageListWrapper">
                     <ol className="mx_RoomView_MessageList" aria-live="polite">
                         {state.hasOlderHistory && (
@@ -1461,6 +1689,7 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
                                         client={client}
                                         event={item.event}
                                         answeredPrompts={answeredPrompts}
+                                        isReadOnly={isReadOnly}
                                         continuation={
                                             previous?.kind === "event" && previous.event.sender === item.event.sender
                                         }
@@ -1472,7 +1701,12 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
                             }
                             const message = item.message;
                             return message.kind === "image" || message.kind === "file" ? (
-                                <PendingAttachment key={message.localId} client={client} message={message} />
+                                <PendingAttachment
+                                    key={message.localId}
+                                    client={client}
+                                    message={message}
+                                    isReadOnly={isReadOnly}
+                                />
                             ) : (
                                 <li
                                     className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
@@ -1525,6 +1759,18 @@ function Timeline({ client, state }: { client: MatronJournalClient; state: Clien
                     </ol>
                 </div>
             </div>
+            {!isFollowingTail && (
+                <button
+                    className="mj_JumpToBottom"
+                    aria-label="Jump to bottom"
+                    onClick={() => {
+                        setFollow(true);
+                        scrollToBottom();
+                    }}
+                >
+                    ↓
+                </button>
+            )}
         </main>
     );
 }
@@ -1785,6 +2031,33 @@ function UploadConfirmPage({
     );
 }
 
+function RunningSubagentStrip({
+    client,
+    state,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+}): React.ReactElement | null {
+    const running = runningChildrenOf(state.conversations, state.selectedConversationId);
+    if (running.length === 0) return null;
+    return (
+        <div className="mj_SubagentStrip" role="list">
+            {running.map((child) => (
+                <button
+                    key={child.id}
+                    className="mj_SubagentPill"
+                    role="listitem"
+                    aria-label={`Open subagent ${conversationTitle(child)}`}
+                    onClick={() => void client.selectConversation(child.id)}
+                >
+                    <span className="mj_Spinner" aria-hidden="true" />
+                    {conversationTitle(child)}
+                </button>
+            ))}
+        </div>
+    );
+}
+
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const leftPanel = useLeftPanelResize();
     const [dragActive, setDragActive] = useState(state.dragActive);
@@ -1799,6 +2072,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     }, [state.stagedUploads]);
 
     const isFileDrag = (event: React.DragEvent): boolean => Array.from(event.dataTransfer.types).includes("Files");
+    const selected = client.selectedConversation();
+    const childMode = selected != null && isSubChat(selected);
 
     return (
         <div className="mx_MatrixChat_wrapper">
@@ -1824,6 +2099,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 if (!isFileDrag(event)) return;
                                 event.preventDefault();
                                 setDragActive(false);
+                                if (childMode) return;
                                 if (state.stagedUploads) return;
                                 const files = [...event.dataTransfer.files];
                                 if (files.length > 0) client.stageFiles(files);
@@ -1841,9 +2117,14 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 </div>
                             )}
                             <div className="mx_RoomView_body mx_MainSplit_timeline" data-layout="bubble">
-                                <ChatHeader client={client} state={state} />
-                                <Timeline client={client} state={state} />
-                                <Composer client={client} state={state} />
+                                {childMode ? (
+                                    <SubChatHeader client={client} state={state} />
+                                ) : (
+                                    <ChatHeader client={client} state={state} />
+                                )}
+                                <RunningSubagentStrip client={client} state={state} />
+                                <Timeline client={client} state={state} isReadOnly={childMode} />
+                                {childMode ? <ReadOnlyHint /> : <Composer client={client} state={state} />}
                             </div>
                         </div>
                     ) : (

@@ -13,11 +13,13 @@ import { mergeSessionStatus } from "./status";
 import {
     type ClientState,
     type Conversation,
+    isSubChat,
     type JournalEphemeralFrame,
     type JournalEvent,
     MESSAGE_EVENT_TYPES,
     normalizeServerUrl,
     type PendingMessage,
+    parentPresent,
     type ServerFrame,
     type Session,
     trimUtf8Prefix,
@@ -95,6 +97,7 @@ function blankState(): ClientState {
         textStreams: {},
         toolStreams: {},
         dragActive: false,
+        sendTick: 0,
     };
 }
 
@@ -146,10 +149,19 @@ function firstSelectableConversation(
     preferredId: string | undefined,
     archivedIds: Set<string>,
 ): Conversation | undefined {
-    const preferred = conversations.find(
-        (conversation) => conversation.id === preferredId && !archivedIds.has(conversation.id),
+    const ids = new Set(
+        conversations
+            .filter((conversation) => !archivedIds.has(conversation.id))
+            .map((conversation) => conversation.id),
     );
-    return preferred ?? conversations.find((conversation) => !archivedIds.has(conversation.id));
+    const preferred = conversations.find(
+        (conversation) =>
+            conversation.id === preferredId && !archivedIds.has(conversation.id) && !parentPresent(conversation, ids),
+    );
+    return (
+        preferred ??
+        conversations.find((conversation) => !archivedIds.has(conversation.id) && !parentPresent(conversation, ids))
+    );
 }
 
 function storeSelectedConversation(session: Session, conversationId: string | undefined): void {
@@ -318,6 +330,7 @@ export class MatronJournalClient {
             toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
         });
         await this.refreshSelectedConversation(conversationId);
+        if (this.state.selectedConversationId !== conversationId) return;
         this.connection?.send({ op: "viewing", convo_id: conversationId });
 
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
@@ -370,8 +383,14 @@ export class MatronJournalClient {
 
     public markAllRead(): void {
         const previousControlError = this.state.controlError;
+        const ids = new Set(
+            this.state.conversations
+                .filter((conversation) => !this.state.archivedIds.has(conversation.id))
+                .map((conversation) => conversation.id),
+        );
         let anyFailed = false;
         for (const conversation of this.state.conversations) {
+            if (parentPresent(conversation, ids)) continue;
             if (this.state.archivedIds.has(conversation.id)) continue;
             if (!effectiveUnread(conversation, this.state.unreadOverrideIds)) continue;
             // Single canonical mark-read path; it clears the override and flushes the server read.
@@ -433,6 +452,7 @@ export class MatronJournalClient {
         const body = bodyInput.trim();
         const conversationId = this.state.selectedConversationId;
         if (!body || !conversationId || !this.database) return false;
+        if (this.isChildConvo(conversationId)) return false;
         const message: PendingMessage = {
             localId: crypto.randomUUID(),
             convoId: conversationId,
@@ -441,6 +461,9 @@ export class MatronJournalClient {
         };
         await this.database.addToOutbox(message);
         await this.refreshSelectedConversation(conversationId);
+        if (this.state.selectedConversationId === conversationId) {
+            this.patch({ sendTick: this.state.sendTick + 1 });
+        }
         this.sendPendingMessage(message);
         return true;
     }
@@ -517,6 +540,7 @@ export class MatronJournalClient {
         const api = this.api;
         const db = this.database;
         if (!api || !db) return;
+        if (this.isChildConvo(convoId)) return;
         const owner = { gen, api, db };
         const message = this.buildPendingAttachment(file, convoId, caption);
         const persistOutcome = await this.persistPendingAttachment(message, file, db, gen);
@@ -544,6 +568,16 @@ export class MatronJournalClient {
                     this.transientAttachmentErrors.get(localId);
                 if (!message || message.attachState !== "error") return;
                 delete message.canRetry;
+                if (this.isChildConvo(message.convoId)) {
+                    this.markChildBlocked(message);
+                    if (!(await this.persistAttachment(message, db, gen))) return;
+                    if (!this.ownsAttachment(owner, localId)) return;
+                    await this.refreshSelectedConversation(message.convoId, db, gen);
+                    return;
+                }
+                if (this.state.selectedConversationId === message.convoId) {
+                    this.patch({ sendTick: this.state.sendTick + 1 });
+                }
 
                 if (
                     message.errorKind === "upload_failed" ||
@@ -584,6 +618,13 @@ export class MatronJournalClient {
         try {
             const bytes = await Promise.race([file.arrayBuffer(), abortPromise(controller.signal)]);
             if (!this.ownsAttachment(owner, message.localId)) return;
+            if (this.isChildConvo(message.convoId)) {
+                this.markChildBlocked(message);
+                if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+                if (!this.ownsAttachment(owner, message.localId)) return;
+                await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+                return;
+            }
             const response = await owner.api.uploadMedia(bytes, message.contentType ?? file.type, controller.signal);
             if (!this.ownsAttachment(owner, message.localId)) return;
             if (typeof response.media_id !== "string" || response.media_id.trim() === "") {
@@ -633,6 +674,14 @@ export class MatronJournalClient {
     }
 
     private async emitPendingAttachment(message: PendingMessage, owner: AttachmentOwner): Promise<void> {
+        if (this.isChildConvo(message.convoId)) {
+            this.markChildBlocked(message);
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+            return;
+        }
         if (!message.blobRef || (message.kind !== "image" && message.kind !== "file")) return;
         if (!this.ownsAttachment(owner, message.localId)) return;
 
@@ -683,6 +732,7 @@ export class MatronJournalClient {
         if (files.length === 0) return;
         const staged = this.state.stagedUploads;
         if (staged) {
+            if (this.isChildConvo(staged.convoId)) return;
             if (staged.error) return;
             this.patch({
                 stagedUploads: {
@@ -695,6 +745,7 @@ export class MatronJournalClient {
         }
         const convoId = this.state.selectedConversationId;
         if (!convoId) return;
+        if (this.isChildConvo(convoId)) return;
         this.patch({
             stagedUploads: {
                 convoId,
@@ -710,6 +761,7 @@ export class MatronJournalClient {
         if (!staged || staged.confirming || staged.error) return;
         const head = staged.items[0];
         if (!head || head.id !== itemId) return;
+        if (this.isChildConvo(staged.convoId)) return;
         this.patch({ stagedUploads: { ...staged, confirming: true } });
 
         const gen = this.sessionGen;
@@ -748,6 +800,9 @@ export class MatronJournalClient {
             if (!afterPurge) return;
             this.patch({ stagedUploads: { ...afterPurge, confirming: false, persistError: true } });
             return;
+        }
+        if (this.state.selectedConversationId === convoId) {
+            this.patch({ sendTick: this.state.sendTick + 1 });
         }
         void this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
         const rest = current.items.slice(1);
@@ -822,6 +877,7 @@ export class MatronJournalClient {
     }
 
     public sendPromptReply(targetSeq: number, choice?: string, text?: string): boolean {
+        if (this.isChildConvo(this.state.selectedConversationId ?? "")) return false;
         const conversationId = this.state.selectedConversationId;
         if (!conversationId) return false;
         const sent =
@@ -865,10 +921,22 @@ export class MatronJournalClient {
         await this.database.expireToolLogs();
 
         let cursor = await this.database.cursor();
-        if (cursor === undefined) {
+        const freshInstall = cursor === undefined;
+        if (freshInstall) {
             const snapshot = await this.api.snapshot();
             await this.database.replaceWithSnapshot(snapshot);
             cursor = snapshot.seq;
+        }
+        try {
+            if (freshInstall && typeof this.database.markBackfillDone === "function") {
+                await this.database.markBackfillDone();
+            } else if (typeof this.database.backfillDone === "function" && !(await this.database.backfillDone())) {
+                await this.database.backfillParentLinks(await this.api.snapshot());
+            }
+        } catch (error) {
+            const permanent = error instanceof Error && error.message.startsWith("malformed");
+            if (permanent) await this.database.recordBackfillError(String(error)).catch(() => undefined);
+            console.warn(`matron: subchat backfill deferred (${permanent ? "permanent" : "transient"})`, error);
         }
         await this.reconcilePersistedOwnMessages(this.database);
         const outbox = await this.database.outbox();
@@ -1065,7 +1133,36 @@ export class MatronJournalClient {
 
         const outbox = await db.outbox();
         if (!ownsReplay()) return;
-        for (const message of outbox) this.sendPendingMessage(message, connection);
+        const kept: PendingMessage[] = [];
+        const blockedTextIds: string[] = [];
+        const blockedAttachments: PendingMessage[] = [];
+        for (const message of outbox) {
+            if (!this.isChildConvo(message.convoId)) {
+                kept.push(message);
+                continue;
+            }
+            if (message.kind === "image" || message.kind === "file") blockedAttachments.push(message);
+            else blockedTextIds.push(message.localId);
+        }
+        if (blockedTextIds.length > 0) {
+            try {
+                await db.deleteOutboxRows(blockedTextIds);
+                if (ownsReplay()) this.patch({ controlError: "Couldn't send to a read-only subagent transcript." });
+            } catch {
+                if (ownsReplay()) {
+                    this.patch({ controlError: "Couldn't update blocked messages — device storage is unavailable." });
+                }
+            }
+        }
+        if (!ownsReplay()) return;
+        for (const message of blockedAttachments) {
+            this.markChildBlocked(message);
+            if (!(await this.persistAttachment(message, db, gen))) continue;
+            if (!ownsReplay()) return;
+            await this.refreshSelectedConversation(message.convoId, db, gen);
+            if (!ownsReplay()) return;
+        }
+        for (const message of kept) this.sendPendingMessage(message, connection);
         if (this.state.selectedConversationId) {
             connection.send({ op: "viewing", convo_id: this.state.selectedConversationId });
             const conversation = this.selectedConversation();
@@ -1295,7 +1392,22 @@ export class MatronJournalClient {
         }
     }
 
+    private isChildConvo(convoId: string): boolean {
+        const conversation = this.state.conversations.find((candidate) => candidate.id === convoId);
+        return !!conversation && isSubChat(conversation);
+    }
+
+    private markChildBlocked(message: PendingMessage): void {
+        message.attachState = "error";
+        message.errorKind = "send_failed";
+        message.errorMessage = "Can't send to a read-only subagent transcript.";
+    }
+
     private sendPendingMessage(message: PendingMessage, connection = this.connection): void {
+        if (this.isChildConvo(message.convoId)) {
+            this.patch({ controlError: "Couldn't send to a read-only subagent transcript." });
+            return;
+        }
         if (message.kind === "image" || message.kind === "file") {
             if (!message.blobRef || this.dismissedAttachments.has(message.localId)) return;
             connection?.send({
@@ -1378,7 +1490,15 @@ export class MatronJournalClient {
     }
 
     private emit(): void {
-        const unread = this.state.conversations.reduce((total, conversation) => total + conversation.unread_count, 0);
+        const ids = new Set(
+            this.state.conversations
+                .filter((conversation) => !this.state.archivedIds.has(conversation.id))
+                .map((conversation) => conversation.id),
+        );
+        const unread = this.state.conversations.reduce(
+            (total, conversation) => total + (parentPresent(conversation, ids) ? 0 : conversation.unread_count),
+            0,
+        );
         ((window as Window & { electron?: ElectronBadgeBridge }).electron as ElectronBadgeBridge | undefined)?.send(
             "setBadgeCount",
             unread,

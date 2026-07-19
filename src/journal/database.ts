@@ -6,6 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    coerceParentId,
     type Conversation,
     enforceToolLogTtl,
     eventSnippet,
@@ -17,6 +18,8 @@ import {
 
 const DATABASE_VERSION = 1;
 const CURSOR_KEY = "cursor";
+const BACKFILL_KEY = "subchat_backfill_v1";
+const BACKFILL_ERROR_KEY = "subchat_backfill_error";
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -42,6 +45,7 @@ function emptyConversation(id: string, timestamp: number): Conversation {
         unread_count: 0,
         snippet: "",
         created_at: timestamp,
+        parent_convo_id: null,
         last_ts: timestamp,
         read_up_to_seq: 0,
     };
@@ -103,9 +107,67 @@ export class JournalDatabase {
         return typeof value === "number" ? value : undefined;
     }
 
+    public async backfillParentLinks(snapshot: SnapshotResponse): Promise<void> {
+        if (!snapshot || !Array.isArray(snapshot.conversations)) throw new Error("malformed snapshot");
+        const summaries = snapshot.conversations;
+        for (const summary of summaries) {
+            if (!summary || typeof summary.id !== "string") throw new Error("malformed snapshot element");
+        }
+
+        const transaction = this.database.transaction(["conversations", "meta"], "readwrite");
+        try {
+            const conversations = transaction.objectStore("conversations");
+            for (const summary of summaries) {
+                const existing = (await requestResult(conversations.get(summary.id))) as Conversation | undefined;
+                if (!existing) continue;
+                // Normalize both sides through coerceParentId, existing-first (immutable link), and reject
+                // a self-parent so the backfill can't persist the invalid state (P33, phase-1 review B2).
+                let link = coerceParentId(existing.parent_convo_id) ?? coerceParentId(summary.parent_convo_id);
+                if (link === summary.id) link = null;
+                existing.parent_convo_id = link;
+                if (typeof summary.session_state === "string") existing.session_state = summary.session_state;
+                conversations.put(existing);
+            }
+            transaction.objectStore("meta").put(true, BACKFILL_KEY);
+            await transactionDone(transaction);
+        } catch (error) {
+            try {
+                transaction.abort();
+            } catch {
+                // The transaction is already aborting or complete.
+            }
+            throw error;
+        }
+    }
+
+    public async markBackfillDone(): Promise<void> {
+        const transaction = this.database.transaction("meta", "readwrite");
+        transaction.objectStore("meta").put(true, BACKFILL_KEY);
+        await transactionDone(transaction);
+    }
+
+    public async backfillDone(): Promise<boolean> {
+        const transaction = this.database.transaction("meta", "readonly");
+        const done = Boolean(await requestResult(transaction.objectStore("meta").get(BACKFILL_KEY)));
+        await transactionDone(transaction);
+        return done;
+    }
+
+    public async recordBackfillError(reason: string): Promise<void> {
+        const transaction = this.database.transaction("meta", "readwrite");
+        transaction.objectStore("meta").put({ ts: Date.now(), reason }, BACKFILL_ERROR_KEY);
+        await transactionDone(transaction);
+    }
+
     public async replaceWithSnapshot(snapshot: SnapshotResponse): Promise<void> {
         const transaction = this.database.transaction(["meta", "conversations", "events", "outbox"], "readwrite");
         const conversations = transaction.objectStore("conversations");
+        const existingParents = new Map(
+            ((await requestResult(conversations.getAll())) as Conversation[]).map((conversation) => {
+                const parentId = coerceParentId(conversation.parent_convo_id);
+                return [conversation.id, parentId === conversation.id ? null : parentId] as const;
+            }),
+        );
         conversations.clear();
         transaction.objectStore("events").clear();
         const validConversationIds = new Set(snapshot.conversations.map((conversation) => conversation.id));
@@ -115,8 +177,11 @@ export class JournalDatabase {
             if (!validConversationIds.has(message.convoId)) outbox.delete(message.localId);
         }
         for (const summary of snapshot.conversations) {
+            let incomingParent = coerceParentId(summary.parent_convo_id);
+            if (incomingParent === summary.id) incomingParent = null;
             conversations.put({
                 ...summary,
+                parent_convo_id: existingParents.get(summary.id) ?? incomingParent ?? null,
                 last_ts: summary.last_ts ?? summary.created_at,
                 read_up_to_seq: summary.read_up_to_seq ?? (summary.unread_count === 0 ? summary.last_seq : 0),
             } satisfies Conversation);
@@ -187,8 +252,13 @@ export class JournalDatabase {
         conversation.last_seq = Math.max(conversation.last_seq, event.seq);
         conversation.last_ts = Math.max(conversation.last_ts ?? 0, event.ts);
 
-        if (event.type === "convo_meta" && typeof event.payload.title === "string") {
-            conversation.title = event.payload.title;
+        if (event.type === "convo_meta") {
+            if (typeof event.payload.title === "string") conversation.title = event.payload.title;
+            let incomingParent = coerceParentId(event.payload.parent_convo_id);
+            if (incomingParent === conversation.id) incomingParent = null;
+            if (conversation.parent_convo_id == null && incomingParent) {
+                conversation.parent_convo_id = incomingParent;
+            }
         } else if (event.type === "session_status" && typeof event.payload.state === "string") {
             conversation.session_state = event.payload.state;
         } else if (MESSAGE_EVENT_TYPES.has(event.type)) {
@@ -235,6 +305,14 @@ export class JournalDatabase {
     public async deleteOutboxRow(localId: string): Promise<void> {
         const transaction = this.database.transaction("outbox", "readwrite");
         transaction.objectStore("outbox").delete(localId);
+        await transactionDone(transaction);
+    }
+
+    public async deleteOutboxRows(localIds: string[]): Promise<void> {
+        if (localIds.length === 0) return;
+        const transaction = this.database.transaction("outbox", "readwrite");
+        const outbox = transaction.objectStore("outbox");
+        for (const localId of localIds) outbox.delete(localId);
         await transactionDone(transaction);
     }
 
