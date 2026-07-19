@@ -211,4 +211,32 @@ describe("JournalDatabase", () => {
         expect((await database.outbox()).map((message) => message.localId)).toEqual(["keep"]);
         database.close();
     });
+
+    it("normalizes an existing legacy self-parent during snapshot replacement", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 9, "dan");
+        const conversation = {
+            id: "c1",
+            title: "Agent",
+            session_state: "running",
+            last_seq: 0,
+            unread_count: 0,
+            snippet: "",
+            created_at: 1,
+            read_up_to_seq: 0,
+            parent_convo_id: "c1",
+        };
+        const rawDatabase = (database as unknown as { database: IDBDatabase }).database;
+        const seed = rawDatabase.transaction("conversations", "readwrite");
+        seed.objectStore("conversations").put(conversation);
+        await new Promise<void>((resolve, reject) => {
+            seed.oncomplete = () => resolve();
+            seed.onerror = () => reject(seed.error);
+            seed.onabort = () => reject(seed.error);
+        });
+
+        await database.replaceWithSnapshot({ seq: 1, conversations: [{ ...conversation, parent_convo_id: null }] });
+
+        expect((await database.conversations())[0]).toMatchObject({ id: "c1", parent_convo_id: null });
+        database.close();
+    });
 });

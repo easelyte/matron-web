@@ -927,6 +927,46 @@ describe("MatronJournalClient attachment send state machine", () => {
         await inFlight;
     });
 
+    it("does not upload bytes when the conversation becomes a child during file reading", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        let releaseRead: (() => void) | undefined;
+        const arrayBuffer = jest.fn(
+            () =>
+                new Promise<ArrayBuffer>((resolve) => {
+                    releaseRead = () => resolve(new Uint8Array([1]).buffer);
+                }),
+        );
+        const uploadMedia = jest.fn().mockResolvedValue({ media_id: "must-not-upload" });
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+
+        const inFlight = client.sendAttachment(
+            fileFixture("late-child.bin", "application/octet-stream", [1], arrayBuffer),
+            "c1",
+        );
+        await PERSIST_TICK();
+        state.state = {
+            ...state.state,
+            conversations: state.state.conversations.map((conversation) =>
+                conversation.id === "c1" ? { ...conversation, parent_convo_id: "parent" } : conversation,
+            ),
+        };
+        releaseRead?.();
+        await inFlight;
+
+        expect(uploadMedia).not.toHaveBeenCalled();
+        expect([...rows.values()]).toEqual([
+            expect.objectContaining({
+                convoId: "c1",
+                attachState: "error",
+                errorKind: "send_failed",
+            }),
+        ]);
+    });
+
     it("confirms head-only, advances pages, and serializes uploads in confirm order", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);

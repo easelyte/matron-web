@@ -618,6 +618,13 @@ export class MatronJournalClient {
         try {
             const bytes = await Promise.race([file.arrayBuffer(), abortPromise(controller.signal)]);
             if (!this.ownsAttachment(owner, message.localId)) return;
+            if (this.isChildConvo(message.convoId)) {
+                this.markChildBlocked(message);
+                if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+                if (!this.ownsAttachment(owner, message.localId)) return;
+                await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+                return;
+            }
             const response = await owner.api.uploadMedia(bytes, message.contentType ?? file.type, controller.signal);
             if (!this.ownsAttachment(owner, message.localId)) return;
             if (typeof response.media_id !== "string" || response.media_id.trim() === "") {
@@ -914,19 +921,22 @@ export class MatronJournalClient {
         await this.database.expireToolLogs();
 
         let cursor = await this.database.cursor();
-        if (cursor === undefined) {
+        const freshInstall = cursor === undefined;
+        if (freshInstall) {
             const snapshot = await this.api.snapshot();
             await this.database.replaceWithSnapshot(snapshot);
-            if (typeof this.database.markBackfillDone === "function") await this.database.markBackfillDone();
             cursor = snapshot.seq;
-        } else if (typeof this.database.backfillDone === "function" && !(await this.database.backfillDone())) {
-            try {
+        }
+        try {
+            if (freshInstall && typeof this.database.markBackfillDone === "function") {
+                await this.database.markBackfillDone();
+            } else if (typeof this.database.backfillDone === "function" && !(await this.database.backfillDone())) {
                 await this.database.backfillParentLinks(await this.api.snapshot());
-            } catch (error) {
-                const permanent = error instanceof Error && error.message.startsWith("malformed");
-                if (permanent) await this.database.recordBackfillError(String(error)).catch(() => undefined);
-                console.warn(`matron: subchat backfill deferred (${permanent ? "permanent" : "transient"})`, error);
             }
+        } catch (error) {
+            const permanent = error instanceof Error && error.message.startsWith("malformed");
+            if (permanent) await this.database.recordBackfillError(String(error)).catch(() => undefined);
+            console.warn(`matron: subchat backfill deferred (${permanent ? "permanent" : "transient"})`, error);
         }
         await this.reconcilePersistedOwnMessages(this.database);
         const outbox = await this.database.outbox();

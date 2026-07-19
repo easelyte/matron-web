@@ -163,10 +163,10 @@ export class JournalDatabase {
         const transaction = this.database.transaction(["meta", "conversations", "events", "outbox"], "readwrite");
         const conversations = transaction.objectStore("conversations");
         const existingParents = new Map(
-            ((await requestResult(conversations.getAll())) as Conversation[]).map((conversation) => [
-                conversation.id,
-                conversation.parent_convo_id ?? null,
-            ]),
+            ((await requestResult(conversations.getAll())) as Conversation[]).map((conversation) => {
+                const parentId = coerceParentId(conversation.parent_convo_id);
+                return [conversation.id, parentId === conversation.id ? null : parentId] as const;
+            }),
         );
         conversations.clear();
         transaction.objectStore("events").clear();

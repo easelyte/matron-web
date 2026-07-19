@@ -133,6 +133,22 @@ describe("subchat existing-client backfill", () => {
         database.close();
     });
 
+    it("retains a restored session when the backfill completion probe fails", async () => {
+        const database = await seedExistingClient();
+        localStorage.setItem("matron_journal_session_v1", JSON.stringify(SESSION));
+        jest.spyOn(JournalDatabase.prototype, "backfillDone").mockRejectedValue(new Error("IndexedDB aborted"));
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const client = new MatronJournalClient();
+
+        await expect(client.initialise()).resolves.toBeUndefined();
+
+        expect(client.getSnapshot()).toMatchObject({ phase: "signed-in", session: SESSION });
+        expect(localStorage.getItem("matron_journal_session_v1")).toBe(JSON.stringify(SESSION));
+        internals(client).connection?.stop();
+        internals(client).database?.close();
+        database.close();
+    });
+
     it("defers a malformed snapshot, leaves the key unset, and does not wedge startup", async () => {
         const database = await seedExistingClient();
         jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue({ seq: 6 } as SnapshotResponse);
