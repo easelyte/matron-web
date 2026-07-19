@@ -146,6 +146,63 @@ textarea {
     text-align: center;
 }
 
+.mj_SubChatState {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-xs-regular);
+}
+
+.mj_SubagentSwitcher {
+    position: relative;
+    display: flex;
+    justify-content: center;
+}
+
+.mj_SubagentSwitcherButton {
+    overflow: hidden;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-action-accent);
+    cursor: pointer;
+    font: var(--cpd-font-body-xs-regular);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SubagentSwitcherButton:focus-visible {
+    border-radius: 4px;
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+.mj_SubagentSwitcherMenu {
+    top: calc(100% + var(--cpd-space-2x));
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.mj_SubagentSwitcherMenu button {
+    overflow: hidden;
+    padding-inline: var(--cpd-space-3x);
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SubagentSwitcherMenu button:disabled {
+    color: var(--cpd-color-text-secondary);
+    cursor: default;
+}
+
+.mj_SubagentSwitcherMenu button:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 1px;
+}
+
 .mj_UsageCluster {
     height: 38px;
     overflow: hidden;
@@ -256,6 +313,59 @@ textarea {
     background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-primary);
     cursor: pointer;
+}
+
+.mj_SubagentStrip {
+    display: flex;
+    min-width: 0;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    overflow-x: auto;
+    border-bottom: 1px solid var(--cpd-color-border-disabled);
+    background: var(--cpd-color-bg-canvas-default);
+    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+    scrollbar-width: thin;
+}
+
+.mj_SubagentPill {
+    display: inline-flex;
+    min-height: 28px;
+    max-width: min(240px, 70vw);
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    overflow: hidden;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-disabled);
+    border-radius: 9999px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+    font: var(--cpd-font-body-sm-regular);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SubagentPill:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_SubagentPill:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+.mj_Spinner {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    border: 2px solid rgb(8 127 109 / 25%);
+    border-top-color: var(--cpd-color-text-action-accent);
+    border-radius: 50%;
+    animation: mj-spin 0.8s linear infinite;
 }
 
 .mj_AccountMenu,
@@ -423,6 +533,36 @@ textarea {
 
 .mx_RoomView_MessageList {
     min-height: 100%;
+}
+
+.mj_JumpToBottom {
+    position: absolute;
+    z-index: 2;
+    right: var(--cpd-space-4x);
+    bottom: var(--cpd-space-4x);
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--cpd-color-border-disabled);
+    border-radius: 50%;
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: 0 2px 8px rgb(15, 23, 42, 0.18);
+    color: var(--cpd-color-text-action-accent);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.mj_JumpToBottom:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_JumpToBottom:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
 }
 
 .mx_EventTile[data-layout="bubble"] .mx_EventTile_line > a {
@@ -939,6 +1079,21 @@ button.mj_File {
     cursor: default;
 }
 
+.mj_ReadOnlyHint {
+    display: flex;
+    min-height: 56px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    border-top: 1px solid var(--cpd-color-border-disabled);
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-secondary);
+    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    font: var(--cpd-font-body-sm-regular);
+    text-align: center;
+}
+
 .mj_ConnectionError {
     margin: var(--cpd-space-2x) 0;
     color: var(--cpd-color-text-critical-primary);
@@ -994,7 +1149,8 @@ button.mj_File {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .mj_AttachmentChip_spinner {
+    .mj_AttachmentChip_spinner,
+    .mj_Spinner {
         animation: none;
     }
 }
