@@ -308,6 +308,14 @@ export class JournalDatabase {
         await transactionDone(transaction);
     }
 
+    public async deleteOutboxRows(localIds: string[]): Promise<void> {
+        if (localIds.length === 0) return;
+        const transaction = this.database.transaction("outbox", "readwrite");
+        const outbox = transaction.objectStore("outbox");
+        for (const localId of localIds) outbox.delete(localId);
+        await transactionDone(transaction);
+    }
+
     public async outbox(conversationId?: string): Promise<PendingMessage[]> {
         const transaction = this.database.transaction("outbox", "readonly");
         const store = transaction.objectStore("outbox");

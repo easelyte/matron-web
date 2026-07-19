@@ -1113,15 +1113,34 @@ export class MatronJournalClient {
         const outbox = await db.outbox();
         if (!ownsReplay()) return;
         const kept: PendingMessage[] = [];
-        let purged = 0;
+        const blockedTextIds: string[] = [];
+        const blockedAttachments: PendingMessage[] = [];
         for (const message of outbox) {
-            if (this.isChildConvo(message.convoId) && message.kind !== "image" && message.kind !== "file") {
-                await db.deleteOutboxRow(message.localId);
-                purged++;
-            } else kept.push(message);
+            if (!this.isChildConvo(message.convoId)) {
+                kept.push(message);
+                continue;
+            }
+            if (message.kind === "image" || message.kind === "file") blockedAttachments.push(message);
+            else blockedTextIds.push(message.localId);
         }
-        if (purged > 0) this.patch({ controlError: "Couldn't send to a read-only subagent transcript." });
+        if (blockedTextIds.length > 0) {
+            try {
+                await db.deleteOutboxRows(blockedTextIds);
+                if (ownsReplay()) this.patch({ controlError: "Couldn't send to a read-only subagent transcript." });
+            } catch {
+                if (ownsReplay()) {
+                    this.patch({ controlError: "Couldn't update blocked messages — device storage is unavailable." });
+                }
+            }
+        }
         if (!ownsReplay()) return;
+        for (const message of blockedAttachments) {
+            this.markChildBlocked(message);
+            if (!(await this.persistAttachment(message, db, gen))) continue;
+            if (!ownsReplay()) return;
+            await this.refreshSelectedConversation(message.convoId, db, gen);
+            if (!ownsReplay()) return;
+        }
         for (const message of kept) this.sendPendingMessage(message, connection);
         if (this.state.selectedConversationId) {
             connection.send({ op: "viewing", convo_id: this.state.selectedConversationId });

@@ -30,7 +30,7 @@ const CHILD: Conversation = {
 interface FakeDatabase {
     outbox: jest.MockedFunction<(conversationId?: string) => Promise<PendingMessage[]>>;
     addToOutbox: jest.MockedFunction<(message: PendingMessage) => Promise<void>>;
-    deleteOutboxRow: jest.MockedFunction<(localId: string) => Promise<void>>;
+    deleteOutboxRows: jest.MockedFunction<(localIds: string[]) => Promise<void>>;
     events: jest.MockedFunction<(conversationId: string) => Promise<[]>>;
     cursor: jest.MockedFunction<() => Promise<number | undefined>>;
 }
@@ -73,8 +73,8 @@ function fakeDatabase(initial: PendingMessage[] = []): { database: FakeDatabase;
         addToOutbox: jest.fn(async (message: PendingMessage) => {
             rows.set(message.localId, structuredClone(message));
         }),
-        deleteOutboxRow: jest.fn(async (localId: string) => {
-            rows.delete(localId);
+        deleteOutboxRows: jest.fn(async (localIds: string[]) => {
+            for (const localId of localIds) rows.delete(localId);
         }),
         events: jest.fn().mockResolvedValue([]),
         cursor: jest.fn().mockResolvedValue(undefined),
@@ -293,16 +293,14 @@ describe("read-only subagent transcript egress", () => {
         ]);
     });
 
-    it("purges blocked text once on reconnect after surfacing the read-only notice", async () => {
-        const text: PendingMessage = {
-            localId: "text-1",
-            convoId: CHILD.id,
-            body: "do not replay",
-            createdAt: 1,
-        };
+    it("purges blocked texts atomically on reconnect with one read-only notice", async () => {
+        const texts: PendingMessage[] = [
+            { localId: "text-1", convoId: CHILD.id, body: "do not replay", createdAt: 1 },
+            { localId: "text-2", convoId: CHILD.id, body: "also do not replay", createdAt: 2, kind: "text" },
+        ];
         const client = new MatronJournalClient();
         const state = internals(client);
-        const { database, rows } = fakeDatabase([text]);
+        const { database, rows } = fakeDatabase(texts);
         const api = {};
         const send = jest.fn().mockReturnValue(true);
         state.state = childState(client);
@@ -312,10 +310,77 @@ describe("read-only subagent transcript egress", () => {
 
         await state.handleReady();
 
-        expect(database.deleteOutboxRow).toHaveBeenCalledTimes(1);
-        expect(database.deleteOutboxRow).toHaveBeenCalledWith(text.localId);
-        expect(rows.has(text.localId)).toBe(false);
+        expect(database.deleteOutboxRows).toHaveBeenCalledTimes(1);
+        expect(database.deleteOutboxRows).toHaveBeenCalledWith(["text-1", "text-2"]);
+        expect(rows.size).toBe(0);
         expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "send" }));
         expect(state.state.controlError).toBe("Couldn't send to a read-only subagent transcript.");
+    });
+
+    it("preserves every blocked text and replays parent messages when the atomic purge fails", async () => {
+        const childTexts: PendingMessage[] = [
+            { localId: "text-1", convoId: CHILD.id, body: "do not replay", createdAt: 1 },
+            { localId: "text-2", convoId: CHILD.id, body: "also do not replay", createdAt: 2 },
+        ];
+        const parentText: PendingMessage = {
+            localId: "parent-text",
+            convoId: PARENT.id,
+            body: "replay me",
+            createdAt: 3,
+        };
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = fakeDatabase([...childTexts, parentText]);
+        database.deleteOutboxRows.mockRejectedValueOnce(new Error("transaction aborted"));
+        const send = jest.fn().mockReturnValue(true);
+        state.state = childState(client);
+        state.api = {};
+        state.database = database;
+        state.connection = { send };
+
+        await state.handleReady();
+
+        expect(rows.has("text-1")).toBe(true);
+        expect(rows.has("text-2")).toBe(true);
+        expect(send).toHaveBeenCalledWith({
+            op: "send",
+            convo_id: PARENT.id,
+            type: "text",
+            payload: { body: parentText.body, local_id: parentText.localId },
+            local_id: parentText.localId,
+        });
+        expect(state.state.controlError).toBe("Couldn't update blocked messages — device storage is unavailable.");
+    });
+
+    it("marks a child attachment errored instead of replaying it on reconnect", async () => {
+        const attachment: PendingMessage = {
+            localId: "attachment-reconnect",
+            convoId: CHILD.id,
+            body: "",
+            createdAt: 1,
+            kind: "file",
+            blobRef: "media-1",
+            attachState: "sending",
+        };
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = fakeDatabase([attachment]);
+        const send = jest.fn().mockReturnValue(true);
+        state.state = childState(client);
+        state.api = {};
+        state.database = database;
+        state.connection = { send };
+
+        await state.handleReady();
+
+        expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "send" }));
+        expect(rows.get(attachment.localId)).toMatchObject({
+            attachState: "error",
+            errorKind: "send_failed",
+            errorMessage: "Can't send to a read-only subagent transcript.",
+        });
+        expect(state.state.pendingMessages).toEqual([
+            expect.objectContaining({ localId: attachment.localId, attachState: "error" }),
+        ]);
     });
 });
