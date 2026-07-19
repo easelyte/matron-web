@@ -1,4 +1,4 @@
-import { coerceParentId } from "../../src/journal/types";
+import { coerceParentId } from "../../../src/journal/types";
 
 describe("coerceParentId", () => {
     it("returns null for non-string, empty, and whitespace inputs", () => {
