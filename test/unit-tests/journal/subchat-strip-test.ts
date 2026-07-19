@@ -112,6 +112,40 @@ describe("running subagent strip", () => {
         expect(rendered.container.querySelector(".mj_SubagentStrip")).toBeNull();
     });
 
+    it("lists a finished child in the parent header switcher and opens it", async () => {
+        const conversations = [
+            conversation("parent", "Parent", "running"),
+            conversation("finished", "Finished", "done", "parent"),
+        ];
+        const client = signedInClient(conversations, "parent");
+        const selectConversation = jest.spyOn(client, "selectConversation").mockResolvedValue();
+
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_SubagentStrip")).toBeNull();
+        const switcher = [...rendered.container.querySelectorAll("button")].find(
+            (button) => button.textContent === "1 subagent ▾",
+        );
+        expect(switcher).toBeDefined();
+
+        await act(async () => switcher?.click());
+        const finishedChild = rendered.container.querySelector<HTMLButtonElement>('[role="menuitem"]');
+        expect(finishedChild?.textContent).toContain("Finished");
+
+        await act(async () => finishedChild?.click());
+        expect(selectConversation).toHaveBeenCalledWith("finished");
+    });
+
+    it("hides the parent header switcher when there are no children", async () => {
+        rendered = await renderClient(signedInClient([conversation("parent", "Parent", "running")], "parent"));
+
+        expect(
+            [...rendered.container.querySelectorAll("button")].some((button) =>
+                /subagents?/.test(button.textContent ?? ""),
+            ),
+        ).toBe(false);
+    });
+
     it("shows running grandchildren when viewing a child", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),

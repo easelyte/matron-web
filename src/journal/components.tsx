@@ -43,6 +43,7 @@ import { compactTokens, resetDisplay, usageBarLabel, usageLevel } from "./status
 import {
     asNumber,
     asString,
+    childrenOf,
     type ClientState,
     conversationTitle,
     displaySender,
@@ -889,6 +890,8 @@ function UsageBars({ limits }: { limits: NonNullable<SessionStatus["limits"]> })
 function ChatHeader({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const conversation = client.selectedConversation();
     const title = conversation ? conversationTitle(conversation) : "Conversation";
+    const children = childrenOf(state.conversations, conversation?.id);
+    const [subagentsOpen, setSubagentsOpen] = useState(false);
     const status = state.sessionStatus;
     const hasModelContext = Boolean(status?.model || status?.context);
     const limits = status?.limits?.filter((limit) => limit.label.trim());
@@ -923,6 +926,37 @@ function ChatHeader({ client, state }: { client: MatronJournalClient; state: Cli
                     <span className="mj_HeaderEmail" title={status.email}>
                         {status.email}
                     </span>
+                )}
+                {children.length > 0 && (
+                    <div className="mj_SubagentSwitcher">
+                        <button
+                            type="button"
+                            className="mj_SubagentSwitcherButton"
+                            aria-haspopup="menu"
+                            aria-expanded={subagentsOpen}
+                            onClick={() => setSubagentsOpen((open) => !open)}
+                        >
+                            {children.length} {children.length === 1 ? "subagent" : "subagents"} ▾
+                        </button>
+                        {subagentsOpen && (
+                            <div className="mj_HeaderMenu mj_SubagentSwitcherMenu" role="menu">
+                                {children.map((child) => (
+                                    <button
+                                        key={child.id}
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() => {
+                                            setSubagentsOpen(false);
+                                            void client.selectConversation(child.id);
+                                        }}
+                                    >
+                                        <span aria-hidden="true">{child.session_state === "running" ? "●" : "○"}</span>{" "}
+                                        {conversationTitle(child)}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 )}
             </div>
             <div
