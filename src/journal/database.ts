@@ -18,6 +18,8 @@ import {
 
 const DATABASE_VERSION = 1;
 const CURSOR_KEY = "cursor";
+const BACKFILL_KEY = "subchat_backfill_v1";
+const BACKFILL_ERROR_KEY = "subchat_backfill_error";
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -103,6 +105,54 @@ export class JournalDatabase {
         const value = await requestResult(transaction.objectStore("meta").get(CURSOR_KEY));
         await transactionDone(transaction);
         return typeof value === "number" ? value : undefined;
+    }
+
+    public async backfillParentLinks(snapshot: SnapshotResponse): Promise<void> {
+        if (!snapshot || !Array.isArray(snapshot.conversations)) throw new Error("malformed snapshot");
+        const summaries = snapshot.conversations;
+        for (const summary of summaries) {
+            if (!summary || typeof summary.id !== "string") throw new Error("malformed snapshot element");
+        }
+
+        const transaction = this.database.transaction(["conversations", "meta"], "readwrite");
+        try {
+            const conversations = transaction.objectStore("conversations");
+            for (const summary of summaries) {
+                const existing = (await requestResult(conversations.get(summary.id))) as Conversation | undefined;
+                if (!existing) continue;
+                existing.parent_convo_id = existing.parent_convo_id ?? coerceParentId(summary.parent_convo_id) ?? null;
+                if (typeof summary.session_state === "string") existing.session_state = summary.session_state;
+                conversations.put(existing);
+            }
+            transaction.objectStore("meta").put(true, BACKFILL_KEY);
+            await transactionDone(transaction);
+        } catch (error) {
+            try {
+                transaction.abort();
+            } catch {
+                // The transaction is already aborting or complete.
+            }
+            throw error;
+        }
+    }
+
+    public async markBackfillDone(): Promise<void> {
+        const transaction = this.database.transaction("meta", "readwrite");
+        transaction.objectStore("meta").put(true, BACKFILL_KEY);
+        await transactionDone(transaction);
+    }
+
+    public async backfillDone(): Promise<boolean> {
+        const transaction = this.database.transaction("meta", "readonly");
+        const done = Boolean(await requestResult(transaction.objectStore("meta").get(BACKFILL_KEY)));
+        await transactionDone(transaction);
+        return done;
+    }
+
+    public async recordBackfillError(reason: string): Promise<void> {
+        const transaction = this.database.transaction("meta", "readwrite");
+        transaction.objectStore("meta").put({ ts: Date.now(), reason }, BACKFILL_ERROR_KEY);
+        await transactionDone(transaction);
     }
 
     public async replaceWithSnapshot(snapshot: SnapshotResponse): Promise<void> {

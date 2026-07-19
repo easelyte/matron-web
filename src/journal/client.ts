@@ -868,7 +868,16 @@ export class MatronJournalClient {
         if (cursor === undefined) {
             const snapshot = await this.api.snapshot();
             await this.database.replaceWithSnapshot(snapshot);
+            if (typeof this.database.markBackfillDone === "function") await this.database.markBackfillDone();
             cursor = snapshot.seq;
+        } else if (typeof this.database.backfillDone === "function" && !(await this.database.backfillDone())) {
+            try {
+                await this.database.backfillParentLinks(await this.api.snapshot());
+            } catch (error) {
+                const permanent = error instanceof Error && error.message.startsWith("malformed");
+                if (permanent) await this.database.recordBackfillError(String(error)).catch(() => undefined);
+                console.warn(`matron: subchat backfill deferred (${permanent ? "permanent" : "transient"})`, error);
+            }
         }
         await this.reconcilePersistedOwnMessages(this.database);
         const outbox = await this.database.outbox();
