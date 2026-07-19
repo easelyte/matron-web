@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { MatronJournalClient } from "../../../src/journal/client";
+import { MatronJournalClient, storeArchivedIds } from "../../../src/journal/client";
 import { JournalConnection } from "../../../src/journal/connection";
 import { JournalDatabase } from "../../../src/journal/database";
 import type { ClientState, Conversation, Session } from "../../../src/journal/types";
@@ -89,5 +89,16 @@ describe("subchat automatic selection", () => {
         await (client as unknown as ClientInternals).startSession(SESSION);
 
         expect(client.getSnapshot().selectedConversationId).toBe("missing:sub:orphan");
+    });
+
+    it("selects a child as a top-level fallback when its parent is archived", async () => {
+        const conversations = [CONVERSATIONS[0], CONVERSATIONS[1]];
+        const client = new MatronJournalClient();
+        storeArchivedIds(SESSION, new Set(["root"]));
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database(conversations));
+
+        await (client as unknown as ClientInternals).startSession(SESSION);
+
+        expect(client.getSnapshot().selectedConversationId).toBe("root:sub:linked");
     });
 });

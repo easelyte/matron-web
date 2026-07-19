@@ -373,7 +373,11 @@ function ConversationList({
         if (!roomMenu) return;
         roomMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     }, [roomMenu]);
-    const ids = new Set(state.conversations.map((conversation) => conversation.id));
+    const ids = new Set(
+        state.conversations
+            .filter((conversation) => !state.archivedIds.has(conversation.id))
+            .map((conversation) => conversation.id),
+    );
     const conversations = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
         return state.conversations
@@ -385,7 +389,7 @@ function ConversationList({
                         .toLocaleLowerCase()
                         .includes(normalized),
             );
-    }, [query, state.conversations]);
+    }, [query, state.archivedIds, state.conversations]);
     const activeAll = conversations.filter((conversation) => !state.archivedIds.has(conversation.id));
     const active = [
         ...activeAll.filter((conversation) => state.pinnedIds.has(conversation.id)),

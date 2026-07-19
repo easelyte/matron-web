@@ -147,7 +147,11 @@ function firstSelectableConversation(
     preferredId: string | undefined,
     archivedIds: Set<string>,
 ): Conversation | undefined {
-    const ids = new Set(conversations.map((conversation) => conversation.id));
+    const ids = new Set(
+        conversations
+            .filter((conversation) => !archivedIds.has(conversation.id))
+            .map((conversation) => conversation.id),
+    );
     const preferred = conversations.find(
         (conversation) =>
             conversation.id === preferredId && !archivedIds.has(conversation.id) && !parentPresent(conversation, ids),
@@ -376,7 +380,11 @@ export class MatronJournalClient {
 
     public markAllRead(): void {
         const previousControlError = this.state.controlError;
-        const ids = new Set(this.state.conversations.map((conversation) => conversation.id));
+        const ids = new Set(
+            this.state.conversations
+                .filter((conversation) => !this.state.archivedIds.has(conversation.id))
+                .map((conversation) => conversation.id),
+        );
         let anyFailed = false;
         for (const conversation of this.state.conversations) {
             if (parentPresent(conversation, ids)) continue;
@@ -1395,7 +1403,11 @@ export class MatronJournalClient {
     }
 
     private emit(): void {
-        const ids = new Set(this.state.conversations.map((conversation) => conversation.id));
+        const ids = new Set(
+            this.state.conversations
+                .filter((conversation) => !this.state.archivedIds.has(conversation.id))
+                .map((conversation) => conversation.id),
+        );
         const unread = this.state.conversations.reduce(
             (total, conversation) => total + (parentPresent(conversation, ids) ? 0 : conversation.unread_count),
             0,

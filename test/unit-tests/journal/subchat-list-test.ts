@@ -80,6 +80,32 @@ describe("subchat conversation list", () => {
         expect(names).toEqual(["Root", "Orphan child"]);
     });
 
+    it("shows a child as a top-level fallback when its parent is archived", async () => {
+        const client = new MatronJournalClient();
+        const state = client.getSnapshot();
+        (client as unknown as ClientInternals).state = {
+            ...state,
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [conversation("root", "Root"), conversation("root:sub:linked", "Linked child", "root")],
+            archivedIds: new Set(["root"]),
+            selectedConversationId: undefined,
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+
+        await act(async () => {
+            root.render(React.createElement(MatronApp, { client }));
+        });
+
+        const names = [...container.querySelectorAll('[data-testid="room-name"]')].map(
+            (element) => element.textContent,
+        );
+        expect(names).toEqual(["Linked child"]);
+    });
+
     it("excludes a linked child's unread override from the active aggregate and mark-all", async () => {
         const client = new MatronJournalClient();
         const state = client.getSnapshot();
