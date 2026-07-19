@@ -2043,18 +2043,15 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 event.preventDefault();
                                 setDragActive(true);
                             }}
-                            onDrop={
-                                childMode
-                                    ? undefined
-                                    : (event) => {
-                                          if (!isFileDrag(event)) return;
-                                          event.preventDefault();
-                                          setDragActive(false);
-                                          if (state.stagedUploads) return;
-                                          const files = [...event.dataTransfer.files];
-                                          if (files.length > 0) client.stageFiles(files);
-                                      }
-                            }
+                            onDrop={(event) => {
+                                if (!isFileDrag(event)) return;
+                                event.preventDefault();
+                                setDragActive(false);
+                                if (childMode) return;
+                                if (state.stagedUploads) return;
+                                const files = [...event.dataTransfer.files];
+                                if (files.length > 0) client.stageFiles(files);
+                            }}
                             onDragLeave={(event) => {
                                 const nextTarget = event.relatedTarget;
                                 if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;

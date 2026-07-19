@@ -112,7 +112,7 @@ describe("read-only subchat viewer", () => {
         const drop = new Event("drop", { bubbles: true, cancelable: true });
         Object.defineProperty(drop, "dataTransfer", { value: { types: ["Files"], files: [file] } });
         await act(async () => room.dispatchEvent(drop));
-        expect(drop.defaultPrevented).toBe(false);
+        expect(drop.defaultPrevented).toBe(true);
         expect(stageFiles).not.toHaveBeenCalled();
     });
 
