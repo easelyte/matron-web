@@ -6,6 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    coerceParentId,
     type Conversation,
     enforceToolLogTtl,
     eventSnippet,
@@ -42,6 +43,7 @@ function emptyConversation(id: string, timestamp: number): Conversation {
         unread_count: 0,
         snippet: "",
         created_at: timestamp,
+        parent_convo_id: null,
         last_ts: timestamp,
         read_up_to_seq: 0,
     };
@@ -106,6 +108,12 @@ export class JournalDatabase {
     public async replaceWithSnapshot(snapshot: SnapshotResponse): Promise<void> {
         const transaction = this.database.transaction(["meta", "conversations", "events", "outbox"], "readwrite");
         const conversations = transaction.objectStore("conversations");
+        const existingParents = new Map(
+            ((await requestResult(conversations.getAll())) as Conversation[]).map((conversation) => [
+                conversation.id,
+                conversation.parent_convo_id ?? null,
+            ]),
+        );
         conversations.clear();
         transaction.objectStore("events").clear();
         const validConversationIds = new Set(snapshot.conversations.map((conversation) => conversation.id));
@@ -115,8 +123,11 @@ export class JournalDatabase {
             if (!validConversationIds.has(message.convoId)) outbox.delete(message.localId);
         }
         for (const summary of snapshot.conversations) {
+            let incomingParent = coerceParentId(summary.parent_convo_id);
+            if (incomingParent === summary.id) incomingParent = null;
             conversations.put({
                 ...summary,
+                parent_convo_id: existingParents.get(summary.id) ?? incomingParent ?? null,
                 last_ts: summary.last_ts ?? summary.created_at,
                 read_up_to_seq: summary.read_up_to_seq ?? (summary.unread_count === 0 ? summary.last_seq : 0),
             } satisfies Conversation);
@@ -187,8 +198,13 @@ export class JournalDatabase {
         conversation.last_seq = Math.max(conversation.last_seq, event.seq);
         conversation.last_ts = Math.max(conversation.last_ts ?? 0, event.ts);
 
-        if (event.type === "convo_meta" && typeof event.payload.title === "string") {
-            conversation.title = event.payload.title;
+        if (event.type === "convo_meta") {
+            if (typeof event.payload.title === "string") conversation.title = event.payload.title;
+            let incomingParent = coerceParentId(event.payload.parent_convo_id);
+            if (incomingParent === conversation.id) incomingParent = null;
+            if (conversation.parent_convo_id == null && incomingParent) {
+                conversation.parent_convo_id = incomingParent;
+            }
         } else if (event.type === "session_status" && typeof event.payload.state === "string") {
             conversation.session_state = event.payload.state;
         } else if (MESSAGE_EVENT_TYPES.has(event.type)) {
