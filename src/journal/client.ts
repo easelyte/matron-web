@@ -716,6 +716,7 @@ export class MatronJournalClient {
         if (files.length === 0) return;
         const staged = this.state.stagedUploads;
         if (staged) {
+            if (this.isChildConvo(staged.convoId)) return;
             if (staged.error) return;
             this.patch({
                 stagedUploads: {
@@ -728,6 +729,7 @@ export class MatronJournalClient {
         }
         const convoId = this.state.selectedConversationId;
         if (!convoId) return;
+        if (this.isChildConvo(convoId)) return;
         this.patch({
             stagedUploads: {
                 convoId,
@@ -743,6 +745,7 @@ export class MatronJournalClient {
         if (!staged || staged.confirming || staged.error) return;
         const head = staged.items[0];
         if (!head || head.id !== itemId) return;
+        if (this.isChildConvo(staged.convoId)) return;
         this.patch({ stagedUploads: { ...staged, confirming: true } });
 
         const gen = this.sessionGen;
@@ -855,6 +858,7 @@ export class MatronJournalClient {
     }
 
     public sendPromptReply(targetSeq: number, choice?: string, text?: string): boolean {
+        if (this.isChildConvo(this.state.selectedConversationId ?? "")) return false;
         const conversationId = this.state.selectedConversationId;
         if (!conversationId) return false;
         const sent =

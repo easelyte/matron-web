@@ -83,6 +83,98 @@ function fakeDatabase(initial: PendingMessage[] = []): { database: FakeDatabase;
 }
 
 describe("read-only subagent transcript egress", () => {
+    it("blocks prompt replies for the selected child conversation", () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const send = jest.fn().mockReturnValue(true);
+        state.state = childState(client);
+        state.connection = { send };
+
+        expect(client.sendPromptReply(42, "approve")).toBe(false);
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it("blocks new and appended staging for a child conversation", () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const first = { name: "first.txt" } as File;
+        const second = { name: "second.txt" } as File;
+        state.state = childState(client);
+
+        client.stageFiles([first]);
+        expect(state.state.stagedUploads).toBeUndefined();
+
+        state.state = {
+            ...state.state,
+            stagedUploads: {
+                convoId: CHILD.id,
+                items: [{ id: "staged-child", file: first }],
+                total: 1,
+                confirming: false,
+            },
+        };
+        client.stageFiles([second]);
+
+        expect(state.state.stagedUploads).toEqual({
+            convoId: CHILD.id,
+            items: [{ id: "staged-child", file: first }],
+            total: 1,
+            confirming: false,
+        });
+    });
+
+    it("blocks confirmation when the staged conversation is a child", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database } = fakeDatabase();
+        const file = { name: "notes.txt", type: "text/plain", size: 1 } as File;
+        state.state = {
+            ...childState(client),
+            stagedUploads: {
+                convoId: CHILD.id,
+                items: [{ id: "staged-child", file }],
+                total: 1,
+                confirming: false,
+            },
+        };
+        state.api = { uploadMedia: jest.fn() };
+        state.database = database;
+
+        await client.confirmStagedFile("staged-child");
+
+        expect(database.addToOutbox).not.toHaveBeenCalled();
+        expect(state.state.stagedUploads?.confirming).toBe(false);
+    });
+
+    it("confirms a staged parent file after selection changes to a child", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database } = fakeDatabase();
+        const file = {
+            name: "notes.txt",
+            type: "text/plain",
+            size: 1,
+            arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(1)),
+        } as unknown as File;
+        state.state = {
+            ...childState(client),
+            stagedUploads: {
+                convoId: PARENT.id,
+                items: [{ id: "staged-parent", file }],
+                total: 1,
+                confirming: false,
+            },
+        };
+        state.api = { uploadMedia: jest.fn().mockResolvedValue({ media_id: "media-1" }) };
+        state.database = database;
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        await client.confirmStagedFile("staged-parent");
+
+        expect(database.addToOutbox).toHaveBeenCalledWith(expect.objectContaining({ convoId: PARENT.id }));
+        expect(state.state.stagedUploads).toBeUndefined();
+    });
+
     it("blocks a fresh child attachment before upload or outbox staging", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
