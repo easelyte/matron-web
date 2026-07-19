@@ -38,7 +38,11 @@ interface ClientInternals {
     state: ClientState;
 }
 
-function signedInClient(conversations: Conversation[], selectedConversationId: string): MatronJournalClient {
+function signedInClient(
+    conversations: Conversation[],
+    selectedConversationId: string,
+    stateOverrides: Partial<ClientState> = {},
+): MatronJournalClient {
     const client = new MatronJournalClient();
     (client as unknown as ClientInternals).state = {
         ...client.getSnapshot(),
@@ -53,6 +57,7 @@ function signedInClient(conversations: Conversation[], selectedConversationId: s
             model: "claude-sonnet",
             context: { tokens: 12_000, window: 200_000, pct: 6 },
         },
+        ...stateOverrides,
     };
     return client;
 }
@@ -140,5 +145,53 @@ describe("read-only subchat viewer", () => {
 
         expect(selectConversation).not.toHaveBeenCalled();
         expect(clearSelection).toHaveBeenCalledTimes(1);
+    });
+
+    it("suppresses prompt replies and attachment retry while retaining dismiss", async () => {
+        const client = signedInClient(
+            [conversation("parent", "running"), conversation("child", "running", "parent")],
+            "child",
+            {
+                events: [
+                    {
+                        seq: 1,
+                        convo_id: "child",
+                        ts: 1,
+                        sender: "agent:test",
+                        type: "prompt",
+                        payload: {
+                            question: "Choose a direction",
+                            options: ["North", "South"],
+                            allows_free_text: true,
+                        },
+                    },
+                ],
+                pendingMessages: [
+                    {
+                        localId: "attachment-1",
+                        convoId: "child",
+                        body: "",
+                        createdAt: 2,
+                        kind: "file",
+                        filename: "notes.txt",
+                        attachState: "error",
+                        errorKind: "upload_failed",
+                        canRetry: true,
+                    },
+                ],
+            },
+        );
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_PromptCard")?.textContent).toContain("Choose a direction");
+        expect(rendered.container.querySelector(".mj_PromptOptions")).toBeNull();
+        expect(rendered.container.querySelector(".mj_PromptText")).toBeNull();
+
+        const attachmentActions = rendered.container.querySelector(".mj_AttachmentChip_actions");
+        const actionLabels = [...(attachmentActions?.querySelectorAll("button") ?? [])].map(
+            (button) => button.textContent,
+        );
+        expect(actionLabels).not.toContain("Retry");
+        expect(actionLabels).toContain("Dismiss");
     });
 });

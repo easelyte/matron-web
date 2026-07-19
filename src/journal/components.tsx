@@ -1041,11 +1041,13 @@ function PromptCard({
     event,
     answered,
     permission = false,
+    isReadOnly = false,
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
     answered: boolean;
     permission?: boolean;
+    isReadOnly?: boolean;
 }): React.ReactElement {
     const [freeText, setFreeText] = useState("");
     const [locallyAnswered, setLocallyAnswered] = useState(false);
@@ -1075,7 +1077,7 @@ function PromptCard({
         <div className="mj_PromptCard">
             <div className="mj_PromptLabel">{permission ? "Permission needed" : "Question"}</div>
             <p>{question}</p>
-            {!disabled && options.length > 0 && (
+            {!isReadOnly && !disabled && options.length > 0 && (
                 <div className="mj_PromptOptions">
                     {options.map((option) => (
                         <button key={`${option.label}:${option.value}`} onClick={() => answer(option.value)}>
@@ -1084,7 +1086,7 @@ function PromptCard({
                     ))}
                 </div>
             )}
-            {!disabled && (event.payload.allows_free_text === true || options.length === 0) && (
+            {!isReadOnly && !disabled && (event.payload.allows_free_text === true || options.length === 0) && (
                 <form
                     className="mj_PromptText"
                     onSubmit={(submitEvent) => {
@@ -1220,18 +1222,35 @@ function EventContent({
     client,
     event,
     answeredPrompts,
+    isReadOnly = false,
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
     answeredPrompts: Set<number>;
+    isReadOnly?: boolean;
 }): React.ReactElement {
     switch (event.type) {
         case "text":
             return <div className="mj_MessageText">{asString(event.payload.body)}</div>;
         case "prompt":
-            return <PromptCard client={client} event={event} answered={answeredPrompts.has(event.seq)} />;
+            return (
+                <PromptCard
+                    client={client}
+                    event={event}
+                    answered={answeredPrompts.has(event.seq)}
+                    isReadOnly={isReadOnly}
+                />
+            );
         case "permission_request":
-            return <PromptCard client={client} event={event} answered={answeredPrompts.has(event.seq)} permission />;
+            return (
+                <PromptCard
+                    client={client}
+                    event={event}
+                    answered={answeredPrompts.has(event.seq)}
+                    permission
+                    isReadOnly={isReadOnly}
+                />
+            );
         case "prompt_reply":
             return (
                 <div className="mj_MessageText">
@@ -1294,12 +1313,14 @@ function EventRow({
     client,
     event,
     answeredPrompts,
+    isReadOnly = false,
     continuation = false,
     lastInSection = true,
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
     answeredPrompts: Set<number>;
+    isReadOnly?: boolean;
     continuation?: boolean;
     lastInSection?: boolean;
 }): React.ReactElement {
@@ -1327,7 +1348,12 @@ function EventRow({
                 </a>
                 <div className="mx_MTextBody mx_EventTile_content">
                     <div className="markdown-body">
-                        <EventContent client={client} event={event} answeredPrompts={answeredPrompts} />
+                        <EventContent
+                            client={client}
+                            event={event}
+                            answeredPrompts={answeredPrompts}
+                            isReadOnly={isReadOnly}
+                        />
                     </div>
                 </div>
             </div>
@@ -1382,9 +1408,11 @@ function attachmentErrorMessage(message: PendingMessage): string {
 function PendingAttachment({
     client,
     message,
+    isReadOnly = false,
 }: {
     client: MatronJournalClient;
     message: PendingMessage;
+    isReadOnly?: boolean;
 }): React.ReactElement {
     const filename = message.filename || (message.kind === "image" ? "Image" : "Attachment");
     const detail = formatBytes(message.size);
@@ -1435,7 +1463,7 @@ function PendingAttachment({
                     {recoveryError && <span>{recoveryError}</span>}
                     {recoveryResult && <span role="status">{recoveryResult}</span>}
                     <div className="mj_AttachmentChip_actions">
-                        {message.canRetry && (
+                        {!isReadOnly && message.canRetry && (
                             <button
                                 type="button"
                                 disabled={recoveryAction !== undefined}
@@ -1461,6 +1489,7 @@ function PendingAttachment({
 function Timeline({
     client,
     state,
+    isReadOnly = false,
 }: {
     client: MatronJournalClient;
     state: ClientState;
@@ -1583,6 +1612,7 @@ function Timeline({
                                         client={client}
                                         event={item.event}
                                         answeredPrompts={answeredPrompts}
+                                        isReadOnly={isReadOnly}
                                         continuation={
                                             previous?.kind === "event" && previous.event.sender === item.event.sender
                                         }
@@ -1594,7 +1624,12 @@ function Timeline({
                             }
                             const message = item.message;
                             return message.kind === "image" || message.kind === "file" ? (
-                                <PendingAttachment key={message.localId} client={client} message={message} />
+                                <PendingAttachment
+                                    key={message.localId}
+                                    client={client}
+                                    message={message}
+                                    isReadOnly={isReadOnly}
+                                />
                             ) : (
                                 <li
                                     className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
