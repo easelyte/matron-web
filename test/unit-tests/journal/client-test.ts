@@ -445,6 +445,33 @@ describe("MatronJournalClient state handling", () => {
         expect(operation.payload).toEqual({ body: "same message", local_id: operation.local_id });
     });
 
+    it("does not bump sendTick when a delayed send refresh finishes after switching conversations", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        let resolveRefresh!: (events: []) => void;
+        let markRefreshStarted!: () => void;
+        const refreshStarted = new Promise<void>((resolve) => (markRefreshStarted = resolve));
+        const database = fakeDatabase({
+            events: jest.fn((conversationId: string) => {
+                if (conversationId !== "c1") return Promise.resolve([]);
+                markRefreshStarted();
+                return new Promise<[]>((resolve) => (resolveRefresh = resolve));
+            }),
+        });
+        state.state = signedInState(client);
+        state.database = database;
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        const send = client.sendMessage("message for A");
+        await refreshStarted;
+        await client.selectConversation("c2");
+        resolveRefresh([]);
+        await send;
+
+        expect(client.getSnapshot().selectedConversationId).toBe("c2");
+        expect(client.getSnapshot().sendTick).toBe(0);
+    });
+
     it("does not patch a refresh that completes after the database session changes", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);

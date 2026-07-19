@@ -169,6 +169,43 @@ describe("timeline tail following", () => {
         expect(rendered.container.querySelector(".mj_JumpToBottom")).toBeNull();
     });
 
+    it("keeps following after own-send while an older-history page is pending", async () => {
+        const client = signedInClient();
+        let resolveHistory!: () => void;
+        const historyPage = new Promise<void>((resolve) => (resolveHistory = resolve));
+        jest.spyOn(client, "loadOlderHistory").mockImplementation(() => {
+            patchClient(client, { loadingHistory: true });
+            return historyPage.then(() => {
+                const older: JournalEvent = {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:test",
+                    type: "text",
+                    payload: { text: "older" },
+                };
+                patchClient(client, { events: [older], loadingHistory: false });
+            });
+        });
+        rendered = await renderClient(client);
+        const panel = rendered.container.querySelector<HTMLDivElement>(".mx_RoomView_messagePanel")!;
+        setScrollMetrics(panel, 100);
+        panel.dispatchEvent(new Event("scroll"));
+        await flushFrames();
+
+        await act(async () => rendered?.container.querySelector<HTMLButtonElement>(".mj_LoadHistory")?.click());
+        await act(async () => patchClient(client, { sendTick: client.getSnapshot().sendTick + 1 }));
+        expect(panel.scrollTop).toBe(1000);
+
+        await act(async () => {
+            resolveHistory();
+            await historyPage;
+        });
+
+        expect(panel.scrollTop).toBe(1000);
+        expect(rendered.container.querySelector(".mj_JumpToBottom")).toBeNull();
+    });
+
     it("a conversation switch forces follow and a pre-switch frame cannot flip it off", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);

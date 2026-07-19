@@ -1605,6 +1605,8 @@ function Timeline({
 
     useEffect(() => {
         cancelPendingScrollFrame();
+        historyScrollAnchor.current = undefined;
+        historyScrollRestored.current = false;
         setFollow(true);
         scrollToBottom();
     }, [state.sendTick, cancelPendingScrollFrame, scrollToBottom]);
