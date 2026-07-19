@@ -43,6 +43,7 @@ export interface Conversation {
     unread_count: number;
     snippet: string;
     created_at: number;
+    parent_convo_id?: string | null; // null/undefined = top-level; set once at child creation, immutable
     last_ts?: number;
     read_up_to_seq: number;
 }
@@ -200,6 +201,11 @@ export interface ClientState {
     toolStreams: Record<string, ToolStreamState>;
     dragActive: boolean;
     stagedUploads?: StagedUploads;
+}
+
+export function coerceParentId(x: unknown): string | null {
+    const s = typeof x === "string" ? x.trim() : "";
+    return s || null;
 }
 
 export function isObject(value: unknown): value is Record<string, unknown> {
