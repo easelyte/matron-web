@@ -183,6 +183,11 @@ textarea {
     top: calc(100% + var(--cpd-space-2x));
     left: 50%;
     transform: translateX(-50%);
+    /* Bound to the viewport so a parent with many finished children stays fully reachable
+       (root overflow is hidden, so an unbounded menu would clip lower items). Phase-6 review. */
+    max-height: min(60vh, 420px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .mj_SubagentSwitcherMenu button {
@@ -288,6 +293,9 @@ textarea {
     z-index: 1000;
     display: flex;
     width: min(280px, calc(100vw - 32px));
+    max-height: min(60vh, 420px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     flex-direction: column;
     gap: var(--cpd-space-2x);
     box-sizing: border-box;
