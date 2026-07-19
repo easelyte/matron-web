@@ -52,6 +52,7 @@ import {
     type PendingMessage,
     parentPresent,
     runningChildrenOf,
+    isSubChat,
     type SessionStatus,
     type StagedUploadItem,
     type StagedUploads,
@@ -969,6 +970,72 @@ function ChatHeader({ client, state }: { client: MatronJournalClient; state: Cli
     );
 }
 
+function SubChatHeader({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
+    const selected = client.selectedConversation();
+    const status = state.sessionStatus;
+    const hasModelContext = Boolean(status?.model || status?.context);
+    const limits = status?.limits?.filter((limit) => limit.label.trim());
+    const goBack = (): void => {
+        if (!selected) {
+            client.clearSelection();
+            return;
+        }
+        const parentId = selected.parent_convo_id;
+        if (
+            parentId &&
+            parentId !== selected.id &&
+            state.conversations.some((conversation) => conversation.id === parentId)
+        ) {
+            void client.selectConversation(parentId);
+        } else {
+            client.clearSelection();
+        }
+    };
+
+    return (
+        <header className="mx_RoomHeader light-panel mj_ChatHeader mj_SubChatHeader">
+            <button type="button" className="mj_BackButton" onClick={goBack} aria-label="Back to parent">
+                <ChevronLeftIcon />
+            </button>
+            <div
+                className={`mj_HeaderCluster mj_ModelContextCluster${hasModelContext ? "" : " mj_HeaderCluster_empty"}`}
+                aria-hidden={!hasModelContext}
+            >
+                {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
+                {status?.context && (
+                    <span
+                        className="mj_HeaderContext"
+                        title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
+                    >
+                        Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
+                    </span>
+                )}
+            </div>
+            <div className="mj_HeaderCluster mj_HeaderTitleCluster">
+                <div dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
+                    <span className="mx_RoomHeader_truncated mx_lineClamp">
+                        {selected ? conversationTitle(selected) : "Subagent"}
+                    </span>
+                </div>
+                <span className="mj_SubChatState">
+                    {selected?.session_state === "running" && <span className="mj_Spinner" aria-hidden="true" />}
+                    {selected?.session_state === "running" ? "Running" : "Finished"}
+                </span>
+            </div>
+            <div
+                className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
+                aria-hidden={!limits?.length}
+            >
+                {limits?.length ? <UsageBars limits={limits} /> : null}
+            </div>
+        </header>
+    );
+}
+
+function ReadOnlyHint(): React.ReactElement {
+    return <div className="mj_ReadOnlyHint">Read-only — subagent transcript</div>;
+}
+
 function PromptCard({
     client,
     event,
@@ -1391,7 +1458,14 @@ function PendingAttachment({
     );
 }
 
-function Timeline({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
+function Timeline({
+    client,
+    state,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    isReadOnly?: boolean;
+}): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
     const historyScrollAnchor = useRef<
         | {
@@ -1874,6 +1948,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     }, [state.stagedUploads]);
 
     const isFileDrag = (event: React.DragEvent): boolean => Array.from(event.dataTransfer.types).includes("Files");
+    const selected = client.selectedConversation();
+    const childMode = selected != null && isSubChat(selected);
 
     return (
         <div className="mx_MatrixChat_wrapper">
@@ -1895,14 +1971,18 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 event.preventDefault();
                                 setDragActive(true);
                             }}
-                            onDrop={(event) => {
-                                if (!isFileDrag(event)) return;
-                                event.preventDefault();
-                                setDragActive(false);
-                                if (state.stagedUploads) return;
-                                const files = [...event.dataTransfer.files];
-                                if (files.length > 0) client.stageFiles(files);
-                            }}
+                            onDrop={
+                                childMode
+                                    ? undefined
+                                    : (event) => {
+                                          if (!isFileDrag(event)) return;
+                                          event.preventDefault();
+                                          setDragActive(false);
+                                          if (state.stagedUploads) return;
+                                          const files = [...event.dataTransfer.files];
+                                          if (files.length > 0) client.stageFiles(files);
+                                      }
+                            }
                             onDragLeave={(event) => {
                                 const nextTarget = event.relatedTarget;
                                 if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
@@ -1916,10 +1996,14 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 </div>
                             )}
                             <div className="mx_RoomView_body mx_MainSplit_timeline" data-layout="bubble">
-                                <ChatHeader client={client} state={state} />
+                                {childMode ? (
+                                    <SubChatHeader client={client} state={state} />
+                                ) : (
+                                    <ChatHeader client={client} state={state} />
+                                )}
                                 <RunningSubagentStrip client={client} state={state} />
-                                <Timeline client={client} state={state} />
-                                <Composer client={client} state={state} />
+                                <Timeline client={client} state={state} isReadOnly={childMode} />
+                                {childMode ? <ReadOnlyHint /> : <Composer client={client} state={state} />}
                             </div>
                         </div>
                     ) : (
