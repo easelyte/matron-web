@@ -329,6 +329,7 @@ export class MatronJournalClient {
             toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
         });
         await this.refreshSelectedConversation(conversationId);
+        if (this.state.selectedConversationId !== conversationId) return;
         this.connection?.send({ op: "viewing", convo_id: conversationId });
 
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
