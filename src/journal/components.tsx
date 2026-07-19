@@ -50,6 +50,7 @@ import {
     type JournalEvent,
     type PendingMessage,
     parentPresent,
+    runningChildrenOf,
     type SessionStatus,
     type StagedUploadItem,
     type StagedUploads,
@@ -1798,6 +1799,33 @@ function UploadConfirmPage({
     );
 }
 
+function RunningSubagentStrip({
+    client,
+    state,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+}): React.ReactElement | null {
+    const running = runningChildrenOf(state.conversations, state.selectedConversationId);
+    if (running.length === 0) return null;
+    return (
+        <div className="mj_SubagentStrip" role="list">
+            {running.map((child) => (
+                <button
+                    key={child.id}
+                    className="mj_SubagentPill"
+                    role="listitem"
+                    aria-label={`Open subagent ${conversationTitle(child)}`}
+                    onClick={() => void client.selectConversation(child.id)}
+                >
+                    <span className="mj_Spinner" aria-hidden="true" />
+                    {conversationTitle(child)}
+                </button>
+            ))}
+        </div>
+    );
+}
+
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const leftPanel = useLeftPanelResize();
     const [dragActive, setDragActive] = useState(state.dragActive);
@@ -1855,6 +1883,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                             )}
                             <div className="mx_RoomView_body mx_MainSplit_timeline" data-layout="bubble">
                                 <ChatHeader client={client} state={state} />
+                                <RunningSubagentStrip client={client} state={state} />
                                 <Timeline client={client} state={state} />
                                 <Composer client={client} state={state} />
                             </div>
