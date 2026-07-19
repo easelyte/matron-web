@@ -41,6 +41,7 @@ interface ClientInternals {
     database?: FakeDatabase;
     connection?: { send: jest.Mock };
     sessionGen: number;
+    pendingFiles: Map<string, File>;
     sendPendingMessage(message: PendingMessage, connection?: { send: jest.Mock }): void;
     emitPendingAttachment(
         message: PendingMessage,
@@ -82,6 +83,67 @@ function fakeDatabase(initial: PendingMessage[] = []): { database: FakeDatabase;
 }
 
 describe("read-only subagent transcript egress", () => {
+    it("blocks a fresh child attachment before upload or outbox staging", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = fakeDatabase();
+        const uploadMedia = jest.fn().mockResolvedValue({ media_id: "media-1" });
+        const file = {
+            name: "notes.txt",
+            type: "text/plain",
+            size: 8,
+            arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(8)),
+        } as unknown as File;
+        state.state = childState(client);
+        state.api = { uploadMedia };
+        state.database = database;
+
+        await client.sendAttachment(file, CHILD.id);
+
+        expect(uploadMedia).not.toHaveBeenCalled();
+        expect(database.addToOutbox).not.toHaveBeenCalled();
+        expect(rows.size).toBe(0);
+    });
+
+    it("blocks a child attachment retry before upload and retains it as errored", async () => {
+        const message: PendingMessage = {
+            localId: "attachment-retry-1",
+            convoId: CHILD.id,
+            body: "",
+            createdAt: 1,
+            kind: "file",
+            filename: "notes.txt",
+            contentType: "text/plain",
+            size: 8,
+            blobRef: null,
+            attachState: "error",
+            errorKind: "upload_failed",
+        };
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = fakeDatabase([message]);
+        const uploadMedia = jest.fn().mockResolvedValue({ media_id: "media-1" });
+        const file = {
+            name: "notes.txt",
+            type: "text/plain",
+            size: 8,
+            arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(8)),
+        } as unknown as File;
+        state.state = childState(client);
+        state.api = { uploadMedia };
+        state.database = database;
+        state.pendingFiles.set(message.localId, file);
+
+        await client.retryAttachment(message.localId);
+
+        expect(uploadMedia).not.toHaveBeenCalled();
+        expect(rows.get(message.localId)).toMatchObject({
+            attachState: "error",
+            errorKind: "send_failed",
+            errorMessage: "Can't send to a read-only subagent transcript.",
+        });
+    });
+
     it.each([undefined, "text" as const])(
         "blocks a child-targeted %s message while retaining it and surfacing an error",
         (kind) => {

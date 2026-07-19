@@ -534,6 +534,7 @@ export class MatronJournalClient {
         const api = this.api;
         const db = this.database;
         if (!api || !db) return;
+        if (this.isChildConvo(convoId)) return;
         const owner = { gen, api, db };
         const message = this.buildPendingAttachment(file, convoId, caption);
         const persistOutcome = await this.persistPendingAttachment(message, file, db, gen);
@@ -561,6 +562,13 @@ export class MatronJournalClient {
                     this.transientAttachmentErrors.get(localId);
                 if (!message || message.attachState !== "error") return;
                 delete message.canRetry;
+                if (this.isChildConvo(message.convoId)) {
+                    this.markChildBlocked(message);
+                    if (!(await this.persistAttachment(message, db, gen))) return;
+                    if (!this.ownsAttachment(owner, localId)) return;
+                    await this.refreshSelectedConversation(message.convoId, db, gen);
+                    return;
+                }
 
                 if (
                     message.errorKind === "upload_failed" ||
