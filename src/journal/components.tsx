@@ -373,8 +373,8 @@ function ConversationList({
         if (!roomMenu) return;
         roomMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     }, [roomMenu]);
+    const ids = new Set(state.conversations.map((conversation) => conversation.id));
     const conversations = useMemo(() => {
-        const ids = new Set(state.conversations.map((conversation) => conversation.id));
         const normalized = query.trim().toLocaleLowerCase();
         return state.conversations
             .filter((conversation) => !parentPresent(conversation, ids))
@@ -394,7 +394,10 @@ function ConversationList({
     const visibleActive =
         tab === "favorites" ? active.filter((conversation) => state.favoriteIds.has(conversation.id)) : active;
     const hasAnyFavorite = state.conversations.some(
-        (conversation) => state.favoriteIds.has(conversation.id) && !state.archivedIds.has(conversation.id),
+        (conversation) =>
+            state.favoriteIds.has(conversation.id) &&
+            !state.archivedIds.has(conversation.id) &&
+            !parentPresent(conversation, ids),
     );
     const archived = conversations.filter((conversation) => state.archivedIds.has(conversation.id));
     // Visibility is computed from the UNFILTERED conversation set (minus archived), NOT the
@@ -402,7 +405,9 @@ function ConversationList({
     // the search box, so the button must not vanish just because the search hides the unread rows.
     const hasActiveUnread = state.conversations.some(
         (conversation) =>
-            effectiveUnread(conversation, state.unreadOverrideIds) && !state.archivedIds.has(conversation.id),
+            effectiveUnread(conversation, state.unreadOverrideIds) &&
+            !state.archivedIds.has(conversation.id) &&
+            !parentPresent(conversation, ids),
     );
     const menuConversation = roomMenu
         ? state.conversations.find((conversation) => conversation.id === roomMenu.conversationId)

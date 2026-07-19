@@ -18,6 +18,7 @@ import {
     MESSAGE_EVENT_TYPES,
     normalizeServerUrl,
     type PendingMessage,
+    parentPresent,
     type ServerFrame,
     type Session,
     trimUtf8Prefix,
@@ -146,10 +147,15 @@ function firstSelectableConversation(
     preferredId: string | undefined,
     archivedIds: Set<string>,
 ): Conversation | undefined {
+    const ids = new Set(conversations.map((conversation) => conversation.id));
     const preferred = conversations.find(
-        (conversation) => conversation.id === preferredId && !archivedIds.has(conversation.id),
+        (conversation) =>
+            conversation.id === preferredId && !archivedIds.has(conversation.id) && !parentPresent(conversation, ids),
     );
-    return preferred ?? conversations.find((conversation) => !archivedIds.has(conversation.id));
+    return (
+        preferred ??
+        conversations.find((conversation) => !archivedIds.has(conversation.id) && !parentPresent(conversation, ids))
+    );
 }
 
 function storeSelectedConversation(session: Session, conversationId: string | undefined): void {
@@ -370,8 +376,10 @@ export class MatronJournalClient {
 
     public markAllRead(): void {
         const previousControlError = this.state.controlError;
+        const ids = new Set(this.state.conversations.map((conversation) => conversation.id));
         let anyFailed = false;
         for (const conversation of this.state.conversations) {
+            if (parentPresent(conversation, ids)) continue;
             if (this.state.archivedIds.has(conversation.id)) continue;
             if (!effectiveUnread(conversation, this.state.unreadOverrideIds)) continue;
             // Single canonical mark-read path; it clears the override and flushes the server read.
@@ -1387,7 +1395,11 @@ export class MatronJournalClient {
     }
 
     private emit(): void {
-        const unread = this.state.conversations.reduce((total, conversation) => total + conversation.unread_count, 0);
+        const ids = new Set(this.state.conversations.map((conversation) => conversation.id));
+        const unread = this.state.conversations.reduce(
+            (total, conversation) => total + (parentPresent(conversation, ids) ? 0 : conversation.unread_count),
+            0,
+        );
         ((window as Window & { electron?: ElectronBadgeBridge }).electron as ElectronBadgeBridge | undefined)?.send(
             "setBadgeCount",
             unread,

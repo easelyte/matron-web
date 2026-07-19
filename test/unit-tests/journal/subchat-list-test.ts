@@ -79,4 +79,57 @@ describe("subchat conversation list", () => {
         );
         expect(names).toEqual(["Root", "Orphan child"]);
     });
+
+    it("excludes a linked child's unread override from the active aggregate and mark-all", async () => {
+        const client = new MatronJournalClient();
+        const state = client.getSnapshot();
+        (client as unknown as ClientInternals).state = {
+            ...state,
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [conversation("root", "Root"), conversation("root:sub:linked", "Linked child", "root")],
+            unreadOverrideIds: new Set(["root:sub:linked"]),
+            selectedConversationId: undefined,
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+
+        await act(async () => {
+            root.render(React.createElement(MatronApp, { client }));
+        });
+
+        expect(container.querySelector('button[aria-label="Mark all as read"]')).toBeNull();
+        await act(async () => client.markAllRead());
+        expect(client.getSnapshot().unreadOverrideIds).toEqual(new Set(["root:sub:linked"]));
+    });
+
+    it("excludes a linked child from the favorite aggregate", async () => {
+        const client = new MatronJournalClient();
+        const state = client.getSnapshot();
+        (client as unknown as ClientInternals).state = {
+            ...state,
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [conversation("root", "Root"), conversation("root:sub:linked", "Linked child", "root")],
+            favoriteIds: new Set(["root:sub:linked"]),
+            selectedConversationId: undefined,
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+
+        await act(async () => {
+            root.render(React.createElement(MatronApp, { client }));
+        });
+        const favoritesTab = [...container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].find(
+            (button) => button.textContent === "Favorites",
+        );
+        await act(async () => favoritesTab?.click());
+
+        expect(container.textContent).toContain("No favorite conversations yet.");
+        expect(container.textContent).not.toContain("No favorites match your search.");
+    });
 });
