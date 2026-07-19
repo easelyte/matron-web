@@ -48,6 +48,7 @@ import {
     conversationTitle,
     displaySender,
     type EventPayload,
+    isNearBottom,
     type JournalEvent,
     type PendingMessage,
     parentPresent,
@@ -1533,6 +1534,10 @@ function Timeline({
     isReadOnly?: boolean;
 }): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
+    const pendingScrollFrame = useRef<number | undefined>(undefined);
+    const selectedConversationId = useRef(state.selectedConversationId);
+    const [isFollowingTail, setFollow] = useState(true);
+    selectedConversationId.current = state.selectedConversationId;
     const historyScrollAnchor = useRef<
         | {
               conversationId?: string;
@@ -1572,6 +1577,38 @@ function Timeline({
             ),
         [state.events],
     );
+    const scrollToBottom = useCallback((): void => {
+        const node = scrollRef.current;
+        if (node) node.scrollTop = node.scrollHeight;
+    }, []);
+    const cancelPendingScrollFrame = useCallback((): void => {
+        if (pendingScrollFrame.current === undefined) return;
+        cancelAnimationFrame(pendingScrollFrame.current);
+        pendingScrollFrame.current = undefined;
+    }, []);
+    const onScroll = (): void => {
+        const node = scrollRef.current;
+        if (!node) return;
+        cancelPendingScrollFrame();
+        const queuedConversationId = state.selectedConversationId;
+        pendingScrollFrame.current = requestAnimationFrame(() => {
+            pendingScrollFrame.current = undefined;
+            if (selectedConversationId.current !== queuedConversationId) return;
+            setFollow(isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight));
+        });
+    };
+
+    useEffect(() => {
+        setFollow(true);
+        return cancelPendingScrollFrame;
+    }, [state.selectedConversationId, cancelPendingScrollFrame]);
+
+    useEffect(() => {
+        cancelPendingScrollFrame();
+        setFollow(true);
+        scrollToBottom();
+    }, [state.sendTick, cancelPendingScrollFrame, scrollToBottom]);
+
     useLayoutEffect(() => {
         const node = scrollRef.current;
         if (!node) return;
@@ -1600,7 +1637,7 @@ function Timeline({
             return;
         }
 
-        node.scrollTop = node.scrollHeight;
+        if (isFollowingTail) node.scrollTop = node.scrollHeight;
     }, [
         state.selectedConversationId,
         visibleEvents,
@@ -1608,6 +1645,7 @@ function Timeline({
         state.textStreams,
         state.toolStreams,
         state.loadingHistory,
+        isFollowingTail,
     ]);
 
     const loadEarlierMessages = (): void => {
@@ -1625,7 +1663,7 @@ function Timeline({
 
     return (
         <main className="mx_RoomView_timeline" data-testid="timeline">
-            <div className="mx_RoomView_messagePanel mx_AutoHideScrollbar" ref={scrollRef}>
+            <div className="mx_RoomView_messagePanel mx_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
                 <div className="mx_RoomView_messageListWrapper">
                     <ol className="mx_RoomView_MessageList" aria-live="polite">
                         {state.hasOlderHistory && (
@@ -1719,6 +1757,18 @@ function Timeline({
                     </ol>
                 </div>
             </div>
+            {!isFollowingTail && (
+                <button
+                    className="mj_JumpToBottom"
+                    aria-label="Jump to bottom"
+                    onClick={() => {
+                        setFollow(true);
+                        scrollToBottom();
+                    }}
+                >
+                    ↓
+                </button>
+            )}
         </main>
     );
 }
