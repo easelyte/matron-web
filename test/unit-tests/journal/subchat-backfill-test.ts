@@ -173,4 +173,16 @@ describe("subchat existing-client backfill", () => {
         expect(await database.backfillDone()).toBe(true);
         database.close();
     });
+
+    it("rejects a self-parent link during backfill (stores null, stays top-level)", async () => {
+        const database = await seedExistingClient({ parent_convo_id: null });
+
+        await database.backfillParentLinks({
+            seq: 6,
+            conversations: [conversation("c1", { parent_convo_id: "c1", session_state: "done" })],
+        });
+
+        expect((await database.conversations())[0]).toMatchObject({ parent_convo_id: null });
+        database.close();
+    });
 });

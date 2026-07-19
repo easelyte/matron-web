@@ -120,7 +120,11 @@ export class JournalDatabase {
             for (const summary of summaries) {
                 const existing = (await requestResult(conversations.get(summary.id))) as Conversation | undefined;
                 if (!existing) continue;
-                existing.parent_convo_id = existing.parent_convo_id ?? coerceParentId(summary.parent_convo_id) ?? null;
+                // Normalize both sides through coerceParentId, existing-first (immutable link), and reject
+                // a self-parent so the backfill can't persist the invalid state (P33, phase-1 review B2).
+                let link = coerceParentId(existing.parent_convo_id) ?? coerceParentId(summary.parent_convo_id);
+                if (link === summary.id) link = null;
+                existing.parent_convo_id = link;
                 if (typeof summary.session_state === "string") existing.session_state = summary.session_state;
                 conversations.put(existing);
             }
