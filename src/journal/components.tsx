@@ -49,6 +49,7 @@ import {
     type EventPayload,
     type JournalEvent,
     type PendingMessage,
+    parentPresent,
     type SessionStatus,
     type StagedUploadItem,
     type StagedUploads,
@@ -373,14 +374,17 @@ function ConversationList({
         roomMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     }, [roomMenu]);
     const conversations = useMemo(() => {
+        const ids = new Set(state.conversations.map((conversation) => conversation.id));
         const normalized = query.trim().toLocaleLowerCase();
-        return state.conversations.filter(
-            (conversation) =>
-                !normalized ||
-                `${conversation.title} ${conversation.id} ${conversation.snippet}`
-                    .toLocaleLowerCase()
-                    .includes(normalized),
-        );
+        return state.conversations
+            .filter((conversation) => !parentPresent(conversation, ids))
+            .filter(
+                (conversation) =>
+                    !normalized ||
+                    `${conversation.title} ${conversation.id} ${conversation.snippet}`
+                        .toLocaleLowerCase()
+                        .includes(normalized),
+            );
     }, [query, state.conversations]);
     const activeAll = conversations.filter((conversation) => !state.archivedIds.has(conversation.id));
     const active = [
