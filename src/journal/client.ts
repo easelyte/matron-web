@@ -13,6 +13,7 @@ import { mergeSessionStatus } from "./status";
 import {
     type ClientState,
     type Conversation,
+    isSubChat,
     type JournalEphemeralFrame,
     type JournalEvent,
     MESSAGE_EVENT_TYPES,
@@ -649,6 +650,14 @@ export class MatronJournalClient {
     }
 
     private async emitPendingAttachment(message: PendingMessage, owner: AttachmentOwner): Promise<void> {
+        if (this.isChildConvo(message.convoId)) {
+            this.markChildBlocked(message);
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+            return;
+        }
         if (!message.blobRef || (message.kind !== "image" && message.kind !== "file")) return;
         if (!this.ownsAttachment(owner, message.localId)) return;
 
@@ -1090,7 +1099,17 @@ export class MatronJournalClient {
 
         const outbox = await db.outbox();
         if (!ownsReplay()) return;
-        for (const message of outbox) this.sendPendingMessage(message, connection);
+        const kept: PendingMessage[] = [];
+        let purged = 0;
+        for (const message of outbox) {
+            if (this.isChildConvo(message.convoId) && message.kind !== "image" && message.kind !== "file") {
+                await db.deleteOutboxRow(message.localId);
+                purged++;
+            } else kept.push(message);
+        }
+        if (purged > 0) this.patch({ controlError: "Couldn't send to a read-only subagent transcript." });
+        if (!ownsReplay()) return;
+        for (const message of kept) this.sendPendingMessage(message, connection);
         if (this.state.selectedConversationId) {
             connection.send({ op: "viewing", convo_id: this.state.selectedConversationId });
             const conversation = this.selectedConversation();
@@ -1320,7 +1339,22 @@ export class MatronJournalClient {
         }
     }
 
+    private isChildConvo(convoId: string): boolean {
+        const conversation = this.state.conversations.find((candidate) => candidate.id === convoId);
+        return !!conversation && isSubChat(conversation);
+    }
+
+    private markChildBlocked(message: PendingMessage): void {
+        message.attachState = "error";
+        message.errorKind = "send_failed";
+        message.errorMessage = "Can't send to a read-only subagent transcript.";
+    }
+
     private sendPendingMessage(message: PendingMessage, connection = this.connection): void {
+        if (this.isChildConvo(message.convoId)) {
+            this.patch({ controlError: "Couldn't send to a read-only subagent transcript." });
+            return;
+        }
         if (message.kind === "image" || message.kind === "file") {
             if (!message.blobRef || this.dismissedAttachments.has(message.localId)) return;
             connection?.send({
