@@ -10,7 +10,7 @@
 
 **Architecture:** All changes are inline within the existing `src/journal/{types.ts,database.ts,client.ts,components.tsx,journal.pcss}` (no file splits — upstream-alignment constraint). A `parent_convo_id` field flows from the server (snapshot + `convo_meta`) into the client store; parent→child relationships are *derived* from `state.conversations`, never stored separately. Read-only is enforced in three layers: UI suppression (primary UX), client egress guards at both transmit functions (defense-in-depth), and a documented server-side follow-up (authoritative).
 
-**Tech Stack:** TypeScript, React 18 (`useSyncExternalStore` over a hand-rolled `MatronJournalClient` external store), IndexedDB (`JournalDatabase`), plain PostCSS (`mj_*`/`mx_*` classes), Jest + jsdom (`test/unit-tests/`, `pnpm test`).
+**Tech Stack:** TypeScript, React 18 (`useSyncExternalStore` over a hand-rolled `MatronJournalClient` external store), IndexedDB (`JournalDatabase`), plain PostCSS (`mj_*`/`mx_*` classes), Jest + jsdom (`test/unit-tests/journal/*-test.ts`, `node_modules/.bin/jest`).
 
 Spec: `docs/superpowers/specs/2026-07-18-web-subagent-subchats-design.md` (converged at spec-review round 4). All `file:line` references verified against HEAD `ccca0fd`.
 
@@ -20,7 +20,7 @@ Spec: `docs/superpowers/specs/2026-07-18-web-subagent-subchats-design.md` (conve
 - **No new server/bridge dependency to ship:** the `session_status: done` completion signal is pre-existing and verified. Client-side read-only is defense-in-depth; authoritative server-side rejection is a documented follow-up (spec §5), out of scope here.
 - **No IndexedDB object-store schema bump:** the new `parent_convo_id` field is backward-compatible; a one-time *data* backfill reconciles existing records.
 - **Commit author:** `easelyte <fantin@easelyte.ai>`. Origin remote is `easelyte`; NEVER push `upstream`/Matronhq.
-- **Test runner:** `pnpm exec jest <path>` (jest `--runInBand`, jsdom). Lint: `pnpm lint` (tsc + prettier).
+- **Test runner:** `node_modules/.bin/jest <path>` (jest `--runInBand`, jsdom). Lint: `pnpm lint` (tsc + prettier).
 - **Parent→child linkage is child→parent only** (structural). Child convo ids are hierarchical: `<parentConvoId>:sub:<agentId>`. Nesting works at any depth — never assume children are leaves.
 
 ---
@@ -58,7 +58,7 @@ Spec: `docs/superpowers/specs/2026-07-18-web-subagent-subchats-design.md` (conve
 
 **Files:**
 - Modify: `src/journal/types.ts` (add field to `Conversation` ~line 38; add `coerceParentId`)
-- Test: `test/unit-tests/subchat-model.test.ts` (create)
+- Test: `test/unit-tests/journal/subchat-model-test.ts` (create)
 
 **Interfaces:**
 - Produces: `Conversation.parent_convo_id?: string | null`; `coerceParentId(x: unknown): string | null` (trims; non-string/empty/whitespace → `null`).
@@ -66,7 +66,7 @@ Spec: `docs/superpowers/specs/2026-07-18-web-subagent-subchats-design.md` (conve
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-import { coerceParentId } from "../../src/journal/types";
+import { coerceParentId } from "../../../src/journal/types";
 
 describe("coerceParentId", () => {
     it("returns null for non-string, empty, and whitespace inputs", () => {
@@ -83,7 +83,7 @@ describe("coerceParentId", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm exec jest test/unit-tests/subchat-model.test.ts -t coerceParentId`
+Run: `node_modules/.bin/jest test/unit-tests/journal/subchat-model-test.ts -t coerceParentId`
 Expected: FAIL — `coerceParentId is not a function`.
 
 - [ ] **Step 3: Implement**
@@ -102,13 +102,13 @@ export function coerceParentId(x: unknown): string | null {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm exec jest test/unit-tests/subchat-model.test.ts`
+Run: `node_modules/.bin/jest test/unit-tests/journal/subchat-model-test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/types.ts test/unit-tests/subchat-model.test.ts
+git add src/journal/types.ts test/unit-tests/journal/subchat-model-test.ts
 git commit -m "feat(subchat): parent_convo_id field + coerceParentId boundary parser"
 ```
 
@@ -118,7 +118,7 @@ git commit -m "feat(subchat): parent_convo_id field + coerceParentId boundary pa
 
 **Files:**
 - Modify: `src/journal/types.ts` (add four helpers)
-- Test: `test/unit-tests/subchat-derivations.test.ts` (create)
+- Test: `test/unit-tests/journal/subchat-derivations-test.ts` (create)
 
 **Interfaces:**
 - Consumes: `Conversation`.
@@ -127,7 +127,7 @@ git commit -m "feat(subchat): parent_convo_id field + coerceParentId boundary pa
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-import { isSubChat, childrenOf, runningChildrenOf, parentPresent } from "../../src/journal/types";
+import { isSubChat, childrenOf, runningChildrenOf, parentPresent } from "../../../src/journal/types";
 
 const convo = (id: string, extra: Partial<any> = {}) => ({
     id, title: "", session_state: "done", last_seq: 0, unread_count: 0,
@@ -162,7 +162,7 @@ describe("subchat derivations", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm exec jest test/unit-tests/subchat-derivations.test.ts`
+Run: `node_modules/.bin/jest test/unit-tests/journal/subchat-derivations-test.ts`
 Expected: FAIL — helpers not exported.
 
 - [ ] **Step 3: Implement** (in `src/journal/types.ts`):
@@ -190,13 +190,13 @@ export function parentPresent(c: Conversation, ids: ReadonlySet<string>): boolea
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm exec jest test/unit-tests/subchat-derivations.test.ts`
+Run: `node_modules/.bin/jest test/unit-tests/journal/subchat-derivations-test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/types.ts test/unit-tests/subchat-derivations.test.ts
+git add src/journal/types.ts test/unit-tests/journal/subchat-derivations-test.ts
 git commit -m "feat(subchat): derivation helpers (isSubChat/childrenOf/runningChildrenOf/parentPresent)"
 ```
 
@@ -206,7 +206,7 @@ git commit -m "feat(subchat): derivation helpers (isSubChat/childrenOf/runningCh
 
 **Files:**
 - Modify: `src/journal/database.ts` — `emptyConversation` (~36), `applyJournal` `convo_meta` branch (~190), `replaceWithSnapshot` (~106, spread ~119)
-- Test: `test/unit-tests/subchat-ingestion.test.ts` (create; use the existing DB test harness / fake-indexeddb pattern already in `test/unit-tests/` — mirror an existing `database`-touching test's setup)
+- Test: `test/unit-tests/journal/subchat-ingestion-test.ts` (create; use the existing DB test harness / fake-indexeddb pattern already in `test/unit-tests/` — mirror an existing `database`-touching test's setup)
 
 **Interfaces:**
 - Consumes: `coerceParentId` (T-1.1).
@@ -228,7 +228,7 @@ git commit -m "feat(subchat): derivation helpers (isSubChat/childrenOf/runningCh
 
 - [ ] **Step 2: Run to verify fail**
 
-Run: `pnpm exec jest test/unit-tests/subchat-ingestion.test.ts`
+Run: `node_modules/.bin/jest test/unit-tests/journal/subchat-ingestion-test.ts`
 Expected: FAIL (link null / cleared).
 
 - [ ] **Step 3: Implement**
@@ -256,13 +256,13 @@ parent_convo_id: existingParents.get(summary.id) ?? coerceParentId(summary.paren
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `pnpm exec jest test/unit-tests/subchat-ingestion.test.ts`
+Run: `node_modules/.bin/jest test/unit-tests/journal/subchat-ingestion-test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/database.ts test/unit-tests/subchat-ingestion.test.ts
+git add src/journal/database.ts test/unit-tests/journal/subchat-ingestion-test.ts
 git commit -m "feat(subchat): ingest parent_convo_id (set-once, resync-coalesced)"
 ```
 
@@ -272,7 +272,7 @@ git commit -m "feat(subchat): ingest parent_convo_id (set-once, resync-coalesced
 
 **Files:**
 - Modify: `src/journal/client.ts` — `startSession` (after DB open, ~865); `src/journal/database.ts` — add a `backfillParentLinks(snapshot)` method + a `meta` key read/write helper if not present
-- Test: `test/unit-tests/subchat-backfill.test.ts` (create)
+- Test: `test/unit-tests/journal/subchat-backfill-test.ts` (create)
 
 **Interfaces:**
 - Consumes: `JournalApi.snapshot()`, `coerceParentId`.
@@ -292,7 +292,7 @@ git commit -m "feat(subchat): ingest parent_convo_id (set-once, resync-coalesced
 
 - [ ] **Step 2: Run to verify fail**
 
-Run: `pnpm exec jest test/unit-tests/subchat-backfill.test.ts`
+Run: `node_modules/.bin/jest test/unit-tests/journal/subchat-backfill-test.ts`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement**
@@ -360,13 +360,13 @@ Add `recordBackfillError(reason: string)` to `database.ts` (writes `{ ts, reason
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `pnpm exec jest test/unit-tests/subchat-backfill.test.ts`
+Run: `node_modules/.bin/jest test/unit-tests/journal/subchat-backfill-test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/client.ts src/journal/database.ts test/unit-tests/subchat-backfill.test.ts
+git add src/journal/client.ts src/journal/database.ts test/unit-tests/journal/subchat-backfill-test.ts
 git commit -m "feat(subchat): one-time existing-client parent-link backfill"
 ```
 
@@ -380,7 +380,7 @@ git commit -m "feat(subchat): one-time existing-client parent-link backfill"
 
 **Files:**
 - Modify: `src/journal/components.tsx` — `ConversationList` `conversations` `useMemo` (~375)
-- Test: `test/unit-tests/subchat-list.test.tsx` (create; render `ConversationList` with a fake client/state per existing component-test pattern)
+- Test: `test/unit-tests/journal/subchat-list-test.ts` (create; render `ConversationList` with a fake client/state per existing component-test pattern)
 
 **Interfaces:**
 - Consumes: `parentPresent` (T-1.2).
@@ -389,7 +389,7 @@ git commit -m "feat(subchat): one-time existing-client parent-link backfill"
 
 Assertions: given `[root, linkedChild, orphanChild]`, `ConversationList` renders rows for `root` and `orphanChild` (parent absent → fallback) but NOT `linkedChild`.
 
-- [ ] **Step 2: Run to verify fail** — `pnpm exec jest test/unit-tests/subchat-list.test.tsx` → FAIL (child row present).
+- [ ] **Step 2: Run to verify fail** — `node_modules/.bin/jest test/unit-tests/journal/subchat-list-test.ts` → FAIL (child row present).
 
 - [ ] **Step 3: Implement** (`components.tsx:375`):
 
@@ -407,7 +407,7 @@ const conversations = useMemo(() => {
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/components.tsx test/unit-tests/subchat-list.test.tsx
+git add src/journal/components.tsx test/unit-tests/journal/subchat-list-test.ts
 git commit -m "feat(subchat): hide linked children from conversation list (orphans stay)"
 ```
 
@@ -418,7 +418,7 @@ git commit -m "feat(subchat): hide linked children from conversation list (orpha
 **Files:**
 - Modify: `src/journal/components.tsx` — `hasAnyFavorite` (~392), `hasActiveUnread` (~399)
 - Modify: `src/journal/client.ts` — `markAllRead` (~373), `emit()` badge reduce (~1381), `firstSelectableConversation` (~144-153, BOTH preferred + fallback branches)
-- Test: extend `test/unit-tests/subchat-list.test.tsx` + `test/unit-tests/subchat-select.test.ts` (create) + `test/unit-tests/subchat-badge.test.ts` (create)
+- Test: extend `test/unit-tests/journal/subchat-list-test.ts` + `test/unit-tests/journal/subchat-select-test.ts` (create) + `test/unit-tests/journal/subchat-badge-test.ts` (create)
 
 **Interfaces:**
 - Consumes: `parentPresent`, `isSubChat`.
@@ -449,8 +449,8 @@ const unread = this.state.conversations.reduce(
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/components.tsx src/journal/client.ts test/unit-tests/subchat-list.test.tsx test/unit-tests/subchat-select.test.ts test/unit-tests/subchat-badge.test.ts
-git status --porcelain test/unit-tests/subchat-badge.test.ts  # assert the badge test is tracked, not left untracked
+git add src/journal/components.tsx src/journal/client.ts test/unit-tests/journal/subchat-list-test.ts test/unit-tests/journal/subchat-select-test.ts test/unit-tests/journal/subchat-badge-test.ts
+git status --porcelain test/unit-tests/journal/subchat-badge-test.ts  # assert the badge test is tracked, not left untracked
 git commit -m "feat(subchat): exclude linked children from unread/markAll/badge/auto-select (both branches)"
 ```
 
@@ -464,7 +464,7 @@ git commit -m "feat(subchat): exclude linked children from unread/markAll/badge/
 
 **Files:**
 - Modify: `src/journal/client.ts` — `sendPendingMessage` (~1298), `emitPendingAttachment` (~635); add a private `isChildConvo(convoId): boolean` helper + a `markChildBlocked(message)` helper
-- Test: `test/unit-tests/readonly-egress.test.ts` (create)
+- Test: `test/unit-tests/journal/readonly-egress-test.ts` (create)
 
 **Interfaces:**
 - Consumes: `isSubChat`.
@@ -528,7 +528,7 @@ for (const message of kept) this.sendPendingMessage(message, connection);
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/client.ts test/unit-tests/readonly-egress.test.ts
+git add src/journal/client.ts test/unit-tests/journal/readonly-egress-test.ts
 git commit -m "feat(subchat): gate both transmit fns for child convos (retain + fail-visible)"
 ```
 
@@ -538,7 +538,7 @@ git commit -m "feat(subchat): gate both transmit fns for child convos (retain + 
 
 **Files:**
 - Modify: `src/journal/client.ts` — `sendAttachment` (~515) and `retryAttachment` (~528): early-return before any `uploadMedia`
-- Test: extend `test/unit-tests/readonly-egress.test.ts`
+- Test: extend `test/unit-tests/journal/readonly-egress-test.ts`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -556,7 +556,7 @@ Assertions: (a) `sendAttachment(file, childConvoId)` calls `api.uploadMedia` **z
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/client.ts test/unit-tests/readonly-egress.test.ts
+git add src/journal/client.ts test/unit-tests/journal/readonly-egress-test.ts
 git commit -m "feat(subchat): block media upload for child convos before bytes egress (P15)"
 ```
 
@@ -566,7 +566,7 @@ git commit -m "feat(subchat): block media upload for child convos before bytes e
 
 **Files:**
 - Modify: `src/journal/client.ts` — `sendPromptReply` (~824), `stageFiles` (~682), `confirmStagedFile` (~708)
-- Test: extend `test/unit-tests/readonly-egress.test.ts`
+- Test: extend `test/unit-tests/journal/readonly-egress-test.ts`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -585,7 +585,7 @@ Assertions: `sendPromptReply` no-ops when the selected convo is a child; `stageF
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/client.ts test/unit-tests/readonly-egress.test.ts
+git add src/journal/client.ts test/unit-tests/journal/readonly-egress-test.ts
 git commit -m "feat(subchat): gate prompt-reply + staging (staged.convoId, not selection)"
 ```
 
@@ -595,7 +595,7 @@ git commit -m "feat(subchat): gate prompt-reply + staging (staged.convoId, not s
 
 **Files:**
 - Modify: `src/journal/client.ts` — `selectConversation` (~320, selected-id guard before `viewing`); confirm/extend `refreshSelectedConversation` (~1216) events staleness guard
-- Test: `test/unit-tests/egress-ratchet.test.ts` (create — reads `client.ts` source) + extend `test/unit-tests/subchat-select.test.ts`
+- Test: `test/unit-tests/journal/egress-ratchet-test.ts` (create — reads `client.ts` source) + extend `test/unit-tests/journal/subchat-select-test.ts`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -613,7 +613,7 @@ Ratchet: read `src/journal/client.ts` text, `match(/op:\s*"send"/g)` → assert 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/client.ts test/unit-tests/egress-ratchet.test.ts test/unit-tests/subchat-select.test.ts
+git add src/journal/client.ts test/unit-tests/journal/egress-ratchet-test.ts test/unit-tests/journal/subchat-select-test.ts
 git commit -m "feat(subchat): op:send grep ratchet + rapid-switch selection guard"
 ```
 
@@ -627,7 +627,7 @@ git commit -m "feat(subchat): op:send grep ratchet + rapid-switch selection guar
 
 **Files:**
 - Modify: `src/journal/components.tsx` — add `RunningSubagentStrip` inline; mount above `<Timeline>` in `SignedInApp` (~1845)
-- Test: `test/unit-tests/subchat-strip.test.tsx` (create)
+- Test: `test/unit-tests/journal/subchat-strip-test.ts` (create)
 
 **Interfaces:**
 - Consumes: `runningChildrenOf`, `conversationTitle`, `client.selectConversation`.
@@ -665,7 +665,7 @@ Mount between `<ChatHeader …>`/`<SubChatHeader>` and `<Timeline …>` in `Sign
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/components.tsx test/unit-tests/subchat-strip.test.tsx
+git add src/journal/components.tsx test/unit-tests/journal/subchat-strip-test.ts
 git commit -m "feat(subchat): running-subagent pill strip above the timeline"
 ```
 
@@ -675,7 +675,7 @@ git commit -m "feat(subchat): running-subagent pill strip above the timeline"
 
 **Files:**
 - Modify: `src/journal/components.tsx` — `ChatHeader` (~875): add an "N subagents ▾" `mj_HeaderMenu` when the selected convo has ≥1 child
-- Test: extend `test/unit-tests/subchat-strip.test.tsx`
+- Test: extend `test/unit-tests/journal/subchat-strip-test.ts`
 
 **Interfaces:**
 - Consumes: `childrenOf`.
@@ -693,7 +693,7 @@ Assertions: with 1 finished child (no running), the strip shows nothing but the 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/components.tsx test/unit-tests/subchat-strip.test.tsx
+git add src/journal/components.tsx test/unit-tests/journal/subchat-strip-test.ts
 git commit -m "feat(subchat): parent-header switcher lists all children (finished reachable)"
 ```
 
@@ -703,7 +703,7 @@ git commit -m "feat(subchat): parent-header switcher lists all children (finishe
 
 **Files:**
 - Modify: `src/journal/components.tsx` — `SignedInApp` (~1788) child-mode branch per the §4.5 composition sketch; add `SubChatHeader` + `ReadOnlyHint` inline
-- Test: `test/unit-tests/subchat-viewer.test.tsx` (create)
+- Test: `test/unit-tests/journal/subchat-viewer-test.ts` (create)
 
 **Interfaces:**
 - Consumes: `isSubChat`, `client.selectedConversation`, `client.selectConversation`, `client.clearSelection`.
@@ -733,7 +733,7 @@ const childMode = selected != null && isSubChat(selected);
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/components.tsx test/unit-tests/subchat-viewer.test.tsx
+git add src/journal/components.tsx test/unit-tests/journal/subchat-viewer-test.ts
 git commit -m "feat(subchat): read-only child viewer + SubChatHeader (back-to-parent)"
 ```
 
@@ -743,7 +743,7 @@ git commit -m "feat(subchat): read-only child viewer + SubChatHeader (back-to-pa
 
 **Files:**
 - Modify: `src/journal/components.tsx` — `Timeline` (~1346), `EventRow` (~1178), `EventContent` (~1104), `PromptCard` (~924), `PendingAttachment` (~1267): accept + honor `isReadOnly`
-- Test: extend `test/unit-tests/subchat-viewer.test.tsx`
+- Test: extend `test/unit-tests/journal/subchat-viewer-test.ts`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -758,7 +758,7 @@ Assertions: under `isReadOnly`, `PromptCard` renders no answer buttons / no free
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/components.tsx test/unit-tests/subchat-viewer.test.tsx
+git add src/journal/components.tsx test/unit-tests/journal/subchat-viewer-test.ts
 git commit -m "feat(subchat): isReadOnly suppresses prompt buttons + attachment retry"
 ```
 
@@ -768,7 +768,7 @@ git commit -m "feat(subchat): isReadOnly suppresses prompt buttons + attachment 
 
 **Files:**
 - Modify: `src/journal/components.tsx` — `SubChatHeader`: sibling dropdown when siblings > 1
-- Test: extend `test/unit-tests/subchat-viewer.test.tsx`
+- Test: extend `test/unit-tests/journal/subchat-viewer-test.ts`
 
 **Interfaces:**
 - Consumes: `childrenOf`.
@@ -786,7 +786,7 @@ Assertions: switcher hidden when the child has ≤1 sibling; when >1, lists all 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/components.tsx test/unit-tests/subchat-viewer.test.tsx
+git add src/journal/components.tsx test/unit-tests/journal/subchat-viewer-test.ts
 git commit -m "feat(subchat): in-child sibling switcher (siblings > 1)"
 ```
 
@@ -800,7 +800,7 @@ git commit -m "feat(subchat): in-child sibling switcher (siblings > 1)"
 
 **Files:**
 - Modify: `src/journal/types.ts` — add `isNearBottom`
-- Test: `test/unit-tests/tail-follow.test.ts` (create)
+- Test: `test/unit-tests/journal/tail-follow-test.ts` (create)
 
 **Interfaces:**
 - Produces: `isNearBottom(scrollTop, scrollHeight, clientHeight, thresholdPx = 80): boolean`.
@@ -823,7 +823,7 @@ export function isNearBottom(scrollTop: number, scrollHeight: number, clientHeig
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/types.ts test/unit-tests/tail-follow.test.ts
+git add src/journal/types.ts test/unit-tests/journal/tail-follow-test.ts
 git commit -m "feat(subchat): isNearBottom pure helper (80px threshold)"
 ```
 
@@ -834,7 +834,7 @@ git commit -m "feat(subchat): isNearBottom pure helper (80px threshold)"
 **Files:**
 - Modify: `src/journal/types.ts` — `ClientState.sendTick: number`
 - Modify: `src/journal/client.ts` — `blankState` (~80) init `sendTick: 0`; bump via `patch({ sendTick: this.state.sendTick + 1 })` in `sendMessage` (~432), `confirmStagedFile` (~708), `retryAttachment` (~528)
-- Test: extend `test/unit-tests/tail-follow.test.ts`
+- Test: extend `test/unit-tests/journal/tail-follow-test.ts`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -849,7 +849,7 @@ Assertions: a **successful** `sendMessage` (non-empty body, non-child convo), `c
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/types.ts src/journal/client.ts test/unit-tests/tail-follow.test.ts
+git add src/journal/types.ts src/journal/client.ts test/unit-tests/journal/tail-follow-test.ts
 git commit -m "feat(subchat): sendTick own-send signal at exact call sites"
 ```
 
@@ -859,7 +859,7 @@ git commit -m "feat(subchat): sendTick own-send signal at exact call sites"
 
 **Files:**
 - Modify: `src/journal/components.tsx` — `Timeline` (~1346): `isFollowingTail` state, rAF-throttled scroll handler (handle in a ref; cancelled on convo-switch cleanup AND on `sendTick` bump; stale-frame guard), gate the existing `useLayoutEffect` (~1387) jump on `isFollowingTail`, add a `selectedConversationId`-keyed reset effect, `sendTick`-watch effect, `mj_JumpToBottom` button
-- Test: `test/unit-tests/tail-follow-timeline.test.tsx` (create)
+- Test: `test/unit-tests/journal/tail-follow-timeline-test.ts` (create)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -874,7 +874,7 @@ Assertions: button hidden when following, shown when not; click re-enables follo
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/journal/components.tsx test/unit-tests/tail-follow-timeline.test.tsx
+git add src/journal/components.tsx test/unit-tests/journal/tail-follow-timeline-test.ts
 git commit -m "feat(subchat): tail-follow state + jump-to-bottom + rAF cancellation"
 ```
 
