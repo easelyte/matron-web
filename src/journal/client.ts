@@ -97,6 +97,7 @@ function blankState(): ClientState {
         textStreams: {},
         toolStreams: {},
         dragActive: false,
+        sendTick: 0,
     };
 }
 
@@ -451,6 +452,7 @@ export class MatronJournalClient {
         const body = bodyInput.trim();
         const conversationId = this.state.selectedConversationId;
         if (!body || !conversationId || !this.database) return false;
+        if (this.isChildConvo(conversationId)) return false;
         const message: PendingMessage = {
             localId: crypto.randomUUID(),
             convoId: conversationId,
@@ -459,6 +461,7 @@ export class MatronJournalClient {
         };
         await this.database.addToOutbox(message);
         await this.refreshSelectedConversation(conversationId);
+        this.patch({ sendTick: this.state.sendTick + 1 });
         this.sendPendingMessage(message);
         return true;
     }
@@ -570,6 +573,7 @@ export class MatronJournalClient {
                     await this.refreshSelectedConversation(message.convoId, db, gen);
                     return;
                 }
+                this.patch({ sendTick: this.state.sendTick + 1 });
 
                 if (
                     message.errorKind === "upload_failed" ||
@@ -786,6 +790,7 @@ export class MatronJournalClient {
             this.patch({ stagedUploads: { ...afterPurge, confirming: false, persistError: true } });
             return;
         }
+        this.patch({ sendTick: this.state.sendTick + 1 });
         void this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
         const rest = current.items.slice(1);
         this.patch({

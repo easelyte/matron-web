@@ -201,6 +201,7 @@ export interface ClientState {
     toolStreams: Record<string, ToolStreamState>;
     dragActive: boolean;
     stagedUploads?: StagedUploads;
+    sendTick: number;
 }
 
 export function coerceParentId(x: unknown): string | null {
