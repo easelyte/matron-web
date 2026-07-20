@@ -36,7 +36,19 @@ const MARK_ALL_READ_ERROR = "Some conversations couldn't be updated — device s
 // This is only a browser memory-safety ceiling. The server's 413 response is
 // authoritative for deployment-specific upload policy.
 export const BROWSER_MEMORY_SAFETY_MAX_BYTES = 512 * 1024 * 1024;
-const UPLOAD_TIMEOUT_MS = 60_000;
+// Upload deadline is size-aware, not a fixed wall-clock. A fixed 60s covered
+// file read + the whole POST, so a server-accepted file whose transfer alone
+// exceeds 60s (e.g. 50MB on a ~5 Mbit/s uplink ≈ 84s) would deterministically
+// abort as upload_failed and retry could never succeed. Scale the deadline by
+// size against a conservative uplink floor, keeping a base for small files and
+// a hard cap so a truly-stuck upload is still bounded.
+const UPLOAD_TIMEOUT_BASE_MS = 60_000;
+const UPLOAD_MIN_BYTES_PER_MS = 64; // ≈ 0.5 Mbit/s uplink floor
+const UPLOAD_TIMEOUT_MAX_MS = 15 * 60_000; // 15 min cap
+export function uploadTimeoutMsFor(sizeBytes: number): number {
+    const sized = Math.ceil((Number.isFinite(sizeBytes) ? Math.max(0, sizeBytes) : 0) / UPLOAD_MIN_BYTES_PER_MS);
+    return Math.min(UPLOAD_TIMEOUT_MAX_MS, Math.max(UPLOAD_TIMEOUT_BASE_MS, sized));
+}
 
 // Client-local per-session flag stores. Archive key string is UNCHANGED (zero migration).
 export const archiveStore: IdSetStore = makeIdSetStore(
@@ -612,7 +624,7 @@ export class MatronJournalClient {
         if (!this.ownsAttachment(owner, message.localId)) return;
 
         const controller = new AbortController();
-        const timer = window.setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+        const timer = window.setTimeout(() => controller.abort(), uploadTimeoutMsFor(file.size));
         this.inFlightUploads.set(message.localId, controller);
         let mediaId: string;
         try {
