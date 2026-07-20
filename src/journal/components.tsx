@@ -1465,7 +1465,11 @@ function PendingAttachment({
         try {
             if (action === "retry") await client.retryAttachment(message.localId);
             else await client.dismissAttachment(message.localId);
-            setRecoveryResult(action === "retry" ? "Retry completed." : "Dismissed.");
+            // Only "dismiss" reports completion. A successful retry clears the
+            // error state, which unmounts this whole error block — so a "Retry
+            // completed." message is only ever visible when the retry actually
+            // FAILED (the chip is still in error), which made it misleading.
+            if (action === "dismiss") setRecoveryResult("Dismissed.");
         } catch (error) {
             setRecoveryError(`${action === "retry" ? "Retry" : "Dismiss"} failed: ${errorMessage(error)}`);
         } finally {
