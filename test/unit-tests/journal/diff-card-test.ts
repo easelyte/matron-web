@@ -8,7 +8,9 @@ Please see LICENSE files in the repository root for full details.
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { DiffCard, parseDiffPayload } from "../../../src/journal/components";
+import { MatronJournalClient } from "../../../src/journal/client";
+import { DiffCard, EventContent, parseDiffPayload } from "../../../src/journal/components";
+import type { JournalEvent } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -26,6 +28,23 @@ async function mountDiff(payload: Record<string, unknown>): Promise<MountedCompo
     mountedComponents.push(mounted);
     await act(async () => {
         root.render(React.createElement(DiffCard, { data: parseDiffPayload(payload) }));
+    });
+    return mounted;
+}
+
+async function mountEvent(event: JournalEvent): Promise<MountedComponent> {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const mounted = { container, root };
+    mountedComponents.push(mounted);
+    await act(async () => {
+        root.render(
+            React.createElement(EventContent, {
+                client: new MatronJournalClient(),
+                event,
+                answeredPrompts: new Set<number>(),
+            }),
+        );
     });
     return mounted;
 }
@@ -240,5 +259,39 @@ describe("DiffCard", () => {
         const { container } = await mountDiff({ diff: "x", truncated: true });
         expect(container.querySelector('[title="diff truncated"]')?.textContent).toBe("…");
         expect(container.querySelector(".mj_DiffCard_truncated")?.textContent).toBe("… diff truncated");
+    });
+});
+
+describe("EventContent diff integration", () => {
+    it("parses rich and legacy diff events into DiffCard", async () => {
+        const rich = await mountEvent({
+            seq: 1,
+            convo_id: "c",
+            ts: 0,
+            sender: "assistant",
+            type: "diff",
+            payload: {
+                display_path: "a/b.ts",
+                viewer_url: "https://x/view?t=1",
+                diff: "@@ rich @@",
+                added: 1,
+                removed: 0,
+            },
+        });
+        const link = rich.container.querySelector<HTMLAnchorElement>("a.mj_DiffCard_filename");
+        expect(link?.textContent).toBe("b.ts");
+        expect(link?.getAttribute("href")).toBe("https://x/view?t=1");
+        expect(rich.container.querySelector(".mj_DiffCard_added")?.textContent).toBe("+1");
+        expect(rich.container.querySelector(".mj_DiffCard_removed")?.textContent).toBe("−0");
+
+        const legacy = await mountEvent({
+            seq: 2,
+            convo_id: "c",
+            ts: 1,
+            sender: "assistant",
+            type: "diff",
+            payload: { patch: "@@ legacy @@" },
+        });
+        expect(legacy.container.querySelector(".mj_DiffCard_body")?.textContent).toContain("@@ legacy @@");
     });
 });

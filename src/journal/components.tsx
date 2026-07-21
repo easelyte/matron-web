@@ -774,7 +774,7 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
     );
 }
 
-function EventContent({
+export function EventContent({
     client,
     event,
     answeredPrompts,
@@ -799,14 +799,7 @@ function EventContent({
         case "tool_output":
             return <ToolOutput client={client} event={event} />;
         case "diff":
-            return (
-                <pre className="mj_Diff">
-                    {asString(
-                        event.payload.diff,
-                        asString(event.payload.patch, JSON.stringify(event.payload, null, 2)),
-                    )}
-                </pre>
-            );
+            return <DiffCard data={parseDiffPayload(event.payload)} />;
         case "image": {
             const mediaId = asString(event.payload.blob_ref);
             return mediaId ? (
