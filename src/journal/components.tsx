@@ -1296,9 +1296,13 @@ export function parseDiffPayload(payload: EventPayload): DiffCardData {
     };
 }
 
+const MAX_DIFF_LINES = 5000;
+
 export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
     const [expanded, setExpanded] = useState(false);
-    const lines = data.diff.replace(/\n+$/, "").split("\n");
+    const allLines = data.diff.replace(/\r\n?/g, "\n").replace(/\n+$/, "").split("\n");
+    const overflowed = allLines.length > MAX_DIFF_LINES;
+    const lines = overflowed ? allLines.slice(0, MAX_DIFF_LINES) : allLines;
     const lineCount = lines.length;
     const expandable = lineCount > 12;
     const path = data.displayPath ?? data.filePath ?? "file";
@@ -1363,6 +1367,9 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
                     <button type="button" className="mj_DiffCard_more" onClick={toggleExpanded}>
                         +{lineCount - 12} more lines
                     </button>
+                )}
+                {overflowed && expanded && (
+                    <div className="mj_DiffCard_truncated">… diff too large; showing first {MAX_DIFF_LINES} lines</div>
                 )}
                 {data.truncated && <div className="mj_DiffCard_truncated">… diff truncated</div>}
             </div>

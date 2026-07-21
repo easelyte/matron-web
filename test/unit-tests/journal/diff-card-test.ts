@@ -255,6 +255,23 @@ describe("DiffCard", () => {
         expect(container.querySelector(".mj_DiffCard_body > div")?.textContent).toBe("    indented");
     });
 
+    it("normalizes CRLF so rows do not retain carriage returns", async () => {
+        const { container } = await mountDiff({ diff: "line 1\r\nline 2\r\n" });
+        const rows = container.querySelectorAll(".mj_DiffCard_body > div");
+        expect(rows).toHaveLength(2);
+        expect(rows[0]?.textContent).toBe("line 1");
+        expect(rows[1]?.textContent).toBe("line 2");
+    });
+
+    it("caps an over-large diff and flags the overflow", async () => {
+        const { container } = await mountDiff({
+            diff: Array.from({ length: 6000 }, (_, index) => `line ${index}`).join("\n"),
+        });
+        await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Expand diff"]')?.click());
+        expect(container.querySelectorAll(".mj_DiffCard_body > div.mj_DiffLine_ctx")).toHaveLength(5000);
+        expect(container.querySelector(".mj_DiffCard_truncated")?.textContent).toContain("diff too large");
+    });
+
     it("renders truncated markers in the header and body", async () => {
         const { container } = await mountDiff({ diff: "x", truncated: true });
         expect(container.querySelector('[title="diff truncated"]')?.textContent).toBe("…");
