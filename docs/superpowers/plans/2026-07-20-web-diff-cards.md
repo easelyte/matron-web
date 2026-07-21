@@ -4,7 +4,7 @@ spec: docs/superpowers/specs/2026-07-20-web-diff-cards-design.md
 date: 2026-07-20
 loop: 455
 owner: easelyte
-risk: low  # render-only component; no auth/RLS/payments/data-loss/deployment surface
+risk: low  # render-only component; no auth, row-security, payment, or destructive-write surface
 base: upstream/main (cf7646f)  # D is the independent leaf; PRs clean to Matronhq:main
 constraint: "components.tsx + client.ts NOT split (upstream alignment). New code lands inline."
 ---
@@ -45,6 +45,8 @@ T-1.4 (styles) ────────────┴────────�
 - **T-1.5** needs T-1.1, T-1.2, T-1.4.
 - **T-2.1** needs all of Phase 1.
 
+**Execution topology:** run via `/execute-slim` in this single `feat/diff-cards` worktree — already isolated from the main checkout, so no per-task sub-worktree is needed (R100's isolation is satisfied at the worktree level). <!-- heavy-signal:docs --> The parallelizable tasks touch DISJOINT files (T-1.1 `components.tsx`, T-1.3 `icons.tsx`, T-1.4 `journal.pcss`), so sequential or concurrent execution in the one worktree is conflict-free; T-1.2/T-1.5 are strictly ordered after their deps.
+
 ## Spec-coverage map
 
 | Spec part | Task(s) |
@@ -77,6 +79,7 @@ Write `test/unit-tests/journal/diff-card-test.ts` (parseDiffPayload block) cover
 - rich payload → full `DiffCardData`;
 - bare `{diff:"…"}` → diff set, `displayPath`/`filePath`/`tool`/`label` all `undefined`, `truncated`/`newFile` false;
 - patch fallback: `{patch:"@@…"}` no diff → `diff` = patch content;
+- **empty-diff precedence:** `{diff:"", patch:"@@…"}` → `diff` is `""` (present-but-empty diff WINS; the nested `asString` does NOT fall through to patch — this is the test that catches an OR-chain (`diff || patch`) misimplementation);
 - diagnostic fallback: `{type:"diff", foo:1}` (no diff/patch) → `diff` = `JSON.stringify(payload,null,2)`;
 - `viewer_url` `null`, `""`, `"javascript:alert(1)"`, `"data:text/html,x"`, relative `"/view?token=x"` → `viewerUrl` undefined **and `parseDiffPayload` does not throw**; valid `https://…` → set;
 - `display_path:""` + `file_path:"a/b.ts"` → (filename resolution asserted at component level; here assert `displayPath === undefined`);
@@ -159,7 +162,7 @@ React.createElement(EventContent, {
 - `corepack pnpm install` (if not already); `node_modules/.bin/jest` (whole suite — `diff-card-test.ts` green, any pre-existing tests unaffected); `corepack pnpm exec tsc --noEmit`; `corepack pnpm build`.
 - Walk §9 acceptance 1-7 and confirm each: rich card renders (linked filename/counts/badge/collapse/truncated); `viewer_url:null` → plain filename; legacy `{diff}`/`{patch}`/diagnostic-JSON render; non-https/relative viewer_url → plain filename; whitespace preserved + no phantom "+1 more"; suite green; `components.tsx`/`client.ts` not split.
 
-**Acceptance:** jest + tsc + build all green; §9 items 1-7 satisfied; `grep -rn "mj_Diff\b" src/` returns zero matches (the old bare `.mj_Diff` / `className="mj_Diff"` fully removed after T-1.5); `git diff --stat` shows only `components.tsx`, `journal.pcss`, `icons.tsx`, `diff-card-test.ts` (+ this plan/spec) touched — no split of the monoliths.
+**Acceptance:** jest + tsc + build all green; §9 items 1-7 satisfied; `grep -rn "mj_Diff\b" src/` returns zero matches (the old bare `.mj_Diff` / `className="mj_Diff"` fully removed after T-1.5) — one-time grep (deliberate P17 exception: a permanent CI lint banning one CSS class name is disproportionate for a single downstream-fork feature; the migration is verified here, not ratcheted); `git diff --stat` shows only `components.tsx`, `journal.pcss`, `icons.tsx`, `diff-card-test.ts` (+ this plan/spec) touched — no split of the monoliths.
 **Deps:** all Phase 1.
 
 ---
