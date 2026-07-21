@@ -660,6 +660,45 @@ function AuthenticatedMedia({
     );
 }
 
+export interface DiffCardData {
+    diff: string;
+    displayPath?: string;
+    filePath?: string;
+    viewerUrl?: string;
+    tool?: string;
+    label?: string;
+    added?: number;
+    removed?: number;
+    truncated: boolean;
+    newFile: boolean;
+}
+
+export function parseDiffPayload(payload: EventPayload): DiffCardData {
+    let viewerUrl: string | undefined;
+    if (typeof payload.viewer_url === "string" && payload.viewer_url) {
+        try {
+            const url = new URL(payload.viewer_url);
+            viewerUrl = url.protocol === "https:" ? payload.viewer_url : undefined;
+        } catch {
+            viewerUrl = undefined;
+        }
+    }
+
+    return {
+        diff: asString(payload.diff, asString(payload.patch, JSON.stringify(payload, null, 2))),
+        displayPath:
+            typeof payload.display_path === "string" && payload.display_path ? payload.display_path : undefined,
+        filePath: typeof payload.file_path === "string" && payload.file_path ? payload.file_path : undefined,
+        viewerUrl,
+        tool: typeof payload.tool === "string" && payload.tool ? payload.tool : undefined,
+        label: typeof payload.label === "string" && payload.label ? payload.label : undefined,
+        added: typeof payload.added === "number" ? payload.added : undefined,
+        removed: typeof payload.removed === "number" ? payload.removed : undefined,
+        truncated: payload.truncated === true,
+        newFile: payload.new_file === true,
+    };
+}
+
 function EventContent({
     client,
     event,
