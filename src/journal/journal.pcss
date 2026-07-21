@@ -955,7 +955,6 @@ li.mj_AttachmentChip_error {
 .mj_ToolCommand,
 .mj_ToolCard pre,
 .mj_LiveTool pre,
-.mj_Diff,
 .mj_Unknown pre {
     max-width: min(720px, 62vw);
     max-height: 360px;
@@ -968,6 +967,87 @@ li.mj_AttachmentChip_error {
     overflow-wrap: anywhere;
     font-family: "Fira Code", monospace;
     font-size: 12px;
+}
+
+.mj_DiffCard {
+    min-width: 0;
+    overflow: hidden;
+    border-radius: 8px;
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_DiffCard_header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+}
+
+.mj_DiffCard_filename {
+    font-weight: 600;
+}
+
+.mj_DiffCard_link {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_DiffCard_link:hover {
+    text-decoration: underline;
+}
+
+.mj_DiffCard_link:focus-visible {
+    border-radius: 2px;
+    outline: 2px solid var(--cpd-color-border-interactive-primary);
+    outline-offset: 2px;
+}
+
+.mj_DiffCard_label,
+.mj_DiffCard_more,
+.mj_DiffCard_truncated {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_DiffCard_badge {
+    border-radius: 999px;
+    background: var(--cpd-color-bg-subtle-primary);
+    padding: 1px var(--cpd-space-2x);
+    font: var(--cpd-font-body-xs-semibold);
+}
+
+.mj_DiffCard_added,
+.mj_DiffLine_add {
+    color: var(--cpd-color-icon-accent-primary);
+}
+
+.mj_DiffCard_removed,
+.mj_DiffLine_del {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_DiffCard_body {
+    max-width: min(720px, 62vw);
+    overflow-x: auto;
+    box-sizing: border-box;
+    padding: 0 var(--cpd-space-3x) var(--cpd-space-3x);
+    white-space: pre;
+    font-family: "Fira Code", monospace;
+    font-size: 12px;
+}
+
+.mj_DiffLine_hunk {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_DiffLine_ctx {
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_DiffCard_more {
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
 }
 
 .mj_ToolCommand {
@@ -1219,7 +1299,7 @@ button.mj_File {
     .mj_ToolCard,
     .mj_ToolCard pre,
     .mj_LiveTool pre,
-    .mj_Diff,
+    .mj_DiffCard,
     .mj_Unknown pre,
     .mj_Image {
         min-width: 0;

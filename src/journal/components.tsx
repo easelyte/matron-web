@@ -24,6 +24,7 @@ import {
     AttachmentIcon,
     ChevronLeftIcon,
     ComposeIcon,
+    FileEditIcon,
     KebabIcon,
     MarkAllReadIcon,
     MarkReadIcon,
@@ -1256,7 +1257,120 @@ function AuthenticatedMedia({
     );
 }
 
-function EventContent({
+export interface DiffCardData {
+    diff: string;
+    displayPath?: string;
+    filePath?: string;
+    viewerUrl?: string;
+    tool?: string;
+    label?: string;
+    added?: number;
+    removed?: number;
+    truncated: boolean;
+    newFile: boolean;
+}
+
+export function parseDiffPayload(payload: EventPayload): DiffCardData {
+    let viewerUrl: string | undefined;
+    if (typeof payload.viewer_url === "string" && payload.viewer_url) {
+        try {
+            const url = new URL(payload.viewer_url);
+            viewerUrl = url.protocol === "https:" ? payload.viewer_url : undefined;
+        } catch {
+            viewerUrl = undefined;
+        }
+    }
+
+    return {
+        diff: asString(payload.diff, asString(payload.patch, JSON.stringify(payload, null, 2))),
+        displayPath:
+            typeof payload.display_path === "string" && payload.display_path ? payload.display_path : undefined,
+        filePath: typeof payload.file_path === "string" && payload.file_path ? payload.file_path : undefined,
+        viewerUrl,
+        tool: typeof payload.tool === "string" && payload.tool ? payload.tool : undefined,
+        label: typeof payload.label === "string" && payload.label ? payload.label : undefined,
+        added: typeof payload.added === "number" ? payload.added : undefined,
+        removed: typeof payload.removed === "number" ? payload.removed : undefined,
+        truncated: payload.truncated === true,
+        newFile: payload.new_file === true,
+    };
+}
+
+export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
+    const [expanded, setExpanded] = useState(false);
+    const lines = data.diff.replace(/\n+$/, "").split("\n");
+    const lineCount = lines.length;
+    const expandable = lineCount > 12;
+    const path = data.displayPath ?? data.filePath ?? "file";
+    const filename = path.split(/[\\/]/).at(-1) || "file";
+    const visibleLines = expanded ? lines : lines.slice(0, 12);
+
+    const toggleExpanded = (): void => setExpanded((current) => !current);
+    const lineClass = (line: string): string => {
+        if (line.startsWith("+")) return "mj_DiffLine_add";
+        if (line.startsWith("-")) return "mj_DiffLine_del";
+        if (line.startsWith("@")) return "mj_DiffLine_hunk";
+        return "mj_DiffLine_ctx";
+    };
+
+    return (
+        <div className="mj_DiffCard">
+            <div className="mj_DiffCard_header">
+                {expandable && (
+                    <button
+                        type="button"
+                        aria-expanded={expanded}
+                        aria-label={expanded ? "Collapse diff" : "Expand diff"}
+                        onClick={toggleExpanded}
+                    >
+                        <svg viewBox="0 0 16 16" width={16} height={16} aria-hidden="true">
+                            <path
+                                d={expanded ? "m4 6 4 4 4-4" : "m6 4 4 4-4 4"}
+                                fill="none"
+                                stroke="currentColor"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                            />
+                        </svg>
+                    </button>
+                )}
+                <FileEditIcon aria-hidden="true" />
+                {data.viewerUrl ? (
+                    <a
+                        className="mj_DiffCard_filename mj_DiffCard_link"
+                        href={data.viewerUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+                        {filename}
+                    </a>
+                ) : (
+                    <span className="mj_DiffCard_filename">{filename}</span>
+                )}
+                {data.label && <span className="mj_DiffCard_label">{data.label}</span>}
+                {data.newFile && <span className="mj_DiffCard_badge">new file</span>}
+                {typeof data.added === "number" && <span className="mj_DiffCard_added">+{data.added}</span>}
+                {typeof data.removed === "number" && <span className="mj_DiffCard_removed">−{data.removed}</span>}
+                {data.truncated && <span title="diff truncated">…</span>}
+            </div>
+            <div className="mj_DiffCard_body">
+                {visibleLines.map((line, index) => (
+                    <div className={lineClass(line)} key={`${index}:${line}`}>
+                        {line}
+                    </div>
+                ))}
+                {expandable && !expanded && (
+                    <button type="button" className="mj_DiffCard_more" onClick={toggleExpanded}>
+                        +{lineCount - 12} more lines
+                    </button>
+                )}
+                {data.truncated && <div className="mj_DiffCard_truncated">… diff truncated</div>}
+            </div>
+        </div>
+    );
+}
+
+export function EventContent({
     client,
     event,
     answeredPrompts,
@@ -1298,14 +1412,7 @@ function EventContent({
         case "tool_output":
             return <ToolOutput client={client} event={event} />;
         case "diff":
-            return (
-                <pre className="mj_Diff">
-                    {asString(
-                        event.payload.diff,
-                        asString(event.payload.patch, JSON.stringify(event.payload, null, 2)),
-                    )}
-                </pre>
-            );
+            return <DiffCard data={parseDiffPayload(event.payload)} />;
         case "image": {
             const mediaId = asString(event.payload.blob_ref);
             return mediaId ? (
