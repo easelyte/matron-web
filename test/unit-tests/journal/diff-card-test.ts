@@ -5,9 +5,40 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { parseDiffPayload } from "../../../src/journal/components";
+import React, { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+
+import { DiffCard, parseDiffPayload } from "../../../src/journal/components";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
+
+type MountedComponent = {
+    container: HTMLDivElement;
+    root: Root;
+};
+
+const mountedComponents: MountedComponent[] = [];
+
+async function mountDiff(payload: Record<string, unknown>): Promise<MountedComponent> {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const mounted = { container, root };
+    mountedComponents.push(mounted);
+    await act(async () => {
+        root.render(React.createElement(DiffCard, { data: parseDiffPayload(payload) }));
+    });
+    return mounted;
+}
+
+beforeAll(() => {
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
+afterEach(async () => {
+    await act(async () => {
+        for (const { root } of mountedComponents.splice(0)) root.unmount();
+    });
+});
 
 describe("parseDiffPayload", () => {
     it("parses a rich diff payload", () => {
@@ -100,5 +131,114 @@ describe("parseDiffPayload", () => {
             truncated: false,
             newFile: false,
         });
+    });
+});
+
+describe("DiffCard", () => {
+    it.each([
+        [{ diff: "x", display_path: "src/a/example.ts", file_path: "fallback.ts" }, "example.ts"],
+        [{ diff: "x", file_path: "src/fallback.ts" }, "fallback.ts"],
+        [{ diff: "x" }, "file"],
+        [{ diff: "x", display_path: "", file_path: "a/b.ts" }, "b.ts"],
+    ])("renders the resolved filename", async (payload, filename) => {
+        const { container } = await mountDiff(payload);
+        expect(container.querySelector(".mj_DiffCard_filename")?.textContent).toBe(filename);
+    });
+
+    it("links the filename only for a valid viewer URL", async () => {
+        const linked = await mountDiff({ diff: "x", file_path: "a.ts", viewer_url: "https://example.test/view" });
+        const link = linked.container.querySelector<HTMLAnchorElement>("a.mj_DiffCard_filename");
+        expect(link?.getAttribute("href")).toBe("https://example.test/view");
+        expect(link?.target).toBe("_blank");
+        expect(link?.rel).toBe("noopener noreferrer");
+
+        const plain = await mountDiff({ diff: "x", file_path: "b.ts", viewer_url: null });
+        expect(plain.container.querySelector("a")).toBeNull();
+        expect(plain.container.querySelector("span.mj_DiffCard_filename")?.textContent).toBe("b.ts");
+    });
+
+    it("renders counts and the new-file badge only when provided", async () => {
+        const rich = await mountDiff({ diff: "x", added: 0, removed: 2, new_file: true });
+        expect(rich.container.querySelector(".mj_DiffCard_added")?.textContent).toBe("+0");
+        expect(rich.container.querySelector(".mj_DiffCard_removed")?.textContent).toBe("−2");
+        expect(rich.container.querySelector(".mj_DiffCard_badge")?.textContent).toBe("new file");
+
+        const bare = await mountDiff({ diff: "x" });
+        expect(bare.container.querySelector(".mj_DiffCard_added")).toBeNull();
+        expect(bare.container.querySelector(".mj_DiffCard_removed")).toBeNull();
+        expect(bare.container.querySelector(".mj_DiffCard_badge")).toBeNull();
+    });
+
+    it("classifies diff lines by prefix", async () => {
+        const { container } = await mountDiff({ diff: "+added\n-removed\n@@ hunk @@\n context" });
+        const rows = Array.from(container.querySelectorAll(".mj_DiffCard_body > div"));
+        expect(rows.map((row) => row.className)).toEqual([
+            "mj_DiffLine_add",
+            "mj_DiffLine_del",
+            "mj_DiffLine_hunk",
+            "mj_DiffLine_ctx",
+        ]);
+    });
+
+    it("has no expansion controls for at most twelve lines", async () => {
+        const { container } = await mountDiff({
+            diff: Array.from({ length: 12 }, (_, index) => `line ${index}`).join("\n"),
+        });
+        expect(container.querySelector("button[aria-expanded]")).toBeNull();
+        expect(container.querySelector(".mj_DiffCard_more")).toBeNull();
+        expect(container.querySelectorAll(".mj_DiffCard_body > div")).toHaveLength(12);
+    });
+
+    it("expands and collapses from the accessible chevron button", async () => {
+        const { container } = await mountDiff({
+            diff: Array.from({ length: 14 }, (_, index) => `line ${index}`).join("\n"),
+        });
+        const chevron = container.querySelector<HTMLButtonElement>('button[aria-label="Expand diff"]');
+        expect(chevron?.getAttribute("aria-expanded")).toBe("false");
+        expect(container.querySelectorAll(".mj_DiffCard_body > div")).toHaveLength(12);
+        expect(container.querySelector<HTMLButtonElement>(".mj_DiffCard_more")?.textContent).toBe("+2 more lines");
+
+        await act(async () => chevron?.click());
+        const collapse = container.querySelector<HTMLButtonElement>('button[aria-label="Collapse diff"]');
+        expect(collapse?.getAttribute("aria-expanded")).toBe("true");
+        expect(container.querySelectorAll(".mj_DiffCard_body > div")).toHaveLength(14);
+        expect(container.querySelector(".mj_DiffCard_more")).toBeNull();
+
+        await act(async () => collapse?.click());
+        expect(container.querySelector('button[aria-label="Expand diff"]')?.getAttribute("aria-expanded")).toBe(
+            "false",
+        );
+        expect(container.querySelectorAll(".mj_DiffCard_body > div")).toHaveLength(12);
+        expect(container.querySelector(".mj_DiffCard_more")).not.toBeNull();
+    });
+
+    it("expands from the more-lines button", async () => {
+        const { container } = await mountDiff({
+            diff: Array.from({ length: 13 }, (_, index) => `line ${index}`).join("\n"),
+        });
+        const more = container.querySelector<HTMLButtonElement>("button.mj_DiffCard_more");
+        expect(more?.textContent).toBe("+1 more lines");
+        await act(async () => more?.click());
+        expect(container.querySelectorAll(".mj_DiffCard_body > div")).toHaveLength(13);
+        expect(container.querySelector('button[aria-label="Collapse diff"]')).not.toBeNull();
+    });
+
+    it.each(["\n", "\n\n"])("ignores trailing newlines when deciding expandability", async (ending) => {
+        const diff = Array.from({ length: 12 }, (_, index) => `line ${index}`).join("\n") + ending;
+        const { container } = await mountDiff({ diff });
+        expect(container.querySelector("button[aria-expanded]")).toBeNull();
+        expect(container.querySelector(".mj_DiffCard_more")).toBeNull();
+        expect(container.querySelectorAll(".mj_DiffCard_body > div")).toHaveLength(12);
+    });
+
+    it("preserves leading whitespace in rendered text", async () => {
+        const { container } = await mountDiff({ diff: "    indented" });
+        expect(container.querySelector(".mj_DiffCard_body > div")?.textContent).toBe("    indented");
+    });
+
+    it("renders truncated markers in the header and body", async () => {
+        const { container } = await mountDiff({ diff: "x", truncated: true });
+        expect(container.querySelector('[title="diff truncated"]')?.textContent).toBe("…");
+        expect(container.querySelector(".mj_DiffCard_truncated")?.textContent).toBe("… diff truncated");
     });
 });
