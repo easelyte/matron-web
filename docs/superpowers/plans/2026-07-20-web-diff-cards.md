@@ -19,13 +19,17 @@ Implements `docs/superpowers/specs/2026-07-20-web-diff-cards-design.md`: port ap
 ```ts
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
+// jest.config.cjs already sets testEnvironment:"jsdom" GLOBALLY (+ test/setup.cjs) — no per-file docblock needed.
+// In a beforeAll (React requires this flag when no testing-library configures it):
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // mount:
 const container = document.createElement("div");
 const root = createRoot(container);
 await act(async () => { root.render(React.createElement(DiffCard, { data })); });
-// query: container.querySelector(...); drive: el.click() / el.dispatchEvent(new Event(...)) inside act(); teardown: act(async () => root.unmount()).
+// query: container.querySelector(...); drive interactions with AWAITED act: await act(async () => el.click());
+// teardown (AWAITED): await act(async () => root.unmount());
 ```
-react/react-dom `^19.2`, `@babel/preset-react`, and `jest-environment-jsdom` are already deps on the upstream base. This mirrors the fork's `components-test.ts` verbatim (its proven pattern) — the upstream base's own `test/` has no prior component-render test; this port introduces the first, using that pattern.
+react/react-dom `^19.2`, `@babel/preset-react`, and `jest-environment-jsdom` are already deps on the upstream base. This mirrors the fork's `components-test.ts` verbatim (its proven pattern — same `IS_REACT_ACT_ENVIRONMENT=true` + awaited `act`/`unmount`) — the upstream base's own `test/` has no prior component-render test; this port introduces the first, using that pattern.
 
 ## Dependency graph
 
@@ -95,6 +99,7 @@ Render tests (jsdom, via the `React.createElement`+`createRoot`+`act`+`querySele
 - counts hidden when undefined, shown when numbers; new-file badge iff `new_file`;
 - **prefix classification:** a fixture with a `+added`, a `-removed`, a `@@ hunk @@`, and a ` context` line asserts those rows carry `mj_DiffLine_add` / `_del` / `_hunk` / `_ctx` respectively (this is the ONLY signal for prefix coloring — build/tsc/jsdom don't validate it);
 - ≤12 lines → no chevron, no "more" row; >12 → chevron + "more" `<button>`; clicking chevron OR the "more" button expands to all lines;
+- **collapse is bidirectional:** clicking the chevron a SECOND time collapses back to 12 rows, restores the "more" row, and sets `aria-expanded="false"` (guards against a `setExpanded(true)` impl that never toggles);
 - **accessibility:** when `expandable`, the chevron button's accessible name is "Expand diff" (collapsed) / "Collapse diff" (expanded), and `aria-expanded` tracks state;
 - terminal newline: 12-line diff ending `"\n"` and `"\n\n"` → `expandable` false;
 - whitespace: an indented line renders inside `mj_DiffCard_body` with leading spaces preserved in `textContent`;
@@ -113,13 +118,13 @@ Add an inline-SVG `FileEditIcon(props: IconProps)` (16px, matching the `IconProp
 ### T-1.4: `mj_DiffCard*` styles in `journal.pcss` (replace `.mj_Diff`)
 
 Add the classes from §5.3, reusing the existing CSS-var tokens (`--cpd-color-*` / `--cpd-space-*`; the repo has **no separate dark selector** — Compound tokens theme themselves, so there is NO light/dark work here):
-- `mj_DiffCard` (code-bg surface, rounded), `mj_DiffCard_header` (flex row, gap, wrap), `mj_DiffCard_filename` + `mj_DiffCard_link` (accent color, hover underline, `:focus-visible` ring), `mj_DiffCard_label` (dimmed), `mj_DiffCard_badge` (pill), `mj_DiffCard_added` (green) / `_removed` (red), `mj_DiffCard_body` (**`white-space: pre;`** + monospace + horizontal scroll — required so indentation/tabs survive; P3), `mj_DiffLine_add`/`_del`/`_hunk`/`_ctx` (prefix tints), `mj_DiffCard_more` (dimmed button) / `_truncated` (dimmed).
+- `mj_DiffCard` (code-bg surface, rounded, **`min-width: 0`** so it can shrink inside the flex timeline), `mj_DiffCard_header` (flex row, gap, wrap), `mj_DiffCard_filename` + `mj_DiffCard_link` (accent color, hover underline, `:focus-visible` ring), `mj_DiffCard_label` (dimmed), `mj_DiffCard_badge` (pill), `mj_DiffCard_added` (green) / `_removed` (red), `mj_DiffCard_body` (**`white-space: pre;`** + monospace + **`max-width: min(720px, 62vw)`** + **`overflow-x: auto`** — reproduces the desktop bound the old `.mj_Diff` gave, so a long unbroken line SCROLLS rather than overflowing the card; P3/P13), `mj_DiffLine_add`/`_del`/`_hunk`/`_ctx` (**distinct** prefix `color:` tints — add≠del≠hunk), `mj_DiffCard_more` (dimmed button) / `_truncated` (dimmed).
 
 **Do NOT delete the `.mj_Diff` rules** — `.mj_Diff` is one selector in two SHARED comma-groups; deleting the blocks would strip styling from unrelated components. Splice out only the `.mj_Diff,` line:
-- **Light group** (`journal.pcss:401-405`, shared with `.mj_ToolCommand`, `.mj_ToolCard pre`, `.mj_LiveTool pre`, `.mj_Unknown pre`): remove the `.mj_Diff,` selector line, leave the other four + the whole rule body intact.
+- **Light group** (`journal.pcss:399-403`, `.mj_Diff,` at :402, shared with `.mj_ToolCommand`, `.mj_ToolCard pre`, `.mj_LiveTool pre`, `.mj_Unknown pre`): remove the `.mj_Diff,` selector line, leave the other four + the whole rule body intact.
 - **Mobile `@media (max-width:700px)` group** (`journal.pcss:~632-638`, shared with `.mj_PromptCard`, `.mj_ToolCard`, `.mj_ToolCard pre`, `.mj_LiveTool pre`, `.mj_Unknown pre`, `.mj_Image`): **replace** `.mj_Diff` with `.mj_DiffCard` so the new card keeps the mobile `max-width: 76vw`. (This is a mobile-width rule, NOT a dark override.)
 
-**Acceptance:** `corepack pnpm build` (postcss) clean; `grep -A10 'mj_DiffCard_body' src/journal/journal.pcss | grep -qE 'white-space:\s*pre;'` — semicolon-anchored + block-scoped so it does NOT match the file's pre-existing `white-space: pre-wrap;` (B2 is a CSS behavior jsdom can't render, so the pcss rule is the testable surface); the light group at :401 still lists `.mj_ToolCommand`/`.mj_ToolCard pre`/`.mj_LiveTool pre`/`.mj_Unknown pre`, and the mobile group still lists its other selectors + now `.mj_DiffCard` (splice, not delete). (Global orphan-ref check for `.mj_Diff` runs in T-2.1, after T-1.5 drops the last `className="mj_Diff"`.)
+**Acceptance:** `corepack pnpm build` (postcss) clean; `grep -A12 'mj_DiffCard_body' src/journal/journal.pcss | grep -qE 'white-space:\s*pre;'` — semicolon-anchored + block-scoped so it does NOT match the file's pre-existing `white-space: pre-wrap;` (B2 is a CSS behavior jsdom can't render, so the pcss rule is the testable surface); `mj_DiffLine_add` and `mj_DiffLine_del` carry DISTINCT `color:` declarations (prefix tints are real, not empty/identical); the light group at :399 still lists `.mj_ToolCommand`/`.mj_ToolCard pre`/`.mj_LiveTool pre`/`.mj_Unknown pre`, and the mobile group still lists its other selectors + now `.mj_DiffCard` (splice, not delete). (Global orphan-ref check for `.mj_Diff` runs in T-2.1, after T-1.5 drops the last `className="mj_Diff"`.)
 **Deps:** none (parallel).
 
 ### T-1.5: wire `case "diff"` → `DiffCard`
@@ -131,7 +136,16 @@ case "diff":
 ```
 Also add `export` to `EventContent` (a named export, no behavior change) so the integration test below can drive the real wiring.
 
-**Integration test** (in `diff-card-test.ts`, via the createElement harness): render `EventContent` with a real `JournalEvent` `{ type:"diff", payload:{ display_path:"a/b.ts", viewer_url:"https://x/view?t=1", diff:"@@…", added:1, removed:0 } }` → assert a linked filename + counts render; and a legacy `{ type:"diff", payload:{ patch:"@@…" } }` → assert the patch renders. This proves the `case "diff"` branch actually pipes `event.payload` through `parseDiffPayload` into `DiffCard` — a wiring regression (wrong prop, forgot the parse) would otherwise pass every direct-component/parser unit gate while journal events render wrong.
+**Integration test** (in `diff-card-test.ts`, via the createElement harness): `EventContent` requires `client` + `event` + `answeredPrompts` props (`components.tsx:663`) and a fully-shaped `JournalEvent` (`seq`/`convo_id`/`ts`/`sender`/`type`/`payload`). Render with:
+```ts
+React.createElement(EventContent, {
+  client: new MatronJournalClient(),                 // no-arg ctor, client.ts:115
+  answeredPrompts: new Set<number>(),
+  event: { seq: 1, convo_id: "c", ts: 0, sender: "assistant", type: "diff",
+           payload: { display_path: "a/b.ts", viewer_url: "https://x/view?t=1", diff: "@@…", added: 1, removed: 0 } },
+})
+```
+→ assert a linked filename + counts render; then a legacy `{ …, type:"diff", payload:{ patch:"@@…" } }` → assert the patch renders. This proves the `case "diff"` branch actually pipes `event.payload` through `parseDiffPayload` into `DiffCard` — a wiring regression (wrong prop, forgot the parse) would otherwise pass every direct-component/parser unit gate while journal events render wrong.
 
 **Acceptance:** `EventContent` exported + renders `DiffCard` for `type:"diff"` events; the integration test (event → EventContent → parseDiffPayload → DiffCard) is green; `tsc --noEmit` clean.
 **Deps:** T-1.1, T-1.2, T-1.4.
