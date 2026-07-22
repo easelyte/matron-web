@@ -2387,16 +2387,67 @@ describe("session-controls flags", () => {
         expect(snapshot.unreadOverrideIds).toEqual(new Set(["c3"]));
     });
 
-    it("sets controlError when a bootstrap flag read fails", async () => {
+    it("keeps preferences unavailable when one bootstrap read fails and an unrelated write succeeds", async () => {
         const client = new MatronJournalClient();
         jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
         jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
-        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-            throw new Error("unavailable");
+        const originalGetItem = Storage.prototype.getItem;
+        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, key) {
+            if (key === pinnedStore.storageKey(SESSION)) throw new Error("unavailable");
+            return originalGetItem.call(this, key);
         });
         await internals(client).startSession(SESSION);
         getItem.mockRestore();
-        expect(client.getSnapshot().controlError).toBe("Couldn't load saved preferences — device storage unavailable.");
+
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+        client.favoriteConversation("c1");
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+    });
+
+    it("keeps preferences unavailable after a write failure and an unrelated write succeeds", () => {
+        const { client } = withConvos(CONVERSATIONS);
+        const originalSetItem = Storage.prototype.setItem;
+        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+            this: Storage,
+            key,
+            value,
+        ) {
+            if (key === pinnedStore.storageKey(SESSION)) throw new Error("full");
+            return originalSetItem.call(this, key, value);
+        });
+
+        client.pinConversation("c1");
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+        client.favoriteConversation("c2");
+
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+        setItem.mockRestore();
+    });
+
+    it("resets storage provenance for a healthy login after a prior session write failure", async () => {
+        const client = new MatronJournalClient();
+        const database = fakeDatabase();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        await internals(client).startSession(SESSION);
+
+        const originalSetItem = Storage.prototype.setItem;
+        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+            this: Storage,
+            key,
+            value,
+        ) {
+            if (key === pinnedStore.storageKey(SESSION)) throw new Error("full");
+            return originalSetItem.call(this, key, value);
+        });
+        client.pinConversation("c1");
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+        setItem.mockRestore();
+
+        await client.logout();
+        await internals(client).startSession(SESSION);
+
+        expect(client.getSnapshot().preferencesUnavailable).toBe(false);
     });
 
     it("preserves prior in-memory flag sets when replaceSnapshot re-read throws", async () => {
@@ -2414,12 +2465,33 @@ describe("session-controls flags", () => {
         expect(client.getSnapshot().pinnedIds).toEqual(new Set(["c1"]));
     });
 
+    it("degrades on a failed snapshot re-read and recovers after every re-read succeeds", async () => {
+        const { client, state } = withConvos(CONVERSATIONS);
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            snapshot: jest.fn().mockResolvedValue({ seq: 1, conversations: CONVERSATIONS }),
+        };
+        const originalGetItem = Storage.prototype.getItem;
+        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, key) {
+            if (key === favoriteStore.storageKey(SESSION)) throw new Error("unavailable");
+            return originalGetItem.call(this, key);
+        });
+
+        await state.replaceSnapshot();
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+
+        getItem.mockRestore();
+        await state.replaceSnapshot();
+        expect(client.getSnapshot().preferencesUnavailable).toBe(false);
+    });
+
     it("patches the matching set when a foreign-tab storage event fires for each of the four keys", async () => {
         const client = new MatronJournalClient();
         jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
         jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
         await internals(client).startSession(SESSION);
         const fire = (key: string, ids: string[]): void => {
+            localStorage.setItem(key, JSON.stringify(ids));
             window.dispatchEvent(new StorageEvent("storage", { key, newValue: JSON.stringify(ids) }));
         };
         fire(archiveStore.storageKey(SESSION), ["c2"]);
@@ -2430,6 +2502,29 @@ describe("session-controls flags", () => {
         expect(client.getSnapshot().favoriteIds).toEqual(new Set(["c1"]));
         fire(unreadStore.storageKey(SESSION), ["c1"]);
         expect(client.getSnapshot().unreadOverrideIds).toEqual(new Set(["c1"]));
+    });
+
+    it("does not recover from a parseable storage event when the backing store read still fails", async () => {
+        const client = new MatronJournalClient();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        await internals(client).startSession(SESSION);
+        const originalGetItem = Storage.prototype.getItem;
+        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, key) {
+            if (key === pinnedStore.storageKey(SESSION)) throw new Error("unavailable");
+            return originalGetItem.call(this, key);
+        });
+
+        window.dispatchEvent(
+            new StorageEvent("storage", {
+                key: pinnedStore.storageKey(SESSION),
+                newValue: JSON.stringify(["c1"]),
+            }),
+        );
+
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+        expect(client.getSnapshot().pinnedIds).toEqual(new Set());
+        getItem.mockRestore();
     });
 
     it("pins/unpins, persisting to the pinned store and patching pinnedIds", () => {

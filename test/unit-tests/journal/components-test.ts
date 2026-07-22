@@ -14,6 +14,7 @@ import {
     favoriteStore,
     MatronJournalClient,
     pinnedStore,
+    PREFERENCES_UNAVAILABLE_ERROR,
     unreadStore,
 } from "../../../src/journal/client";
 import { MatronApp } from "../../../src/journal/components";
@@ -118,6 +119,37 @@ async function openMenu(container: HTMLElement): Promise<void> {
 }
 
 beforeEach(() => localStorage.clear());
+
+describe("session-control banners", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    it("renders the persistent storage banner alongside a transient control error", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            preferencesUnavailable: true,
+            controlError: "Couldn't save — device storage is full or unavailable.",
+        };
+
+        rendered = await renderClient(client);
+
+        expect(
+            [...rendered.container.querySelectorAll('[role="status"]')].map((element) => element.textContent),
+        ).toEqual([PREFERENCES_UNAVAILABLE_ERROR, "Couldn't save — device storage is full or unavailable."]);
+    });
+});
 
 function fileDragEvent(type: string, file: File): Event {
     const event = new Event(type, { bubbles: true, cancelable: true });
