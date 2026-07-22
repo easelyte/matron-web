@@ -24,7 +24,7 @@
   Please see LICENSE files in the repository root for full details.
   */
   ```
-- **Constants:** `MAX_DRAFT_BYTES = 64 * 1024`; `MAX_DRAFT_ENTRIES = 50`; `DRAFT_DEBOUNCE_MS = 250`; `SEND_WATCHDOG_MS = 15_000`; `LONG_PRESS_MS = 500`.
+- **Constants:** `MAX_DRAFT_BYTES = 64 * 1024`; `MAX_DRAFT_ENTRIES = 50`; `DRAFT_DEBOUNCE_MS = 250`; `LONG_PRESS_MS = 500`. (No send-watchdog constant — the watchdog was removed in plan-review round 3; see T-3.2.)
 - **Menu scope:** the timeline context menu attaches ONLY to `EventRow` rows (settled `JournalEvent`); never to `ToolStream` / pending placeholders.
 - **No em-dashes** are irrelevant here (code/comments allowed); this is not operator-voice copy.
 - **Verification gate:** `pnpm lint` (tsc + prettier) and `pnpm test` must be green before ship. Run `pnpm exec prettier --write` on touched files before each commit.
@@ -34,9 +34,41 @@
 
 ---
 
+## Phase 0 — Baseline reconciliation (do FIRST)
+
+### T-0.1: Rebase onto current origin/main + grep-confirm references
+
+At plan-writing time `feat/composer-rows` was **14 commits behind origin/main**, and the upstream delta touches `client.ts` (~41 lines, incl. egress/upload-session guards) — the exact file T-1.3 edits. Implementing `sendMessage` against the stale base risks conflicts or silently dropping upstream guards (round-4 Maj-1). Reconcile before writing any code.
+
+**Files:** none (git + verification only).
+
+- [ ] **Step 1: Rebase the worktree onto current origin/main**
+
+```bash
+git -C /opt/matron/web-journal-wt-composer-rows fetch origin
+git -C /opt/matron/web-journal-wt-composer-rows rebase origin/main
+```
+Resolve any conflicts (expected mainly in `client.ts` / `components.tsx`). If the rebase is non-trivial, pause and reconcile deliberately — do NOT force past a conflict.
+
+- [ ] **Step 2: Re-verify `sendMessage`'s current shape** — the T-1.3 patch assumes `sendMessage(bodyInput)` awaits `addToOutbox` then `refreshSelectedConversation`. Re-read the post-rebase `client.ts:464`+ and adapt the T-1.3 diff to the reconciled code (the upstream egress guards must be **preserved**, not overwritten).
+
+- [ ] **Step 3: Grep-confirm every symbol the plan references** (round-4 Maj-4 — verify against HEAD, don't assume):
+
+```bash
+cd /opt/matron/web-journal-wt-composer-rows/src/journal
+grep -n "export function utf8Length" types.ts                    # T-1.1
+grep -n "export function createLongPressController\|interface LongPressController" longPress.ts   # T-1.2
+grep -n "recentFolderArgument\|parseFolderCommand\|interface RecentFoldersStore\|makeRecentFoldersStore" slash-palette.ts  # T-3.1/T-3.2
+grep -n "mj_UploadConfirm_scrim\|mj_HeaderMenu\|mj_RoomItemMenu" journal.pcss   # T-2.1/T-4.1
+grep -n "internals\|signedInClient\|const SESSION" ../../test/unit-tests/journal/components-test.ts  # test harness
+```
+Confirm each resolves; if any moved/renamed post-rebase, update the citing task before implementing it.
+
+- [ ] **Step 4: Baseline green** — `pnpm install` (if lockfile changed) then `pnpm lint && pnpm test` on the reconciled base. Record the pass; every later task's "run tests" is relative to this baseline.
+
 ## Phase 1 — Foundation modules (leaf, no interdependencies)
 
-`composer-drafts.ts`, `context-menu.ts` pure helpers, `client.ts` fixes, and the `copyText` helper are independent; they can be built in any order and are prerequisites for Phases 2–3.
+`composer-drafts.ts`, `context-menu.ts` pure helpers, `client.ts` fixes, and the `copyText` helper are independent; they can be built in any order and are prerequisites for Phases 2–3. **Do Phase 0 first.**
 
 ### T-1.1: `composer-drafts.ts` — in-memory-authoritative draft store
 
@@ -160,6 +192,17 @@ test("entry cap evicts by recency (re-write refreshes position)", () => {
     expect(s.read("k1").text).toBe("");
 });
 
+test("hydration from a >50-entry blob is capped to MAX_DRAFT_ENTRIES", () => {
+    const big: Record<string, string> = {};
+    for (let i = 0; i < 60; i++) big[`k${i}`] = `v${i}`;
+    localStorage.setItem(KEY, JSON.stringify(big));
+    const s = makeDraftStore(SESSION);
+    s.read("k59"); // force hydrate
+    // oldest evicted: k0..k9 gone, newest 50 kept
+    expect(s.read("k0").text).toBe("");
+    expect(s.read("k59").text).toBe("v59");
+});
+
 test("clear removes the entry from memory and persists immediately", () => {
     const s = makeDraftStore(SESSION);
     s.setDraft("c1", "x"); s.persist();
@@ -230,6 +273,9 @@ export function makeDraftStore(session: Session | undefined): DraftStore {
         try {
             const map = parseMap(localStorage.getItem(key));
             for (const [k, v] of Object.entries(map)) if (!mem.has(k)) mem.set(k, v);
+            // Enforce the entry cap on hydration too (round-4 Maj-2): a persisted blob with >50 entries
+            // (manual edit / older build) must not exceed MAX_DRAFT_ENTRIES. Evict oldest (insertion order).
+            while (mem.size > MAX_DRAFT_ENTRIES) mem.delete(mem.keys().next().value as string);
             hydrated = true;
             return true;
         } catch {
@@ -703,7 +749,7 @@ Merged (round-1 B2): the menu and the sheet are interdependent (the menu's "View
 
 **Interfaces:**
 - Consumes: `useRowContextMenu<JournalEvent>` (T-1.2), `copyText` (T-1.4), `JournalEvent`/`asString` from `./types`.
-- Produces: `function EventSourceSheet({ event, onClose }: { event: JournalEvent; onClose: () => void }): React.ReactElement`; an `mj_HeaderMenu mj_EventRowMenu` rendered by `Timeline`; `rowHandlers` spread onto each `EventRow` `<li>` (via new `EventRow` props `rowHandlers` + `didFireRef`).
+- Produces: `function EventSourceSheet({ event, onClose }: { event: JournalEvent; onClose: () => void }): React.ReactElement`; an `mj_HeaderMenu mj_EventRowMenu` rendered by `Timeline`; `rowHandlers` spread onto each `EventRow` `<li>` (via a single new `EventRow` prop `rowHandlers` — `didFireRef` stays internal to the hook, round-3 M3).
 
 - [ ] **Step 1: Write failing tests** — add local helpers `renderAppWithEvents(events, convoIds?)`, `openRowMenu(container, seq)` (dispatch a `contextmenu` on the `[data-event-id="<seq>"]` `<li>` inside `act`), `clickMenuItem(container, label)`, `clickButton(container, label)`, `rightClick(node)` (all wrap `dispatchEvent`/`click` in `act`). Follow the seeded-client harness note above.
 
@@ -776,7 +822,14 @@ test("long-press opens the menu; a scroll during the press cancels it", async ()
 ```tsx
 function EventSourceSheet({ event, onClose }: { event: JournalEvent; onClose: () => void }): React.ReactElement {
     const doneRef = useRef<HTMLButtonElement>(null);
-    useEffect(() => { doneRef.current?.focus(); }, []);
+    // Focus-restore (round-4 M3): capture the element focused when the sheet opened (the row/menuitem),
+    // focus Done on open, and restore focus on close so keyboard focus never falls through to <body>.
+    const restoreRef = useRef<HTMLElement | null>(null);
+    useEffect(() => {
+        restoreRef.current = document.activeElement as HTMLElement | null;
+        doneRef.current?.focus();
+        return () => { if (restoreRef.current?.isConnected) restoreRef.current.focus(); };
+    }, []);
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
         document.addEventListener("keydown", onKey);
@@ -1001,7 +1054,7 @@ git add src/journal/components.tsx test/unit-tests/journal/components-test.ts
 git commit -m "feat(composer): per-conversation draft persistence, navigation-safe (#471)"
 ```
 
-### T-3.2: Send — per-convo lock, watchdog, snapshot-guarded completion
+### T-3.2: Send — per-convo lock, snapshot-guarded completion (no watchdog)
 
 **Files:**
 - Modify: `src/journal/components.tsx` (`Composer.send`)
@@ -1151,7 +1204,19 @@ test("pagehide flushes a pending draft write within the debounce window", async 
     expect(setItem).toHaveBeenCalled();                // flushed synchronously, before the timer
     jest.useRealTimers();
 });
+test("unmount (switch to read-only child) within the debounce window flushes the draft (round-4 B1)", async () => {
+    jest.useFakeTimers();
+    // renderComposerApp with a parent (c1) and a child (child of c1, read-only → Composer unmounts).
+    const { container, client } = renderComposerAppWithChild("c1", "c1-child");
+    await typeInComposer(container, "edit before unmount");   // 250ms debounce pending, NOT yet persisted
+    await act(async () => { await client.selectConversation("c1-child"); }); // Composer unmounts
+    await act(async () => { await client.selectConversation("c1"); });       // Composer remounts, new store hydrates
+    expect(composerValue(container)).toBe("edit before unmount");            // draft survived the unmount
+    jest.useRealTimers();
+});
 ```
+
+> `renderComposerAppWithChild` is a harness helper that seeds a parent conversation plus a running child (`parent_convo_id` set), so selecting the child renders `ReadOnlyHint` (Composer unmounts) per `components.tsx:2424`/`2417`.
 
 - [ ] **Step 2: Run to verify it fails** — no listener → `setItem` not called → FAIL.
 
@@ -1162,13 +1227,18 @@ useEffect(() => {
     const onVis = () => { if (document.visibilityState === "hidden") flushDraft(); };
     window.addEventListener("pagehide", flushDraft);
     document.addEventListener("visibilitychange", onVis);
+    // Flush on UNMOUNT too (round-4 B1): the Composer is conditionally unmounted when the operator
+    // switches to a read-only child conversation (components.tsx:2424). Without this, an edit made
+    // within the 250 ms debounce window is orphaned (the store's useMemo instance is destroyed) and a
+    // remount hydrates stale localStorage → lost draft. flushDraft cancels the timer + persists now.
     return () => {
         window.removeEventListener("pagehide", flushDraft);
         document.removeEventListener("visibilitychange", onVis);
+        flushDraft();
     };
 }, [flushDraft]);
 ```
-Also add `onBlur={flushDraft}` to the textarea. All three flush paths just `flushDraft()` (cancel debounce + persist the memory map) — no re-staging of `bodyRef.current` (round-3 B2: `setBodyDraft` already staged every edit into the map, so the map is authoritative; re-staging risks resurrecting a concurrently-cleared draft).
+Also add `onBlur={flushDraft}` to the textarea. All flush paths just `flushDraft()` (cancel debounce + persist the memory map) — no re-staging of `bodyRef.current` (round-3 B2: `setBodyDraft` already staged every edit into the map, so the map is authoritative; re-staging risks resurrecting a concurrently-cleared draft).
 
 - [ ] **Step 4: Run to verify it passes** — `pnpm exec jest components-test -i -t "pagehide flushes"` → PASS.
 
@@ -1274,7 +1344,8 @@ git commit -m "chore(web): lint + build fixups for composer-rows feature (#471/#
 
 ## Dependency graph
 
-- **Phase 1** (T-1.1, T-1.2, T-1.3, T-1.4) — all independent leaves; any order / parallelizable.
+- **Phase 0** (T-0.1) — baseline rebase + grep-confirm + green tests. **Blocks everything** (esp. T-1.3, which patches the upstream-modified `client.ts`).
+- **Phase 1** (T-1.1, T-1.2, T-1.3, T-1.4) — all independent leaves; any order / parallelizable (after Phase 0).
 - **Phase 2** (T-2.1 → T-2.2) — needs T-1.2 + T-1.4. T-2.1 is the atomic menu+sheet task (one commit); T-2.2 (close-on-switch) needs T-2.1.
 - **Phase 3** (T-3.1 → T-3.2 → T-3.3) — needs T-1.1 + T-1.3. Independent of Phase 2.
 - **Phase 4** (T-4.1, T-4.2) — needs Phases 2 + 3.
@@ -1291,7 +1362,7 @@ Under `/execute-slim`, Phases 2 and 3 can be built in either order; Phase 4 is t
 | #471 Part B — draft store (in-memory authoritative, {text,ok}, parse-don't-validate, MAX_DRAFT_BYTES, MAX_DRAFT_ENTRIES recency, clear) | T-1.1 |
 | #471 Part B — Composer integration (refs, setBodyDraft capture-by-value, switch effect always-assign, completion-pick persistence) | T-3.1 |
 | #471 Part B — write coalescing / teardown flush / blur flush | T-3.1, T-3.3 |
-| #478 — per-convo lock, snapshot-guarded decoupled completion, watchdog, recent-folder preserved | T-3.2 |
+| #478 — per-convo lock (Set), snapshot-guarded decoupled completion, outbox-reject catch, recent-folder preserved (no watchdog — documented tradeoff) | T-3.2 |
 | #478 / round-4 B1 — client.ts explicit target + outbox-authoritative | T-1.3 |
 | Shared `copyText` async helper | T-1.4 |
 | Styles (menu + sheet) | T-4.1 |
@@ -1299,6 +1370,15 @@ Under `/execute-slim`, Phases 2 and 3 can be built in either order; Phase 4 is t
 | Reviewer overrides (reconnect-replay dedup, session-tuple) | Out of scope — documented follow-ups in spec |
 
 All spec deliverables are covered. The two spec-documented overrides (reconnect-replay dedup → upstream `matron-journal`; full session-tuple binding → pre-existing follow-up) are intentionally not tasked; they are filed as follow-up loops at ship.
+
+## Reviewer overrides + follow-ups (plan-review)
+
+Decisions consciously NOT actioned in this PR, with rationale (per `procedure_codex_review_re_flags_operator_accepted_limitations` + the reviewer-oscillation rule):
+
+- **No send watchdog (round-3 removed it; round-4 re-flagged its absence).** Two opposing flips on one finding: a watchdog dups a slow-successful send (round-3 B1); no watchdog wedges a hung send until reload (round-4 B2). Per the oscillation-stop rule, the documented decision stands: **no-dup beats wedge-recovery** in a double-send-guard feature; the residual (a pathological hung local `addToOutbox` wedging one convo until reload) is rare and reload-recoverable. A true fix needs **idempotent retry** (stable outbox key + observable indeterminate state) — filed as a follow-up alongside the upstream server-idempotency work.
+- **Draft persistence is best-effort across reload (round-4 B3 re-flag).** A `setItem` quota/SecurityError is swallowed with a console warn; the draft is **never lost in-session** (in-memory authoritative) — only a reload after a storage failure loses it. For convenience state on a single-user tool, a durable-save-failure toast is disproportionate; the boolean/return-status surfacing is a follow-up if it ever proves needed.
+- **Source-sheet focus containment (round-4 M3, partial).** This PR adds focus-Done-on-open + focus-restore-on-close (no fall-through to `<body>`). A full focus-trap + app-level `inert` (matching the staged-uploads modal) is a follow-up — proportionate to a dev-facing JSON viewer, not blocking.
+- **Late-resolve B2 test is a documented coverage limitation** (round-4 Claude minor): the shipped switch-effect is flush-only (correct by inspection); the interleave test asserts final state, which can coincide between fixed/buggy variants. The flush-only design is the guarantee, not the test.
 
 ---
 
