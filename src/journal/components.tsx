@@ -1367,11 +1367,7 @@ function decodeViewerExp(viewerUrl: string): number | undefined {
 
 export function parseDiffPayload(payload: EventPayload): DiffCardData {
     let viewerUrl: string | undefined;
-    if (
-        typeof payload.viewer_url === "string" &&
-        payload.viewer_url &&
-        payload.viewer_url.length <= MAX_VIEWER_TOKEN_LEN
-    ) {
+    if (typeof payload.viewer_url === "string" && payload.viewer_url) {
         try {
             const url = new URL(payload.viewer_url);
             viewerUrl = url.protocol === "https:" ? payload.viewer_url : undefined;
@@ -1379,6 +1375,13 @@ export function parseDiffPayload(payload: EventPayload): DiffCardData {
             viewerUrl = undefined;
         }
     }
+    // NOTE: the oversized-token bound lives ONLY inside decodeViewerExp (below),
+    // not on this link-render guard. An oversized-but-valid viewer_url must still
+    // render as a live link (viewer stays authoritative) — it just skips expiry
+    // detection. Gating the link itself on length regressed valid long links to
+    // no-link (Codex phase-1 review). The viewer_url string is already received +
+    // JSON-parsed by the journal client before this runs, so the pre-existing
+    // new URL() above is not a fresh unbounded-allocation DoS surface.
 
     return {
         diff: asString(payload.diff, asString(payload.patch, JSON.stringify(payload, null, 2))),

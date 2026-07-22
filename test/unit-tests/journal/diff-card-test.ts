@@ -150,12 +150,13 @@ describe("parseDiffPayload", () => {
         expect(parseDiffPayload({ diff: "x", viewer_url: makeToken({ exp }) }).viewerUrlExp).toBeUndefined();
     });
 
-    it("rejects an oversized viewer URL before decoding", () => {
-        const parsed = parseDiffPayload({
-            diff: "x",
-            viewer_url: "https://x.test/view?token=" + "A".repeat(20000),
-        });
-        expect(parsed.viewerUrl).toBeUndefined();
+    it("keeps an oversized viewer URL as a live link but skips expiry decoding", () => {
+        const oversized = "https://x.test/view?token=" + "A".repeat(20000);
+        const parsed = parseDiffPayload({ diff: "x", viewer_url: oversized });
+        // The oversized bound lives in decodeViewerExp only, not the link guard:
+        // a valid https URL still renders (viewer stays authoritative); expiry
+        // detection is skipped (undefined), degrading to today's live-link.
+        expect(parsed.viewerUrl).toBe(oversized);
         expect(parsed.viewerUrlExp).toBeUndefined();
     });
 

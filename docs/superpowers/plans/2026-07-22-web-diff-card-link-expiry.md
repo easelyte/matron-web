@@ -36,13 +36,13 @@ Client-only detect-and-degrade for expired DiffCard viewer links (loop #472). Al
   - No token param → `undefined` silent.
   - Inner try: `payload = token.split(".")[0]`; empty → throw; `b64 = payload.replace(/-/g,"+").replace(/_/g,"/")`; `JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)))`; require **`Number.isSafeInteger(json.exp) && json.exp > 0 && json.exp <= Math.floor(Number.MAX_SAFE_INTEGER / 1000)`** (integer is load-bearing — a fractional `exp` wedges the floored-clock timer; the `*1000`-safe ceiling bars a huge "integer" like `1e308`/`9e15` whose `exp*1000` overflows to `Infinity`/loses precision → forever-live link; the bridge always mints a small floored-seconds `exp` at `index.js:343`) else throw; return `json.exp`.
   - Catch: throttled `console.warn` (guard on `_viewerExpDecodeWarned`, set-once) + return `undefined`.
-- [ ] **Guard-order:** change `parseDiffPayload`'s existing viewer_url https-guard condition (`components.tsx:1303`) to also require `payload.viewer_url.length <= MAX_VIEWER_TOKEN_LEN`, so an oversized string is rejected before the pre-existing `new URL(payload.viewer_url)` at `components.tsx:1305` (per spec §3.1 "Guard the pre-existing parse too"). One-line change, no restructure.
+- [ ] **Bound decode only, not the link:** keep the `MAX_VIEWER_TOKEN_LEN` check ONLY inside `decodeViewerExp`. Do NOT gate `parseDiffPayload`'s existing https block on length — that would drop a valid-but-oversized link entirely (regression). An oversized `viewer_url` must still render as a live link (`viewerUrl` set), skipping only expiry decode (`viewerUrlExp === undefined`). Per spec §3.1 "Bound the decode work only — NOT the link render."
 - [ ] In `parseDiffPayload` (`components.tsx:1301`), after the existing `viewerUrl` https-bound block, set `viewerUrlExp: viewerUrl ? decodeViewerExp(viewerUrl) : undefined` in the returned object.
 
 **Acceptance:**
 - `parseDiffPayload` compiles; `DiffCardData` carries `viewerUrlExp`.
 - A non-integer (`1000.5`), non-finite, ≤0, or over-ceiling (> `floor(MAX_SAFE_INTEGER/1000)`, e.g. `MAX_SAFE_INTEGER`) `exp` → `viewerUrlExp === undefined`.
-- Oversized `viewer_url` (> `MAX_VIEWER_TOKEN_LEN`) → both `viewerUrl` and `viewerUrlExp` `undefined`, no warn (rejected by the https-guard length gate before any parse).
+- Oversized `viewer_url` (> `MAX_VIEWER_TOKEN_LEN`) → `viewerUrl` still set (live link), `viewerUrlExp` `undefined`, no warn (bound is decode-only; link not dropped).
 - Present-but-undecodable in-bounds token → `undefined` + exactly one `console.warn` per module load. (spec §6 #5)
 - No bridge/journal file touched. (spec §6 #6)
 
@@ -60,7 +60,7 @@ Client-only detect-and-degrade for expired DiffCard viewer links (loop #472). Al
   - future integer `exp` token ⇒ `viewerUrlExp === <future>`.
   - past integer `exp` token ⇒ `viewerUrlExp === <past>` (decode is time-agnostic; expiry is a render concern).
   - out-of-range `exp` (`-1`, `0`, a **fractional** `1000.5`, and an **over-ceiling** `Number.MAX_SAFE_INTEGER`) ⇒ `viewerUrlExp === undefined` (fractional guards the integer-exp fix; MAX_SAFE_INTEGER guards the `*1000`-safe ceiling — `exp*1000` would overflow).
-  - oversized `viewer_url` (length > `MAX_VIEWER_TOKEN_LEN`, e.g. `"https://x.test/view?token=" + "A".repeat(20000)`) ⇒ BOTH `viewerUrl === undefined` AND `viewerUrlExp === undefined` (the guard-order length gate on the https block rejects it before any parse; decode is never reached).
+  - oversized `viewer_url` (length > `MAX_VIEWER_TOKEN_LEN`, e.g. `"https://x.test/view?token=" + "A".repeat(20000)`) ⇒ `viewerUrl` STILL SET (live link preserved) but `viewerUrlExp === undefined` (the bound lives in `decodeViewerExp`, skipping expiry decode without dropping the link).
 - [ ] **Warn-throttle test in an isolated module** (deterministic, order-independent — supersedes the spec §4 "fold into the existing fixture" approach, which is file-order-fragile because the range-sanity failure shares the same throttle budget). Add a dedicated test using `jest.isolateModules(() => { ... })` to get a fresh `_viewerExpDecodeWarned`:
   ```ts
   it("warns exactly once across undecodable tokens, silent for non-token rejects", () => {
