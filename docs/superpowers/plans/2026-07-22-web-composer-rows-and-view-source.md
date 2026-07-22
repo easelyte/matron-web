@@ -42,13 +42,17 @@ At plan-writing time `feat/composer-rows` was **14 commits behind origin/main**,
 
 **Files:** none (git + verification only).
 
-- [ ] **Step 1: Rebase the worktree onto current origin/main**
+- [ ] **Step 1: Rebase the worktree onto current origin/main — with a recoverable backup (round-6 B1 / R102)**
 
+Create a backup ref BEFORE the history rewrite, so a bad conflict resolution is fully recoverable:
 ```bash
-git -C /opt/matron/web-journal-wt-composer-rows fetch origin
-git -C /opt/matron/web-journal-wt-composer-rows rebase origin/main
+cd /opt/matron/web-journal-wt-composer-rows
+git fetch origin
+git branch backup/composer-rows-prerebase   # recovery ref — delete only after Step 4 passes
+git status --porcelain                       # MUST be clean before rebasing; stash/commit first if not
+git rebase origin/main
 ```
-Resolve any conflicts (expected mainly in `client.ts` / `components.tsx`). If the rebase is non-trivial, pause and reconcile deliberately — do NOT force past a conflict.
+If a conflict resolution looks wrong at any point: `git rebase --abort` (returns to the pre-rebase state), or after completion recover with `git reset --hard backup/composer-rows-prerebase`. **Verify no feature commits were dropped:** `git range-diff origin/main backup/composer-rows-prerebase HEAD` — every pre-rebase feature commit must appear with an equivalent post-rebase commit. Only after Step 4 is green: `git branch -D backup/composer-rows-prerebase`.
 
 - [ ] **Step 2: Re-verify `sendMessage`'s current shape** — the T-1.3 patch assumes `sendMessage(bodyInput)` awaits `addToOutbox` then `refreshSelectedConversation`. Re-read the post-rebase `client.ts:464`+ and adapt the T-1.3 diff to the reconciled code (the upstream egress guards must be **preserved**, not overwritten).
 
@@ -62,7 +66,7 @@ grep -n "recentFolderArgument\|parseFolderCommand\|interface RecentFoldersStore\
 grep -n "mj_UploadConfirm_scrim\|mj_HeaderMenu\|mj_RoomItemMenu" journal.pcss   # T-2.1/T-4.1
 grep -n "internals\|signedInClient\|const SESSION" ../../test/unit-tests/journal/components-test.ts  # test harness
 ```
-Confirm each resolves; if any moved/renamed post-rebase, update the citing task before implementing it.
+Confirm each resolves; if any moved/renamed post-rebase, **edit the plan file** to correct the citing task and **commit that amendment** (`git add docs/superpowers/plans/... && git commit -m "docs(plan): reconcile refs post-rebase"`) — the committed plan file is the handoff to later tasks (round-6 Maj-3); a grep result held only in this step's memory is not visible to subsequent `/execute-slim` tasks.
 
 - [ ] **Step 4: Baseline green** — `pnpm install` (if lockfile changed) then `pnpm lint && pnpm test` on the reconciled base. Record the pass; every later task's "run tests" is relative to this baseline.
 
@@ -352,7 +356,7 @@ git commit -m "feat(composer): in-memory-authoritative per-conversation draft st
 - Produces:
   - pure helpers `clampToViewport(left, top, width, height, vw, vh): { left: number; top: number }` and `nextMenuIndex(current: number, delta: 1 | -1, count: number): number` (exported for direct unit test);
   - hook `useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContextMenu<T>` where
-    `interface RowContextMenu<T> { state: { target: T; left: number; top: number } | undefined; menuRef: React.RefObject<HTMLDivElement>; open(target: T, left: number, top: number, opener: HTMLElement | null): void; close(restoreFocus?: boolean): void; rowHandlers(target: T, getRow: () => HTMLElement): { onContextMenu; onPointerDown; onPointerMove; onPointerUp; onPointerCancel }; menuKeyDown(e: React.KeyboardEvent): void; }`.
+    `interface RowContextMenu<T> { state: { target: T; left: number; top: number } | undefined; menuRef: React.RefObject<HTMLDivElement>; open(target: T, left: number, top: number, opener: HTMLElement | null): void; close(restoreFocus?: boolean): void; rowHandlers(target: T, getRow: () => HTMLElement | null): { onContextMenu; onPointerDown; onPointerMove; onPointerUp; onPointerCancel }; menuKeyDown(e: React.KeyboardEvent): void; }`.
 
 > **Test note:** the repo has no hook-testing library. Unit-test the **pure helpers** here; the hook's stateful wiring (open on right-click / long-press, close on switch, keyboard nav) is covered by rendering `EventRow` in `components-test.ts` (T-2.1). This mirrors how `longPress-test.ts` tests the pure controller while its wiring is exercised elsewhere.
 
@@ -411,7 +415,7 @@ export interface RowContextMenu<T> {
     openerRef: React.MutableRefObject<HTMLElement | null>; // the row that opened the menu (for focus-restore)
     open(target: T, left: number, top: number, opener: HTMLElement | null): void;
     close(restoreFocus?: boolean): void;
-    rowHandlers(target: T, getRow: () => HTMLElement): {
+    rowHandlers(target: T, getRow: () => HTMLElement | null): {
         onContextMenu(e: React.MouseEvent): void;
         onPointerDown(e: React.PointerEvent): void;
         onPointerMove(e: React.PointerEvent): void;
@@ -427,7 +431,7 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
     stateRef.current = state;
     const menuRef = useRef<HTMLDivElement | null>(null);
     const openerRef = useRef<HTMLElement | null>(null);
-    const pressTargetRef = useRef<{ target: T; getRow: () => HTMLElement } | undefined>(undefined);
+    const pressTargetRef = useRef<{ target: T; getRow: () => HTMLElement | null } | undefined>(undefined);
     const controllerRef = useRef<LongPressController | undefined>(undefined);
     const pressScrollCleanupRef = useRef<() => void>(() => undefined); // cancels a PENDING press on scroll
 
@@ -448,8 +452,10 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
                 pressScrollCleanupRef.current();
                 const p = pressTargetRef.current;
                 if (!p) return;
-                const rect = p.getRow().getBoundingClientRect();
-                open(p.target, rect.right, rect.top, p.getRow());
+                const row = p.getRow();
+                if (!row) return; // round-6 Maj-2: the row may have unmounted (convo switched) before the 500ms timer fired — don't crash
+                const rect = row.getBoundingClientRect();
+                open(p.target, rect.right, rect.top, row);
             },
         });
     }
@@ -484,13 +490,15 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
 
     useEffect(() => () => { controllerRef.current?.onPointerCancel(); pressScrollCleanupRef.current(); }, []);
 
-    const rowHandlers = useCallback((target: T, getRow: () => HTMLElement) => ({
+    const rowHandlers = useCallback((target: T, getRow: () => HTMLElement | null) => ({
         onContextMenu(e: React.MouseEvent) {
             e.preventDefault();
+            const row = getRow();
+            if (!row) return;
             const keyboard = e.clientX === 0 && e.clientY === 0;
-            const rect = getRow().getBoundingClientRect();
-            if (keyboard) open(target, rect.right, rect.bottom, getRow());
-            else open(target, e.clientX, e.clientY, getRow());
+            const rect = row.getBoundingClientRect();
+            if (keyboard) open(target, rect.right, rect.bottom, row);
+            else open(target, e.clientX, e.clientY, row);
         },
         onPointerDown(e: React.PointerEvent) {
             if (e.pointerType !== "touch") return;
@@ -811,6 +819,16 @@ test("long-press opens the menu; a scroll during the press cancels it", async ()
     expect(container.querySelector(".mj_EventRowMenu")).not.toBeNull();
     jest.useRealTimers();
 });
+test("a long-press timer firing after the row unmounts (convo switch) does not crash (round-6 Maj-2)", async () => {
+    jest.useFakeTimers();
+    const { container, client } = renderAppWithEvents([textEvent(5, "hi")], ["c1", "c2"]);
+    const li = container.querySelector('[data-event-id="5"]') as HTMLElement;
+    await touchPress(li);                                                     // start the 500ms press timer on c1's row
+    await act(async () => { await client.selectConversation("c2"); });        // c1's EventRow unmounts (getRow()→null)
+    await act(async () => { jest.advanceTimersByTime(500); });                // timer fires → must be a no-op, not a null-ref throw
+    expect(container.querySelector(".mj_EventRowMenu")).toBeNull();
+    jest.useRealTimers();
+});
 ```
 
 - [ ] **Step 2: Run to verify it fails** — `pnpm exec jest components-test -i -t "EventRow|View source|long-press"` → FAIL.
@@ -853,7 +871,7 @@ function EventSourceSheet({ event, opener, onClose }: { event: JournalEvent; ope
 In `Timeline`: `const [sourceEvent, setSourceEvent] = useState<JournalEvent | undefined>();`, `const menu = useRowContextMenu<JournalEvent>();`, and `const sourceOpenerRef = useRef<HTMLElement | null>(null);` (captures the opener for the sheet's focus-restore). Pass `rowHandlers={menu.rowHandlers}` to each `EventRow`. In `EventRow`, add a single prop `rowHandlers` and:
 ```tsx
 const liRef = useRef<HTMLLIElement>(null);
-const handlers = rowHandlers(event, () => liRef.current!);
+const handlers = rowHandlers(event, () => liRef.current);
 // <li ref={liRef} ...existing... {...handlers}>
 ```
 `ToolStream` / pending placeholder rows do NOT receive `rowHandlers` (scope enforced by construction). Render at the end of `Timeline`:
@@ -1010,8 +1028,11 @@ test("keystroke debounces the localStorage write (no setItem before 250ms, one a
 // a remount + re-Enter would dup the durable message, and (b) hold a stale store instance whose late
 // persist would clobber the new instance's writes to the session-shared key. SignedInApp does NOT unmount
 // on childMode, so one store + one lock persist across the toggle. Composer signature gains:
-//   function Composer({ client, state, drafts, sendingConvos }: { ...; drafts: DraftStore; sendingConvos: React.MutableRefObject<Set<string>> })
-// and SignedInApp (components.tsx:2358) creates them once and threads them to <Composer ... drafts={drafts} sendingConvos={sendingConvos} />.
+//   function Composer({ client, state, drafts, sendingConvos }: { ...; drafts: DraftStore; sendingConvos: React.RefObject<Set<string>> })
+// In SignedInApp (components.tsx:2358) create them once and thread at the sole <Composer> call (L2424):
+//   const drafts = useMemo(() => makeDraftStore(state.session), [state.session]); // mirrors makeRecentFoldersStore(state.session) @ L1995
+//   const sendingConvos = useRef<Set<string>>(new Set());
+//   {childMode ? <ReadOnlyHint /> : <Composer client={client} state={state} drafts={drafts} sendingConvos={sendingConvos} />}
 const convoId = state.selectedConversationId;
 const convoIdRef = useRef(convoId); convoIdRef.current = convoId;
 const bodyRef = useRef(body); bodyRef.current = body;
@@ -1233,9 +1254,9 @@ test("unmount (switch to read-only child) within the debounce window flushes the
     // renderComposerApp with a parent (c1) and a child (child of c1, read-only → Composer unmounts).
     const { container, client } = renderComposerAppWithChild("c1", "c1-child");
     await typeInComposer(container, "edit before unmount");   // 250ms debounce pending, NOT yet persisted
-    await act(async () => { await client.selectConversation("c1-child"); }); // Composer unmounts
-    await act(async () => { await client.selectConversation("c1"); });       // Composer remounts, new store hydrates
-    expect(composerValue(container)).toBe("edit before unmount");            // draft survived the unmount
+    await act(async () => { await client.selectConversation("c1-child"); }); // Composer unmounts (store survives in SignedInApp)
+    await act(async () => { await client.selectConversation("c1"); });       // Composer remounts, same hoisted store
+    expect(composerValue(container)).toBe("edit before unmount");            // draft survived the unmount (in-memory, hoisted)
     jest.useRealTimers();
 });
 ```
@@ -1403,6 +1424,10 @@ Decisions consciously NOT actioned in this PR, with rationale (per `procedure_co
 - **Draft persistence is best-effort across reload (round-4 B3 / round-5 B2 re-flag).** A `setItem` quota/SecurityError is swallowed with a console warn, and an **oversized** draft (`> MAX_DRAFT_BYTES`) is intentionally memory-only (omitted from the localStorage mirror to bound blob size — round-2 B2). In both cases the draft is **never lost in-session** (in-memory authoritative); only a full reload loses it. For convenience state on a single-user tool, a durable-save-failure toast / non-durable badge is disproportionate to a >64 KB-composer or quota-exhausted edge; a `persist()` durability-status return + UI surfacing is a documented follow-up if it ever proves needed.
 - **Source-sheet focus containment (round-4 M3, partial).** This PR adds focus-Done-on-open + focus-restore-on-close (no fall-through to `<body>`). A full focus-trap + app-level `inert` (matching the staged-uploads modal) is a follow-up — proportionate to a dev-facing JSON viewer, not blocking.
 - **Late-resolve B2 test is a documented coverage limitation** (round-4 Claude minor): the shipped switch-effect is flush-only (correct by inspection); the interleave test asserts final state, which can coincide between fixed/buggy variants. The flush-only design is the guarantee, not the test.
+- **Reconnect-replay non-idempotency (round-6 Codex B3 re-raise) → upstream follow-up.** If the server accepts a message but the connection drops before the outbox row is reconciled, reconnect replays it → a duplicate. An in-memory Enter lock cannot span a reload/reconnect boundary; the real fix is an **end-to-end `localId` idempotency key enforced server-side** in `matron-journal` (Dan's repo). Out of scope for this web-client PR; filed as an upstream follow-up (also covers spec-round-5 B1).
+- **Full session-identity tuple on `sendMessage` (round-6 Codex B2 re-raise) → follow-up.** A sign-out / session swap mid-`addToOutbox` could dispatch through a replacement session's connection. This is a **pre-existing** `client.ts` race (today's `sendMessage` captures no `{db, gen, connection}` tuple either); binding `targetConvoId` is the proportionate identity fix for this PR. Full owner-tuple capture is session-lifecycle hardening, filed as a follow-up (also covers spec-round-5 Major-1).
+- **Copy-failure invisibility (round-6 Codex Maj-4 re-raise).** `copyText` returns a boolean the callers `void`; on the secure-context (`:8443` HTTPS) deploy the user-gesture Copy always succeeds. A visible failure state / manual-copy affordance is a follow-up if the permission-denied edge ever proves real.
+- **Hung-local-write wedge (round-6 Codex Maj-1 re-raise).** Same no-watchdog decision (oscillation-stop): no-dup beats wedge-recovery; a pathological hung IndexedDB write wedges one convo until reload. A stable-attempt-ID + indeterminate-state model is the follow-up, bundled with the idempotency work above.
 
 ---
 
