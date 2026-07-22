@@ -78,11 +78,13 @@ independent composer fix bundled into the same branch/PR.
 |---|---|---|
 | `src/journal/context-menu.ts` | **new** | Headless `useRowContextMenu` hook — open/close/position state, long-press + right-click + keyboard triggers, outside-click/Escape/scroll close, arrow-key nav helper, viewport clamp. React-aware but presentation-free. |
 | `src/journal/composer-drafts.ts` | **new** | `makeDraftStore(session)` — per-session localStorage map `convoId → draft text`, fail-soft read, prune-on-empty. |
-| `src/journal/components.tsx` | edit | Wire the timeline event-row menu (`EventRow`/`Timeline`), the `EventSourceSheet` modal, and the composer draft + double-send logic. |
+| `src/journal/components.tsx` | edit | Wire the timeline event-row menu (`EventRow`/`Timeline`), the `EventSourceSheet` modal, the shared `copyText` helper, and the composer draft + double-send logic. |
+| `src/journal/client.ts` | edit (small, bug-fix) | `sendMessage` gains an explicit `targetConvoId` param (binds the mutation to the captured conversation, not a late read of `selectedConversationId` — round-4 identity fix) and makes `addToOutbox`-success **authoritative** (a subsequent `refreshSelectedConversation` failure no longer rejects, so the composer clears and can't be retried into a duplicate durable message — round-4 B1). Bug-fix only; no structural split (#448-compatible; upstream-PR candidate). |
 | `src/journal/shell.pcss` (or `journal.pcss`) | edit | Styles for the event-row menu (reuse `mj_HeaderMenu`/`mj_RoomItemMenu` classes where possible) + `EventSourceSheet` modal, matching existing dialog styling (`UploadConfirmDialog`). |
 | `test/unit-tests/journal/context-menu-test.ts` | **new** | Hook logic (open position clamp, keyboard nav index math, long-press fire → open). |
 | `test/unit-tests/journal/composer-drafts-test.ts` | **new** | Draft store read/write/clear, prune-on-empty, fail-soft read, per-session key isolation. |
-| `test/unit-tests/journal/components-test.ts` | edit | Timeline menu open/Copy/View source; EventSourceSheet content + close; draft load/save/clear across convo switch + reload; double-send guard drops the 2nd rapid Enter. |
+| `test/unit-tests/journal/components-test.ts` | edit | Timeline menu open/Copy/View source; EventSourceSheet content + close; draft load/save/clear across convo switch + reload; double-send guard drops the 2nd rapid Enter; clipboard-rejection fallback; recent-folder preserved. |
+| `test/unit-tests/journal/client-test.ts` | edit | `sendMessage` explicit `targetConvoId` binding + outbox-authoritative (resolves `true` when refresh fails after `addToOutbox`). |
 
 ### #471 Part A — Timeline event-row context menu (shared surface)
 
@@ -120,9 +122,11 @@ untouched room-list menu (which lives under a different, hook-unaware subtree). 
 hook presentation-free and testable in isolation, and keeps menu markup where Dan keeps his (no split).
 
 **Menu items** (rendered in `Timeline`, positioned `fixed` like the room menu):
-1. **Copy** — shown only for `event.type === "text"` (payload `body`). Uses the shared `copyText(body)`
-   helper (`navigator.clipboard.writeText` → hidden-textarea `execCommand("copy")` → silent no-op fallback,
-   all try/catch — never throws). Closes the menu.
+1. **Copy** — shown only for `event.type === "text"` (payload `body`). Uses the shared **async** `copyText(text)`
+   helper: `await`s `navigator.clipboard.writeText` inside a try/catch (round-4 M5: a *synchronous*
+   try/catch would not catch the promise rejection, so the fallback would never fire and an unhandled
+   rejection would escape), falling back to hidden-textarea `execCommand("copy")`, then a silent no-op —
+   never throws, never leaves an unhandled rejection. Closes the menu.
 2. **View source** — shown for **all** event kinds (#476). Sets the source-sheet target (below). Closes the menu.
 
 Share is intentionally omitted (see Right-size decisions). The menu therefore has 1–2 items; when only
@@ -186,22 +190,31 @@ React handler. `makeIdSetStore.write` (`conversation-flags.ts` L50–52) is **no
   text is exactly the cross-convo leak, so it is purged from this contract and Error handling). See the
   Composer convo-switch step for the authoritative caller behavior.
 - **Parse, don't validate (round-3 M2):** the persisted blob is parsed into a typed
-  `Record<string, string>` — after `JSON.parse`, if the result is not a plain object it is treated as `{}`;
-  entries whose value is not a `string` are dropped (same defensive filter as `makeIdSetStore.parse`, which
-  filters to strings). `read` therefore never returns a non-string `text`, and a wrong-shaped-but-valid JSON
-  (array, `null`, `{convoId: 7}`) degrades to "no draft" (`ok:true, text:""`) rather than leaking a
-  non-string into composer string ops. `write` re-serializes only the sanitized map, so it never
-  *propagates* corruption, but it also does not blow away the whole store on a single bad entry — unrelated
-  valid entries survive the parse filter.
+  `Record<string, string>`. Two distinct failure modes, with **distinct** recovery (round-4 clarification —
+  the single-blob design can't recover individual entries from an unparseable string):
+  - **Unparseable string** (`JSON.parse` throws — truncated/corrupted blob): the *entire* map is
+    unrecoverable → `read` returns `{ text: "", ok: true }` and the next `write` starts from `{}`, so **all**
+    drafts for that session are lost. Accepted: this is corruption recovery, not a preservation contract.
+  - **Valid JSON, wrong shape** (parses to an array / `null` / number → treated as `{}`; or a valid object
+    with some non-`string` values → those entries dropped, same defensive filter as `makeIdSetStore.parse`).
+    Here sibling entries with string values **do** survive. `read` never returns a non-string `text`; a
+    wrong-shaped value degrades to "no draft" (`ok:true, text:""`) rather than leaking into composer string
+    ops.
+  So `write` never *propagates* corruption, and it preserves valid sibling entries **except** when the
+  top-level string was itself unparseable (then the whole blob necessarily resets). Testing asserts each
+  mode explicitly.
 - `write(convoId, text): void` — `try/catch`-wrapped (warn once on failure, never throw). Read→parse→mutate
   →`setItem` on the sanitized map. If `text.trim() === ""`, **deletes** the entry (prune-on-empty). If
   `utf8Length(text) > MAX_DRAFT_BYTES` (const, 64 KiB), the entry is **deleted** (deleting — not no-op — so a
   reload restores *nothing* rather than a stale smaller earlier draft; the oversized text stays live in the
   composer, just won't survive a reload). **Aggregate bound (round-3 M4):** at most `MAX_DRAFT_ENTRIES`
   (const, 50) entries are kept; on write, if adding this entry would exceed the cap, the least-recently
-  written entries are evicted (the map is maintained in insertion/write order; evict from the front). This
-  quantifies the platform-limit treatment — total blob ≤ `MAX_DRAFT_ENTRIES × MAX_DRAFT_BYTES` (≤ ~3.2 MiB
-  worst case, in practice far smaller), bounding both quota exposure and the synchronous serialize cost.
+  written entry is evicted. To make eviction actually recency-ordered, `write` **deletes-then-reinserts** the
+  key on every update (round-4 minor: a plain `obj[cid]=text` reassignment preserves stale insertion order,
+  so an untouched-but-late entry could outlive a just-written early one) — then evicts from the front.
+  Bounds entry count and per-entry raw size; `setItem` still fails soft on quota (the serialized JSON can
+  exceed the raw-UTF-8 sum due to escaping, so no exact byte bound is claimed — the fail-soft write is the
+  real quota guard, round-4 M4).
 - `clear(convoId): void` — deletes the entry + persists (used after a successful send).
 - **Write coalescing:** the Composer schedules `write` through a trailing-edge debounce (~250 ms) that
   **captures `{convoId, text}` by value at schedule time** (not a lazy ref read — round-2 fix) so rapid
@@ -257,10 +270,16 @@ visible live; over-alerting on it is worse UX than a silent console warn).
   - `send()`: `const convoId = convoIdRef.current; const submitted = body;` then
     `if (!convoId || sendingConvos.current.has(convoId)) return;` then `sendingConvos.current.add(convoId)`
     (synchronous, pre-`await` → blocks the same-tick second Enter for *this* convo only, so a send in A never
-    drops an Enter in B). `try { if (await client.sendMessage(submitted)) { …completion… } } finally {
-    sendingConvos.current.delete(convoId); }`.
-  - **Completion — flush, then decouple persisted-draft clear from live-body clear** (round-2 + round-3
-    fix). On `sendMessage` success:
+    drops an Enter in B). `try { if (await client.sendMessage(submitted, convoId)) { …completion… } } finally
+    { sendingConvos.current.delete(convoId); }`. **The captured `convoId` is passed explicitly** so the
+    mutation binds to it, not `client`'s later read of `selectedConversationId` (round-4 identity fix — the
+    lock key and the send target are provably the same conversation).
+  - **Completion — record folder, flush, then decouple persisted-draft clear from live-body clear** (round-2
+    + round-3 + round-4 fix). On `sendMessage` success:
+    0. **Preserve existing behavior:** `const folder = recentFolderArgument(submitted); if (folder)
+       store.record(folder)` — the recent-folders update the current `send()` already performs
+       (`components.tsx` L2015–2018). Kept verbatim (round-4: the rewritten algorithm must not regress the
+       slash-palette folder history).
     1. **Flush** the pending debounced write for `convoId` (commits whatever's latest — `submitted` if no
        edit, `Y` if the operator typed a follow-up — so step 2's read sees the true current draft; no
        pending timer survives to re-persist later, closing round-2 M2).
@@ -278,10 +297,23 @@ visible live; over-alerting on it is worse UX than a silent console warn).
     reconciliation of "successful send clears that convo's draft" with "never wipe a newer edit."
   - **Wedge scope:** `finally` releases the lock on resolve *and* reject; the only residual is a promise
     that never settles, which for this path means a hung local IndexedDB `addToOutbox` (no network in the
-    awaited path — verified: `sendMessage` awaits only `addToOutbox` + `refreshSelectedConversation`, both
-    local; the network dispatch `sendPendingMessage` is fire-and-forget, not awaited). Per-convo scoping
-    bounds even that to the one affected conversation; no timeout is added because a spurious mid-send unlock
-    would reintroduce the double-send. Documented, not silently assumed.
+    awaited path — `sendMessage` awaits only local IndexedDB work; the network dispatch `sendPendingMessage`
+    is fire-and-forget, not awaited). Per-convo scoping bounds even that to the one affected conversation; no
+    timeout is added because a spurious mid-send unlock would reintroduce the double-send. Documented, not
+    silently assumed.
+
+**`client.ts` — send-target binding + outbox-authoritative (round-4 folded fixes).** Two small `sendMessage`
+changes (bug-fix, not a structural split — upstream-PR candidates):
+- **Explicit target:** `sendMessage(bodyInput, targetConvoId = this.state.selectedConversationId)`. The
+  Composer passes the captured `convoId`, so the durable outbox row is bound to the conversation that was
+  active *when Enter fired*, not to a possibly-later `selectedConversationId` read (round-4 Codex M1 / P56
+  identity-tuple). Default arg preserves existing call sites.
+- **Outbox-authoritative:** once `addToOutbox` succeeds the message is durably queued and will send; the
+  subsequent `refreshSelectedConversation` is wrapped so its failure is logged but does **not** reject
+  `sendMessage` (which still returns `true`). This closes round-4 Codex B1: a post-persistence refresh
+  failure no longer leaves the composer holding retry-able text that a manual re-send would duplicate into a
+  second durable message (no server idempotency). Folded into scope because it is the same duplicate-send
+  class #478 targets, reached via a partial-failure path rather than rapid Enter.
 
 Persistence is localStorage → drafts **best-effort** survive both in-app navigation and full page reload
 (the loop's "across navigation"). Best-effort because a storage failure (quota, Safari private mode) is
@@ -311,16 +343,13 @@ useRef(new Set<string>())`), not a single boolean. Rationale for the shape (roun
 
 `client.sendMessage` already returns false on empty/child/no-db, so no extra emptiness check is added.
 
-**Out of scope for #478 — post-persistence partial-failure retry (round-3 Codex B1, pre-existing).**
-`client.sendMessage` (`client.ts` L464–482) awaits `addToOutbox` (durable) **then**
-`refreshSelectedConversation`. If the refresh rejects *after* the outbox write, `sendMessage` rejects, the
-composer keeps its text, and a manual retry mints a fresh UUID → a second durable outbox entry for the same
-content (no server idempotency). This duplicate-on-retry-after-partial-failure is **pre-existing** behavior
-of the current `send()` (which already clears only on `sendMessage() === true`) — it is a `client.ts`
-check-act-ordering / idempotency issue, **not** the rapid-Enter UI race that #478 scopes. #478 does not
-regress it and does not fix it; a separate follow-up loop is filed to make `addToOutbox`-success authoritative
-(clear the composer / treat as sent even if the subsequent refresh fails, or add a dedup key). Called out
-here so it isn't mistaken for a gap this PR introduced.
+**Post-persistence partial-failure retry (round-3 Codex B1) — folded into scope (round 4).** Originally
+scope-fenced as pre-existing, but it is a real duplicate-send path in the loop about double-send, so the
+minimal `client.ts` fix is now in scope (see "`client.ts` — send-target binding + outbox-authoritative"
+above): once `addToOutbox` succeeds, `sendMessage` resolves `true` regardless of a later
+`refreshSelectedConversation` failure, so the composer clears and cannot be retried into a second durable
+message. Adjacent server-side idempotency (a stable dedup key) remains a larger upstream concern, not
+required here — making local persistence authoritative closes the client-observable duplicate.
 
 ## Data flow
 
@@ -342,8 +371,10 @@ Enter → per-convo sendingConvos gate → sendMessage(submitted)
 
 ## Error handling
 
-- Clipboard: `navigator.clipboard` may be unavailable (insecure context) or reject — wrap in try/catch,
-  fall back to `execCommand` or no-op; never surface an exception into the timeline.
+- Clipboard: the shared **async** `copyText(text)` helper `await`s `navigator.clipboard.writeText` in a
+  try/catch (so a promise *rejection* — unavailable in insecure context, permission denied — is caught, not
+  leaked as an unhandled rejection), falls back to hidden-textarea `execCommand("copy")`, then a silent
+  no-op. Never surfaces an exception into the timeline. Round-4 M5: the async boundary is load-bearing.
 - localStorage: draft `read` **and** `write` are both fail-soft — modeled on `makeRecentFoldersStore.record`
   (`try/catch`, warn once), **not** `makeIdSetStore.write` (which is unguarded and throws on quota). `read`
   returns `{ text, ok }` and the convo-switch caller **always assigns** `setBody(ok ? text : "")` — on a
@@ -364,12 +395,19 @@ Enter → per-convo sendingConvos gate → sendMessage(submitted)
 
 - **`composer-drafts-test.ts`:** write/read round-trip; `read` returns `{ text, ok }`; `ok:false` on a
   throwing `getItem` and on `undefined` session; **wrong-shape valid JSON** (array, `null`, `{cid: 7}`) →
-  `ok:true, text:""` (parse filter, no non-string leak); malformed JSON → `ok:true, text:""` and does not
-  blow away other valid entries; prune-on-empty deletes the entry; `clear`; per-session key isolation
+  `ok:true, text:""` for the bad key **and sibling string entries survive** (parse filter, no non-string
+  leak); **unparseable JSON** (truncated string) → `ok:true, text:""` and the next `write` resets the blob to
+  a single-entry map (whole-store loss is the accepted corruption-recovery outcome — the two modes are
+  asserted distinctly, round-4); prune-on-empty deletes the entry; `clear`; per-session key isolation
   (different serverUrl/userId → different key); **write fail-soft** on a throwing `setItem` (no throw
   propagates); oversized draft (`> MAX_DRAFT_BYTES`) entry is **deleted**, smaller ones kept; **entry cap**
-  (`MAX_DRAFT_ENTRIES`) evicts the least-recently-written entry on overflow; undefined-session store is a
-  full no-op.
+  (`MAX_DRAFT_ENTRIES`) evicts by recency (re-writing an existing key refreshes its position via
+  delete-then-reinsert, so a just-written early key is **not** the eviction victim); undefined-session store
+  is a full no-op.
+- **`client-test.ts` (added cases):** `sendMessage(body, targetConvoId)` enqueues under `targetConvoId`
+  even when `selectedConversationId` differs; `sendMessage` resolves `true` and does not reject when
+  `refreshSelectedConversation` throws after a successful `addToOutbox` (outbox-authoritative); the default
+  `targetConvoId` arg preserves the existing no-arg call behavior.
 - **`context-menu-test.ts`:** long-press `onFire` → `open` with pointer coords; viewport clamp math
   (right/bottom edges); keyboard nav index cycling (wrap up/down); Escape close; containment/measurement use
   the passed `menuRef` node (a sibling menu node is not selected).
@@ -387,7 +425,11 @@ Enter → per-convo sendingConvos gate → sendMessage(submitted)
   - successful send clears **that convo's** draft;
   - **double-send:** two synchronous Enter keydowns (same convo) with a slow-resolving `sendMessage` stub → `sendMessage` called exactly once;
   - **cross-convo interleave:** send X in A (slow stub, still pending) → switch to B → Enter in B is **not** blocked (fires its own send); when A resolves, B's live composer body is **untouched** AND **A's persisted draft is cleared** (return to A shows an empty composer, not the already-sent X — round-3 phantom-draft fix);
-  - **same-convo interleave:** send X in A (slow stub) → type follow-up Y in A while pending → X resolves → Y is **preserved** in both the live composer and the persisted draft (snapshot guard: `bodyRef !== submitted`), and X's draft is **not** cleared out from under Y.
+  - **same-convo interleave:** send X in A (slow stub) → type follow-up Y in A while pending → X resolves → Y is **preserved** in both the live composer and the persisted draft (snapshot guard: `bodyRef !== submitted`), and X's draft is **not** cleared out from under Y;
+  - **recent-folder preserved:** a successful send of a folder-bearing body still calls `store.record(folder)` (round-4 — the rewritten completion keeps the existing slash-palette side effect);
+  - **explicit send target:** `send()` passes the captured `convoId` to `client.sendMessage(submitted, convoId)`; the outbox row is bound to that convo (a stubbed `sendMessage` asserts it received the captured id, not a mutated `selectedConversationId`);
+  - **outbox-authoritative:** a `sendMessage` whose internal `refreshSelectedConversation` rejects **after** `addToOutbox` still resolves `true` → composer clears → a second Enter does **not** enqueue a duplicate (round-4 B1);
+  - **clipboard rejection:** a `navigator.clipboard.writeText` that **rejects** → `copyText` falls back to `execCommand` (no unhandled rejection); with both unavailable → silent no-op, no throw.
 - `pnpm lint` (tsc + prettier) + full `pnpm test` green before ship.
 
 ## Right-size decisions (quantified)
@@ -397,11 +439,12 @@ Enter → per-convo sendingConvos gate → sendMessage(submitted)
 - **Don't refactor the shipped room-list menu.** True DRY (both menus on one hook) is real but touches
   Dan's working code and deepens fork divergence (#448). Deferred to an upstream proposal (Follow-ups).
 - **Single localStorage blob** for drafts, not per-convo keys — simpler, no key-enumeration cleanup.
-  Growth is bounded by `MAX_DRAFT_BYTES` (64 KiB/entry) **and** `MAX_DRAFT_ENTRIES` (50, LRU eviction) →
-  total ≤ ~3.2 MiB worst case, in practice far smaller; prune-on-empty removes cleared drafts. The blob is
-  parsed into a typed `Record<string,string>` (parse-don't-validate), so corrupt/wrong-shape storage
-  degrades to "no draft" rather than leaking. Round 1/round 3 flagged that per-entry-cap + prune alone don't
-  bound the aggregate, hence the entry cap.
+  Growth is bounded by `MAX_DRAFT_BYTES` (64 KiB/entry raw) **and** `MAX_DRAFT_ENTRIES` (50, recency
+  eviction) plus prune-on-empty. No exact serialized-byte bound is claimed (JSON escaping expands the raw
+  text — round-4 M4); the fail-soft `setItem` is the real quota guard. The blob is parsed into a typed
+  `Record<string,string>` (parse-don't-validate), so corrupt/wrong-shape storage degrades to "no draft"
+  rather than leaking. Rounds 1/3/4 flagged that per-entry-cap + prune alone don't bound the aggregate, hence
+  the entry cap.
 - **Trailing debounce (~250 ms) on draft writes, flushed on switch/blur/page-teardown** — an unguarded
   per-keystroke whole-blob stringify is a synchronous hot path that degrades with blob size. The debounce
   coalesces keystrokes; synchronous flush on convo-switch, blur, and `pagehide`/`visibilitychange`
@@ -412,10 +455,9 @@ Enter → per-convo sendingConvos gate → sendMessage(submitted)
 
 - **Upstream proposal to Dan:** converge the room-list menu onto the shared `useRowContextMenu` hook
   (fold into loop #448's upstream-refactor track, `type: operator`).
-- **New loop — `client.sendMessage` post-persistence idempotency (round-3 Codex B1):** make
-  `addToOutbox`-success authoritative so a `refreshSelectedConversation` failure after the durable write
-  doesn't leave the composer retry-able into a duplicate durable message. Pre-existing `client.ts`
-  check-act-ordering issue, out of #478 scope. File at ship time.
+- Optional: server-side idempotency (stable dedup key) for `sendMessage` — a larger upstream concern beyond
+  the client-observable duplicate closed here (round-4 B1 folded in); propose to Dan if the journal server
+  ever needs retry-safety.
 - Optional: `storage`-event reconciliation for multi-tab draft editing (round-3 M3) — only if multi-tab
   drafting becomes a real workflow; last-writer-wins is accepted until then.
 - Optional: raw server-frame source (vs DTO) once/if the bridge exposes original event JSON — mirrors the
