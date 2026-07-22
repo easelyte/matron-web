@@ -463,9 +463,9 @@ export class MatronJournalClient {
         }
     }
 
-    public async sendMessage(bodyInput: string): Promise<boolean> {
+    public async sendMessage(bodyInput: string, targetConvoId?: string): Promise<boolean> {
         const body = bodyInput.trim();
-        const conversationId = this.state.selectedConversationId;
+        const conversationId = targetConvoId ?? this.state.selectedConversationId;
         if (!body || !conversationId || !this.database) return false;
         if (this.isChildConvo(conversationId)) return false;
         const message: PendingMessage = {
@@ -474,12 +474,24 @@ export class MatronJournalClient {
             body,
             createdAt: Date.now(),
         };
-        await this.database.addToOutbox(message);
-        await this.refreshSelectedConversation(conversationId);
-        if (this.state.selectedConversationId === conversationId) {
-            this.patch({ sendTick: this.state.sendTick + 1 });
+        await this.database.addToOutbox(message); // the only awaited durable step
+        // Everything after the durable write is best-effort and must never reject sendMessage or
+        // delay its resolution. Otherwise the composer remains retryable despite a queued message.
+        void (async () => {
+            try {
+                await this.refreshSelectedConversation(conversationId);
+                if (this.state.selectedConversationId === conversationId) {
+                    this.patch({ sendTick: this.state.sendTick + 1 });
+                }
+            } catch (error) {
+                console.warn("matron: post-send refresh failed (message still queued)", error);
+            }
+        })();
+        try {
+            this.sendPendingMessage(message);
+        } catch (error) {
+            console.warn("matron: post-send dispatch threw (message still queued)", error);
         }
-        this.sendPendingMessage(message);
         return true;
     }
 

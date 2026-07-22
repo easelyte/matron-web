@@ -509,6 +509,56 @@ describe("MatronJournalClient state handling", () => {
         expect(operation.payload).toEqual({ body: "same message", local_id: operation.local_id });
     });
 
+    it("enqueues under an explicit targetConvoId, not selectedConversationId", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase();
+        state.state = signedInState(client, "c1");
+        state.database = database;
+
+        await client.sendMessage("hi", "c2");
+
+        expect(database.addToOutbox).toHaveBeenCalledWith(expect.objectContaining({ convoId: "c2", body: "hi" }));
+    });
+
+    it("resolves true when refresh throws after addToOutbox", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase();
+        state.state = signedInState(client);
+        state.database = database;
+        jest.spyOn(state, "refreshSelectedConversation").mockRejectedValueOnce(new Error("db read failed"));
+
+        await expect(client.sendMessage("hi")).resolves.toBe(true);
+
+        expect(database.addToOutbox).toHaveBeenCalledTimes(1);
+    });
+
+    it("resolves without awaiting a hung refresh", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase();
+        state.state = signedInState(client);
+        state.database = database;
+        jest.spyOn(state, "refreshSelectedConversation").mockReturnValue(new Promise(() => {}));
+
+        await expect(client.sendMessage("hi")).resolves.toBe(true);
+
+        expect(database.addToOutbox).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses selectedConversationId when targetConvoId is omitted", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase();
+        state.state = signedInState(client, "c1");
+        state.database = database;
+
+        await client.sendMessage("hi");
+
+        expect(database.addToOutbox).toHaveBeenCalledWith(expect.objectContaining({ convoId: "c1" }));
+    });
+
     it("does not bump sendTick when a delayed send refresh finishes after switching conversations", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
