@@ -968,7 +968,6 @@ export class MatronJournalClient {
     private async startSession(session: Session): Promise<void> {
         this.sessionGen += 1;
         this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
-        this.storeWritable = { archive: true, pinned: true, favorite: true, unread: true };
         for (const controller of this.inFlightUploads.values()) controller.abort();
         this.inFlightUploads.clear();
         this.uploadConvos.clear();
@@ -1069,6 +1068,7 @@ export class MatronJournalClient {
             if (event.key === archiveStore.storageKey(currentSession)) {
                 const read = archiveStore.read(currentSession);
                 this.storeHydrated.archive = read.ok;
+                if (read.ok) this.storeWritable.archive = true;
                 if (!read.ok) this.logStorageDiag("read_fail", "archive", false);
                 this.patch({
                     ...(read.ok ? { archivedIds: read.ids } : {}),
@@ -1080,6 +1080,7 @@ export class MatronJournalClient {
             } else if (event.key === pinnedStore.storageKey(currentSession)) {
                 const read = pinnedStore.read(currentSession);
                 this.storeHydrated.pinned = read.ok;
+                if (read.ok) this.storeWritable.pinned = true;
                 if (!read.ok) this.logStorageDiag("read_fail", "pinned", false);
                 this.patch({
                     ...(read.ok ? { pinnedIds: read.ids } : {}),
@@ -1088,6 +1089,7 @@ export class MatronJournalClient {
             } else if (event.key === favoriteStore.storageKey(currentSession)) {
                 const read = favoriteStore.read(currentSession);
                 this.storeHydrated.favorite = read.ok;
+                if (read.ok) this.storeWritable.favorite = true;
                 if (!read.ok) this.logStorageDiag("read_fail", "favorite", false);
                 this.patch({
                     ...(read.ok ? { favoriteIds: read.ids } : {}),
@@ -1096,6 +1098,7 @@ export class MatronJournalClient {
             } else if (event.key === unreadStore.storageKey(currentSession)) {
                 const read = unreadStore.read(currentSession);
                 this.storeHydrated.unread = read.ok;
+                if (read.ok) this.storeWritable.unread = true;
                 if (!read.ok) this.logStorageDiag("read_fail", "unread", false);
                 this.patch({
                     ...(read.ok ? { unreadOverrideIds: read.ids } : {}),

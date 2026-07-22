@@ -2424,7 +2424,7 @@ describe("session-controls flags", () => {
         setItem.mockRestore();
     });
 
-    it("resets storage provenance for a healthy login after a prior session write failure", async () => {
+    it("carries a write failure across relogin until a write succeeds", async () => {
         const client = new MatronJournalClient();
         const database = fakeDatabase();
         jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
@@ -2447,6 +2447,8 @@ describe("session-controls flags", () => {
         await client.logout();
         await internals(client).startSession(SESSION);
 
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+        client.pinConversation("c1");
         expect(client.getSnapshot().preferencesUnavailable).toBe(false);
     });
 
@@ -2502,6 +2504,36 @@ describe("session-controls flags", () => {
         expect(client.getSnapshot().favoriteIds).toEqual(new Set(["c1"]));
         fire(unreadStore.storageKey(SESSION), ["c1"]);
         expect(client.getSnapshot().unreadOverrideIds).toEqual(new Set(["c1"]));
+    });
+
+    it("recovers failed write provenance after a matching foreign-tab write succeeds", async () => {
+        const client = new MatronJournalClient();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        await internals(client).startSession(SESSION);
+        const originalSetItem = Storage.prototype.setItem;
+        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+            this: Storage,
+            key,
+            value,
+        ) {
+            if (key === pinnedStore.storageKey(SESSION)) throw new Error("full");
+            return originalSetItem.call(this, key, value);
+        });
+        client.pinConversation("c1");
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+        setItem.mockRestore();
+
+        localStorage.setItem(pinnedStore.storageKey(SESSION), JSON.stringify(["c1"]));
+        window.dispatchEvent(
+            new StorageEvent("storage", {
+                key: pinnedStore.storageKey(SESSION),
+                newValue: JSON.stringify(["c1"]),
+            }),
+        );
+
+        expect(client.getSnapshot().pinnedIds).toEqual(new Set(["c1"]));
+        expect(client.getSnapshot().preferencesUnavailable).toBe(false);
     });
 
     it("does not recover from a parseable storage event when the backing store read still fails", async () => {
