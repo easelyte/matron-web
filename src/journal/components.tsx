@@ -2232,6 +2232,19 @@ function Composer({
         [drafts],
     );
 
+    useEffect(() => {
+        const onVis = (): void => {
+            if (document.visibilityState === "hidden") flushDraft();
+        };
+        window.addEventListener("pagehide", flushDraft);
+        document.addEventListener("visibilitychange", onVis);
+        return () => {
+            window.removeEventListener("pagehide", flushDraft);
+            document.removeEventListener("visibilitychange", onVis);
+            flushDraft();
+        };
+    }, [flushDraft]);
+
     useLayoutEffect(() => {
         const prev = prevConvoIdRef.current;
         if (prev && prev !== convoId) flushDraft();
@@ -2314,6 +2327,7 @@ function Composer({
                                 ref={textarea}
                                 rows={1}
                                 value={body}
+                                onBlur={flushDraft}
                                 onChange={(event) => {
                                     const nextBody = event.target.value;
                                     setBodyDraft(nextBody);

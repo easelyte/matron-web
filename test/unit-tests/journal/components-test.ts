@@ -588,6 +588,35 @@ describe("composer drafts", () => {
         expect(setItem).toHaveBeenCalledTimes(1);
         jest.useRealTimers();
     });
+
+    test("pagehide flushes a pending draft write within the debounce window", async () => {
+        jest.useFakeTimers();
+        const setItem = jest.spyOn(Storage.prototype, "setItem");
+        const result = await renderComposerApp(["c1"]);
+        rendered = result;
+        await typeInComposer(result.container, "unsaved edit");
+        setItem.mockClear();
+        await act(async () => {
+            window.dispatchEvent(new Event("pagehide"));
+        });
+        expect(setItem).toHaveBeenCalled();
+        jest.useRealTimers();
+    });
+
+    test("unmount (switch to read-only child) within the debounce window flushes the draft (round-4 B1)", async () => {
+        jest.useFakeTimers();
+        const result = await renderComposerAppWithChild("c1", "c1-child");
+        rendered = result;
+        await typeInComposer(result.container, "edit before unmount");
+        await act(async () => {
+            await result.client.selectConversation("c1-child");
+        });
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        expect(composerValue(result.container)).toBe("edit before unmount");
+        jest.useRealTimers();
+    });
 });
 
 describe("composer sends", () => {
