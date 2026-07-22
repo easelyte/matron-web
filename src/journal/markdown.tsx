@@ -35,6 +35,7 @@ import remarkGfm from "remark-gfm";
 import { copyText } from "./clipboard";
 
 export const MARKDOWN_MAX = 200_000;
+export const HIGHLIGHT_MAX = 30_000;
 
 const CURATED = {
     bash,
@@ -61,7 +62,50 @@ const ALIASES = {
     markdown: ["md"],
 };
 
-const HIGHLIGHT_OPTIONS = { languages: CURATED, aliases: ALIASES, detect: true };
+const HIGHLIGHT_OPTIONS = { languages: CURATED, aliases: ALIASES };
+
+interface HighlightNode {
+    type: string;
+    tagName?: string;
+    value?: string;
+    properties?: Record<string, unknown>;
+    children?: HighlightNode[];
+}
+
+function exceedsHighlightMax(node: HighlightNode): boolean {
+    let length = 0;
+    const pending = [node];
+    while (pending.length > 0) {
+        const current = pending.pop()!;
+        if (current.type === "text") {
+            length += current.value?.length ?? 0;
+            if (length > HIGHLIGHT_MAX) return true;
+        } else if (current.children) {
+            pending.push(...current.children);
+        }
+    }
+    return false;
+}
+
+function capCodeBlockHighlighting() {
+    return (tree: HighlightNode): void => {
+        const pending = [tree];
+        while (pending.length > 0) {
+            const current = pending.pop()!;
+            if (current.tagName === "pre") {
+                for (const child of current.children ?? []) {
+                    if (child.tagName !== "code" || !exceedsHighlightMax(child)) continue;
+                    child.properties ??= {};
+                    const className = child.properties.className;
+                    const classes = Array.isArray(className) ? className : [];
+                    if (!classes.includes("no-highlight")) classes.push("no-highlight");
+                    child.properties.className = classes;
+                }
+            }
+            if (current.children) pending.push(...current.children);
+        }
+    };
+}
 
 interface MarkdownBodyProps {
     text: string;
@@ -87,6 +131,7 @@ function CodeBlock({ node, source, children, ...props }: CodeBlockProps): React.
     const [copyLabel, setCopyLabel] = useState("Copy");
     const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const mountedRef = useRef(true);
+    const copyOperationRef = useRef(0);
 
     function clearCopyTimer(): void {
         if (timerRef.current === undefined) return;
@@ -103,9 +148,10 @@ function CodeBlock({ node, source, children, ...props }: CodeBlockProps): React.
     }, []);
 
     async function handleCopy(): Promise<void> {
+        const operation = ++copyOperationRef.current;
         clearCopyTimer();
         const copied = await copyText(raw);
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || operation !== copyOperationRef.current) return;
         setCopyLabel(copied ? "Copied" : "Copy failed");
         clearCopyTimer();
         timerRef.current = setTimeout(() => {
@@ -139,7 +185,7 @@ function componentsFor(source: string): Components {
             );
         },
         a({ node: _node, href, children, ...props }) {
-            const external = href !== undefined && /^(?:https?:|mailto:)/i.test(href);
+            const external = href !== undefined && /^(?:https?:|mailto:|\/\/)/i.test(href);
             return (
                 <a
                     {...props}
@@ -206,7 +252,7 @@ function MarkdownBodyComponent({ text, streaming = false, label }: MarkdownBodyP
         <MarkdownErrorBoundary text={text} streaming={streaming} label={label}>
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
-                rehypePlugins={streaming ? [] : [[rehypeHighlight, HIGHLIGHT_OPTIONS]]}
+                rehypePlugins={streaming ? [] : [capCodeBlockHighlighting, [rehypeHighlight, HIGHLIGHT_OPTIONS]]}
                 components={componentsFor(text)}
             >
                 {text}

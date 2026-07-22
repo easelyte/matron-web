@@ -10,7 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { toString } from "hast-util-to-string";
 
 import { copyText } from "../../../src/journal/clipboard";
-import { MARKDOWN_MAX, MarkdownBody } from "../../../src/journal/markdown";
+import { HIGHLIGHT_MAX, MARKDOWN_MAX, MarkdownBody } from "../../../src/journal/markdown";
 
 jest.mock("../../../src/journal/clipboard", () => ({ copyText: jest.fn() }));
 jest.mock("hast-util-to-string", () => {
@@ -82,6 +82,24 @@ test("highlights a TypeScript fence using its ts alias", async () => {
     expect(code?.querySelectorAll('[class^="hljs-"]').length).toBeGreaterThan(0);
 });
 
+test("does not autodetect an untyped fence", async () => {
+    const container = await renderMarkdown("```\nconst answer = 42;\n```");
+    const code = container.querySelector("code");
+
+    expect(code?.classList.contains("hljs")).toBe(false);
+    expect(code?.querySelectorAll('[class^="hljs-"]').length).toBe(0);
+});
+
+test("leaves an oversized labeled fence unhighlighted", async () => {
+    const source = "a".repeat(HIGHLIGHT_MAX + 1);
+    const container = await renderMarkdown(`\`\`\`js\n${source}\n\`\`\``);
+    const code = container.querySelector("code");
+
+    expect(code?.textContent).toBe(`${source}\n`);
+    expect(code?.classList.contains("hljs")).toBe(false);
+    expect(code?.querySelectorAll('[class^="hljs-"]').length).toBe(0);
+});
+
 test("leaves an unknown language fence unhighlighted without throwing", async () => {
     const container = await renderMarkdown("```notalang\nsome words\n```");
     const code = container.querySelector("code");
@@ -132,6 +150,15 @@ test("escapes raw HTML, strips unsafe URLs, and hardens external links", async (
     expect(links[1]?.getAttribute("rel")).toBe("noopener noreferrer nofollow");
 });
 
+test("hardens scheme-relative external links", async () => {
+    const container = await renderMarkdown("[sign in](//attacker.example/phish)");
+    const link = container.querySelector("a");
+
+    expect(link?.getAttribute("href")).toBe("//attacker.example/phish");
+    expect(link?.getAttribute("target")).toBe("_blank");
+    expect(link?.getAttribute("rel")).toBe("noopener noreferrer nofollow");
+});
+
 test("renders an unterminated TypeScript fence safely while streaming", async () => {
     const container = await renderMarkdown("```ts\nconst partial: string =", true);
 
@@ -176,6 +203,28 @@ test("a second copy clears the first label timeout", async () => {
 
     await act(async () => jest.advanceTimersByTime(900));
     expect(button.textContent).toBe("Copy");
+});
+
+test("ignores a stale copy result when overlapping copies finish out of order", async () => {
+    let resolveFirst!: (copied: boolean) => void;
+    let resolveSecond!: (copied: boolean) => void;
+    const first = new Promise<boolean>((resolve) => {
+        resolveFirst = resolve;
+    });
+    const second = new Promise<boolean>((resolve) => {
+        resolveSecond = resolve;
+    });
+    copyTextMock.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const container = await renderMarkdown("```ts\nconst value = 1;\n```");
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Copy code"]')!;
+
+    act(() => button.click());
+    act(() => button.click());
+    await act(async () => resolveSecond(true));
+    expect(button.textContent).toBe("Copied");
+
+    await act(async () => resolveFirst(false));
+    expect(button.textContent).toBe("Copied");
 });
 
 test("clears the copy label timeout when its code block unmounts", async () => {
