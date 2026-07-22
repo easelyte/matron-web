@@ -952,7 +952,6 @@ export class MatronJournalClient {
         this.sessionGen += 1;
         this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
         this.storeWritable = { archive: true, pinned: true, favorite: true, unread: true };
-        void this.allStorageHealthy();
         for (const controller of this.inFlightUploads.values()) controller.abort();
         this.inFlightUploads.clear();
         this.uploadConvos.clear();
@@ -1010,6 +1009,9 @@ export class MatronJournalClient {
         const pinnedRead = pinnedStore.read(session);
         const favoriteRead = favoriteStore.read(session);
         const unreadRead = unreadStore.read(session);
+        this.storeHydrated.archive = archiveRead.ok;
+        this.storeHydrated.pinned = pinnedRead.ok;
+        this.storeHydrated.favorite = favoriteRead.ok;
         this.storeHydrated.unread = unreadRead.ok;
         const bootstrapReadFailed = !archiveRead.ok || !pinnedRead.ok || !favoriteRead.ok || !unreadRead.ok;
         const archivedIds = archiveRead.ids;
@@ -1027,26 +1029,44 @@ export class MatronJournalClient {
             pinnedIds,
             favoriteIds,
             unreadOverrideIds,
-            controlError: bootstrapReadFailed ? PREFERENCES_UNAVAILABLE_ERROR : undefined,
+            preferencesUnavailable: bootstrapReadFailed,
             selectedConversationId: selectedConversation?.id,
         };
         if (this.storageListener) window.removeEventListener("storage", this.storageListener);
         this.storageListener = (event: StorageEvent): void => {
             const currentSession = this.state.session;
-            if (!currentSession || event.newValue === null) return;
+            if (!currentSession) return;
             if (event.key === archiveStore.storageKey(currentSession)) {
-                const archivedIds = archiveStore.parse(event.newValue);
-                this.patch({ archivedIds });
-                if (this.state.selectedConversationId && archivedIds.has(this.state.selectedConversationId)) {
+                const read = archiveStore.read(currentSession);
+                this.storeHydrated.archive = read.ok;
+                this.patch({
+                    ...(read.ok ? { archivedIds: read.ids } : {}),
+                    preferencesUnavailable: !this.allStorageHealthy(),
+                });
+                if (read.ok && this.state.selectedConversationId && read.ids.has(this.state.selectedConversationId)) {
                     this.clearSelection();
                 }
             } else if (event.key === pinnedStore.storageKey(currentSession)) {
-                this.patch({ pinnedIds: pinnedStore.parse(event.newValue) });
+                const read = pinnedStore.read(currentSession);
+                this.storeHydrated.pinned = read.ok;
+                this.patch({
+                    ...(read.ok ? { pinnedIds: read.ids } : {}),
+                    preferencesUnavailable: !this.allStorageHealthy(),
+                });
             } else if (event.key === favoriteStore.storageKey(currentSession)) {
-                this.patch({ favoriteIds: favoriteStore.parse(event.newValue) });
+                const read = favoriteStore.read(currentSession);
+                this.storeHydrated.favorite = read.ok;
+                this.patch({
+                    ...(read.ok ? { favoriteIds: read.ids } : {}),
+                    preferencesUnavailable: !this.allStorageHealthy(),
+                });
             } else if (event.key === unreadStore.storageKey(currentSession)) {
-                if (!this.storeHydrated.unread) this.storeHydrated.unread = true;
-                this.patch({ unreadOverrideIds: unreadStore.parse(event.newValue) });
+                const read = unreadStore.read(currentSession);
+                this.storeHydrated.unread = read.ok;
+                this.patch({
+                    ...(read.ok ? { unreadOverrideIds: read.ids } : {}),
+                    preferencesUnavailable: !this.allStorageHealthy(),
+                });
             }
         };
         window.addEventListener("storage", this.storageListener);
@@ -1068,8 +1088,12 @@ export class MatronJournalClient {
         const session = this.state.session;
         if (!session) return;
         const current = archiveStore.read(session);
+        this.storeHydrated.archive = current.ok;
         if (!current.ok) {
-            this.patch({ controlError: "Couldn't read saved archive — device storage unavailable." });
+            this.patch({
+                controlError: "Couldn't read saved archive — device storage unavailable.",
+                preferencesUnavailable: !this.allStorageHealthy(),
+            });
             return;
         }
         const next = new Set(current.ids);
@@ -1078,10 +1102,19 @@ export class MatronJournalClient {
         try {
             archiveStore.write(session, next);
         } catch {
-            this.patch({ controlError: "Couldn't save — device storage is full or unavailable." });
+            this.storeWritable.archive = false;
+            this.patch({
+                controlError: "Couldn't save — device storage is full or unavailable.",
+                preferencesUnavailable: !this.allStorageHealthy(),
+            });
             return;
         }
-        this.patch({ archivedIds: next, controlError: undefined });
+        this.storeWritable.archive = true;
+        this.patch({
+            archivedIds: next,
+            controlError: undefined,
+            preferencesUnavailable: !this.allStorageHealthy(),
+        });
         if (archived && conversationId === this.state.selectedConversationId) this.clearSelection();
     }
 
@@ -1094,9 +1127,30 @@ export class MatronJournalClient {
         const session = this.state.session;
         if (!session) return false;
 
+        let storeName: "pinned" | "favorite" | "unread";
+        switch (stateKey) {
+            case "pinnedIds":
+                storeName = "pinned";
+                break;
+            case "favoriteIds":
+                storeName = "favorite";
+                break;
+            case "unreadOverrideIds":
+                storeName = "unread";
+                break;
+            default: {
+                const _exhaustive: never = stateKey;
+                throw new Error(`unmapped stateKey: ${_exhaustive}`);
+            }
+        }
+
         const current = store.read(session);
+        this.storeHydrated[storeName] = current.ok;
         if (!current.ok) {
-            this.patch({ controlError: "Couldn't read saved preference — device storage unavailable." });
+            this.patch({
+                controlError: "Couldn't read saved preference — device storage unavailable.",
+                preferencesUnavailable: !this.allStorageHealthy(),
+            });
             return false;
         }
         const next = new Set(current.ids);
@@ -1105,10 +1159,19 @@ export class MatronJournalClient {
         try {
             store.write(session, next);
         } catch {
-            this.patch({ controlError: "Couldn't save — device storage is full or unavailable." });
+            this.storeWritable[storeName] = false;
+            this.patch({
+                controlError: "Couldn't save — device storage is full or unavailable.",
+                preferencesUnavailable: !this.allStorageHealthy(),
+            });
             return false;
         }
-        this.patch({ [stateKey]: next, controlError: undefined } as Partial<ClientState>);
+        this.storeWritable[storeName] = true;
+        this.patch({
+            [stateKey]: next,
+            controlError: undefined,
+            preferencesUnavailable: !this.allStorageHealthy(),
+        } as Partial<ClientState>);
         return true;
     }
 
@@ -1143,16 +1206,17 @@ export class MatronJournalClient {
         const session = this.state.session;
         if (session) {
             const archiveRead = archiveStore.read(session);
+            this.storeHydrated.archive = archiveRead.ok;
             if (archiveRead.ok) archivedIds = archiveRead.ids;
             const pinnedRead = pinnedStore.read(session);
+            this.storeHydrated.pinned = pinnedRead.ok;
             if (pinnedRead.ok) pinnedIds = pinnedRead.ids;
             const favoriteRead = favoriteStore.read(session);
+            this.storeHydrated.favorite = favoriteRead.ok;
             if (favoriteRead.ok) favoriteIds = favoriteRead.ids;
             const unreadRead = unreadStore.read(session);
-            if (unreadRead.ok) {
-                unreadOverrideIds = unreadRead.ids;
-                this.storeHydrated.unread = true;
-            }
+            this.storeHydrated.unread = unreadRead.ok;
+            if (unreadRead.ok) unreadOverrideIds = unreadRead.ids;
         }
         const selectedConversation = firstSelectableConversation(conversations, previousSelection, archivedIds);
         this.patch({
@@ -1162,6 +1226,7 @@ export class MatronJournalClient {
             favoriteIds,
             unreadOverrideIds,
             selectedConversationId: selectedConversation?.id,
+            preferencesUnavailable: !this.allStorageHealthy(),
         });
         // A snapshot can be the first place THIS tab observes a convo's parent link (→ read-only child).
         // Mirror the journal-event path and abort any in-flight upload to a now-child convo so it can't
