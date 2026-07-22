@@ -17,7 +17,12 @@ import React, {
 } from "react";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
-import { BROWSER_MEMORY_SAFETY_MAX_BYTES, errorMessage, type MatronJournalClient } from "./client";
+import {
+    BROWSER_MEMORY_SAFETY_MAX_BYTES,
+    errorMessage,
+    type MatronJournalClient,
+    PREFERENCES_UNAVAILABLE_ERROR,
+} from "./client";
 import { effectiveUnread } from "./conversation-flags";
 import {
     ArchiveIcon,
@@ -639,6 +644,11 @@ function ConversationList({
                                         />
                                     </label>
                                 </div>
+                                {state.preferencesUnavailable && (
+                                    <div className="mj_ConnectionError" role="status">
+                                        {PREFERENCES_UNAVAILABLE_ERROR}
+                                    </div>
+                                )}
                                 {state.controlError && (
                                     <div className="mj_ConnectionError" role="status">
                                         {state.controlError}
