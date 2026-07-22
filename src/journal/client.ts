@@ -13,6 +13,7 @@ import { mergeSessionStatus } from "./status";
 import {
     type ClientState,
     type Conversation,
+    type DeviceDTO,
     isSubChat,
     type JournalEphemeralFrame,
     type JournalEvent,
@@ -20,6 +21,8 @@ import {
     normalizeServerUrl,
     type PendingMessage,
     parentPresent,
+    type RecentFolder,
+    type RpcReply,
     type ServerFrame,
     type Session,
     trimUtf8Prefix,
@@ -31,6 +34,7 @@ const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
 const HISTORY_PAGE_SIZE = 80;
+const RPC_CREATE_WATCHDOG_MS = 10_000;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 const MARK_ALL_READ_ERROR = "Some conversations couldn't be updated — device storage is full or unavailable.";
 export const PREFERENCES_UNAVAILABLE_ERROR = "Couldn't load saved preferences — device storage unavailable.";
@@ -83,6 +87,11 @@ type PersistPendingAttachmentOutcome =
     | { kind: "persisted-uploadable" }
     | { kind: "persisted-terminal" }
     | { kind: "persist-failed" };
+
+export type StartOutcome =
+    | { kind: "created"; convoId: string }
+    | { kind: "error"; message: string }
+    | { kind: "uncertain" };
 
 function deviceName(): string {
     if ((window as Window & { electron?: unknown }).electron) {
@@ -233,6 +242,9 @@ export class MatronJournalClient {
     private ackTimer?: number;
     private pendingAck = 0;
     private historyError?: string;
+    private rpcCreateWatchdog?: number;
+    private rpcCreateWatchdogConvo?: string;
+    private rpcCreateWatchdogGen?: number;
     private storageListener?: (event: StorageEvent) => void;
     private storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
     private storeWritable = { archive: true, pinned: true, favorite: true, unread: true };
@@ -352,8 +364,78 @@ export class MatronJournalClient {
         this.emit();
     }
 
-    public async selectConversation(conversationId: string, opts?: { clearUnread?: boolean }): Promise<void> {
+    public async listAgents(): Promise<DeviceDTO[]> {
+        const response = await this.api?.devices();
+        if (!response) throw new Error("Not signed in.");
+        return response.devices
+            .filter((device) => device.kind === "agent")
+            .sort(
+                (left, right) =>
+                    Number(right.connected) - Number(left.connected) ||
+                    (left.name ?? "").localeCompare(right.name ?? "") ||
+                    left.device_id - right.device_id,
+            );
+    }
+
+    public async recentFolders(agentDeviceId: number): Promise<RecentFolder[]> {
+        const reply = await this.agentRpc(agentDeviceId, "recent_folders", {});
+        if (!reply.ok || typeof reply.result !== "object" || reply.result === null || Array.isArray(reply.result)) {
+            return [];
+        }
+        const folders = (reply.result as Record<string, unknown>).folders;
+        if (!Array.isArray(folders)) return [];
+        return folders.flatMap((raw): RecentFolder[] => {
+            if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return [];
+            const folder = raw as Record<string, unknown>;
+            if (
+                typeof folder.path !== "string" ||
+                folder.path.length === 0 ||
+                (folder.last_used !== null &&
+                    (typeof folder.last_used !== "number" || !Number.isFinite(folder.last_used)))
+            ) {
+                return [];
+            }
+            return [{ path: folder.path, last_used: folder.last_used }];
+        });
+    }
+
+    public async startSessionRpc(agentDeviceId: number, workdir: string, browser: boolean): Promise<StartOutcome> {
+        const params: { workdir?: string; browser?: true } = {};
+        const normalizedWorkdir = workdir.trim();
+        if (normalizedWorkdir) params.workdir = normalizedWorkdir;
+        if (browser) params.browser = true;
+
+        const reply = await this.agentRpc(agentDeviceId, "start", params);
+        if (reply.ok) {
+            if (typeof reply.result !== "object" || reply.result === null || Array.isArray(reply.result)) {
+                return { kind: "uncertain" };
+            }
+            const convoId = (reply.result as Record<string, unknown>).convo_id;
+            return typeof convoId === "string" && convoId.length > 0
+                ? { kind: "created", convoId }
+                : { kind: "uncertain" };
+        }
+        if (reply.origin === "relay") {
+            return {
+                kind: "error",
+                message:
+                    reply.code === "not_connected" || reply.code === "not_ready"
+                        ? "Still connecting — try again in a moment."
+                        : "Couldn't reach that box — try again.",
+            };
+        }
+        if (reply.origin === "agent" && reply.code === "bad_workdir") {
+            return { kind: "error", message: "That folder doesn't exist on the box." };
+        }
+        return { kind: "uncertain" };
+    }
+
+    public async selectConversation(
+        conversationId: string,
+        opts?: { clearUnread?: boolean; fromRpcCreate?: boolean },
+    ): Promise<void> {
         if (!this.database || !this.state.session) return;
+        if (opts?.fromRpcCreate) this.armRpcCreateWatchdog(conversationId);
         if (opts?.clearUnread ?? true) this.clearUnreadOverride(conversationId);
         storeSelectedConversation(this.state.session, conversationId);
         this.patch({
@@ -374,7 +456,9 @@ export class MatronJournalClient {
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
         if (conversation?.unread_count) this.scheduleRead(conversationId, conversation.last_seq, 0);
 
-        if (!this.history.get(conversationId)?.initialized) await this.loadOlderHistory();
+        if (!this.history.get(conversationId)?.initialized) {
+            await this.loadOlderHistory({ suppressNotFound: opts?.fromRpcCreate });
+        }
     }
 
     public clearSelection(): void {
@@ -443,7 +527,7 @@ export class MatronJournalClient {
         });
     }
 
-    public async loadOlderHistory(): Promise<void> {
+    public async loadOlderHistory(opts?: { suppressNotFound?: boolean }): Promise<void> {
         const conversationId = this.state.selectedConversationId;
         if (!conversationId || !this.database || !this.api || this.state.loadingHistory) return;
         const history = this.history.get(conversationId) ?? { initialized: false, hasMore: true };
@@ -474,6 +558,16 @@ export class MatronJournalClient {
                 await this.refreshSelectedConversation(conversationId);
             this.clearHistoryError();
         } catch (error) {
+            if (
+                opts?.suppressNotFound &&
+                error instanceof JournalApiError &&
+                error.status === 404 &&
+                error.code === "not_found"
+            ) {
+                this.history.set(conversationId, { initialized: true, hasMore: false });
+                this.clearHistoryError();
+                return;
+            }
             this.historyError = error instanceof Error ? error.message : "Could not load message history";
             this.patch({ connectionError: this.historyError });
         } finally {
@@ -1223,6 +1317,41 @@ export class MatronJournalClient {
         return this.setFlag(unreadStore, "unreadOverrideIds", id, false);
     }
 
+    private agentRpc(agentDeviceId: number, method: string, params: unknown): Promise<RpcReply> {
+        return (
+            this.connection?.agentRequest(agentDeviceId, method, params) ??
+            Promise.resolve({ ok: false, origin: "relay", code: "not_connected" })
+        );
+    }
+
+    private logRpcCreateDiag(event: "sync_watchdog_fire", conversationId: string): void {
+        console.warn("matron:rpc-create", { event, convo_id: conversationId });
+    }
+
+    private armRpcCreateWatchdog(conversationId: string): void {
+        this.clearRpcCreateWatchdog();
+        const gen = this.sessionGen;
+        this.rpcCreateWatchdogConvo = conversationId;
+        this.rpcCreateWatchdogGen = gen;
+        this.rpcCreateWatchdog = window.setTimeout(() => {
+            if (this.rpcCreateWatchdogConvo !== conversationId || this.rpcCreateWatchdogGen !== gen) return;
+            this.rpcCreateWatchdog = undefined;
+            this.rpcCreateWatchdogConvo = undefined;
+            this.rpcCreateWatchdogGen = undefined;
+            if (this.sessionGen !== gen || this.state.selectedConversationId !== conversationId) return;
+            this.logRpcCreateDiag("sync_watchdog_fire", conversationId);
+            this.patch({ connectionError: "Session created but not syncing yet — refresh to retry." });
+        }, RPC_CREATE_WATCHDOG_MS);
+    }
+
+    private clearRpcCreateWatchdog(conversationId?: string): void {
+        if (conversationId !== undefined && this.rpcCreateWatchdogConvo !== conversationId) return;
+        if (this.rpcCreateWatchdog !== undefined) window.clearTimeout(this.rpcCreateWatchdog);
+        this.rpcCreateWatchdog = undefined;
+        this.rpcCreateWatchdogConvo = undefined;
+        this.rpcCreateWatchdogGen = undefined;
+    }
+
     private async replaceSnapshot(): Promise<void> {
         if (!this.api || !this.database) return;
         const previousSelection = this.state.selectedConversationId;
@@ -1360,6 +1489,7 @@ export class MatronJournalClient {
     private async handleJournal(event: JournalEvent): Promise<void> {
         if (!this.database) return;
         const applied = await this.database.applyJournal(event);
+        this.clearRpcCreateWatchdog(event.convo_id);
         const removed = await this.database.reconcileOwnMessage(event);
         if (removed) {
             this.pendingFiles.delete(removed);
@@ -1647,6 +1777,7 @@ export class MatronJournalClient {
     }
 
     private resetTransientSyncState(): void {
+        this.clearRpcCreateWatchdog();
         for (const timer of this.readTimers.values()) window.clearTimeout(timer);
         if (this.ackTimer !== undefined) window.clearTimeout(this.ackTimer);
         this.readTimers.clear();
