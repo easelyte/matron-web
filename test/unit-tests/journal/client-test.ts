@@ -82,7 +82,11 @@ interface ClientInternals {
         snapshot?: () => Promise<{ seq: number; conversations: Conversation[] }>;
         uploadMedia?: (bytes: ArrayBuffer, contentType: string, signal?: AbortSignal) => Promise<{ media_id: string }>;
     };
-    connection?: { send: ReturnType<typeof jest.fn>; stop?: ReturnType<typeof jest.fn> };
+    connection?: {
+        send: ReturnType<typeof jest.fn>;
+        stop?: ReturnType<typeof jest.fn>;
+        agentRequest?: ReturnType<typeof jest.fn>;
+    };
     history: Map<string, { initialized: boolean; hasMore: boolean; oldestSeq?: number }>;
     activities: Map<string, unknown>;
     statuses: Map<string, unknown>;
@@ -184,6 +188,14 @@ function fileFixture(
     if (arrayBuffer.getMockImplementation() === undefined) arrayBuffer.mockResolvedValue(bytes.buffer);
     Object.defineProperty(file, "arrayBuffer", { value: arrayBuffer });
     return file;
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((resolvePromise) => {
+        resolve = resolvePromise;
+    });
+    return { promise, resolve };
 }
 
 describe("MatronJournalClient state handling", () => {
@@ -2722,5 +2734,238 @@ describe("session-controls flags", () => {
         unreadStore.write(SESSION, new Set(["c1"]));
         client.markConversationRead("c1");
         expect(unreadStore.read(SESSION).ids.has("c1")).toBe(false);
+    });
+});
+
+describe("session creation orchestration", () => {
+    afterEach(() => {
+        jest.restoreAllMocks();
+        jest.useRealTimers();
+    });
+
+    function withAgentReply(reply: unknown): MatronJournalClient {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.connection = {
+            send: jest.fn().mockReturnValue(true),
+            agentRequest: jest.fn().mockResolvedValue(reply),
+        };
+        return client;
+    }
+
+    it.each([
+        [
+            "relay not_connected",
+            { ok: false, origin: "relay", code: "not_connected" },
+            { kind: "error", message: "Still connecting — try again in a moment." },
+        ],
+        [
+            "relay not_ready",
+            { ok: false, origin: "relay", code: "not_ready" },
+            { kind: "error", message: "Still connecting — try again in a moment." },
+        ],
+        [
+            "other relay error",
+            { ok: false, origin: "relay", code: "rejected" },
+            { kind: "error", message: "Couldn't reach that box — try again." },
+        ],
+        [
+            "bad workdir",
+            { ok: false, origin: "agent", code: "bad_workdir" },
+            { kind: "error", message: "That folder doesn't exist on the box." },
+        ],
+        ["spawn failure", { ok: false, origin: "agent", code: "spawn_failed" }, { kind: "uncertain" }],
+        ["unsupported mode", { ok: false, origin: "agent", code: "unsupported_mode" }, { kind: "uncertain" }],
+        ["timeout", { ok: false, origin: "timeout", code: "timeout" }, { kind: "uncertain" }],
+        ["teardown", { ok: false, origin: "teardown", code: "teardown" }, { kind: "uncertain" }],
+        ["missing convo id", { ok: true, origin: "agent", result: {} }, { kind: "uncertain" }],
+        ["empty convo id", { ok: true, origin: "agent", result: { convo_id: "" } }, { kind: "uncertain" }],
+        [
+            "created",
+            { ok: true, origin: "agent", result: { convo_id: "new-convo" } },
+            { kind: "created", convoId: "new-convo" },
+        ],
+    ])("maps %s to the specified StartOutcome", async (_label, reply, expected) => {
+        const client = withAgentReply(reply);
+
+        await expect(client.startSessionRpc(9, " /srv/project ", true)).resolves.toEqual(expected);
+        expect(internals(client).connection?.agentRequest).toHaveBeenCalledWith(9, "start", {
+            workdir: "/srv/project",
+            browser: true,
+        });
+    });
+
+    it.each([
+        { folders: null },
+        { folders: [{ path: "", last_used: null }] },
+        { folders: [{ path: "/ok", last_used: "yesterday" }] },
+    ])("returns an empty recent-folder list for malformed result %#", async (result) => {
+        const client = withAgentReply({ ok: true, origin: "agent", result });
+
+        await expect(client.recentFolders(9)).resolves.toEqual([]);
+    });
+
+    it("drops malformed folder items while retaining valid ones", async () => {
+        const client = withAgentReply({
+            ok: true,
+            origin: "agent",
+            result: {
+                folders: [
+                    { path: "/valid", last_used: null },
+                    { path: 42, last_used: 1 },
+                ],
+            },
+        });
+
+        await expect(client.recentFolders(9)).resolves.toEqual([{ path: "/valid", last_used: null }]);
+    });
+
+    it("returns typed not-connected fallbacks while the connection is absent", async () => {
+        const client = new MatronJournalClient();
+        internals(client).state = signedInState(client);
+
+        await expect(client.recentFolders(9)).resolves.toEqual([]);
+        await expect(client.startSessionRpc(9, "", false)).resolves.toEqual({
+            kind: "error",
+            message: "Still connecting — try again in a moment.",
+        });
+    });
+
+    function watchdogClient(
+        database: FakeDatabase = fakeDatabase(),
+        messages: () => Promise<{ events: [] }> = jest.fn().mockResolvedValue({ events: [] }),
+    ): { client: MatronJournalClient; state: ClientInternals } {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages };
+        state.connection = { send: jest.fn().mockReturnValue(true), stop: jest.fn() };
+        return { client, state };
+    }
+
+    it("suppresses a new-conversation 404 but fires the watchdog for the still-selected unsynced convo", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const messages = jest.fn().mockRejectedValue(new JournalApiError("missing", 404, "not_found"));
+        const { client } = watchdogClient(fakeDatabase(), messages);
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+        jest.advanceTimersByTime(10_000);
+
+        expect(client.getSnapshot().connectionError).toBe("Session created but not syncing yet — refresh to retry.");
+    });
+
+    it("does not fire after a matching journal frame syncs the created conversation", async () => {
+        jest.useFakeTimers();
+        const { client, state } = watchdogClient();
+        await client.selectConversation("created", { fromRpcCreate: true });
+
+        await state.handleJournal({
+            seq: 11,
+            convo_id: "created",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+        jest.advanceTimersByTime(10_000);
+
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+    });
+
+    it("arms before selectConversation awaits so an early journal frame cancels the watchdog", async () => {
+        jest.useFakeTimers();
+        const events = deferred<[]>();
+        const database = fakeDatabase({ events: jest.fn().mockReturnValue(events.promise) });
+        const { client, state } = watchdogClient(database);
+
+        const selecting = client.selectConversation("created", { fromRpcCreate: true });
+        const syncing = state.handleJournal({
+            seq: 12,
+            convo_id: "created",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        jest.advanceTimersByTime(10_000);
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+
+        events.resolve([]);
+        await Promise.all([selecting, syncing]);
+    });
+
+    it("retains watchdog protection across navigate-away and ordinary reselect", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        await client.selectConversation("c2");
+        await client.selectConversation("created");
+        jest.advanceTimersByTime(10_000);
+
+        expect(client.getSnapshot().connectionError).toBe("Session created but not syncing yet — refresh to retry.");
+    });
+
+    it("suppresses the watchdog notice when another conversation is selected at expiry", async () => {
+        jest.useFakeTimers();
+        const { client } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        await client.selectConversation("c2");
+        jest.advanceTimersByTime(10_000);
+
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+    });
+
+    it("clears the watchdog on logout and snapshot replacement", async () => {
+        jest.useFakeTimers();
+        const first = watchdogClient();
+        await first.client.selectConversation("created", { fromRpcCreate: true });
+        await first.client.logout();
+        jest.advanceTimersByTime(10_000);
+        expect(first.client.getSnapshot().connectionError).toBeUndefined();
+
+        const second = watchdogClient();
+        second.state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            snapshot: jest.fn().mockResolvedValue({ seq: 30, conversations: CONVERSATIONS }),
+        };
+        await second.client.selectConversation("created", { fromRpcCreate: true });
+        await second.state.replaceSnapshot();
+        jest.advanceTimersByTime(10_000);
+        expect(second.client.getSnapshot().connectionError).toBeUndefined();
+    });
+
+    it("a second RPC create replaces the first watchdog without leaking it", async () => {
+        jest.useFakeTimers();
+        const { client } = watchdogClient();
+
+        await client.selectConversation("created-1", { fromRpcCreate: true });
+        await client.selectConversation("created-2", { fromRpcCreate: true });
+        await client.selectConversation("created-1");
+        jest.advanceTimersByTime(10_000);
+
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+    });
+
+    it("ordinary reselect does not wipe another conversation's in-flight streaming state", async () => {
+        const { client, state } = watchdogClient();
+        const activity = { state: "thinking" as const };
+        state.activities.set("c2", activity);
+        state.textStreams.set("c2", { ref: "partial" });
+        state.toolStreams.set("c2", { ref: { content: "partial" } });
+
+        await client.selectConversation("c1");
+
+        expect(state.activities.get("c2")).toBe(activity);
+        expect(state.textStreams.get("c2")).toEqual({ ref: "partial" });
+        expect(state.toolStreams.get("c2")).toEqual({ ref: { content: "partial" } });
     });
 });
