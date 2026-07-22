@@ -40,7 +40,17 @@ import {
     UnarchiveIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
-import type { BotCommand } from "./slash-palette";
+import {
+    applyCommand,
+    applyFolder,
+    type BotCommand,
+    CLAUDE_BRIDGE_COMMANDS,
+    filterCommands,
+    folderSuggestions,
+    isCommandMode,
+    makeRecentFoldersStore,
+    recentFolderArgument,
+} from "./slash-palette";
 import { compactTokens, resetDisplay, usageBarLabel, usageLevel } from "./status";
 import {
     asNumber,
@@ -1967,11 +1977,33 @@ function SlashCommandPalette({
 
 function Composer({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const [body, setBody] = useState("");
+    const [highlighted, setHighlighted] = useState<number | null>(null);
+    const [dismissed, setDismissed] = useState<string | null>(null);
+    const store = useMemo(() => makeRecentFoldersStore(state.session), [state.session]);
     const textarea = useRef<HTMLTextAreaElement>(null);
     const fileInput = useRef<HTMLInputElement>(null);
+    const folders = folderSuggestions(body, store);
+    const commands = filterCommands(CLAUDE_BRIDGE_COMMANDS, body);
+    const open = body !== dismissed && (folders.length > 0 || (isCommandMode(body) && commands.length > 0));
+
+    const selectCommand = (command: BotCommand): void => {
+        setBody(applyCommand(command.trigger));
+        setHighlighted(null);
+        textarea.current?.focus();
+    };
+    const selectFolder = (path: string): void => {
+        const nextBody = applyFolder(body, path);
+        setBody(nextBody);
+        setDismissed(nextBody);
+        setHighlighted(null);
+        textarea.current?.focus();
+    };
     const send = async (): Promise<void> => {
         if (await client.sendMessage(body)) {
+            const folder = recentFolderArgument(body);
+            if (folder) store.record(folder);
             setBody("");
+            setDismissed(null);
             if (textarea.current) textarea.current.style.height = "auto";
         }
     };
@@ -1983,6 +2015,16 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
                         {state.connectionError}
                     </div>
                 )}
+                {open && (
+                    <SlashCommandPalette
+                        commands={commands}
+                        folders={folders}
+                        highlighted={highlighted}
+                        onHighlight={setHighlighted}
+                        onSelectCommand={selectCommand}
+                        onSelectFolder={selectFolder}
+                    />
+                )}
                 <div className="mx_MessageComposer_row">
                     <div className="mx_SendMessageComposer" onClick={() => textarea.current?.focus()}>
                         <div className="mx_BasicMessageComposer">
@@ -1992,11 +2034,49 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
                                 rows={1}
                                 value={body}
                                 onChange={(event) => {
-                                    setBody(event.target.value);
+                                    const nextBody = event.target.value;
+                                    setBody(nextBody);
+                                    setHighlighted(null);
+                                    if (dismissed !== null && nextBody !== dismissed) setDismissed(null);
                                     event.target.style.height = "auto";
                                     event.target.style.height = `${Math.min(event.target.scrollHeight, 160)}px`;
                                 }}
                                 onKeyDown={(event) => {
+                                    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                                    if (open) {
+                                        const count = folders.length || commands.length;
+                                        if (event.key === "ArrowDown") {
+                                            event.preventDefault();
+                                            setHighlighted((current) => (current === null ? 0 : (current + 1) % count));
+                                            return;
+                                        }
+                                        if (event.key === "ArrowUp") {
+                                            event.preventDefault();
+                                            setHighlighted((current) =>
+                                                current === null ? count - 1 : (current - 1 + count) % count,
+                                            );
+                                            return;
+                                        }
+                                        if (event.key === "Tab") {
+                                            event.preventDefault();
+                                            const index = highlighted ?? 0;
+                                            if (folders.length > 0) selectFolder(folders[index]);
+                                            else selectCommand(commands[index]);
+                                            return;
+                                        }
+                                        if (event.key === "Escape") {
+                                            event.preventDefault();
+                                            setDismissed(body);
+                                            setHighlighted(null);
+                                            return;
+                                        }
+                                        if (event.key === "Enter" && !event.shiftKey && highlighted !== null) {
+                                            event.preventDefault();
+                                            if (folders.length > 0) selectFolder(folders[highlighted]);
+                                            else selectCommand(commands[highlighted]);
+                                            return;
+                                        }
+                                    }
                                     if (event.key === "Enter" && !event.shiftKey) {
                                         event.preventDefault();
                                         void send();
@@ -2016,6 +2096,10 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
                                         : "Messages will send when reconnected"
                                 }
                                 aria-label="Message your agent"
+                                role="combobox"
+                                aria-expanded={open}
+                                aria-controls={SLASH_LISTBOX_ID}
+                                aria-activedescendant={highlighted !== null ? slashRowId(highlighted) : undefined}
                             />
                         </div>
                     </div>
