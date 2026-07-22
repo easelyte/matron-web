@@ -6,6 +6,8 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    type DeviceDTO,
+    type DevicesResponse,
     endpointUrl,
     type LoginResponse,
     type MatronConfig,
@@ -49,6 +51,32 @@ export class JournalApiError extends Error {
 
 function electronBridge(): JournalElectron | undefined {
     return (window as Window & { electron?: JournalElectron }).electron;
+}
+
+function parseDevice(raw: unknown): DeviceDTO | undefined {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+
+    const device = raw as Record<string, unknown>;
+    if (
+        typeof device.device_id !== "number" ||
+        !Number.isFinite(device.device_id) ||
+        typeof device.kind !== "string" ||
+        typeof device.connected !== "boolean" ||
+        (device.name !== undefined && typeof device.name !== "string") ||
+        (device.last_seen_at !== undefined && typeof device.last_seen_at !== "number") ||
+        typeof device.is_self !== "boolean"
+    ) {
+        return undefined;
+    }
+
+    return {
+        device_id: device.device_id,
+        kind: device.kind,
+        name: device.name,
+        last_seen_at: device.last_seen_at,
+        connected: device.connected,
+        is_self: device.is_self,
+    } as DeviceDTO;
 }
 
 export async function loadMatronConfig(): Promise<MatronConfig> {
@@ -110,6 +138,40 @@ export class JournalApi {
 
     public snapshot(): Promise<SnapshotResponse> {
         return this.json<SnapshotResponse>("/snapshot");
+    }
+
+    public async devices(): Promise<DevicesResponse> {
+        const devicesCall = this.json<unknown>("/devices");
+        // The request may outlive the transport-agnostic timeout (notably in Electron).
+        void devicesCall.catch(() => undefined);
+
+        let timeoutTimer: ReturnType<typeof setTimeout>;
+        const timeoutReject = new Promise<never>((_resolve, reject) => {
+            timeoutTimer = setTimeout(() => reject(new JournalApiError("timeout", 0)), 10_000);
+        });
+
+        let raw: unknown;
+        try {
+            raw = await Promise.race([devicesCall, timeoutReject]);
+        } finally {
+            clearTimeout(timeoutTimer!);
+        }
+
+        if (typeof raw !== "object" || raw === null || Array.isArray(raw) || !("devices" in raw)) {
+            throw new JournalApiError("The journal server returned a malformed devices response.", 200);
+        }
+
+        const rawDevices = (raw as { devices?: unknown }).devices;
+        if (!Array.isArray(rawDevices)) {
+            throw new JournalApiError("The journal server returned a malformed devices response.", 200);
+        }
+
+        const devices = rawDevices.map(parseDevice).filter((device): device is DeviceDTO => device !== undefined);
+        if (rawDevices.length > 0 && devices.length === 0) {
+            throw new JournalApiError("The journal server returned a malformed devices response.", 200);
+        }
+
+        return { devices };
     }
 
     public messages(conversationId: string, beforeSeq?: number, limit = 80): Promise<MessagesResponse> {
