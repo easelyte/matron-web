@@ -1144,6 +1144,10 @@ export class MatronJournalClient {
             unreadOverrideIds,
             selectedConversationId: selectedConversation?.id,
         });
+        // A snapshot can be the first place THIS tab observes a convo's parent link (→ read-only child).
+        // Mirror the journal-event path and abort any in-flight upload to a now-child convo so it can't
+        // egress to a read-only transcript (ship-review major 2). Guarded to skip work when idle.
+        if (this.uploadConvos.size > 0) this.abortUploadsForChildConvos();
         if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
         else if (this.state.session) storeSelectedConversation(this.state.session, undefined);
     }

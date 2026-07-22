@@ -436,6 +436,41 @@ describe("MatronJournalClient state handling", () => {
         });
     });
 
+    it("aborts an in-flight upload when a required snapshot first reveals its convo is a child", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        // The snapshot is the first place this tab observes sub-1's parent link (→ read-only child).
+        const rows: Conversation[] = [
+            ...CONVERSATIONS,
+            {
+                id: "sub-1",
+                title: "Sub",
+                session_state: "running",
+                last_seq: 4,
+                unread_count: 0,
+                snippet: "",
+                created_at: 3,
+                parent_convo_id: "c1",
+                read_up_to_seq: 0,
+            },
+        ];
+        const snapshot = { seq: 30, conversations: rows };
+        const database = fakeDatabase({ conversations: jest.fn().mockResolvedValue(rows) });
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            snapshot: jest.fn().mockResolvedValue(snapshot),
+        };
+        const controller = new AbortController();
+        state.inFlightUploads.set("local-1", controller);
+        state.uploadConvos.set("local-1", "sub-1");
+
+        await state.replaceSnapshot();
+
+        expect(controller.signal.aborted).toBe(true);
+    });
+
     it("applies every field from a combined ephemeral frame", () => {
         const client = new MatronJournalClient();
         const state = internals(client);

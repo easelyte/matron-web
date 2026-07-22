@@ -111,22 +111,16 @@ export class JournalDatabase {
         if (!snapshot || !Array.isArray(snapshot.conversations)) throw new Error("malformed snapshot");
         const summaries = snapshot.conversations;
         for (const summary of summaries) {
-            // Validate id AND last_seq up front. last_seq is the freshness authority for the
-            // session_state merge below; a malformed value (null/NaN/non-number) must reject the
-            // whole snapshot atomically (throw → BACKFILL_KEY stays unset → retried next startup),
-            // exactly like a malformed id. Guarding only at-use would skip the session_state update
-            // yet still seal the completion key, permanently sealing a stale state with no retry
-            // (execute-slim phase-1 review — P3 Fail Visible / V6 Classify Errors).
-            if (
-                !summary ||
-                typeof summary.id !== "string" ||
-                typeof summary.last_seq !== "number" ||
-                !Number.isFinite(summary.last_seq)
-            ) {
-                throw new Error("malformed snapshot element");
-            }
+            if (!summary || typeof summary.id !== "string") throw new Error("malformed snapshot element");
         }
 
+        // A malformed freshness field (null/NaN/non-number last_seq) makes the session_state merge
+        // for THAT row unassessable. We must NOT reject the whole snapshot (that would block valid
+        // parent-link repair for every other row — ship-review major 1; the "parent-link backfill
+        // unchanged" contract). Instead: repair parent links for all rows, skip only the unassessable
+        // session_state write, and DEFER sealing the completion key so the reconcile retries rather
+        // than sealing a possibly-stale state (phase-1 review — P3 Fail Visible / V6 Classify Errors).
+        let deferredForMalformedFreshness = false;
         const transaction = this.database.transaction(["conversations", "meta"], "readwrite");
         try {
             const conversations = transaction.objectStore("conversations");
@@ -138,14 +132,19 @@ export class JournalDatabase {
                 let link = coerceParentId(existing.parent_convo_id) ?? coerceParentId(summary.parent_convo_id);
                 if (link === summary.id) link = null;
                 existing.parent_convo_id = link;
-                // Preserve a locally-newer session_state (cross-tab shared-IndexedDB stale-snapshot
-                // guard). last_seq finiteness is guaranteed by the pre-transaction validation above.
-                if (typeof summary.session_state === "string" && summary.last_seq >= existing.last_seq) {
-                    existing.session_state = summary.session_state;
+                if (typeof summary.session_state === "string") {
+                    if (typeof summary.last_seq === "number" && Number.isFinite(summary.last_seq)) {
+                        // Preserve a locally-newer session_state (cross-tab shared-IndexedDB stale-snapshot guard).
+                        if (summary.last_seq >= existing.last_seq) existing.session_state = summary.session_state;
+                    } else {
+                        deferredForMalformedFreshness = true; // skip this row's state; defer sealing below.
+                    }
                 }
                 conversations.put(existing);
             }
-            transaction.objectStore("meta").put(true, BACKFILL_KEY);
+            // Seal completion only on a fully-assessable run. If any row had a malformed freshness field,
+            // leave BACKFILL_KEY unset so startup retries (the parent-link puts already committed are idempotent).
+            if (!deferredForMalformedFreshness) transaction.objectStore("meta").put(true, BACKFILL_KEY);
             await transactionDone(transaction);
         } catch (error) {
             try {
@@ -154,6 +153,10 @@ export class JournalDatabase {
                 // The transaction is already aborting or complete.
             }
             throw error;
+        }
+        if (deferredForMalformedFreshness) {
+            // Durable evidence of the degraded reconcile (P3 Fail Visible); the unset key drives the retry.
+            await this.recordBackfillError("malformed last_seq in snapshot — session_state merge deferred for retry");
         }
     }
 

@@ -324,40 +324,45 @@ Run the file → green.
 
 **Files:** none (deploy).
 
-**Deploy runbook (atomic, per `CLAUDE.local.md` journal-web runbook — NOT the Matrix-era Docker path in the `matron-web-deploy` memory). Fail-closed (`set -euo pipefail`), absolute paths, executable timestamp, and an EXACT `HEAD == MERGED_SHA` gate — a path-history `git log` alone does NOT prove HEAD advanced (Codex round-2 B1/B2):**
+**Deploy runbook — build-to-STAGING + atomic swap (ship-review B1/B2).** The live serving dir is `/opt/matron/web-journal/webapp` (nginx :8443). `pnpm build` = `rimraf webapp && webpack`, so building **in-place** deletes the live bundle before rebuilding — a failed/killed/OOM build strands `:8443` serving nothing, and the `rimraf` is a destructive mutation of live state. Both are avoided by building in a **staging clone** and touching the live dir only via a **reversible rename**:
 ```bash
 set -euo pipefail
 WEB=/opt/matron/web-journal
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
-MERGED_SHA="<the SHA recorded in T-4.2>"   # exact commit that ship-slim merged to origin/main
-# 1. PULL THE MERGED FIX INTO THE LIVE CHECKOUT FIRST (Claude M1 / Codex B1 — the live checkout
-#    sits on pre-fix main until this runs; skipping it silently deploys stale code). Fail-closed:
+MERGED_SHA="<the SHA recorded in T-4.2>"   # exact commit ship-slim merged to origin/main
+STAGE="$(mktemp -d /tmp/mw-build.XXXXXX)"
+cleanup() { rm -rf "$STAGE"; }; trap cleanup EXIT
+# 1. Update the live checkout's SOURCE to the merged SHA (does NOT touch webapp/ — webpack output).
 git -C "$WEB" fetch origin
 git -C "$WEB" checkout main
 git -C "$WEB" pull --ff-only origin main
-# 2. EXACT gate: HEAD must equal the merged SHA (not merely "some history touches these files"):
 test "$(git -C "$WEB" rev-parse HEAD)" = "$MERGED_SHA" \
-  || { echo "live checkout HEAD != merged SHA — refuse to build stale"; exit 1; }
-# 3. Atomic backup of the current live bundle (validated), then build in place:
-test -d "$WEB/webapp" && cp -a "$WEB/webapp" "$WEB/webapp.bak.$TS"
-test -d "$WEB/webapp.bak.$TS" || { echo "backup missing — abort before build"; exit 1; }
-corepack pnpm -C "$WEB" build   # = rimraf webapp && webpack --mode production
-# 4. Verify :8443 serves the new bundle (curl + operator smoke).
-# RESTORE-ON-FAILURE (only if build/verify fails): validate the backup exists, then swap by RENAME
-#   (mv the stale build aside, not rm -rf the live dir blind):
-#   test -d "$WEB/webapp.bak.$TS" && mv "$WEB/webapp" "$WEB/webapp.failed.$TS" && mv "$WEB/webapp.bak.$TS" "$WEB/webapp"
+  || { echo "live checkout HEAD != merged SHA — refuse to deploy stale"; exit 1; }
+# 2. Build in a STAGING clone (its own webapp/ is what rimraf+webpack rebuild — live is untouched):
+git clone --shared "$WEB" "$STAGE"
+git -C "$STAGE" checkout "$MERGED_SHA"
+corepack pnpm -C "$STAGE" install --prefer-offline
+corepack pnpm -C "$STAGE" build
+test -f "$STAGE/webapp/index.html" || { echo "staged build invalid — live untouched"; exit 1; }
+# 3. ATOMIC SWAP — live dir mutated only by reversible renames (no rimraf on live):
+test -d "$WEB/webapp" && mv "$WEB/webapp" "$WEB/webapp.old.$TS"
+mv "$STAGE/webapp" "$WEB/webapp"
+# 4. Verify :8443. ROLLBACK on failed verify (reversible, backup validated first):
+#   test -d "$WEB/webapp.old.$TS" && mv "$WEB/webapp" "$WEB/webapp.failed.$TS" && mv "$WEB/webapp.old.$TS" "$WEB/webapp"
+# 5. On success, retain webapp.old.$TS until operator-confirmed, then prune.
 ```
 
-> **R102 disposition (Codex re-flagged rounds 1 + 2 — recorded override, not a silent skip).** R102 (no destructive command without a confirmation token) is a son-of-anton `RULES.md` BLOCK rule governing the **autonomous Codex agent runtime**; `RULES.md` does not exist in `matron-web`, and these Phase 4 steps are **operator-in-the-loop coordinator actions** run in this Matron bridge session (the operator sees each step), NOT autonomous-cron commands. The matron-web-appropriate safety equivalent is applied instead of the token ceremony: fail-closed chaining, an exact SHA gate before the only bundle-destroying step (`rimraf webapp`), a validated backup before that step, a reversible rename (not `rm -rf`) on rollback, and (T-4.4) a merge-gated non-`--force` `git worktree remove`. Adding the autonomous-runtime token flow to an operator-run fork deploy would be ceremony without a matching threat model. Per `procedure_codex_review_re_flags_operator_accepted_limitations`: override with documented rationale, do not loop further.
+> **R102 disposition (Codex re-flagged plan-review rounds 1+2 + ship — now resolved substantively, not overridden).** The build-to-staging redesign removes the destructive operation R102 targets: there is **no `rimraf`/`rm -rf` on the live serving dir** — `rimraf webapp` runs inside the throwaway `$STAGE` clone, and the live dir is mutated only by reversible `mv` renames with a validated backup. A failed build never touches live (it aborts before step 3). This is the matron-web-appropriate safety property R102 exists to guarantee (no unrecoverable destruction of live/system state), achieved by design rather than by an autonomous-runtime confirmation-token ceremony (which governs the son-of-anton Codex cron runtime, not an operator-in-the-loop fork deploy). T-4.4's `git worktree remove` is likewise merge-gated + non-`--force` (refuses on unmerged/dirty).
 
 **Acceptance:**
-- The live checkout's HEAD **exactly equals** `MERGED_SHA` (step-2 gate passes) **before** the build runs.
-- Live `https://vmi3096107.taild3d6c4.ts.net:8443` serves the rebuilt bundle.
-- Smoke: the three touched paths don't visibly regress (subchat list renders, uploads to top-level convos still work, reconnect replay shows the read-only notice). NOTE: the three races are timing-dependent and won't be *proven* by manual smoke — smoke only confirms no gross regression; the unit tests (Phases 1-3) are the correctness evidence.
-- Restore path validates the backup exists and uses rename (not blind `rm -rf`); backup `webapp.bak.<ts>` retained until operator-confirmed, then pruned.
+- The live checkout's HEAD **exactly equals** `MERGED_SHA` before the staged build.
+- The build runs in `$STAGE`; the live `webapp/` is deleted at **no** point — only renamed. A failed staged build leaves `:8443` serving the prior bundle.
+- Live `https://vmi3096107.taild3d6c4.ts.net:8443` serves the swapped-in bundle after the atomic rename.
+- Smoke: the three touched paths don't visibly regress (subchat list renders, uploads to top-level convos still work, reconnect replay shows the read-only notice). NOTE: the three races are timing-dependent and won't be *proven* by manual smoke — the unit tests (Phases 1-3) are the correctness evidence.
+- `webapp.old.<ts>` retained until operator-confirmed, then pruned.
 
-- [ ] Pull merged main into the live checkout; confirm fix commits present.
-- [ ] Backup (validated) → build → verify :8443 → smoke-test.
+- [ ] Update live checkout source to `MERGED_SHA`; build in `$STAGE`; validate the staged bundle.
+- [ ] Atomic-swap live `webapp/`; verify :8443; smoke-test; retain the old bundle until confirmed.
 
 ### T-4.4: close loop + follow-up notes
 
@@ -382,7 +387,9 @@ corepack pnpm -C "$WEB" build   # = rimraf webapp && webpack --mode production
 - **Map lifecycle** — R3's two maps kept in lockstep at every set/delete/clear site (explicit in T-3.1 Step 3) to avoid orphaned entries / leaks. ✓
 - **No metered AI / no new deps** — none added. ✓
 - **Ship ordering explicit** (Codex B1 / Claude M1) — T-4.2 ships/merges to fork-main via ship-slim; T-4.3 pulls the merged SHA into the live checkout before building + verifies the SHA touches both files; deploy/close never run against the worktree branch or pre-fix main. ✓
-- **Destructive steps target-validated** (Codex B3) — deploy restore validates the backup exists and uses rename not blind `rm -rf`; worktree teardown is merge-gated `git worktree remove` (refuses dirty), never `rm -rf`. (R102's confirmation-token ceremony is a son-of-anton BLOCK rule that does not exist in matron-web; adopted the substantive hardening, not the token flow.) ✓
+- **Deploy is non-destructive to live** (ship-review B1/B2) — T-4.3 builds in a throwaway staging clone (`rimraf webapp` runs there, not on live) and swaps the live dir only via reversible `mv` renames with a validated backup; a failed staged build never touches `:8443`. Worktree teardown is merge-gated `git worktree remove` (refuses dirty), never `rm -rf`. R102's destruction concern is resolved by design (no live `rimraf`), not by an autonomous-runtime token ceremony. ✓
+- **Malformed-freshness handling** (ship-review major 1) — a non-finite `last_seq` no longer rejects the whole snapshot (which would block valid parent-link repair); parent links repair for all rows, only the unassessable `session_state` write is skipped, sealing is deferred (retry) + recorded (fail-visible). ✓
+- **Abort covers all convo→child observation paths** (phase-3 blocker + ship-review major 2) — `abortUploadsForChildConvos()` runs on the applied journal frame, the duplicate/`!applied` `convo_meta` frame (cross-tab), AND the snapshot-install path; all guarded on `uploadConvos.size`. ✓
 - **last_seq guarded at runtime** (Codex R1-M1) — R1 uses `typeof/Number.isFinite` before the `>=` comparison so a malformed `null`/`NaN` can't clobber via coercion; guarded at-use (not in the pre-tx validation loop) so a bad `last_seq` still doesn't drop a valid parent link. ✓
 - **Deliberate exceptions:**
   - R2 ordering can't be asserted directly in jsdom; the test asserts both effects (notice + deletion) rather than sequence — accepted, the reorder is the fix and both-effects guards regression. T-2.1 is a regression guard, not red-green (state-neutral reorder).

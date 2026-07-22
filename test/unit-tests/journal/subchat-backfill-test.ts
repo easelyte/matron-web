@@ -232,35 +232,31 @@ describe("subchat existing-client backfill", () => {
     it.each([
         ["null", null],
         ["NaN", Number.NaN],
-    ])(
-        "rejects a malformed %s last_seq atomically and leaves the backfill unsealed for retry",
-        async (_label, lastSeq) => {
-            const database = await seedExistingClient({ last_seq: 10, session_state: "done", parent_convo_id: null });
+    ])("backfills the parent link but defers sealing on a malformed %s last_seq", async (_label, lastSeq) => {
+        const database = await seedExistingClient({ last_seq: 10, session_state: "done", parent_convo_id: null });
 
-            // A non-finite last_seq is treated as a malformed snapshot element: the whole backfill
-            // rejects before any write, so the existing row is untouched and BACKFILL_KEY stays unset
-            // (the reconcile retries next startup, rather than silently sealing a stale state).
-            await expect(
-                database.backfillParentLinks({
-                    seq: 11,
-                    conversations: [
-                        conversation("c1", {
-                            last_seq: lastSeq as unknown as number,
-                            session_state: "running",
-                            parent_convo_id: "p1",
-                        }),
-                    ],
+        // A non-finite last_seq makes the session_state merge unassessable for that row: the parent
+        // link is STILL repaired (one bad freshness field must not block valid link repair), the
+        // session_state is left untouched, and BACKFILL_KEY stays unset so the reconcile retries
+        // (rather than sealing a possibly-stale state). No throw.
+        await database.backfillParentLinks({
+            seq: 11,
+            conversations: [
+                conversation("c1", {
+                    last_seq: lastSeq as unknown as number,
+                    session_state: "running",
+                    parent_convo_id: "p1",
                 }),
-            ).rejects.toThrow("malformed snapshot element");
+            ],
+        });
 
-            expect((await database.conversations())[0]).toMatchObject({
-                parent_convo_id: null,
-                session_state: "done",
-            });
-            expect(await database.backfillDone()).toBe(false);
-            database.close();
-        },
-    );
+        expect((await database.conversations())[0]).toMatchObject({
+            parent_convo_id: "p1", // link repaired despite the malformed freshness field
+            session_state: "done", // unassessable freshness → local state preserved
+        });
+        expect(await database.backfillDone()).toBe(false); // deferred for retry
+        database.close();
+    });
 
     it("rejects a self-parent link during backfill (stores null, stays top-level)", async () => {
         const database = await seedExistingClient({ parent_convo_id: null });
