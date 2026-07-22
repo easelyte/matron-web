@@ -142,13 +142,41 @@ describe("JournalApi devices", () => {
     });
 
     it("rejects a browser request that exceeds the transport-agnostic timeout", async () => {
-        fetchMock.mockReturnValue(new Promise(() => undefined));
+        let requestSignal: AbortSignal | undefined;
+        fetchMock.mockImplementation(
+            (_url: string, init: RequestInit) =>
+                new Promise((_resolve, reject) => {
+                    requestSignal = init.signal ?? undefined;
+                    init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+                        once: true,
+                    });
+                }),
+        );
         const api = new JournalApi("https://journal.example", "token");
 
         const devices = api.devices();
         jest.advanceTimersByTime(10_000);
 
         await expect(devices).rejects.toMatchObject({ message: "timeout", status: 0 });
+        expect(requestSignal?.aborted).toBe(true);
+    });
+
+    it("shares a browser devices request between concurrent callers", async () => {
+        let resolveRequest!: (response: ReturnType<typeof jsonResponse>) => void;
+        fetchMock.mockReturnValue(
+            new Promise((resolve) => {
+                resolveRequest = resolve;
+            }),
+        );
+        const api = new JournalApi("https://journal.example", "token");
+
+        const first = api.devices();
+        const second = api.devices();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        resolveRequest(jsonResponse({ devices: [] }));
+
+        await expect(first).resolves.toEqual({ devices: [] });
+        await expect(second).resolves.toEqual({ devices: [] });
     });
 
     it("times out an Electron request and handles a late rejection from the losing branch", async () => {
@@ -169,8 +197,11 @@ describe("JournalApi devices", () => {
         jest.advanceTimersByTime(10_000);
         await expect(devices).rejects.toMatchObject({ message: "timeout", status: 0 });
 
+        const retry = api.devices();
+        expect(journalRequest).toHaveBeenCalledTimes(1);
+
         rejectRequest(new Error("late desktop failure"));
-        await Promise.resolve();
+        await expect(retry).rejects.toThrow("late desktop failure");
         expect(journalRequest).toHaveBeenCalledTimes(1);
     });
 
@@ -191,6 +222,7 @@ describe("JournalApi devices", () => {
             }),
         );
         const api = new JournalApi("https://journal.example", "token");
+        const warning = jest.spyOn(console, "warn").mockImplementation(() => undefined);
 
         await expect(api.devices()).resolves.toEqual({
             devices: [
@@ -203,6 +235,11 @@ describe("JournalApi devices", () => {
                     is_self: false,
                 },
             ],
+        });
+        expect(warning).toHaveBeenCalledWith("matron:devices", {
+            event: "partial_roster",
+            rejected_count: 1,
+            reasons: [["invalid_device_id"]],
         });
     });
 

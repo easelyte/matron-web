@@ -53,30 +53,34 @@ function electronBridge(): JournalElectron | undefined {
     return (window as Window & { electron?: JournalElectron }).electron;
 }
 
-function parseDevice(raw: unknown): DeviceDTO | undefined {
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+type DeviceParseResult = { device: DeviceDTO; reasons: [] } | { reasons: string[] };
+
+function parseDevice(raw: unknown): DeviceParseResult {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { reasons: ["not_object"] };
 
     const device = raw as Record<string, unknown>;
-    if (
-        typeof device.device_id !== "number" ||
-        !Number.isFinite(device.device_id) ||
-        typeof device.kind !== "string" ||
-        typeof device.connected !== "boolean" ||
-        (device.name !== undefined && typeof device.name !== "string") ||
-        (device.last_seen_at !== undefined && typeof device.last_seen_at !== "number") ||
-        typeof device.is_self !== "boolean"
-    ) {
-        return undefined;
+    const reasons: string[] = [];
+    if (typeof device.device_id !== "number" || !Number.isFinite(device.device_id)) reasons.push("invalid_device_id");
+    if (typeof device.kind !== "string") reasons.push("invalid_kind");
+    if (typeof device.connected !== "boolean") reasons.push("invalid_connected");
+    if (device.name !== undefined && typeof device.name !== "string") reasons.push("invalid_name");
+    if (device.last_seen_at !== undefined && typeof device.last_seen_at !== "number") {
+        reasons.push("invalid_last_seen_at");
     }
+    if (typeof device.is_self !== "boolean") reasons.push("invalid_is_self");
+    if (reasons.length > 0) return { reasons };
 
     return {
-        device_id: device.device_id,
-        kind: device.kind,
-        name: device.name,
-        last_seen_at: device.last_seen_at,
-        connected: device.connected,
-        is_self: device.is_self,
-    } as DeviceDTO;
+        device: {
+            device_id: device.device_id,
+            kind: device.kind,
+            name: device.name,
+            last_seen_at: device.last_seen_at,
+            connected: device.connected,
+            is_self: device.is_self,
+        } as DeviceDTO,
+        reasons: [],
+    };
 }
 
 export async function loadMatronConfig(): Promise<MatronConfig> {
@@ -119,6 +123,8 @@ function messageForCode(code: string | undefined, status: number): string {
 }
 
 export class JournalApi {
+    private devicesRequest?: { promise: Promise<unknown>; controller: AbortController };
+
     public constructor(
         public readonly serverUrl: string,
         private token?: string,
@@ -141,13 +147,17 @@ export class JournalApi {
     }
 
     public async devices(): Promise<DevicesResponse> {
-        const devicesCall = this.json<unknown>("/devices");
+        const request = this.devicesRequest ?? this.startDevicesRequest();
+        const devicesCall = request.promise;
         // The request may outlive the transport-agnostic timeout (notably in Electron).
         void devicesCall.catch(() => undefined);
 
         let timeoutTimer: ReturnType<typeof setTimeout>;
         const timeoutReject = new Promise<never>((_resolve, reject) => {
-            timeoutTimer = setTimeout(() => reject(new JournalApiError("timeout", 0)), 10_000);
+            timeoutTimer = setTimeout(() => {
+                reject(new JournalApiError("timeout", 0));
+                request.controller.abort();
+            }, 10_000);
         });
 
         let raw: unknown;
@@ -166,12 +176,32 @@ export class JournalApi {
             throw new JournalApiError("The journal server returned a malformed devices response.", 200);
         }
 
-        const devices = rawDevices.map(parseDevice).filter((device): device is DeviceDTO => device !== undefined);
+        const parsedDevices = rawDevices.map(parseDevice);
+        const devices = parsedDevices.flatMap((parsed) => ("device" in parsed ? [parsed.device] : []));
         if (rawDevices.length > 0 && devices.length === 0) {
             throw new JournalApiError("The journal server returned a malformed devices response.", 200);
         }
+        const rejected = parsedDevices.filter((parsed): parsed is { reasons: string[] } => !("device" in parsed));
+        if (rejected.length > 0) {
+            console.warn("matron:devices", {
+                event: "partial_roster",
+                rejected_count: rejected.length,
+                reasons: rejected.map((item) => item.reasons),
+            });
+        }
 
         return { devices };
+    }
+
+    private startDevicesRequest(): { promise: Promise<unknown>; controller: AbortController } {
+        const controller = new AbortController();
+        const request = { promise: this.json<unknown>("/devices", { signal: controller.signal }), controller };
+        this.devicesRequest = request;
+        const clear = (): void => {
+            if (this.devicesRequest === request) this.devicesRequest = undefined;
+        };
+        void request.promise.then(clear, clear);
+        return request;
     }
 
     public messages(conversationId: string, beforeSeq?: number, limit = 80): Promise<MessagesResponse> {
@@ -232,6 +262,7 @@ export class JournalApi {
             method?: "GET" | "POST";
             body?: Record<string, unknown>;
             authenticated?: boolean;
+            signal?: AbortSignal;
         } = {},
     ): Promise<T> {
         const response = await this.request(path, options);

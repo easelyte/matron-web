@@ -43,6 +43,7 @@ export class JournalConnection {
         private readonly serverUrl: string,
         private readonly token: string,
         private readonly callbacks: JournalConnectionCallbacks,
+        private readonly makeId: () => string = () => crypto.randomUUID(),
     ) {}
 
     public start(): void {
@@ -87,9 +88,11 @@ export class JournalConnection {
         method: string,
         params: unknown,
         timeoutMs = 30_000,
-        makeId = (): string => crypto.randomUUID(),
     ): Promise<RpcReply> {
-        const requestId = makeId();
+        const requestId = this.makeId();
+        if (this.pendingRpc.has(requestId)) {
+            return { ok: false, origin: "relay", code: "duplicate_request_id" };
+        }
         const operation = {
             op: "agent_request",
             request_id: requestId,
@@ -152,20 +155,21 @@ export class JournalConnection {
 
         socket.onmessage = (message) => {
             if (typeof message.data !== "string") return;
+            let frame: ServerFrame;
+            try {
+                frame = JSON.parse(message.data) as ServerFrame;
+            } catch {
+                return;
+            }
+
+            if (this.isFastPathFrame(frame)) {
+                void this.handleFrame(frame, socket).catch((error) => this.handleProcessingError(error, socket));
+                return;
+            }
+
             this.processing = this.processing
-                .then(async () => {
-                    let frame: ServerFrame;
-                    try {
-                        frame = JSON.parse(message.data) as ServerFrame;
-                    } catch {
-                        return;
-                    }
-                    await this.handleFrame(frame, socket);
-                })
-                .catch((error) => {
-                    this.callbacks.onState("offline", error instanceof Error ? error.message : "Sync failed");
-                    socket.close();
-                });
+                .then(() => this.handleFrame(frame, socket))
+                .catch((error) => this.handleProcessingError(error, socket));
         };
 
         socket.onerror = () => {
@@ -314,6 +318,23 @@ export class JournalConnection {
         if (pending.backoffTimer !== undefined) window.clearTimeout(pending.backoffTimer);
         this.pendingRpc.delete(requestId);
         pending.resolve(reply);
+    }
+
+    private isFastPathFrame(frame: unknown): frame is ServerFrame {
+        if (typeof frame !== "object" || frame === null || !("kind" in frame)) return false;
+        const candidate = frame as Record<string, unknown>;
+        return (
+            candidate.kind === "rpc" ||
+            (candidate.kind === "control" &&
+                candidate.op === "error" &&
+                typeof candidate.request_id === "string" &&
+                this.pendingRpc.has(candidate.request_id))
+        );
+    }
+
+    private handleProcessingError(error: unknown, socket: WebSocket): void {
+        this.callbacks.onState("offline", error instanceof Error ? error.message : "Sync failed");
+        socket.close();
     }
 
     private logRpcDiag(event: string, requestId?: string): void {

@@ -27,7 +27,12 @@ function callbacks() {
 
 function harness() {
     const connectionCallbacks = callbacks();
-    const connection = new JournalConnection("https://journal.example", "token", connectionCallbacks);
+    const connection = new JournalConnection(
+        "https://journal.example",
+        "token",
+        connectionCallbacks,
+        () => "request-1",
+    );
     const socket = { close: jest.fn() } as unknown as WebSocket;
     const internal = connection as unknown as ConnectionInternals;
     return { connection, connectionCallbacks, internal, socket };
@@ -50,7 +55,7 @@ describe("JournalConnection RPC transport", () => {
     it("correlates an rpc response and ignores a duplicate multicast response", async () => {
         const { connection, connectionCallbacks, internal, socket } = harness();
         const send = jest.spyOn(connection, "send").mockReturnValue(true);
-        const reply = connection.agentRequest(7, "start", { browser: true }, 30_000, () => "request-1");
+        const reply = connection.agentRequest(7, "start", { browser: true }, 30_000);
         const response = {
             kind: "rpc",
             response: { request_id: "request-1", agent_device_id: 7, ok: true, result: { convo_id: "c1" } },
@@ -64,6 +69,66 @@ describe("JournalConnection RPC transport", () => {
         expect(connectionCallbacks.onFrame).not.toHaveBeenCalled();
     });
 
+    it("rejects a duplicate generated request id before sending a second operation", async () => {
+        const { connection, internal, socket } = harness();
+        const send = jest.spyOn(connection, "send").mockReturnValue(true);
+        const first = connection.agentRequest(7, "start", {}, 30_000);
+
+        await expect(connection.agentRequest(7, "start", {}, 30_000)).resolves.toEqual({
+            ok: false,
+            origin: "relay",
+            code: "duplicate_request_id",
+        });
+        expect(send).toHaveBeenCalledTimes(1);
+
+        await frame(internal, socket, {
+            kind: "rpc",
+            response: { request_id: "request-1", agent_device_id: 7, ok: true, result: "created" },
+        });
+        await expect(first).resolves.toEqual({ ok: true, origin: "agent", result: "created" });
+    });
+
+    it("handles a prompt rpc response while onReady is blocked in the ordered queue", async () => {
+        let releaseReady!: () => void;
+        const ready = new Promise<void>((resolve) => {
+            releaseReady = resolve;
+        });
+        const connectionCallbacks = callbacks();
+        connectionCallbacks.onReady.mockReturnValue(ready);
+        const socket = { close: jest.fn() } as unknown as WebSocket;
+        const websocket = jest.spyOn(globalThis, "WebSocket").mockImplementation(() => socket);
+        const connection = new JournalConnection(
+            "https://journal.example",
+            "token",
+            connectionCallbacks,
+            () => "request-1",
+        );
+        const send = jest.spyOn(connection, "send").mockReturnValue(true);
+
+        connection.start();
+        socket.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ kind: "control", op: "hello_ok" }) }));
+        await Promise.resolve();
+        expect(connectionCallbacks.onReady).toHaveBeenCalledTimes(1);
+
+        const reply = connection.agentRequest(7, "start", {}, 100);
+        socket.onmessage?.(
+            new MessageEvent("message", {
+                data: JSON.stringify({
+                    kind: "rpc",
+                    response: { request_id: "request-1", agent_device_id: 7, ok: true, result: "created" },
+                }),
+            }),
+        );
+        jest.advanceTimersByTime(100);
+
+        await expect(reply).resolves.toEqual({ ok: true, origin: "agent", result: "created" });
+        expect(send).toHaveBeenCalledTimes(1);
+        releaseReady();
+        await Promise.resolve();
+        connection.stop();
+        websocket.mockRestore();
+    });
+
     it.each([
         ["a missing response", { kind: "rpc" }],
         ["a missing ok field", { kind: "rpc", response: { request_id: "request-1", agent_device_id: 7 } }],
@@ -71,7 +136,7 @@ describe("JournalConnection RPC transport", () => {
         const { connection, internal, socket } = harness();
         jest.spyOn(connection, "send").mockReturnValue(true);
         const warning = jest.spyOn(console, "warn").mockImplementation(() => undefined);
-        const reply = connection.agentRequest(7, "start", {}, 100, () => "request-1");
+        const reply = connection.agentRequest(7, "start", {}, 100);
 
         await frame(internal, socket, response);
 
@@ -87,7 +152,7 @@ describe("JournalConnection RPC transport", () => {
     it("resolves the overall timeout with its origin", async () => {
         const { connection } = harness();
         jest.spyOn(connection, "send").mockReturnValue(true);
-        const reply = connection.agentRequest(7, "start", {}, 500, () => "request-1");
+        const reply = connection.agentRequest(7, "start", {}, 500);
 
         jest.advanceTimersByTime(500);
 
@@ -97,7 +162,7 @@ describe("JournalConnection RPC transport", () => {
     it("resolves pending requests as teardown when stopped", async () => {
         const { connection } = harness();
         jest.spyOn(connection, "send").mockReturnValue(true);
-        const reply = connection.agentRequest(7, "start", {}, 30_000, () => "request-1");
+        const reply = connection.agentRequest(7, "start", {}, 30_000);
 
         connection.stop();
 
@@ -107,7 +172,7 @@ describe("JournalConnection RPC transport", () => {
     it("correlates a relay control error", async () => {
         const { connection, internal, socket } = harness();
         jest.spyOn(connection, "send").mockReturnValue(true);
-        const reply = connection.agentRequest(7, "start", {}, 30_000, () => "request-1");
+        const reply = connection.agentRequest(7, "start", {}, 30_000);
 
         await frame(internal, socket, {
             kind: "control",
@@ -128,7 +193,7 @@ describe("JournalConnection RPC transport", () => {
     it("retries not_ready twice at one-second intervals with the same request id, then surfaces it", async () => {
         const { connection, internal, socket } = harness();
         const send = jest.spyOn(connection, "send").mockReturnValue(true);
-        const reply = connection.agentRequest(7, "start", { workdir: "/repo" }, 30_000, () => "request-1");
+        const reply = connection.agentRequest(7, "start", { workdir: "/repo" }, 30_000);
         const notReady = { kind: "control", op: "error", request_id: "request-1", code: "not_ready" };
 
         await frame(internal, socket, notReady);
@@ -167,7 +232,7 @@ describe("JournalConnection RPC transport", () => {
     it("does not resend after a request settles during not_ready backoff", async () => {
         const { connection, internal, socket } = harness();
         const send = jest.spyOn(connection, "send").mockReturnValue(true);
-        const reply = connection.agentRequest(7, "start", {}, 30_000, () => "request-1");
+        const reply = connection.agentRequest(7, "start", {}, 30_000);
 
         await frame(internal, socket, {
             kind: "control",
@@ -188,7 +253,7 @@ describe("JournalConnection RPC transport", () => {
     it("resolves immediately when a retry send returns false", async () => {
         const { connection, internal, socket } = harness();
         jest.spyOn(connection, "send").mockReturnValueOnce(true).mockReturnValueOnce(false);
-        const reply = connection.agentRequest(7, "start", {}, 30_000, () => "request-1");
+        const reply = connection.agentRequest(7, "start", {}, 30_000);
 
         await frame(internal, socket, {
             kind: "control",
@@ -204,7 +269,7 @@ describe("JournalConnection RPC transport", () => {
     it("does not schedule a second resend for a duplicate not_ready frame", async () => {
         const { connection, internal, socket } = harness();
         const send = jest.spyOn(connection, "send").mockReturnValue(true);
-        const reply = connection.agentRequest(7, "start", {}, 30_000, () => "request-1");
+        const reply = connection.agentRequest(7, "start", {}, 30_000);
         const notReady = { kind: "control", op: "error", request_id: "request-1", code: "not_ready" };
 
         await frame(internal, socket, notReady);
@@ -220,7 +285,7 @@ describe("JournalConnection RPC transport", () => {
         const { connection } = harness();
         jest.spyOn(connection, "send").mockReturnValue(false);
 
-        await expect(connection.agentRequest(7, "start", {}, 30_000, () => "request-1")).resolves.toEqual({
+        await expect(connection.agentRequest(7, "start", {}, 30_000)).resolves.toEqual({
             ok: false,
             origin: "relay",
             code: "not_connected",
@@ -237,7 +302,7 @@ describe("JournalConnection RPC transport", () => {
             }),
         } as unknown as WebSocket;
 
-        await expect(connection.agentRequest(7, "start", {}, 30_000, () => "request-1")).resolves.toEqual({
+        await expect(connection.agentRequest(7, "start", {}, 30_000)).resolves.toEqual({
             ok: false,
             origin: "relay",
             code: "not_connected",
@@ -248,7 +313,7 @@ describe("JournalConnection RPC transport", () => {
         const { connection, internal, socket } = harness();
         jest.spyOn(connection, "send").mockReturnValue(true);
         jest.spyOn(console, "warn").mockImplementation(() => undefined);
-        const reply = connection.agentRequest(7, "start", {}, 30_000, () => "request-1");
+        const reply = connection.agentRequest(7, "start", {}, 30_000);
 
         await frame(internal, socket, {
             kind: "rpc",
@@ -265,7 +330,7 @@ describe("JournalConnection RPC transport", () => {
     it("drops a non-string detail from an agent error", async () => {
         const { connection, internal, socket } = harness();
         jest.spyOn(connection, "send").mockReturnValue(true);
-        const reply = connection.agentRequest(7, "start", {}, 30_000, () => "request-1");
+        const reply = connection.agentRequest(7, "start", {}, 30_000);
 
         await frame(internal, socket, {
             kind: "rpc",
@@ -289,7 +354,7 @@ describe("JournalConnection RPC transport", () => {
         const { connection, internal, socket } = harness();
         jest.spyOn(connection, "send").mockReturnValue(true);
         const warning = jest.spyOn(console, "warn").mockImplementation(() => undefined);
-        const reply = connection.agentRequest(7, "start", {}, 100, () => "request-1");
+        const reply = connection.agentRequest(7, "start", {}, 100);
 
         await frame(internal, socket, {
             kind: "rpc",
@@ -308,7 +373,7 @@ describe("JournalConnection RPC transport", () => {
         const { connection, internal, socket } = harness();
         jest.spyOn(connection, "send").mockReturnValue(true);
         const warning = jest.spyOn(console, "warn").mockImplementation(() => undefined);
-        const reply = connection.agentRequest(7, "start", {}, 30_000, () => "request-1");
+        const reply = connection.agentRequest(7, "start", {}, 30_000);
 
         await frame(internal, socket, {
             kind: "control",
