@@ -749,8 +749,9 @@ Depends on Phase 1 (`useRowContextMenu`, `copyText`). Independent of Phase 3.
 Merged (round-1 B2): the menu and the sheet are interdependent (the menu's "View source" sets the sheet state), so they land as **one atomic task with one commit** — no intermediate red-test handoff between per-task workers.
 
 **Files:**
-- Modify: `src/journal/components.tsx` (add `EventSourceSheet` beside `UploadConfirmDialog`; add `sourceEvent` state + `useRowContextMenu` + menu render in `Timeline`; add `rowHandlers` to `EventRow`)
-- Test: `test/unit-tests/journal/components-test.ts`
+- Modify: `src/journal/components.tsx` (add `EventSourceSheet` beside `UploadConfirmDialog`; add `sourceEvent` state + `useRowContextMenu` + menu render in `Timeline`; add `rowHandlers` + `onClickCapture` to `EventRow`)
+- Modify: `src/journal/context-menu.ts` (re-add `didFireRef` set in `onFire` / reset in `onPointerDown`, and add an `onClickCapture` handler to `rowHandlers` — Phase-1 review Maj-1, click-suppression for nested interactive content)
+- Test: `test/unit-tests/journal/components-test.ts`, `test/unit-tests/journal/context-menu-test.ts`
 
 **Interfaces:**
 - Consumes: `useRowContextMenu<JournalEvent>` (T-1.2), `copyText` (T-1.4), `JournalEvent`/`asString` from `./types`.
@@ -872,9 +873,13 @@ In `Timeline`: `const [sourceEvent, setSourceEvent] = useState<JournalEvent | un
 ```tsx
 const liRef = useRef<HTMLLIElement>(null);
 const handlers = rowHandlers(event, () => liRef.current);
-// <li ref={liRef} ...existing... {...handlers}>
+// <li ref={liRef} ...existing... {...handlers} onClickCapture={handlers.onClickCapture}>
 ```
-`ToolStream` / pending placeholder rows do NOT receive `rowHandlers` (scope enforced by construction). Render at the end of `Timeline`:
+`ToolStream` / pending placeholder rows do NOT receive `rowHandlers` (scope enforced by construction).
+
+> **Click-suppression after long-press (Phase-1 review Maj-1 — plan amendment).** The earlier "drop `didFireRef`, the `<li>` has no onClick" reasoning was **wrong**: `EventContent` renders nested interactive elements (prompt-answer / permission-request buttons). A touch long-press that *starts on* such a button would, after the menu opens, synthesize a `click` on release that submits the prompt/permission. So **re-introduce `didFireRef` in `useRowContextMenu`** (set `true` in `onFire`, reset `false` on the next `onPointerDown`) and expose an **`onClickCapture(e)`** handler in `rowHandlers` that, when `didFireRef.current` is true, calls `e.preventDefault(); e.stopPropagation();` and resets the flag — spread it onto the `EventRow` `<li>` (capture phase, so it intercepts the synthesized click before it reaches the nested button). Add a test: a long-press starting on a nested `<button>` inside an event opens the menu AND does **not** fire that button's `onClick`.
+
+Render at the end of `Timeline`:
 ```tsx
 {menu.state && (
     <div className="mj_HeaderMenu mj_EventRowMenu" role="menu" ref={menu.menuRef}
