@@ -80,6 +80,7 @@ describe("folderCompletionPartial", () => {
         ["/start --claude --browser /o", "/o"],
         ["/start --browser /op", "/op"],
         ["/start --agent=codex /op", "/op"],
+        ["/start —claude /op", "/op"],
         ["/START --claude /op", "/op"],
         ["/START /op", "/op"],
         ["/Workdir /o", "/o"],
@@ -108,6 +109,10 @@ describe("applyFolder", () => {
         ["/start /op", "/opt/x", "/start /opt/x"],
         ["/start --claude /op", "/opt/x", "/start --claude /opt/x"],
         ["/workdir /srv/My", "/srv/My Project", "/workdir /srv/My Project"],
+        ["/start /op", "/srv/$&", "/start /srv/$&"],
+        ["/start /op", "/srv/$`", "/start /srv/$`"],
+        ["/start /op", "/srv/$'", "/start /srv/$'"],
+        ["/start /op", "/srv/$$", "/start /srv/$$"],
     ])("applies %j to %j as %j", (input, path, expected) => {
         expect(applyFolder(input, path)).toBe(expected);
     });
@@ -121,6 +126,7 @@ describe("recentFolderArgument", () => {
         ["/start --claude /a b c", "/a"],
         ["/workdir --claude /a b c", "/a b c"],
         ["/start --agent=codex /z", "/z"],
+        ["/start —claude /op", "/op"],
         ["/start --CLAUDE /op", "--CLAUDE"],
         ["/workdir --bogus /op", "--bogus /op"],
         ["/start now", null],

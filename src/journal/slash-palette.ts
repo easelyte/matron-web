@@ -80,7 +80,13 @@ interface ParsedFolderCommand {
 
 // recognized flags mirror bridge lib/agent-backend.js extractAgentFlag + lib/mcp-config.js extractMcpExtraFlags — resync if the bridge adds flags
 function isRecognizedFolderFlag(token: string): boolean {
-    return token === "--claude" || token === "--codex" || token === "--browser" || /^--agent=\S+$/.test(token);
+    const normalized = token.replace(/^[‐‑‒–—―]+/, "--");
+    return (
+        normalized === "--claude" ||
+        normalized === "--codex" ||
+        normalized === "--browser" ||
+        /^--agent=\S+$/.test(normalized)
+    );
 }
 
 function parseFolderCommand(input: string): ParsedFolderCommand | null {
@@ -116,7 +122,7 @@ export function applyCommand(trigger: string): string {
 }
 
 export function applyFolder(input: string, path: string): string {
-    return input.replace(/\S*$/, path);
+    return input.replace(/\S*$/, () => path);
 }
 
 export function recentFolderArgument(text: string): string | null {
