@@ -33,6 +33,7 @@ const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v
 const HISTORY_PAGE_SIZE = 80;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 const MARK_ALL_READ_ERROR = "Some conversations couldn't be updated — device storage is full or unavailable.";
+export const PREFERENCES_UNAVAILABLE_ERROR = "Couldn't load saved preferences — device storage unavailable.";
 // This is only a browser memory-safety ceiling. The server's 413 response is
 // authoritative for deployment-specific upload policy.
 export const BROWSER_MEMORY_SAFETY_MAX_BYTES = 512 * 1024 * 1024;
@@ -233,7 +234,12 @@ export class MatronJournalClient {
     private pendingAck = 0;
     private historyError?: string;
     private storageListener?: (event: StorageEvent) => void;
-    private unreadHydrated = false;
+    private storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
+    private storeWritable = { archive: true, pinned: true, favorite: true, unread: true };
+
+    private allStorageHealthy(): boolean {
+        return Object.values(this.storeHydrated).every(Boolean) && Object.values(this.storeWritable).every(Boolean);
+    }
 
     public readonly subscribe = (listener: () => void): (() => void) => {
         this.listeners.add(listener);
@@ -944,6 +950,9 @@ export class MatronJournalClient {
 
     private async startSession(session: Session): Promise<void> {
         this.sessionGen += 1;
+        this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
+        this.storeWritable = { archive: true, pinned: true, favorite: true, unread: true };
+        void this.allStorageHealthy();
         for (const controller of this.inFlightUploads.values()) controller.abort();
         this.inFlightUploads.clear();
         this.uploadConvos.clear();
@@ -1001,7 +1010,7 @@ export class MatronJournalClient {
         const pinnedRead = pinnedStore.read(session);
         const favoriteRead = favoriteStore.read(session);
         const unreadRead = unreadStore.read(session);
-        this.unreadHydrated = unreadRead.ok;
+        this.storeHydrated.unread = unreadRead.ok;
         const bootstrapReadFailed = !archiveRead.ok || !pinnedRead.ok || !favoriteRead.ok || !unreadRead.ok;
         const archivedIds = archiveRead.ids;
         const pinnedIds = pinnedRead.ids;
@@ -1018,9 +1027,7 @@ export class MatronJournalClient {
             pinnedIds,
             favoriteIds,
             unreadOverrideIds,
-            controlError: bootstrapReadFailed
-                ? "Couldn't load saved preferences — device storage unavailable."
-                : undefined,
+            controlError: bootstrapReadFailed ? PREFERENCES_UNAVAILABLE_ERROR : undefined,
             selectedConversationId: selectedConversation?.id,
         };
         if (this.storageListener) window.removeEventListener("storage", this.storageListener);
@@ -1038,7 +1045,7 @@ export class MatronJournalClient {
             } else if (event.key === favoriteStore.storageKey(currentSession)) {
                 this.patch({ favoriteIds: favoriteStore.parse(event.newValue) });
             } else if (event.key === unreadStore.storageKey(currentSession)) {
-                if (!this.unreadHydrated) this.unreadHydrated = true;
+                if (!this.storeHydrated.unread) this.storeHydrated.unread = true;
                 this.patch({ unreadOverrideIds: unreadStore.parse(event.newValue) });
             }
         };
@@ -1108,7 +1115,7 @@ export class MatronJournalClient {
     private clearUnreadOverride(id: string): boolean {
         // The in-memory no-op shortcut is only safe after the unread store has hydrated successfully.
         // Otherwise a stale-empty mirror may mask a persisted override, so re-read before deleting.
-        if (this.unreadHydrated && !this.state.unreadOverrideIds.has(id)) return true;
+        if (this.api && this.storeHydrated.unread && !this.state.unreadOverrideIds.has(id)) return true;
         return this.setFlag(unreadStore, "unreadOverrideIds", id, false);
     }
 
@@ -1144,7 +1151,7 @@ export class MatronJournalClient {
             const unreadRead = unreadStore.read(session);
             if (unreadRead.ok) {
                 unreadOverrideIds = unreadRead.ids;
-                this.unreadHydrated = true;
+                this.storeHydrated.unread = true;
             }
         }
         const selectedConversation = firstSelectableConversation(conversations, previousSelection, archivedIds);

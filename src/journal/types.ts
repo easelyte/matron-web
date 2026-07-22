@@ -188,6 +188,7 @@ export interface ClientState {
     favoriteIds: Set<string>;
     unreadOverrideIds: Set<string>;
     controlError?: string;
+    preferencesUnavailable?: boolean;
     selectedConversationId?: string;
     events: JournalEvent[];
     pendingMessages: PendingMessage[];
