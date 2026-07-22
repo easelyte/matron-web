@@ -147,6 +147,8 @@ Run: `node_modules/.bin/jest test/unit-tests/journal/subchat-backfill-test.ts` �
 ```
 This upgrades T-2.1 from a state-only regression guard to a real red→green test: case (b) is red against the current delete-before-patch code and green after the reorder.
 
+**Override (execute-slim phase-2 Codex review, ship_blocking — documented, deferred):** the review correctly notes the reorder *narrows* but does not *eliminate* the crash window — `patch()` is volatile while `deleteOutboxRows` is durable, so a tab killed between the delete-commit and the notice paint still loses both the (undeliverable) draft text and its explanation on reload. This exceeds the R2 scope, which is precisely a **reorder** (loop brief: "blocked child text deleted from IndexedDB before the controlError notice renders"). Full crash-durability requires either a tombstone persisted in the deletion's IndexedDB transaction + startup restore, or mark-don't-delete for blocked text (consistent with the blocked-attachment path, but needs render-path support for errored *text* pending messages — `attachState` is attachment-semantic today). Given the residual is a pre-existing deletion behavior over undeliverable draft text in a sub-second window, and the reorder covers the normal (non-crash) case, this is deferred to a follow-up loop (filed at /close), not fixed in this narrow R2 residual. Matches how #453 deferred these residuals.
+
 - [ ] **Step 2: Run to verify fail (order-observing case)**
 
 Run: `node_modules/.bin/jest test/unit-tests/journal/readonly-egress-test.ts`.
