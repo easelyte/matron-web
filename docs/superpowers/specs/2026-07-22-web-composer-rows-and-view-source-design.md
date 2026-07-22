@@ -311,16 +311,18 @@ visible live; over-alerting on it is worse UX than a silent console warn).
     Steps 2 and 3 are independent: the persisted draft of a sent message is always cleared (keyed to
     `submitted`), while the live textarea is only cleared when it's safe to. This is the round-3
     reconciliation of "successful send clears that convo's draft" with "never wipe a newer edit."
-  - **Wedge scope + watchdog (round-5 B2):** `finally` releases the lock on resolve *and* reject; the only
-    residual is a promise that never settles — a hung local IndexedDB `addToOutbox` (no network in the
-    awaited path — `sendMessage` awaits only local IndexedDB work; the network dispatch `sendPendingMessage`
-    is fire-and-forget, not awaited). Per-convo scoping bounds it to the one affected conversation, and a
-    **watchdog** provides recovery: when the lock is taken, a `setTimeout(~15 s)` is armed that removes the
-    convoId from `sendingConvos` (cleared in `finally` on normal completion). 15 s is far beyond any
-    legitimate local write, so it cannot reintroduce the millisecond-window double-send, but it prevents a
-    genuinely hung write from permanently wedging that conversation's composer (P55 finite-watchdog). If the
-    original promise never settled, the message was never durably queued, so allowing a retry after the
-    watchdog fires is the correct recovery.
+  - **Wedge scope — NO watchdog (superseded during plan-review; canonical decision).** `finally` releases
+    the lock on resolve *and* reject; the only residual is a promise that never settles — a hung local
+    IndexedDB `addToOutbox` (no network in the awaited path — `sendMessage` awaits only local IndexedDB work;
+    the network dispatch `sendPendingMessage` is fire-and-forget, not awaited). An earlier draft of this spec
+    proposed a 15 s watchdog to auto-release the lock, but plan-review (round 3) **removed it**: a
+    *slow-but-successful* write that commits after the watchdog fires would let a retry create a second
+    durable message — reintroducing the exact double-send this feature closes. **No-dup strictly beats
+    wedge-recovery** for a double-send-guard. The residual (a pathological hung local IndexedDB write) wedges
+    only that one conversation until a page reload (fully recoverable, no data loss — the text stays on
+    screen). A stable-attempt-ID + indeterminate-state model is the proper P55 fix and is filed as a
+    follow-up alongside the server-idempotency work. The implementation and tests use a plain per-convo
+    `Set` lock with **no timer** — see the plan's T-3.2 (P2 canonical source: this spec now matches the plan).
 
 **`client.ts` — send-target binding + outbox-authoritative (round-4 folded fixes).** Two small `sendMessage`
 changes (bug-fix, not a structural split — upstream-PR candidates):
@@ -471,7 +473,7 @@ Enter → per-convo sendingConvos gate → sendMessage(submitted)
   - **outbox-authoritative:** a `sendMessage` whose internal `refreshSelectedConversation` rejects **after** `addToOutbox` still resolves `true` → composer clears → a second Enter does **not** enqueue a duplicate (round-4 B1);
   - **clipboard rejection:** a `navigator.clipboard.writeText` that **rejects** → `copyText` falls back to `execCommand` (no unhandled rejection); with both unavailable → silent no-op, no throw;
   - **write-failure navigation safety:** type in A, force `setItem` to throw, switch to B and back to A → A's draft is **still shown** (in-memory authoritative, round-5 B3);
-  - **send watchdog:** a never-settling `sendMessage` stub → after the watchdog interval the convo's lock is released and a subsequent Enter can send again (round-5 B2, using fake timers).
+  - **hung-send wedge (accepted, no watchdog):** a never-settling `sendMessage` leaves that convo's lock held until reload — documented tradeoff, no timer-based auto-release (a watchdog would risk a slow-success dup). No watchdog test; see the plan's no-watchdog decision.
 - `pnpm lint` (tsc + prettier) + full `pnpm test` green before ship.
 
 ## Right-size decisions (quantified)
