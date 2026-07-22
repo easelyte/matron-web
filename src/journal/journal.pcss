@@ -508,6 +508,10 @@ textarea {
     overflow-y: auto;
 }
 
+.mj_EventRowMenu {
+    width: min(220px, calc(100vw - var(--cpd-space-4x)));
+}
+
 .mj_RoomItemMenu_item {
     display: flex;
     width: 100%;
@@ -645,6 +649,48 @@ textarea {
     font: var(--cpd-font-body-sm-regular);
     font-weight: 600;
     pointer-events: none;
+}
+
+.mj_EventSource_scrim {
+    position: fixed;
+    z-index: 100;
+    display: flex;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    background: rgb(18 16 14 / 55%);
+}
+
+.mj_EventSource {
+    display: flex;
+    max-width: min(720px, 92vw);
+    max-height: 80vh;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 12px;
+    background: var(--cpd-color-bg-canvas-default);
+}
+
+.mj_EventSource_header {
+    padding: 12px 16px;
+}
+
+.mj_EventSource_json {
+    overflow: auto;
+    flex: 1 1 auto;
+    margin: 0;
+    padding: 12px 16px;
+    font-family: var(--mj-mono, ui-monospace, monospace);
+    font-size: 0.8125rem;
+    user-select: text;
+    white-space: pre;
+}
+
+.mj_EventSource_actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 8px 16px;
 }
 
 .mj_UploadConfirm_scrim {
