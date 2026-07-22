@@ -40,6 +40,7 @@ import {
     UnarchiveIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
+import type { BotCommand } from "./slash-palette";
 import { compactTokens, resetDisplay, usageBarLabel, usageLevel } from "./status";
 import {
     asNumber,
@@ -1890,6 +1891,77 @@ function Timeline({
                 </button>
             )}
         </main>
+    );
+}
+
+const SLASH_LISTBOX_ID = "mx_SlashPalette_listbox";
+const slashRowId = (index: number): string => `${SLASH_LISTBOX_ID}_opt_${index}`;
+
+function SlashCommandPalette({
+    commands,
+    folders,
+    highlighted,
+    onHighlight,
+    onSelectCommand,
+    onSelectFolder,
+}: {
+    commands: BotCommand[];
+    folders: string[];
+    highlighted: number | null;
+    onHighlight: (index: number | null) => void;
+    onSelectCommand: (command: BotCommand) => void;
+    onSelectFolder: (path: string) => void;
+}): React.ReactElement {
+    const highlightedRow = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (highlighted !== null) highlightedRow.current?.scrollIntoView({ block: "nearest" });
+    }, [highlighted]);
+
+    return (
+        <div className="mx_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox">
+            {folders.length > 0
+                ? folders.map((folder, index) => (
+                      <div
+                          className={`mx_SlashPalette_row${
+                              highlighted === index ? " mx_SlashPalette_row_highlighted" : ""
+                          }`}
+                          id={slashRowId(index)}
+                          key={`${folder}-${index}`}
+                          ref={highlighted === index ? highlightedRow : undefined}
+                          role="option"
+                          aria-selected={highlighted === index}
+                          onMouseEnter={() => onHighlight(index)}
+                          onMouseDown={(event) => {
+                              event.preventDefault();
+                              onSelectFolder(folder);
+                          }}
+                      >
+                          <span className="mx_SlashPalette_trigger">{folder}</span>
+                      </div>
+                  ))
+                : commands.map((command, index) => (
+                      <div
+                          className={`mx_SlashPalette_row${
+                              highlighted === index ? " mx_SlashPalette_row_highlighted" : ""
+                          }`}
+                          id={slashRowId(index)}
+                          key={command.trigger}
+                          ref={highlighted === index ? highlightedRow : undefined}
+                          role="option"
+                          aria-selected={highlighted === index}
+                          onMouseEnter={() => onHighlight(index)}
+                          onMouseDown={(event) => {
+                              event.preventDefault();
+                              onSelectCommand(command);
+                          }}
+                      >
+                          <span className="mx_SlashPalette_trigger">{command.trigger}</span>
+                          {command.argHint && <span className="mx_SlashPalette_argHint">{command.argHint}</span>}
+                          <span className="mx_SlashPalette_summary">{command.summary}</span>
+                      </div>
+                  ))}
+        </div>
     );
 }
 
