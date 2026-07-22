@@ -181,12 +181,19 @@ describe("JournalApi devices", () => {
 
     it("times out an Electron request and handles a late rejection from the losing branch", async () => {
         let rejectRequest!: (reason: Error) => void;
-        const journalRequest = jest.fn(
-            () =>
-                new Promise<never>((_resolve, reject) => {
-                    rejectRequest = reject;
-                }),
-        );
+        const journalRequest = jest
+            .fn()
+            .mockImplementationOnce(
+                () =>
+                    new Promise<never>((_resolve, reject) => {
+                        rejectRequest = reject;
+                    }),
+            )
+            .mockResolvedValueOnce({
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+                body: new NodeTextEncoder().encode(JSON.stringify({ devices: [] })).buffer,
+            });
         (window as Window & { electron?: unknown }).electron = {
             initialise: jest.fn(),
             journalRequest,
@@ -198,11 +205,12 @@ describe("JournalApi devices", () => {
         await expect(devices).rejects.toMatchObject({ message: "timeout", status: 0 });
 
         const retry = api.devices();
-        expect(journalRequest).toHaveBeenCalledTimes(1);
+        expect(journalRequest).toHaveBeenCalledTimes(2);
+        await expect(retry).resolves.toEqual({ devices: [] });
 
         rejectRequest(new Error("late desktop failure"));
-        await expect(retry).rejects.toThrow("late desktop failure");
-        expect(journalRequest).toHaveBeenCalledTimes(1);
+        await Promise.resolve();
+        expect(journalRequest).toHaveBeenCalledTimes(2);
     });
 
     it("drops malformed items when at least one roster item is valid", async () => {

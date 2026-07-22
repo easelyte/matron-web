@@ -155,6 +155,8 @@ export class JournalApi {
         let timeoutTimer: ReturnType<typeof setTimeout>;
         const timeoutReject = new Promise<never>((_resolve, reject) => {
             timeoutTimer = setTimeout(() => {
+                if (this.devicesRequest === request) this.devicesRequest = undefined;
+                void request.promise.catch(() => undefined);
                 reject(new JournalApiError("timeout", 0));
                 request.controller.abort();
             }, 10_000);

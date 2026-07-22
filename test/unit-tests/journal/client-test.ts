@@ -2436,7 +2436,7 @@ describe("session-controls flags", () => {
         setItem.mockRestore();
     });
 
-    it("carries a write failure across relogin until a write succeeds", async () => {
+    it("clears a write failure after a healthy relogin", async () => {
         const client = new MatronJournalClient();
         const database = fakeDatabase();
         jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
@@ -2459,8 +2459,6 @@ describe("session-controls flags", () => {
         await client.logout();
         await internals(client).startSession(SESSION);
 
-        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
-        client.pinConversation("c1");
         expect(client.getSnapshot().preferencesUnavailable).toBe(false);
     });
 
@@ -2753,6 +2751,29 @@ describe("session creation orchestration", () => {
         };
         return client;
     }
+
+    it("shares an in-flight start request across callers", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const reply = deferred<{ ok: true; origin: "agent"; result: { convo_id: string } }>();
+        const agentRequest = jest.fn().mockReturnValue(reply.promise);
+        state.state = signedInState(client);
+        state.connection = { send: jest.fn().mockReturnValue(true), agentRequest };
+
+        const first = client.startSessionRpc(9, "/srv/first", false);
+        const second = client.startSessionRpc(10, "/srv/second", true);
+
+        expect(second).toBe(first);
+        expect(agentRequest).toHaveBeenCalledTimes(1);
+        expect(agentRequest).toHaveBeenCalledWith(9, "start", { workdir: "/srv/first" });
+
+        reply.resolve({ ok: true, origin: "agent", result: { convo_id: "created" } });
+        await expect(first).resolves.toEqual({ kind: "created", convoId: "created" });
+        await expect(second).resolves.toEqual({ kind: "created", convoId: "created" });
+
+        await client.startSessionRpc(10, "/srv/second", true);
+        expect(agentRequest).toHaveBeenCalledTimes(2);
+    });
 
     it.each([
         [

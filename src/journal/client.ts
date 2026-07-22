@@ -242,6 +242,7 @@ export class MatronJournalClient {
     private ackTimer?: number;
     private pendingAck = 0;
     private historyError?: string;
+    private startSessionRequest?: Promise<StartOutcome>;
     private rpcCreateWatchdog?: number;
     private rpcCreateWatchdogConvo?: string;
     private rpcCreateWatchdogGen?: number;
@@ -399,7 +400,23 @@ export class MatronJournalClient {
         });
     }
 
-    public async startSessionRpc(agentDeviceId: number, workdir: string, browser: boolean): Promise<StartOutcome> {
+    public startSessionRpc(agentDeviceId: number, workdir: string, browser: boolean): Promise<StartOutcome> {
+        if (this.startSessionRequest) return this.startSessionRequest;
+
+        const request = this.performStartSessionRpc(agentDeviceId, workdir, browser);
+        this.startSessionRequest = request;
+        const clear = (): void => {
+            if (this.startSessionRequest === request) this.startSessionRequest = undefined;
+        };
+        void request.then(clear, clear);
+        return request;
+    }
+
+    private async performStartSessionRpc(
+        agentDeviceId: number,
+        workdir: string,
+        browser: boolean,
+    ): Promise<StartOutcome> {
         const params: { workdir?: string; browser?: true } = {};
         const normalizedWorkdir = workdir.trim();
         if (normalizedWorkdir) params.workdir = normalizedWorkdir;
@@ -1062,6 +1079,7 @@ export class MatronJournalClient {
     private async startSession(session: Session): Promise<void> {
         this.sessionGen += 1;
         this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
+        this.storeWritable = { archive: true, pinned: true, favorite: true, unread: true };
         for (const controller of this.inFlightUploads.values()) controller.abort();
         this.inFlightUploads.clear();
         this.uploadConvos.clear();
