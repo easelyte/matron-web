@@ -204,13 +204,13 @@ describe("markdown render-site integration", () => {
         expect(plainReply?.querySelector("strong")).toBeNull();
     });
 
-    it("renders pending and streaming markdown while keeping the stream cursor outside the markdown subtree", async () => {
+    it("renders pending markdown and visually trails streaming prose with an external cursor", async () => {
         const client = signedInClient({
             pendingMessages: [{ localId: "pending-markdown", convoId: "c1", body: "**pending bold**", createdAt: 1 }],
         });
         internals(client).state = {
             ...client.getSnapshot(),
-            textStreams: { response: "**stream bold**" },
+            textStreams: { response: "stream text" },
         };
 
         rendered = await renderClient(client);
@@ -220,10 +220,12 @@ describe("markdown render-site integration", () => {
         );
         const cursor = rendered.container.querySelector(".mj_Cursor");
         const streamMarkdown = cursor?.parentElement;
-        expect(streamMarkdown?.classList.contains("mj_Markdown")).toBe(true);
-        expect(streamMarkdown?.querySelector("strong")?.textContent).toBe("stream bold");
+        const terminalParagraph = streamMarkdown?.querySelector(":scope > p:nth-last-child(2)");
+        expect(streamMarkdown?.classList.contains("mj_Markdown_streaming")).toBe(true);
+        expect(terminalParagraph?.textContent).toBe("stream text");
+        expect(terminalParagraph?.nextElementSibling).toBe(cursor);
         expect(cursor?.parentElement).toBe(streamMarkdown);
-        expect(cursor?.parentElement?.children).toContain(cursor);
+        expect(terminalParagraph?.contains(cursor ?? null)).toBe(false);
     });
 });
 

@@ -35,6 +35,7 @@ import remarkGfm from "remark-gfm";
 import { copyText } from "./clipboard";
 
 export const MARKDOWN_MAX = 200_000;
+export const MARKDOWN_MAX_LINES = 2_000;
 export const HIGHLIGHT_MAX = 30_000;
 
 const CURATED = {
@@ -244,7 +245,12 @@ class MarkdownErrorBoundary extends Component<MarkdownErrorBoundaryProps, Markdo
 }
 
 function MarkdownBodyComponent({ text, streaming = false, label }: MarkdownBodyProps): React.ReactElement {
-    if (text.length > MARKDOWN_MAX) {
+    let newlineCount = 0;
+    for (let index = 0; index < text.length && newlineCount < MARKDOWN_MAX_LINES; index += 1) {
+        if (text.charCodeAt(index) === 10) newlineCount += 1;
+    }
+
+    if (text.length > MARKDOWN_MAX || newlineCount >= MARKDOWN_MAX_LINES) {
         return <div className="mj_MessageText mj_MarkdownRaw">{text}</div>;
     }
 

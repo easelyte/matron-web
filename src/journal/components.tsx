@@ -2321,7 +2321,7 @@ function Timeline({
                                 </span>
                                 <div className="mx_EventTile_line">
                                     <div className="mx_MTextBody mx_EventTile_content">
-                                        <div className="mj_Markdown">
+                                        <div className="mj_Markdown mj_Markdown_streaming">
                                             <MarkdownBody text={text} streaming label={`stream-${index}`} />
                                             <span className="mj_Cursor" />
                                         </div>

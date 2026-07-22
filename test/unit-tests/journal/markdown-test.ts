@@ -10,7 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { toString } from "hast-util-to-string";
 
 import { copyText } from "../../../src/journal/clipboard";
-import { HIGHLIGHT_MAX, MARKDOWN_MAX, MarkdownBody } from "../../../src/journal/markdown";
+import { HIGHLIGHT_MAX, MARKDOWN_MAX, MARKDOWN_MAX_LINES, MarkdownBody } from "../../../src/journal/markdown";
 
 jest.mock("../../../src/journal/clipboard", () => ({ copyText: jest.fn() }));
 jest.mock("hast-util-to-string", () => {
@@ -123,6 +123,17 @@ test("uses the raw fallback above the markdown size limit", async () => {
 
     expect(fallback?.textContent).toBe(text);
     expect(container.querySelector("p")).toBeNull();
+});
+
+test("uses the raw fallback for dense markdown below the size limit", async () => {
+    const text = "- x\n".repeat(MARKDOWN_MAX_LINES);
+    expect(text.length).toBeLessThan(MARKDOWN_MAX);
+
+    const container = await renderMarkdown(text);
+    const fallback = container.querySelector(".mj_MessageText.mj_MarkdownRaw");
+
+    expect(fallback?.textContent).toBe(text);
+    expect(container.querySelector("li")).toBeNull();
 });
 
 test("renders markdown images as hardened links without fetching them", async () => {
