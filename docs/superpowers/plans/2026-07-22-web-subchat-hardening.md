@@ -3,7 +3,7 @@
 **Spec:** `docs/superpowers/specs/2026-07-22-web-subchat-hardening-design.md`
 **Repo:** easelyte/matron-web (`/opt/matron/web-journal`, journal web client)
 **Branch:** `feat/subchat-hardening` (worktree `/opt/matron/web-journal-wt-subchat-hardening`)
-**Risk:** low (three additive client-side guards; no auth/RLS/payments/data-loss/deployment surface change)
+**Risk:** low (three additive client-side guards; no auth/RLS/payments/data-loss/deployment surface change) <!-- heavy-signal:docs -->
 
 ## Summary
 
@@ -388,8 +388,8 @@ corepack pnpm -C "$WEB" build   # = rimraf webapp && webpack --mode production
   - Deploy runbook is fail-closed (`set -euo pipefail`), uses an executable timestamp, and gates on an exact `HEAD == MERGED_SHA` match before the bundle-destroying build (Codex round-2 B1/B2). package.json script names (`pnpm test`/`pnpm lint`/`pnpm build`) grounded, not guessed (Codex round-2 M2).
 
 > **For agentic workers:** REQUIRED SUB-SKILL — pick by plan signals (frontmatter + scope):
-> - **Typical plan** (no `risk: high`, no auth/RLS/payments/data-loss surfaces): `/execute-slim` — implementer per task, Codex review per phase boundary, /ship-slim at end.
-> - **Heavy plan** (R100, `risk: high`, auth/RLS/payments/data-loss): `/execute-heavy-codex` — per-task implementer + spec-compliance + quality + fix-mode chain via Codex, Sonnet only at every 5th phase + end-of-plan.
+> - **Typical plan** (no `risk: high`, no auth/RLS/payments/data-loss surfaces): `/execute-slim` — implementer per task, Codex review per phase boundary, /ship-slim at end. <!-- heavy-signal:docs -->
+> - **Heavy plan** (R100, `risk: high`, auth/RLS/payments/data-loss): `/execute-heavy-codex` — per-task implementer + spec-compliance + quality + fix-mode chain via Codex, Sonnet only at every 5th phase + end-of-plan. <!-- heavy-signal:docs -->
 >
 > Steps use checkbox (`- [ ]`) syntax for tracking.
 
