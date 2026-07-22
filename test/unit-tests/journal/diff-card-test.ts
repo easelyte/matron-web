@@ -21,6 +21,10 @@ type MountedComponent = {
 
 const mountedComponents: MountedComponent[] = [];
 
+function makeToken(payloadObj: Record<string, unknown>): string {
+    return `https://x.test/view?token=${Buffer.from(JSON.stringify(payloadObj)).toString("base64url")}.sig`;
+}
+
 async function mountDiff(payload: Record<string, unknown>): Promise<MountedComponent> {
     const container = document.createElement("div");
     const root = createRoot(container);
@@ -79,6 +83,7 @@ describe("parseDiffPayload", () => {
             displayPath: "src/example.ts",
             filePath: "/workspace/src/example.ts",
             viewerUrl: "https://example.test/view?token=secret",
+            viewerUrlExp: undefined,
             tool: "edit",
             label: "Updated",
             added: 2,
@@ -94,6 +99,7 @@ describe("parseDiffPayload", () => {
             displayPath: undefined,
             filePath: undefined,
             viewerUrl: undefined,
+            viewerUrlExp: undefined,
             tool: undefined,
             label: undefined,
             added: undefined,
@@ -128,6 +134,44 @@ describe("parseDiffPayload", () => {
         expect(parseDiffPayload({ diff: "x", viewer_url: "https://example.test/view" }).viewerUrl).toBe(
             "https://example.test/view",
         );
+    });
+
+    it("decodes a future integer viewer expiry", () => {
+        const future = 2_000_000_000;
+        expect(parseDiffPayload({ diff: "x", viewer_url: makeToken({ exp: future }) }).viewerUrlExp).toBe(future);
+    });
+
+    it("decodes a past integer viewer expiry", () => {
+        const past = 1_000_000_000;
+        expect(parseDiffPayload({ diff: "x", viewer_url: makeToken({ exp: past }) }).viewerUrlExp).toBe(past);
+    });
+
+    it.each([-1, 0, 1000.5, Number.MAX_SAFE_INTEGER])("rejects out-of-range viewer expiry %p", (exp) => {
+        expect(parseDiffPayload({ diff: "x", viewer_url: makeToken({ exp }) }).viewerUrlExp).toBeUndefined();
+    });
+
+    it("rejects an oversized viewer URL before decoding", () => {
+        const parsed = parseDiffPayload({
+            diff: "x",
+            viewer_url: "https://x.test/view?token=" + "A".repeat(20000),
+        });
+        expect(parsed.viewerUrl).toBeUndefined();
+        expect(parsed.viewerUrlExp).toBeUndefined();
+    });
+
+    it("warns exactly once across undecodable tokens, silent for non-token rejects", () => {
+        jest.isolateModules(() => {
+            const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { parseDiffPayload: pdp } = require("../../../src/journal/components");
+            pdp({ diff: "x" });
+            pdp({ diff: "x", viewer_url: "https://x.test/view?token=" + "A".repeat(20000) });
+            expect(warn).not.toHaveBeenCalled();
+            pdp({ diff: "x", viewer_url: "https://x.test/view?token=secret" });
+            pdp({ diff: "x", viewer_url: makeToken({ exp: -1 }) });
+            expect(warn).toHaveBeenCalledTimes(1);
+            warn.mockRestore();
+        });
     });
 
     it("treats empty optional strings as absent", () => {
