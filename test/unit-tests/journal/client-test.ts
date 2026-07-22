@@ -1061,6 +1061,66 @@ describe("MatronJournalClient attachment send state machine", () => {
         },
     );
 
+    it("aborts an in-flight upload when a duplicate convo_meta reveals a child conversation", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        let uploadStarted!: () => void;
+        let releaseUpload!: (value: { media_id: string }) => void;
+        let uploadSignal: AbortSignal | undefined;
+        const started = new Promise<void>((resolve) => (uploadStarted = resolve));
+        const uploadMedia = jest.fn(
+            (_bytes: ArrayBuffer, _contentType: string, signal?: AbortSignal) =>
+                new Promise<{ media_id: string }>((resolve, reject) => {
+                    uploadSignal = signal;
+                    releaseUpload = resolve;
+                    uploadStarted();
+                    signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+                        once: true,
+                    });
+                }),
+        );
+        database.applyJournal = jest.fn().mockResolvedValue(false);
+        database.conversations = jest
+            .fn()
+            .mockResolvedValue(
+                CONVERSATIONS.map((conversation) =>
+                    conversation.id === "c1" ? { ...conversation, parent_convo_id: "parent" } : conversation,
+                ),
+            );
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        const upload = client.sendAttachment(fileFixture("held.bin", "application/octet-stream", [1]), "c1");
+        await started;
+        expect(releaseUpload).toBeDefined();
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 21,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "user:2",
+            type: "convo_meta",
+            payload: { parent_convo_id: "parent" },
+        });
+
+        expect(uploadSignal?.aborted).toBe(true);
+        await upload;
+        expect([...rows.values()]).toEqual([
+            expect.objectContaining({
+                attachState: "error",
+                errorKind: "send_failed",
+                errorMessage: "Can't send to a read-only subagent transcript.",
+            }),
+        ]);
+        expect([...rows.values()]).not.toEqual([expect.objectContaining({ errorKind: "upload_failed" })]);
+        expect(state.inFlightUploads.size).toBe(0);
+        expect(state.uploadConvos.size).toBe(0);
+    });
+
     it("keeps a genuine top-level upload failure in the upload-failed state", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);

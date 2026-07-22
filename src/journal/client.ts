@@ -1227,6 +1227,10 @@ export class MatronJournalClient {
             if (removed && event.convo_id === this.state.selectedConversationId) {
                 await this.refreshSelectedConversation(event.convo_id);
             }
+            if (event.type === "convo_meta" && this.uploadConvos.size > 0) {
+                await this.refreshConversations();
+                this.abortUploadsForChildConvos();
+            }
             return;
         }
         this.clearHistoryError();
