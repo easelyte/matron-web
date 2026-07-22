@@ -59,7 +59,7 @@ import { makeDraftStore, MAX_DRAFT_BYTES } from "../../../src/journal/composer-d
 import type { Session } from "../../../src/journal/types";
 
 const SESSION: Session = { serverUrl: "https://j.example", token: "t", deviceId: 1, userId: 2, username: "u" };
-const KEY = `matron:draft:${encodeURIComponent(SESSION.serverUrl)}:${SESSION.userId}`;
+const KEY = `matron:draft:v1:${encodeURIComponent(SESSION.serverUrl)}:${SESSION.userId}`;
 
 beforeEach(() => localStorage.clear());
 
@@ -132,11 +132,16 @@ test("throwing getItem on a memory-miss read returns ok:false", () => {
     spy.mockRestore();
 });
 
-test("oversized draft deletes the entry (smaller kept)", () => {
+test("oversized draft stays in memory (navigation-safe) but is omitted from localStorage", () => {
     const s = makeDraftStore(SESSION);
-    s.setDraft("c1", "small");
-    s.setDraft("c1", "x".repeat(MAX_DRAFT_BYTES + 1));
-    expect(s.read("c1").text).toBe("");
+    const big = "x".repeat(MAX_DRAFT_BYTES + 1);
+    s.setDraft("c1", big);
+    s.setDraft("c2", "small");
+    expect(s.read("c1").text).toBe(big);          // memory keeps it → navigation-safe
+    s.persist();
+    const stored = JSON.parse(localStorage.getItem(KEY)!);
+    expect(stored.c1).toBeUndefined();            // oversized omitted from the reload mirror
+    expect(stored.c2).toBe("small");              // normal entry persisted
 });
 
 test("per-session key isolation", () => {
@@ -211,8 +216,11 @@ function parseMap(raw: string | null): Record<string, string> {
 
 export function makeDraftStore(session: Session | undefined): DraftStore {
     if (!session) return NOOP;
-    const key = `matron:draft:${encodeURIComponent(session.serverUrl)}:${session.userId}`;
-    // In-memory map is session-authoritative; localStorage is a best-effort reload mirror.
+    // Versioned key (round-2 M3) so a future shape change gets a fresh namespace, not a silent
+    // reinterpret of v1 blobs. Bump to :v2: with an explicit migration/fallback when the shape changes.
+    const key = `matron:draft:v1:${encodeURIComponent(session.serverUrl)}:${session.userId}`;
+    // In-memory map is session-authoritative (holds EVERYTHING, incl. oversized — navigation-safe);
+    // localStorage is a best-effort reload mirror that omits oversized entries.
     const mem = new Map<string, string>();
     let hydrated = false;
 
@@ -231,7 +239,12 @@ export function makeDraftStore(session: Session | undefined): DraftStore {
 
     const persist = (): void => {
         try {
-            localStorage.setItem(key, JSON.stringify(Object.fromEntries(mem)));
+            // Mirror memory to localStorage, OMITTING oversized entries (round-2 B2): oversized text
+            // stays live in memory (navigation-safe) but must not bloat the reload blob — it simply
+            // won't survive a reload. Normal entries persist.
+            const out: Record<string, string> = {};
+            for (const [k, v] of mem) if (utf8Length(v) <= MAX_DRAFT_BYTES) out[k] = v;
+            localStorage.setItem(key, JSON.stringify(out));
         } catch {
             console.warn("matron: draft persist failed (storage full/unavailable)");
         }
@@ -249,14 +262,15 @@ export function makeDraftStore(session: Session | undefined): DraftStore {
         setDraft(convoId, text) {
             if (!hydrated) hydrate();
             mem.delete(convoId); // delete-then-reinsert → recency ordering
-            if (text.trim() !== "" && utf8Length(text) <= MAX_DRAFT_BYTES) {
-                mem.set(convoId, text);
+            if (text.trim() !== "") {
+                mem.set(convoId, text); // memory holds EVERYTHING incl. oversized (navigation-safe)
                 while (mem.size > MAX_DRAFT_ENTRIES) {
                     const oldest = mem.keys().next().value as string;
                     mem.delete(oldest);
                 }
             }
-            // NO persist here — memory only; the Composer debounces persist().
+            // NO persist here — memory only; the Composer debounces persist(). Oversized entries are
+            // filtered out at persist() time, not dropped from memory.
         },
         persist,
         clear(convoId) {
@@ -520,6 +534,14 @@ test("sendMessage resolves true when refresh throws after addToOutbox (outbox-au
     expect(db.addToOutbox).toHaveBeenCalledTimes(1);
 });
 
+test("sendMessage resolves without awaiting a hung refresh (refresh off the critical path)", async () => {
+    const { client, db } = makeClientWithConvos(["a"]);
+    await client.selectConversation("a");
+    jest.spyOn(client as any, "refreshSelectedConversation").mockReturnValue(new Promise(() => {})); // never settles
+    await expect(client.sendMessage("hi")).resolves.toBe(true);   // does NOT hang
+    expect(db.addToOutbox).toHaveBeenCalledTimes(1);
+});
+
 test("default targetConvoId preserves the no-arg call behavior", async () => {
     const { client, db } = makeClientWithConvos(["a"]);
     await client.selectConversation("a");
@@ -546,21 +568,31 @@ public async sendMessage(bodyInput: string, targetConvoId?: string): Promise<boo
         body,
         createdAt: Date.now(),
     };
-    await this.database.addToOutbox(message); // durable — from here the message WILL send
-    try {
-        await this.refreshSelectedConversation(conversationId);
-        if (this.state.selectedConversationId === conversationId) {
-            this.patch({ sendTick: this.state.sendTick + 1 });
+    await this.database.addToOutbox(message); // the ONLY awaited durable step
+    // Everything after the durable write is BEST-EFFORT and must never reject sendMessage or
+    // delay its resolution — otherwise the composer stays retry-able into a duplicate durable
+    // message (no server idempotency), and a hung refresh could wedge the send lock past the
+    // watchdog (round-2 B1/M2). sendMessage resolves `true` the instant the outbox write lands.
+    void (async () => {
+        try {
+            await this.refreshSelectedConversation(conversationId);
+            if (this.state.selectedConversationId === conversationId) {
+                this.patch({ sendTick: this.state.sendTick + 1 });
+            }
+        } catch (err) {
+            console.warn("matron: post-send refresh failed (message still queued)", err);
         }
+    })();
+    try {
+        this.sendPendingMessage(message);
     } catch (err) {
-        // Outbox write already succeeded; a refresh failure must not reject (would leave the
-        // composer retry-able into a duplicate durable message — no server idempotency).
-        console.warn("matron: post-send refresh failed (message still queued)", err);
+        console.warn("matron: post-send dispatch threw (message still queued)", err);
     }
-    this.sendPendingMessage(message);
     return true;
 }
 ```
+
+> **Why refresh moves off the awaited path (round-2 B1 + M2):** the durable `addToOutbox` is the only thing `sendMessage` waits on. A hung or throwing `refreshSelectedConversation` (or a throwing `sendPendingMessage`) can no longer reject `sendMessage` or hold the send lock open — so the watchdog only ever fires when `addToOutbox` itself hangs (message NOT queued → retry is safe). The pending row still appears (refresh runs, just un-awaited); on the rare refresh-throw it self-heals on the next refresh/echo.
 
 - [ ] **Step 4: Run to verify it passes** — `pnpm exec jest client-test -i` → PASS (new + existing cases). `pnpm exec tsc --noEmit` clean.
 
@@ -579,27 +611,36 @@ git commit -m "fix(client): explicit sendMessage target + outbox-authoritative (
 - Test: `test/unit-tests/journal/components-test.ts` (add a focused case)
 
 **Interfaces:**
-- Produces: `export async function copyText(text: string): Promise<void>` — awaits `navigator.clipboard.writeText`, falls back to a hidden-`<textarea>` `document.execCommand("copy")`, then a silent no-op; never throws, never leaks an unhandled rejection.
+- Produces: `export async function copyText(text: string): Promise<boolean>` — awaits `navigator.clipboard.writeText`, falls back to a hidden-`<textarea>` `document.execCommand("copy")`; returns `true` on success, `false` if both paths fail (round-2 B3: an explicit result lets a caller react). Never throws, never leaks an unhandled rejection, and always removes the temp textarea (via `finally`, even if `execCommand` throws).
+
+> **Note (round-2 B3):** the journal web client is served over **HTTPS** (`:8443` Tailscale) — a secure context — so `navigator.clipboard.writeText` is always available and the primary path always succeeds in production; the `false` return and `execCommand` fallback exist only for non-secure/edge environments. A visible copy-failure toast is therefore unnecessary (the failure path is unreachable on the real deploy) — the boolean return is the accepted surface, not a UI affordance.
 
 - [ ] **Step 1: Write the failing test** (append to `components-test.ts`)
 
 ```ts
 import { copyText } from "../../../src/journal/components";
 
-test("copyText awaits clipboard and falls back to execCommand on rejection", async () => {
-    const writeText = jest.fn().mockRejectedValue(new Error("denied"));
+test("copyText awaits clipboard and returns true", async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
-    const exec = jest.fn().mockReturnValue(true);
-    (document as any).execCommand = exec;
-    await expect(copyText("hello")).resolves.toBeUndefined();
+    await expect(copyText("hello")).resolves.toBe(true);
     expect(writeText).toHaveBeenCalledWith("hello");
-    expect(exec).toHaveBeenCalledWith("copy");
 });
 
-test("copyText is a silent no-op when both paths fail", async () => {
+test("copyText falls back to execCommand on rejection and returns true", async () => {
+    Object.assign(navigator, { clipboard: { writeText: jest.fn().mockRejectedValue(new Error("denied")) } });
+    const exec = jest.fn().mockReturnValue(true);
+    (document as any).execCommand = exec;
+    await expect(copyText("hello")).resolves.toBe(true);
+    expect(exec).toHaveBeenCalledWith("copy");
+    expect(document.querySelectorAll("textarea").length).toBe(0); // temp textarea cleaned up
+});
+
+test("copyText returns false when both paths fail, without throwing, and cleans up the textarea", async () => {
     Object.assign(navigator, { clipboard: { writeText: jest.fn().mockRejectedValue(new Error("x")) } });
     (document as any).execCommand = jest.fn(() => { throw new Error("nope"); });
-    await expect(copyText("hello")).resolves.toBeUndefined();
+    await expect(copyText("hello")).resolves.toBe(false);
+    expect(document.querySelectorAll("textarea").length).toBe(0); // cleaned up despite the throw
 });
 ```
 
@@ -608,26 +649,27 @@ test("copyText is a silent no-op when both paths fail", async () => {
 - [ ] **Step 3: Implement `copyText`** in `components.tsx`
 
 ```tsx
-export async function copyText(text: string): Promise<void> {
+export async function copyText(text: string): Promise<boolean> {
     try {
         if (navigator.clipboard?.writeText) {
             await navigator.clipboard.writeText(text);
-            return;
+            return true;
         }
     } catch {
         /* fall through to execCommand */
     }
+    const ta = document.createElement("textarea");
     try {
-        const ta = document.createElement("textarea");
         ta.value = text;
         ta.style.position = "fixed";
         ta.style.opacity = "0";
         document.body.appendChild(ta);
         ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
+        return document.execCommand("copy"); // true on success
     } catch {
-        /* silent no-op — copy is best-effort, never throws into the UI */
+        return false; // best-effort — never throws into the UI
+    } finally {
+        ta.remove(); // always clean up, even if execCommand threw
     }
 }
 ```
@@ -797,16 +839,24 @@ git commit -m "feat(timeline): event-row menu (Copy + View source) + EventSource
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test("switching conversations closes an open menu and source sheet", async () => {
+test("switching conversations closes an OPEN MENU (menu still open, not via View source)", async () => {
+    const { container, client } = renderAppWithEvents([textEvent(5, "hi")], ["c1", "c2"]);
+    await openRowMenu(container, 5);
+    expect(container.querySelector(".mj_EventRowMenu")).not.toBeNull(); // menu open, sheet not
+    await act(async () => { await client.selectConversation("c2"); });
+    expect(container.querySelector(".mj_EventRowMenu")).toBeNull();     // closed by the switch effect, NOT by a menu action
+});
+test("switching conversations closes an open source sheet", async () => {
     const { container, client } = renderAppWithEvents([textEvent(5, "hi")], ["c1", "c2"]);
     await openRowMenu(container, 5);
     await clickMenuItem(container, "View source");
     expect(container.querySelector(".mj_EventSource")).not.toBeNull();
     await act(async () => { await client.selectConversation("c2"); });
-    expect(container.querySelector(".mj_EventRowMenu")).toBeNull();
     expect(container.querySelector(".mj_EventSource")).toBeNull();
 });
 ```
+
+> The first case is load-bearing (round-2 Maj-1): it leaves the **menu** open (does not click "View source", which would close the menu itself) so the test actually detects a missing `menu.close()` in the switch effect. A test that opens View source first can't distinguish the switch effect from the menu's own close-on-action.
 
 - [ ] **Step 2: Run to verify it fails** — the sheet/menu persist across switch → FAIL.
 
@@ -899,11 +949,12 @@ const bodyRef = useRef(body); bodyRef.current = body;
 const prevConvoIdRef = useRef(convoId);
 const draftTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-// flushDraft = cancel the pending debounce AND persist now (used on switch/blur/teardown/send).
-const flushDraft = useCallback(() => {
+// cancelDraftDebounce = clear the pending mirror timer WITHOUT persisting (send uses this so it can
+// clear-or-persist exactly once). flushDraft = cancel + persist now (switch/blur/teardown).
+const cancelDraftDebounce = useCallback(() => {
     if (draftTimerRef.current) { clearTimeout(draftTimerRef.current); draftTimerRef.current = undefined; }
-    drafts.persist();
-}, [drafts]);
+}, []);
+const flushDraft = useCallback(() => { cancelDraftDebounce(); drafts.persist(); }, [cancelDraftDebounce, drafts]);
 
 const setBodyDraft = useCallback((next: string) => {
     setBody(next);
@@ -961,16 +1012,40 @@ test("two rapid Enters send once", async () => {
     expect(send).toHaveBeenCalledTimes(1);
     await act(async () => { resolve(true); });
 });
-test("cross-convo: send in A pending, Enter in B is not blocked; A resolve leaves B untouched; A draft cleared", async () => {
-    // send X in c1 (slow), switch to c2, type + Enter in c2 (own send), resolve c1
-    // assert: c2 body sends its own message; return to c1 -> empty composer (X's draft cleared)
+test("cross-convo: send in A pending, Enter in B not blocked; A resolve leaves B untouched; A draft cleared", async () => {
+    let resolveA!: (v: boolean) => void;
+    const sm = jest.spyOn(client, "sendMessage")
+        .mockReturnValueOnce(new Promise((r) => (resolveA = r)))  // A: pending
+        .mockResolvedValue(true);                                 // B: resolves
+    const { container, client: c } = renderComposerApp(["c1", "c2"], client);
+    await typeInComposer(container, "X"); await pressEnter(container);        // A send pending, X still in composer
+    await act(async () => { await c.selectConversation("c2"); });             // switch to B (c2)
+    await typeInComposer(container, "B-msg"); await pressEnter(container);     // B not blocked → its own send
+    expect(sm).toHaveBeenNthCalledWith(2, "B-msg", "c2");
+    await act(async () => { resolveA(true); });                               // A resolves while B on screen
+    expect(composerValue(container)).toBe("");                                // B's composer untouched (already sent B-msg → empty)
+    await act(async () => { await c.selectConversation("c1"); });
+    expect(composerValue(container)).toBe("");                                // A's draft cleared (X was sent)
 });
-test("same-convo interleave: follow-up Y typed during pending send is preserved", async () => {
-    // send X in c1 (slow), type Y, resolve X -> composer still shows Y, Y persisted, X not re-sendable
+test("same-convo interleave: follow-up Y typed during a pending send is preserved", async () => {
+    let resolveX!: (v: boolean) => void;
+    jest.spyOn(client, "sendMessage").mockReturnValueOnce(new Promise((r) => (resolveX = r)));
+    const { container } = renderComposerApp(["c1"], client);
+    await typeInComposer(container, "X"); await pressEnter(container);        // X pending
+    await typeInComposer(container, "Y");                                     // type follow-up while pending
+    await act(async () => { resolveX(true); });                              // X resolves
+    expect(composerValue(container)).toBe("Y");                              // Y preserved (bodyRef !== submitted)
+    expect(makeDraftStore(SESSION_C1).read("c1").text).toBe("Y");           // Y persisted, X's draft not clobbered
 });
 test("recent-folder is recorded on a successful folder-bearing send", async () => {
     const record = jest.fn();
-    // spy makeRecentFoldersStore().record; send "//work/dir prompt"; assert record called with the folder
+    jest.spyOn(require("../../../src/journal/slash-palette"), "makeRecentFoldersStore")
+        .mockReturnValue({ record, folders: () => [] });
+    jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+    const { container } = renderComposerApp(["c1"], client);
+    await typeInComposer(container, "//work/dir do it"); await pressEnter(container);
+    await act(async () => {}); // flush the awaited send completion
+    expect(record).toHaveBeenCalledWith("work/dir");  // recentFolderArgument("//work/dir do it")
 });
 test("send watchdog releases a hung lock after the interval", async () => {
     jest.useFakeTimers();
@@ -1020,8 +1095,9 @@ const send = async (): Promise<void> => {
         if (await client.sendMessage(submitted, cid)) {
             const folder = recentFolderArgument(submitted);
             if (folder) store.record(folder);
-            flushDraft();                                       // cancel debounce + persist current map
-            if (drafts.read(cid).text === submitted) drafts.clear(cid); // clear the sent convo's draft (any view)
+            cancelDraftDebounce();                              // stop the pending mirror; persist exactly once below
+            if (drafts.read(cid).text === submitted) drafts.clear(cid); // sent text still the draft → clear (persists)
+            else drafts.persist();                             // a follow-up Y was typed → commit it (persists once)
             if (convoIdRef.current === cid && bodyRef.current === submitted) {
                 setBody("");
                 setDismissed(null);
