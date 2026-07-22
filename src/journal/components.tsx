@@ -23,6 +23,8 @@ import {
     ArchiveIcon,
     AttachmentIcon,
     ChevronLeftIcon,
+    CloseIcon,
+    CompactIcon,
     ComposeIcon,
     FileEditIcon,
     KebabIcon,
@@ -913,11 +915,26 @@ function ChatHeader({ client, state }: { client: MatronJournalClient; state: Cli
             >
                 {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
                 {status?.context && (
-                    <span
-                        className="mj_HeaderContext"
-                        title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
-                    >
-                        Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
+                    <span className="mj_HeaderContextRow">
+                        <span
+                            className="mj_HeaderContext"
+                            title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
+                        >
+                            Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
+                        </span>
+                        <button
+                            className="mj_CompactButton"
+                            type="button"
+                            aria-label="Compact conversation"
+                            title="Compact the conversation — sends /compact"
+                            onClick={() =>
+                                void client
+                                    .sendMessage("/compact")
+                                    .catch((error) => console.warn("Compact command failed to send:", error))
+                            }
+                        >
+                            <CompactIcon />
+                        </button>
                     </span>
                 )}
             </div>
@@ -1895,6 +1912,7 @@ function Timeline({
 
 function Composer({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const [body, setBody] = useState("");
+    const [dismissedSeq, setDismissedSeq] = useState(0);
     const textarea = useRef<HTMLTextAreaElement>(null);
     const fileInput = useRef<HTMLInputElement>(null);
     const send = async (): Promise<void> => {
@@ -1906,9 +1924,18 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
     return (
         <div className="mx_MessageComposer" role="region" aria-label="Message composer">
             <div className="mx_MessageComposer_wrapper">
-                {state.connectionError && (
-                    <div className="mj_ConnectionError" role="status">
-                        {state.connectionError}
+                {state.connectionError && state.connectionErrorSeq !== dismissedSeq && (
+                    <div className="mj_ConnectionError">
+                        <span role="status">{state.connectionError}</span>
+                        <button
+                            className="mj_ConnectionError_dismiss"
+                            type="button"
+                            aria-label="Dismiss error"
+                            title="Dismiss error"
+                            onClick={() => setDismissedSeq(state.connectionErrorSeq)}
+                        >
+                            <CloseIcon />
+                        </button>
                     </div>
                 )}
                 <div className="mx_MessageComposer_row">

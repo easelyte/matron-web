@@ -104,6 +104,7 @@ function blankState(): ClientState {
         events: [],
         pendingMessages: [],
         connection: "offline",
+        connectionErrorSeq: 0,
         loadingHistory: false,
         hasOlderHistory: false,
         textStreams: {},
@@ -1497,7 +1498,8 @@ export class MatronJournalClient {
     }
 
     private patch(update: Partial<ClientState>): void {
-        this.state = { ...this.state, ...update };
+        const bump = "connectionError" in update && update.connectionError ? 1 : 0;
+        this.state = { ...this.state, ...update, connectionErrorSeq: this.state.connectionErrorSeq + bump };
         this.emit();
     }
 

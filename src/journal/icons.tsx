@@ -186,3 +186,29 @@ export function SendIcon(props: IconProps): React.ReactElement {
         </Icon>
     );
 }
+
+export function CompactIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            {/* two arrows collapsing inward — compress, matches apple's arrow.down.right.and.arrow.up.left */}
+            <path d="M9 9 4 4M4 8V4h4" />
+            <path d="m15 15 5 5M20 16v4h-4" />
+        </Icon>
+    );
+}
+
+export function ChevronDownIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="m6 9 6 6 6-6" />
+        </Icon>
+    );
+}
+
+export function CloseIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M18 6 6 18M6 6l12 12" />
+        </Icon>
+    );
+}

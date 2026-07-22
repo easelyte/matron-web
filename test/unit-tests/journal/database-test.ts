@@ -239,4 +239,23 @@ describe("JournalDatabase", () => {
         expect((await database.conversations())[0]).toMatchObject({ id: "c1", parent_convo_id: null });
         database.close();
     });
+
+    it("orders conversations by last activity, newest first, with last_seq as the tie-break", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 10, "dan");
+        const base = { session_state: "running", unread_count: 0, snippet: "", created_at: 1 };
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                { ...base, id: "old", title: "Old", last_seq: 5, last_ts: 1_000 },
+                { ...base, id: "newest", title: "Newest", last_seq: 9, last_ts: 3_000 },
+                { ...base, id: "mid", title: "Mid", last_seq: 7, last_ts: 2_000 },
+                { ...base, id: "mid-tie", title: "MidTie", last_seq: 8, last_ts: 2_000 },
+            ],
+        });
+
+        const ordered = (await database.conversations()).map((conversation) => conversation.id);
+        // newest last_ts first; the two 2_000 rows tie-break on higher last_seq (8 before 7)
+        expect(ordered).toEqual(["newest", "mid-tie", "mid", "old"]);
+        database.close();
+    });
 });
