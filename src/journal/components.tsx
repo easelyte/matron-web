@@ -23,6 +23,7 @@ import {
     type MatronJournalClient,
     PREFERENCES_UNAVAILABLE_ERROR,
 } from "./client";
+import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
@@ -164,30 +165,6 @@ function formatBytes(value: unknown): string | undefined {
     if (value < 1024) return `${value} B`;
     if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
     return `${(value / 1024 / 1024).toFixed(1)} MB`;
-}
-
-export async function copyText(text: string): Promise<boolean> {
-    try {
-        if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(text);
-            return true;
-        }
-    } catch {
-        /* Fall through to execCommand. */
-    }
-    const textarea = document.createElement("textarea");
-    try {
-        textarea.value = text;
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        return document.execCommand("copy");
-    } catch {
-        return false;
-    } finally {
-        textarea.remove();
-    }
 }
 
 function LoginScreen({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
