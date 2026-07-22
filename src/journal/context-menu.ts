@@ -76,12 +76,17 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
         controllerRef.current = createLongPressController({
             delayMs: opts?.longPressMs ?? 500,
             onFire: () => {
-                didFireRef.current = true;
                 pressScrollCleanupRef.current();
                 const p = pressTargetRef.current;
                 if (!p) return;
                 const row = p.getRow();
-                if (!row) return;
+                if (!row) {
+                    controllerRef.current?.onPointerCancel();
+                    didFireRef.current = false;
+                    pressTargetRef.current = undefined;
+                    return;
+                }
+                didFireRef.current = true;
                 const rect = row.getBoundingClientRect();
                 open(p.target, rect.right, rect.top, row);
             },

@@ -172,9 +172,9 @@ function renderAppWithEvents(
 ): Promise<{ container: HTMLDivElement; root: Root; client: MatronJournalClient }> {
     const conversations = convoIds.map((id) => ({ ...CONVERSATION, id, title: id }));
     const client = signedInWithRooms(conversations);
-    internals(client).state = { ...client.getSnapshot(), events };
+    internals(client).state = { ...client.getSnapshot(), events: events.filter((event) => event.convo_id === "c1") };
     internals(client).database = {
-        events: jest.fn(async (convoId: string) => (convoId === "c1" ? events : [])),
+        events: jest.fn(async (convoId: string) => events.filter((event) => event.convo_id === convoId)),
         outbox: jest.fn(async () => []),
     };
     return renderClient(client).then((rendered) => ({ ...rendered, client }));
@@ -292,14 +292,17 @@ async function selectFirstPaletteItem(container: HTMLElement): Promise<void> {
     await act(async () => item.click());
 }
 
-async function touchPress(node: Element): Promise<void> {
+async function touchPress(node: Element, pointerId = 1): Promise<void> {
     const event = new MouseEvent("pointerdown", {
         bubbles: true,
         cancelable: true,
         clientX: 12,
         clientY: 18,
     });
-    Object.defineProperty(event, "pointerType", { value: "touch" });
+    Object.defineProperties(event, {
+        pointerType: { value: "touch" },
+        pointerId: { value: pointerId },
+    });
     await act(async () => node.dispatchEvent(event));
 }
 
@@ -1298,17 +1301,25 @@ describe("EventRow context menu and source sheet", () => {
         expect(rendered.container.querySelector(".mj_EventRowMenu")).not.toBeNull();
     });
 
-    test("a long-press timer firing after the row unmounts does not crash", async () => {
+    test("a long-press timer firing after the row unmounts does not poison the next conversation", async () => {
         jest.useFakeTimers();
-        const result = await renderAppWithEvents([textEvent(5, "hi")], ["c1", "c2"]);
+        const result = await renderAppWithEvents(
+            [textEvent(5, "hi"), { ...textEvent(6, "new conversation"), convo_id: "c2" }],
+            ["c1", "c2"],
+        );
         rendered = result;
         const row = rendered.container.querySelector('[data-event-id="5"]') as HTMLElement;
-        await touchPress(row);
+        await touchPress(row, 1);
         await act(async () => {
             await result.client.selectConversation("c2");
         });
         await act(async () => jest.advanceTimersByTime(500));
         expect(rendered.container.querySelector(".mj_EventRowMenu")).toBeNull();
+
+        const newRow = rendered.container.querySelector('[data-event-id="6"]') as HTMLElement;
+        await touchPress(newRow, 2);
+        await act(async () => jest.advanceTimersByTime(500));
+        expect(rendered.container.querySelector(".mj_EventRowMenu")).not.toBeNull();
     });
 
     test("switching conversations closes an OPEN MENU (menu still open, not via View source)", async () => {

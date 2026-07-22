@@ -534,6 +534,30 @@ describe("MatronJournalClient state handling", () => {
         expect(database.addToOutbox).toHaveBeenCalledTimes(1);
     });
 
+    it("resolves true without enabling a duplicate when a post-outbox subscriber throws", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase({
+            addToOutbox: jest.fn(async () => {
+                client.subscribe(() => {
+                    throw new Error("subscriber failed");
+                });
+            }),
+        });
+        state.state = signedInState(client);
+        state.database = database;
+        jest.spyOn(state, "refreshSelectedConversation").mockReturnValue(new Promise(() => {}));
+        const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+        try {
+            await expect(client.sendMessage("hi")).resolves.toBe(true);
+
+            expect(database.addToOutbox).toHaveBeenCalledTimes(1);
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
     it("resolves without awaiting a hung refresh", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);

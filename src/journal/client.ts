@@ -478,7 +478,11 @@ export class MatronJournalClient {
         // sendTick is a synchronous "a send happened → scroll to bottom" signal; bump it now (the
         // message is durably queued) rather than gating it behind the async refresh below.
         if (this.state.selectedConversationId === conversationId) {
-            this.patch({ sendTick: this.state.sendTick + 1 });
+            try {
+                this.patch({ sendTick: this.state.sendTick + 1 });
+            } catch (error) {
+                console.warn("matron: post-send state update failed (message still queued)", error);
+            }
         }
         // Everything after the durable write is best-effort and must never reject sendMessage or
         // delay its resolution. Otherwise the composer remains retryable despite a queued message.
