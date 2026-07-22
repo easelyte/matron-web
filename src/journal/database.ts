@@ -125,7 +125,14 @@ export class JournalDatabase {
                 let link = coerceParentId(existing.parent_convo_id) ?? coerceParentId(summary.parent_convo_id);
                 if (link === summary.id) link = null;
                 existing.parent_convo_id = link;
-                if (typeof summary.session_state === "string") existing.session_state = summary.session_state;
+                if (
+                    typeof summary.session_state === "string" &&
+                    typeof summary.last_seq === "number" &&
+                    Number.isFinite(summary.last_seq) &&
+                    summary.last_seq >= existing.last_seq
+                ) {
+                    existing.session_state = summary.session_state;
+                }
                 conversations.put(existing);
             }
             transaction.objectStore("meta").put(true, BACKFILL_KEY);

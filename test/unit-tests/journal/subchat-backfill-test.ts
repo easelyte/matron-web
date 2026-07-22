@@ -190,6 +190,69 @@ describe("subchat existing-client backfill", () => {
         database.close();
     });
 
+    it("preserves a newer local session state while still backfilling the parent link", async () => {
+        const database = await seedExistingClient({ last_seq: 10, session_state: "done", parent_convo_id: null });
+
+        await database.backfillParentLinks({
+            seq: 11,
+            conversations: [conversation("c1", { last_seq: 5, session_state: "running", parent_convo_id: "p1" })],
+        });
+
+        expect((await database.conversations())[0]).toMatchObject({
+            parent_convo_id: "p1",
+            session_state: "done",
+        });
+        database.close();
+    });
+
+    it("updates the session state from a fresher snapshot", async () => {
+        const database = await seedExistingClient({ last_seq: 5, session_state: "running" });
+
+        await database.backfillParentLinks({
+            seq: 11,
+            conversations: [conversation("c1", { last_seq: 10, session_state: "done" })],
+        });
+
+        expect((await database.conversations())[0]).toMatchObject({ session_state: "done" });
+        database.close();
+    });
+
+    it("lets the snapshot session state win when sequence numbers are equal", async () => {
+        const database = await seedExistingClient({ last_seq: 10, session_state: "done" });
+
+        await database.backfillParentLinks({
+            seq: 11,
+            conversations: [conversation("c1", { last_seq: 10, session_state: "running" })],
+        });
+
+        expect((await database.conversations())[0]).toMatchObject({ session_state: "running" });
+        database.close();
+    });
+
+    it.each([
+        ["null", null],
+        ["NaN", Number.NaN],
+    ])("rejects a malformed %s last_seq while still backfilling the parent link", async (_label, lastSeq) => {
+        const database = await seedExistingClient({ last_seq: 10, session_state: "done", parent_convo_id: null });
+
+        await database.backfillParentLinks({
+            seq: 11,
+            conversations: [
+                conversation("c1", {
+                    last_seq: lastSeq as unknown as number,
+                    session_state: "running",
+                    parent_convo_id: "p1",
+                }),
+            ],
+        });
+
+        expect((await database.conversations())[0]).toMatchObject({
+            parent_convo_id: "p1",
+            session_state: "done",
+        });
+        database.close();
+    });
+
     it("rejects a self-parent link during backfill (stores null, stays top-level)", async () => {
         const database = await seedExistingClient({ parent_convo_id: null });
 
