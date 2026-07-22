@@ -50,6 +50,7 @@ import {
     UnarchiveIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
+import { MarkdownBody } from "./markdown";
 import {
     applyCommand,
     applyFolder,
@@ -1834,7 +1835,11 @@ export function EventContent({
 }): React.ReactElement {
     switch (event.type) {
         case "text":
-            return <div className="mj_MessageText">{asString(event.payload.body)}</div>;
+            return (
+                <div className="mj_Markdown">
+                    <MarkdownBody text={asString(event.payload.body)} label={String(event.seq)} />
+                </div>
+            );
         case "prompt":
             return (
                 <PromptCard
@@ -2295,7 +2300,9 @@ function Timeline({
                                 >
                                     <div className="mx_EventTile_line">
                                         <div className="mx_MTextBody mx_EventTile_content">
-                                            <div className="markdown-body mj_MessageText">{message.body}</div>
+                                            <div className="mj_Markdown">
+                                                <MarkdownBody text={message.body} label={message.localId} />
+                                            </div>
                                         </div>
                                     </div>
                                     <span className="mj_SendingLabel">Sending…</span>
@@ -2314,8 +2321,8 @@ function Timeline({
                                 </span>
                                 <div className="mx_EventTile_line">
                                     <div className="mx_MTextBody mx_EventTile_content">
-                                        <div className="markdown-body mj_MessageText">
-                                            {text}
+                                        <div className="mj_Markdown">
+                                            <MarkdownBody text={text} streaming label={`stream-${index}`} />
                                             <span className="mj_Cursor" />
                                         </div>
                                     </div>
