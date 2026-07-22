@@ -1004,7 +1004,7 @@ describe("MatronJournalClient attachment send state machine", () => {
         async (_label, eventConvoId, shouldAbort) => {
             const client = new MatronJournalClient();
             const state = internals(client);
-            const { database } = attachmentDatabase();
+            const { database, rows } = attachmentDatabase();
             let uploadStarted!: () => void;
             let releaseUpload!: (value: { media_id: string }) => void;
             let uploadSignal: AbortSignal | undefined;
@@ -1047,10 +1047,37 @@ describe("MatronJournalClient attachment send state machine", () => {
             expect(uploadSignal?.aborted).toBe(shouldAbort);
             if (!shouldAbort) releaseUpload({ media_id: "media-1" });
             await upload;
+            if (shouldAbort) {
+                expect([...rows.values()]).toEqual([
+                    expect.objectContaining({
+                        attachState: "error",
+                        errorKind: "send_failed",
+                        errorMessage: "Can't send to a read-only subagent transcript.",
+                    }),
+                ]);
+            }
             expect(state.inFlightUploads.size).toBe(0);
             expect(state.uploadConvos.size).toBe(0);
         },
     );
+
+    it("keeps a genuine top-level upload failure in the upload-failed state", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const { database, rows } = attachmentDatabase();
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            uploadMedia: jest.fn().mockRejectedValue(new Error("network unavailable")),
+        };
+
+        await client.sendAttachment(fileFixture("failed.bin", "application/octet-stream", [1]), "c1");
+
+        expect([...rows.values()]).toEqual([
+            expect.objectContaining({ attachState: "error", errorKind: "upload_failed" }),
+        ]);
+    });
 
     it("confirms head-only, advances pages, and serializes uploads in confirm order", async () => {
         const client = new MatronJournalClient();

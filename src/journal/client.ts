@@ -649,6 +649,13 @@ export class MatronJournalClient {
             mediaId = response.media_id;
         } catch (error) {
             if (!this.ownsAttachment(owner, message.localId)) return;
+            if (this.isChildConvo(message.convoId)) {
+                this.markChildBlocked(message);
+                if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+                if (!this.ownsAttachment(owner, message.localId)) return;
+                await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+                return;
+            }
             message.blobRef = null;
             message.attachState = "error";
             message.errorKind =
