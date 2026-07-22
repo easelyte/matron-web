@@ -24,7 +24,7 @@ if (typeof summary.session_state === "string" && summary.last_seq >= existing.la
 }
 ```
 - Preserve when `existing.last_seq > summary.last_seq` (local is newer — exactly the scope contract).
-- `SnapshotResponse` summaries are `Omit<Conversation,"read_up_to_seq">`, so `summary.last_seq` is always present (`types.ts:51-53`).
+- **Implementation revision (Codex plan-review R1-M1):** `SnapshotResponse` summaries are TYPED `Omit<Conversation,"read_up_to_seq">`, so `summary.last_seq` is present at the type level — but the type is not a runtime guarantee (`backfillParentLinks` validates only `conversations` array + each `id`). A malformed server response (`last_seq: null`) would coerce `null >= 0 → true` and clobber a local terminal state. The implemented guard therefore adds a runtime finite-number check (`typeof summary.last_seq === "number" && Number.isFinite(summary.last_seq)`) before the `>=` comparison; on a non-finite `last_seq` the local `session_state` is preserved. See plan T-1.1.
 - Parent-link backfill (the method's primary job) is **unchanged** — only the session_state write gets the guard. `parent_convo_id` is immutable-once-set and already existing-first coalesced, so it needs no freshness gate.
 
 ### R2 — reconnect-purge crash window (purge-before-notice)
