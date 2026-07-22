@@ -221,6 +221,13 @@ describe("DiffCard", () => {
         expect(plain.container.querySelector("span.mj_DiffCard_filename")?.textContent).toBe("b.ts");
     });
 
+    it("renders a plain filename without an expired note when no viewer URL is provided", async () => {
+        const { container } = await mountDiff({ diff: "x", file_path: "plain.ts" });
+        expect(container.querySelector("a")).toBeNull();
+        expect(container.querySelector("span.mj_DiffCard_filename")?.textContent).toBe("plain.ts");
+        expect(container.querySelector(".mj_DiffCard_expiredNote")).toBeNull();
+    });
+
     it("renders counts and the new-file badge only when provided", async () => {
         const rich = await mountDiff({ diff: "x", added: 0, removed: 2, new_file: true });
         expect(rich.container.querySelector(".mj_DiffCard_added")?.textContent).toBe("+0");
@@ -321,6 +328,91 @@ describe("DiffCard", () => {
         const { container } = await mountDiff({ diff: "x", truncated: true });
         expect(container.querySelector('[title="diff truncated"]')?.textContent).toBe("…");
         expect(container.querySelector(".mj_DiffCard_truncated")?.textContent).toBe("… diff truncated");
+    });
+});
+
+describe("DiffCard viewer link expiry", () => {
+    // These mirror the unexported values in components.tsx. Update both places
+    // together if the implementation constants change.
+    const FIXED_MS = 1_700_000_000_000;
+    const nowSec = Math.floor(FIXED_MS / 1000);
+    const CLOCK_SKEW_GRACE_SEC = 30;
+    const MAX_TIMEOUT_MS = 2_147_483_647;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(FIXED_MS);
+    });
+
+    afterEach(() => jest.useRealTimers());
+
+    it("renders future links as live and links beyond the grace period as expired", async () => {
+        const live = await mountDiff({
+            diff: "x",
+            file_path: "live.ts",
+            viewer_url: makeToken({ exp: nowSec + 3600 }),
+        });
+        expect(live.container.querySelector("a.mj_DiffCard_filename")).not.toBeNull();
+
+        const expired = await mountDiff({
+            diff: "x",
+            file_path: "expired.ts",
+            viewer_url: makeToken({ exp: nowSec - 3600 }),
+        });
+        expect(expired.container.querySelector("a")).toBeNull();
+        expect(expired.container.querySelector(".mj_DiffCard_expired")?.textContent).toBe("expired.ts");
+        expect(expired.container.querySelector(".mj_DiffCard_expiredNote")?.textContent).toBe("link expired");
+    });
+
+    it("keeps a recently expired link live during the clock-skew grace period", async () => {
+        const { container } = await mountDiff({
+            diff: "x",
+            file_path: "grace.ts",
+            viewer_url: makeToken({ exp: nowSec - 5 }),
+        });
+        expect(container.querySelector("a.mj_DiffCard_filename")?.textContent).toBe("grace.ts");
+        expect(container.querySelector(".mj_DiffCard_expiredNote")).toBeNull();
+    });
+
+    it("flips a live viewer link to expired after its grace period", async () => {
+        const { container } = await mountDiff({
+            diff: "x",
+            file_path: "flip.ts",
+            viewer_url: makeToken({ exp: nowSec + 60 }),
+        });
+        expect(container.querySelector("a.mj_DiffCard_filename")).not.toBeNull();
+
+        await act(async () => {
+            jest.advanceTimersByTime((60 + CLOCK_SKEW_GRACE_SEC) * 1000 + 500 + 50);
+        });
+
+        expect(container.querySelector("a")).toBeNull();
+        expect(container.querySelector(".mj_DiffCard_expired")?.textContent).toBe("flip.ts");
+    });
+
+    it("clamps long waits and re-arms until the viewer link expires", async () => {
+        const setTimeoutSpy = jest.spyOn(global, "setTimeout");
+        const thirtyDaysSec = 30 * 86400;
+        const { container } = await mountDiff({
+            diff: "x",
+            file_path: "long-lived.ts",
+            viewer_url: makeToken({ exp: nowSec + thirtyDaysSec }),
+        });
+
+        expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), MAX_TIMEOUT_MS);
+        expect(container.querySelector("a.mj_DiffCard_filename")).not.toBeNull();
+
+        await act(async () => {
+            jest.advanceTimersByTime(MAX_TIMEOUT_MS);
+        });
+        expect(container.querySelector("a.mj_DiffCard_filename")).not.toBeNull();
+
+        await act(async () => {
+            jest.advanceTimersByTime(thirtyDaysSec * 1000 - MAX_TIMEOUT_MS + CLOCK_SKEW_GRACE_SEC * 1000 + 1000);
+        });
+        expect(container.querySelector("a")).toBeNull();
+        expect(container.querySelector(".mj_DiffCard_expired")?.textContent).toBe("long-lived.ts");
+        setTimeoutSpy.mockRestore();
     });
 });
 
