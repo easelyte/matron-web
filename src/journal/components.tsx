@@ -582,7 +582,7 @@ function ConversationList({
     const [query, setQuery] = useState("");
     const [tab, setTab] = useState<"all" | "favorites">("all");
     const [accountOpen, setAccountOpen] = useState(false);
-    const [composeHint, setComposeHint] = useState(false);
+    const [newSessionOpen, setNewSessionOpen] = useState(false);
     const [archivedExpanded, setArchivedExpanded] = useState(false);
     const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
     const roomMenuRef = useRef(roomMenu);
@@ -600,7 +600,7 @@ function ConversationList({
     roomMenuRef.current = roomMenu;
     openRoomMenuRef.current = (conversationId, left, top, opener): void => {
         setAccountOpen(false);
-        setComposeHint(false);
+        setNewSessionOpen(false);
         roomMenuOpenerRef.current = opener;
         setRoomMenu({ conversationId, left, top });
     };
@@ -885,7 +885,7 @@ function ConversationList({
                                             type="button"
                                             aria-label="Settings"
                                             onClick={() => {
-                                                setComposeHint(false);
+                                                setNewSessionOpen(false);
                                                 setAccountOpen((open) => !open);
                                             }}
                                         >
@@ -897,7 +897,8 @@ function ConversationList({
                                             aria-label="New conversation"
                                             onClick={() => {
                                                 setAccountOpen(false);
-                                                setComposeHint((open) => !open);
+                                                closeRoomMenu();
+                                                setNewSessionOpen(true);
                                             }}
                                         >
                                             <ComposeIcon />
@@ -1008,11 +1009,7 @@ function ConversationList({
                         <button onClick={() => void client.logout()}>Sign out</button>
                     </div>
                 )}
-                {composeHint && (
-                    <div className="mj_HeaderMenu mj_ComposeHint">
-                        New conversations appear when an agent starts a session.
-                    </div>
-                )}
+                {newSessionOpen && <NewSessionSheet client={client} onClose={() => setNewSessionOpen(false)} />}
                 {roomMenu && menuConversation && (
                     <div
                         className="mj_HeaderMenu mj_RoomItemMenu"
