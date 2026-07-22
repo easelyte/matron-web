@@ -1823,6 +1823,12 @@ function Timeline({
     const menu = useRowContextMenu<JournalEvent>();
     const sourceOpenerRef = useRef<HTMLElement | null>(null);
     selectedConversationId.current = state.selectedConversationId;
+
+    useEffect(() => {
+        menu.close();
+        setSourceEvent(undefined);
+    }, [state.selectedConversationId]); // eslint-disable-line react-hooks/exhaustive-deps
+
     const historyScrollAnchor = useRef<
         | {
               conversationId?: string;

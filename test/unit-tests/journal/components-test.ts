@@ -934,6 +934,29 @@ describe("EventRow context menu and source sheet", () => {
         expect(rendered.container.querySelector(".mj_EventRowMenu")).toBeNull();
     });
 
+    test("switching conversations closes an OPEN MENU (menu still open, not via View source)", async () => {
+        const result = await renderAppWithEvents([textEvent(5, "hi")], ["c1", "c2"]);
+        rendered = result;
+        await openRowMenu(rendered.container, 5);
+        expect(rendered.container.querySelector(".mj_EventRowMenu")).not.toBeNull();
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        expect(rendered.container.querySelector(".mj_EventRowMenu")).toBeNull();
+    });
+
+    test("switching conversations closes an open source sheet", async () => {
+        const result = await renderAppWithEvents([textEvent(5, "hi")], ["c1", "c2"]);
+        rendered = result;
+        await openRowMenu(rendered.container, 5);
+        await clickMenuItem(rendered.container, "View source");
+        expect(rendered.container.querySelector(".mj_EventSource")).not.toBeNull();
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        expect(rendered.container.querySelector(".mj_EventSource")).toBeNull();
+    });
+
     test("long-pressing a prompt button opens the menu without activating the button", async () => {
         jest.useFakeTimers();
         const prompt: JournalEvent = {
