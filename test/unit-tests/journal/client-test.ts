@@ -559,7 +559,7 @@ describe("MatronJournalClient state handling", () => {
         expect(database.addToOutbox).toHaveBeenCalledWith(expect.objectContaining({ convoId: "c1" }));
     });
 
-    it("does not bump sendTick when a delayed send refresh finishes after switching conversations", async () => {
+    it("bumps sendTick synchronously at send; the delayed refresh does not bump it again after switching conversations", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
         let resolveRefresh!: (events: []) => void;
@@ -583,7 +583,10 @@ describe("MatronJournalClient state handling", () => {
         await send;
 
         expect(client.getSnapshot().selectedConversationId).toBe("c2");
-        expect(client.getSnapshot().sendTick).toBe(0);
+        // sendTick was bumped once, synchronously, in c1's context at send time (scroll c1 to bottom);
+        // the now fire-and-forget refresh does NOT bump it again, and switching to c2 leaves it unchanged
+        // (c2's scroll effect only fires on a sendTick change, so c2 does not scroll for c1's send).
+        expect(client.getSnapshot().sendTick).toBe(1);
     });
 
     it("does not patch a refresh that completes after the database session changes", async () => {

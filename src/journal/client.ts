@@ -475,14 +475,16 @@ export class MatronJournalClient {
             createdAt: Date.now(),
         };
         await this.database.addToOutbox(message); // the only awaited durable step
+        // sendTick is a synchronous "a send happened → scroll to bottom" signal; bump it now (the
+        // message is durably queued) rather than gating it behind the async refresh below.
+        if (this.state.selectedConversationId === conversationId) {
+            this.patch({ sendTick: this.state.sendTick + 1 });
+        }
         // Everything after the durable write is best-effort and must never reject sendMessage or
         // delay its resolution. Otherwise the composer remains retryable despite a queued message.
         void (async () => {
             try {
                 await this.refreshSelectedConversation(conversationId);
-                if (this.state.selectedConversationId === conversationId) {
-                    this.patch({ sendTick: this.state.sendTick + 1 });
-                }
             } catch (error) {
                 console.warn("matron: post-send refresh failed (message still queued)", error);
             }
