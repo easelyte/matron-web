@@ -2184,6 +2184,7 @@ function Composer({
     draftReloadTick,
     reloadDraft,
     sendingConvos,
+    draftRevisions,
 }: {
     client: MatronJournalClient;
     state: ClientState;
@@ -2191,6 +2192,7 @@ function Composer({
     draftReloadTick: number;
     reloadDraft: (conversationId: string) => void;
     sendingConvos: React.RefObject<Set<string>>;
+    draftRevisions: React.RefObject<Map<string, number>>;
 }): React.ReactElement {
     const [body, setBody] = useState("");
     const [highlighted, setHighlighted] = useState<number | null>(null);
@@ -2202,8 +2204,6 @@ function Composer({
     const convoId = state.selectedConversationId;
     const convoIdRef = useRef(convoId);
     convoIdRef.current = convoId;
-    const bodyRef = useRef(body);
-    bodyRef.current = body;
     const prevConvoIdRef = useRef(convoId);
     const draftTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const folders = folderSuggestions(body, store);
@@ -2226,6 +2226,7 @@ function Composer({
             setBody(next);
             const cid = convoIdRef.current;
             if (!cid) return;
+            draftRevisions.current.set(cid, (draftRevisions.current.get(cid) ?? 0) + 1);
             drafts.setDraft(cid, next);
             if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
             draftTimerRef.current = setTimeout(() => {
@@ -2233,7 +2234,7 @@ function Composer({
                 draftTimerRef.current = undefined;
             }, 250);
         },
-        [drafts],
+        [draftRevisions, drafts],
     );
 
     useEffect(() => {
@@ -2276,16 +2277,18 @@ function Composer({
         const cid = convoIdRef.current;
         const submitted = body;
         if (!cid || !submitted.trim() || sendingConvos.current.has(cid)) return;
+        const submittedRevision = draftRevisions.current.get(cid) ?? 0;
         sendingConvos.current.add(cid);
         try {
             if (await client.sendMessage(submitted, cid)) {
                 const folder = recentFolderArgument(submitted);
                 if (folder) store.record(folder);
                 cancelDraftDebounce();
-                if (drafts.read(cid).text === submitted) drafts.clear(cid);
+                const draftUnchanged = (draftRevisions.current.get(cid) ?? 0) === submittedRevision;
+                if (draftUnchanged) drafts.clear(cid);
                 else drafts.persist();
                 reloadDraft(cid);
-                if (convoIdRef.current === cid && bodyRef.current === submitted) {
+                if (draftUnchanged && convoIdRef.current === cid) {
                     setBody("");
                     setDismissed(null);
                     if (textarea.current) textarea.current.style.height = "auto";
@@ -2715,6 +2718,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
     const sendingConvos = useRef<Set<string>>(new Set());
+    const draftRevisions = useRef<Map<string, number>>(new Map());
 
     useEffect(() => {
         if (uploadDialogWasOpen.current && !state.stagedUploads) {
@@ -2791,6 +2795,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                             }))
                                         }
                                         sendingConvos={sendingConvos}
+                                        draftRevisions={draftRevisions}
                                     />
                                 )}
                             </div>

@@ -46,26 +46,34 @@ export function makeDraftStore(session: Session | undefined): DraftStore {
     if (!session) return NOOP;
     const key = `matron:draft:v1:${encodeURIComponent(session.serverUrl)}:${session.userId}`;
     const mem = new Map<string, string>();
-    let hydrated = false;
+    const dirty = new Map<string, string | null>();
+    let hydrationState: "uninitialized" | "ready" | "failed" = "uninitialized";
 
     const hydrate = (): boolean => {
         try {
             const map = parseMap(localStorage.getItem(key));
-            for (const [convoId, text] of Object.entries(map)) {
-                if (!mem.has(convoId)) mem.set(convoId, text);
+            const merged = new Map(Object.entries(map));
+            for (const [convoId, text] of dirty) {
+                merged.delete(convoId);
+                if (text !== null) merged.set(convoId, text);
             }
-            while (mem.size > MAX_DRAFT_ENTRIES) {
-                mem.delete(mem.keys().next().value as string);
+            while (merged.size > MAX_DRAFT_ENTRIES) {
+                merged.delete(merged.keys().next().value as string);
             }
-            hydrated = true;
+            mem.clear();
+            for (const [convoId, text] of merged) mem.set(convoId, text);
+            dirty.clear();
+            hydrationState = "ready";
             return true;
         } catch {
+            hydrationState = "failed";
             console.warn("matron: draft read failed (storage unavailable)");
             return false;
         }
     };
 
     const persist = (): void => {
+        if (hydrationState !== "ready" && !hydrate()) return;
         try {
             const out: Record<string, string> = {};
             for (const [convoId, text] of mem) {
@@ -80,14 +88,14 @@ export function makeDraftStore(session: Session | undefined): DraftStore {
     return {
         read(convoId) {
             if (mem.has(convoId)) return { text: mem.get(convoId)!, ok: true };
-            if (!hydrated) {
+            if (hydrationState !== "ready") {
                 const ok = hydrate();
                 if (!ok) return { text: "", ok: false };
             }
             return { text: mem.get(convoId) ?? "", ok: true };
         },
         setDraft(convoId, text) {
-            if (!hydrated) hydrate();
+            if (hydrationState !== "ready") hydrate();
             mem.delete(convoId);
             if (text.trim() !== "") {
                 mem.set(convoId, text);
@@ -96,11 +104,13 @@ export function makeDraftStore(session: Session | undefined): DraftStore {
                     mem.delete(oldest);
                 }
             }
+            if (hydrationState !== "ready") dirty.set(convoId, text.trim() === "" ? null : text);
         },
         persist,
         clear(convoId) {
-            if (!hydrated) hydrate();
+            if (hydrationState !== "ready") hydrate();
             mem.delete(convoId);
+            if (hydrationState !== "ready") dirty.set(convoId, null);
             persist();
         },
     };

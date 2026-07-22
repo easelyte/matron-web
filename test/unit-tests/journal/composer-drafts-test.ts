@@ -95,6 +95,18 @@ test("throwing getItem on a memory-miss read returns ok:false", () => {
     spy.mockRestore();
 });
 
+test("a transient hydration failure preserves persisted sibling drafts on retry", () => {
+    localStorage.setItem(KEY, JSON.stringify({ sibling: "keep me" }));
+    const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementationOnce(() => {
+        throw new DOMException("denied", "SecurityError");
+    });
+    const s = makeDraftStore(SESSION);
+    s.setDraft("edited", "new draft");
+    s.persist();
+    expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ sibling: "keep me", edited: "new draft" });
+    getItem.mockRestore();
+});
+
 test("oversized draft stays in memory (navigation-safe) but is omitted from localStorage", () => {
     const s = makeDraftStore(SESSION);
     const big = "x".repeat(MAX_DRAFT_BYTES + 1);

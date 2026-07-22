@@ -698,6 +698,25 @@ describe("composer sends", () => {
         expect(makeDraftStore(SESSION).read("c1").text).toBe("Y");
     });
 
+    test("same-convo ABA interleave: a re-typed X during a pending X send is preserved", async () => {
+        let resolveX!: (value: boolean) => void;
+        const client = signedInClient();
+        jest.spyOn(client, "sendMessage").mockReturnValueOnce(
+            new Promise((promiseResolve) => (resolveX = promiseResolve)),
+        );
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+        await typeInComposer(result.container, "X");
+        await pressEnter(result.container);
+        await typeInComposer(result.container, "Y");
+        await typeInComposer(result.container, "X");
+        await act(async () => {
+            resolveX(true);
+        });
+        expect(composerValue(result.container)).toBe("X");
+        expect(makeDraftStore(SESSION).read("c1").text).toBe("X");
+    });
+
     test("late resolve after a conversation switch does not resurrect the sent draft", async () => {
         let resolveX!: (value: boolean) => void;
         const client = signedInClient();
