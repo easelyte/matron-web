@@ -440,7 +440,53 @@ button {
 }
 
 .mx_MessageComposer_wrapper {
+    position: relative;
     padding: 0 16px;
+}
+
+.mx_SlashPalette {
+    position: absolute;
+    z-index: 2;
+    right: var(--cpd-space-4x);
+    bottom: calc(100% + var(--cpd-space-2x));
+    left: var(--cpd-space-4x);
+    max-height: 15rem;
+    overflow-y: auto;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-disabled);
+    border-radius: var(--cpd-space-2x);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: 0 8px 24px rgb(18 16 14 / 14%);
+    color: var(--cpd-color-text-primary);
+}
+
+.mx_SlashPalette_row {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    align-items: baseline;
+    gap: var(--cpd-space-2x);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    cursor: pointer;
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mx_SlashPalette_row_highlighted {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mx_SlashPalette_trigger {
+    font-family: "Fira Code", monospace;
+    white-space: nowrap;
+}
+
+.mx_SlashPalette_argHint,
+.mx_SlashPalette_summary {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mx_SlashPalette_summary {
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .mx_MessageComposer_row {
