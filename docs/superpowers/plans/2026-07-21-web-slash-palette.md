@@ -182,6 +182,10 @@ Every spec §2-§6 part maps to ≥1 task. §7 (follow-ups: /context-/compact, c
 
 No new principle violations introduced; the one deliberate exception (P18 inline vs no-split) is operator-decided and tracked.
 
+## Deferred (out-of-scope, filed for upstream)
+
+- **Rapid double-Enter duplicate send (Phase-3-review blocker, DEFERRED):** pressing Enter twice before `client.sendMessage` settles double-invokes the unguarded `send()`, writing two outbox entries → duplicate messages. Verified PRE-EXISTING: `origin/main`'s `Composer.send()` has no in-flight guard; this feature added only the folder-record lines inside the existing success block and does NOT introduce or worsen the race. Deferred because it's unrelated to the slash palette and touches Dan's core send path — bundling it here would diverge the upstream composer for a reason unrelated to the stated feature (per `project_matron_web_stays_dan_upstream_aligned`, unrelated fixes are separate upstream proposals). Fix = a synchronous in-flight ref guard (`if (sendingRef.current) return; … finally { sendingRef.current = false }`) + a deferred-promise/two-keydown regression test. File as an upstream-PR candidate to Dan + a follow-up loop.
+
 ## Rollback
 
 Pure client-side, additive, unreleased branch. Rollback of the WORK = discard the `feat/slash-palette` branch (nothing merged/deployed until operator gates). Rollback of a bad DEPLOY = operator restores the `webapp.bak.<ts>` per the runbook (spec §6). No data migration, no server state, no irreversible action in any execution task.
