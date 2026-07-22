@@ -408,6 +408,7 @@ export function nextMenuIndex(current: number, delta: 1 | -1, count: number): nu
 export interface RowContextMenu<T> {
     state: { target: T; left: number; top: number } | undefined;
     menuRef: React.RefObject<HTMLDivElement | null>;
+    openerRef: React.MutableRefObject<HTMLElement | null>; // the row that opened the menu (for focus-restore)
     open(target: T, left: number, top: number, opener: HTMLElement | null): void;
     close(restoreFocus?: boolean): void;
     rowHandlers(target: T, getRow: () => HTMLElement): {
@@ -418,7 +419,6 @@ export interface RowContextMenu<T> {
         onPointerCancel(e: React.PointerEvent): void;
     };
     menuKeyDown(e: React.KeyboardEvent): void;
-    didFireRef: React.MutableRefObject<boolean>;
 }
 
 export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContextMenu<T> {
@@ -427,7 +427,6 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
     stateRef.current = state;
     const menuRef = useRef<HTMLDivElement | null>(null);
     const openerRef = useRef<HTMLElement | null>(null);
-    const didFireRef = useRef(false);
     const pressTargetRef = useRef<{ target: T; getRow: () => HTMLElement } | undefined>(undefined);
     const controllerRef = useRef<LongPressController | undefined>(undefined);
     const pressScrollCleanupRef = useRef<() => void>(() => undefined); // cancels a PENDING press on scroll
@@ -449,7 +448,6 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
                 pressScrollCleanupRef.current();
                 const p = pressTargetRef.current;
                 if (!p) return;
-                didFireRef.current = true;
                 const rect = p.getRow().getBoundingClientRect();
                 open(p.target, rect.right, rect.top, p.getRow());
             },
@@ -496,7 +494,6 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
         },
         onPointerDown(e: React.PointerEvent) {
             if (e.pointerType !== "touch") return;
-            didFireRef.current = false;
             pressTargetRef.current = { target, getRow };
             controllerRef.current?.onPointerDown(e.clientX, e.clientY);
             // Cancel a still-PENDING press on any scroll during the 500ms window (mirrors HEAD's
@@ -540,7 +537,7 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
         }
     }, [close]);
 
-    return { state, menuRef, open, close, rowHandlers, menuKeyDown, didFireRef };
+    return { state, menuRef, openerRef, open, close, rowHandlers, menuKeyDown };
 }
 ```
 
@@ -749,7 +746,7 @@ Merged (round-1 B2): the menu and the sheet are interdependent (the menu's "View
 
 **Interfaces:**
 - Consumes: `useRowContextMenu<JournalEvent>` (T-1.2), `copyText` (T-1.4), `JournalEvent`/`asString` from `./types`.
-- Produces: `function EventSourceSheet({ event, onClose }: { event: JournalEvent; onClose: () => void }): React.ReactElement`; an `mj_HeaderMenu mj_EventRowMenu` rendered by `Timeline`; `rowHandlers` spread onto each `EventRow` `<li>` (via a single new `EventRow` prop `rowHandlers` — `didFireRef` stays internal to the hook, round-3 M3).
+- Produces: `function EventSourceSheet({ event, opener, onClose }: { event: JournalEvent; opener: HTMLElement | null; onClose: () => void }): React.ReactElement`; an `mj_HeaderMenu mj_EventRowMenu` rendered by `Timeline`; `rowHandlers` spread onto each `EventRow` `<li>` (via a single new `EventRow` prop `rowHandlers`).
 
 - [ ] **Step 1: Write failing tests** — add local helpers `renderAppWithEvents(events, convoIds?)`, `openRowMenu(container, seq)` (dispatch a `contextmenu` on the `[data-event-id="<seq>"]` `<li>` inside `act`), `clickMenuItem(container, label)`, `clickButton(container, label)`, `rightClick(node)` (all wrap `dispatchEvent`/`click` in `act`). Follow the seeded-client harness note above.
 
@@ -792,6 +789,7 @@ test("View source shows the event DTO JSON; Copy button, Done, Esc, and backdrop
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"seq": 5'));
     await clickButton(container, "Done");
     expect(container.querySelector(".mj_EventSource")).toBeNull();
+    expect(document.activeElement).toBe(container.querySelector('[data-event-id="5"]')); // focus restored to the row, not <body>
     // Esc close
     await openRowMenu(container, 5); await clickMenuItem(container, "View source");
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
@@ -820,16 +818,16 @@ test("long-press opens the menu; a scroll during the press cancels it", async ()
 - [ ] **Step 3: Implement `EventSourceSheet`, the hook wiring, and the menu**
 
 ```tsx
-function EventSourceSheet({ event, onClose }: { event: JournalEvent; onClose: () => void }): React.ReactElement {
+function EventSourceSheet({ event, opener, onClose }: { event: JournalEvent; opener: HTMLElement | null; onClose: () => void }): React.ReactElement {
     const doneRef = useRef<HTMLButtonElement>(null);
-    // Focus-restore (round-4 M3): capture the element focused when the sheet opened (the row/menuitem),
-    // focus Done on open, and restore focus on close so keyboard focus never falls through to <body>.
-    const restoreRef = useRef<HTMLElement | null>(null);
+    // Focus-restore (round-4 M3 / round-5 M1 fix): the OPENER is captured by the caller BEFORE menu.close()
+    // runs — reading document.activeElement inside this effect would capture <body>, because menu.close()
+    // unmounts the focused menuitem in the same commit that mounts this sheet. Focus Done on open; restore
+    // to the opener (the timeline row) on close so keyboard focus never falls through to <body>.
     useEffect(() => {
-        restoreRef.current = document.activeElement as HTMLElement | null;
         doneRef.current?.focus();
-        return () => { if (restoreRef.current?.isConnected) restoreRef.current.focus(); };
-    }, []);
+        return () => { if (opener?.isConnected) opener.focus(); };
+    }, [opener]);
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
         document.addEventListener("keydown", onKey);
@@ -852,7 +850,7 @@ function EventSourceSheet({ event, onClose }: { event: JournalEvent; onClose: ()
     );
 }
 ```
-In `Timeline`: `const [sourceEvent, setSourceEvent] = useState<JournalEvent | undefined>();` and `const menu = useRowContextMenu<JournalEvent>();`. Pass `rowHandlers={menu.rowHandlers}` to each `EventRow`. In `EventRow`, add a single prop `rowHandlers` (do NOT add `didFireRef` — it stays internal to the hook; the `<li>` has no `onClick` to suppress, round-3 M3) and:
+In `Timeline`: `const [sourceEvent, setSourceEvent] = useState<JournalEvent | undefined>();`, `const menu = useRowContextMenu<JournalEvent>();`, and `const sourceOpenerRef = useRef<HTMLElement | null>(null);` (captures the opener for the sheet's focus-restore). Pass `rowHandlers={menu.rowHandlers}` to each `EventRow`. In `EventRow`, add a single prop `rowHandlers` and:
 ```tsx
 const liRef = useRef<HTMLLIElement>(null);
 const handlers = rowHandlers(event, () => liRef.current!);
@@ -868,10 +866,14 @@ const handlers = rowHandlers(event, () => liRef.current!);
                     onClick={() => { void copyText(asString(menu.state!.target.payload.body)); menu.close(); }}>Copy</button>
         )}
         <button className="mj_RoomItemMenu_item" type="button" role="menuitem"
-                onClick={() => { setSourceEvent(menu.state!.target); menu.close(); }}>View source</button>
+                onClick={() => {
+                    sourceOpenerRef.current = menu.openerRef.current; // capture the row BEFORE menu.close() unmounts the menuitem
+                    setSourceEvent(menu.state!.target);
+                    menu.close();
+                }}>View source</button>
     </div>
 )}
-{sourceEvent && <EventSourceSheet event={sourceEvent} onClose={() => setSourceEvent(undefined)} />}
+{sourceEvent && <EventSourceSheet event={sourceEvent} opener={sourceOpenerRef.current} onClose={() => setSourceEvent(undefined)} />}
 ```
 
 - [ ] **Step 4: Run to verify it passes** — `pnpm exec jest components-test -i` → PASS (all new + existing). `pnpm exec tsc --noEmit` clean, `pnpm exec prettier --check` clean.
@@ -944,7 +946,7 @@ Depends on Phase 1 (`makeDraftStore`, `client.ts`). Independent of Phase 2.
 ### T-3.1: Composer draft integration (store, refs, switch effect)
 
 **Files:**
-- Modify: `src/journal/components.tsx` (`Composer`)
+- Modify: `src/journal/components.tsx` — `SignedInApp` (create the hoisted `drafts` store + `sendingConvos` lock, pass as props at the `<Composer .../>` call, ~L2424) and `Composer` (accept them as props; remove the internal `useMemo`/`useRef` for them). Import `DraftStore` type from `./composer-drafts`.
 - Test: `test/unit-tests/journal/components-test.ts`
 
 **Interfaces:**
@@ -1002,7 +1004,14 @@ test("keystroke debounces the localStorage write (no setItem before 250ms, one a
 - [ ] **Step 3: Implement** the draft wiring in `Composer`
 
 ```tsx
-const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
+// drafts + sendingConvos are HOISTED into SignedInApp (round-5 B1/Maj-2) and passed as props, so they
+// SURVIVE the Composer unmount that happens when switching to a read-only child conversation
+// (components.tsx:2424). If they lived in Composer, a send in flight at unmount would (a) drop its lock →
+// a remount + re-Enter would dup the durable message, and (b) hold a stale store instance whose late
+// persist would clobber the new instance's writes to the session-shared key. SignedInApp does NOT unmount
+// on childMode, so one store + one lock persist across the toggle. Composer signature gains:
+//   function Composer({ client, state, drafts, sendingConvos }: { ...; drafts: DraftStore; sendingConvos: React.MutableRefObject<Set<string>> })
+// and SignedInApp (components.tsx:2358) creates them once and threads them to <Composer ... drafts={drafts} sendingConvos={sendingConvos} />.
 const convoId = state.selectedConversationId;
 const convoIdRef = useRef(convoId); convoIdRef.current = convoId;
 const bodyRef = useRef(body); bodyRef.current = body;
@@ -1029,7 +1038,9 @@ const setBodyDraft = useCallback((next: string) => {
 // setBodyDraft already staged every edit into the memory map, so the map is current for prev; re-staging
 // bodyRef.current here would resurrect a draft a concurrent send-completion just cleared. Just persist.
 // Use setBody directly (NOT setBodyDraft) so loading doesn't schedule a write.
-useEffect(() => {
+// useLayoutEffect (NOT useEffect) so body syncs to the new convo BEFORE paint (round-5 Codex M1): with a
+// passive effect, an Enter in the post-commit/pre-effect window would send convo A's stale body to convo B.
+useLayoutEffect(() => {
     const prev = prevConvoIdRef.current;
     if (prev && prev !== convoId) flushDraft();  // persist the memory map as-is; no re-stage
     const { text, ok } = convoId ? drafts.read(convoId) : { text: "", ok: true };
@@ -1060,7 +1071,7 @@ git commit -m "feat(composer): per-conversation draft persistence, navigation-sa
 - Modify: `src/journal/components.tsx` (`Composer.send`)
 - Test: `test/unit-tests/journal/components-test.ts`
 
-**Interfaces:** Consumes `sendMessage(body, convoId)` (T-1.3), `drafts` + refs (T-3.1). Adds `sendingConvos` ref.
+**Interfaces:** Consumes `sendMessage(body, convoId)` (T-1.3), the hoisted `drafts` + `sendingConvos` props (T-3.1, created in SignedInApp), and Composer's local refs.
 
 - [ ] **Step 1: Write failing tests** (use `jest.useFakeTimers()` where noted)
 
@@ -1130,6 +1141,17 @@ test("an addToOutbox rejection is caught (no unhandled rejection), text retained
     await act(async () => { await pressEnter(container); });   // lock released → retry succeeds
     expect(composerValue(container)).toBe("");
 });
+test("remount (in-flight send → child → parent → Enter) does not duplicate (round-5 B1, hoisted lock)", async () => {
+    let resolveX!: (v: boolean) => void;
+    const sm = jest.spyOn(client, "sendMessage").mockReturnValueOnce(new Promise((r) => (resolveX = r)));
+    const { container, client: c } = renderComposerAppWithChild("c1", "c1-child"); // hoisted drafts+sendingConvos in SignedInApp
+    await typeInComposer(container, "X"); await pressEnter(container);        // X pending, c1 locked (lock lives in SignedInApp)
+    await act(async () => { await c.selectConversation("c1-child"); });       // Composer UNMOUNTS (read-only child)
+    await act(async () => { await c.selectConversation("c1"); });             // Composer REMOUNTS; lock survived
+    await typeInComposer(container, "X"); await pressEnter(container);        // re-Enter while X still pending
+    expect(sm).toHaveBeenCalledTimes(1);                                     // blocked — no duplicate durable message
+    await act(async () => { resolveX(true); });
+});
 ```
 
 - [ ] **Step 2: Run to verify it fails** — FAIL (double-send fires twice; completion wipes Y / resurrects X; rejection unhandled).
@@ -1139,7 +1161,9 @@ test("an addToOutbox rejection is caught (no unhandled rejection), text retained
 Simple `Set<convoId>` lock (no watchdog — round-3 decision, see note): the lock is added synchronously before the first `await` and released in `finally` on settle. A `catch` (round-3 M1) prevents an `addToOutbox` rejection from becoming a silent unhandled rejection — the text is retained for retry.
 
 ```tsx
-const sendingConvos = useRef(new Set<string>());
+// sendingConvos is a PROP (hoisted to SignedInApp, round-5 B1) so the lock survives Composer unmount:
+// a send in flight when the operator opens a read-only child keeps the convo locked, so a remount +
+// re-Enter cannot enqueue a duplicate. No local `useRef` here.
 const send = async (): Promise<void> => {
     const cid = convoIdRef.current;
     const submitted = body;
@@ -1376,7 +1400,7 @@ All spec deliverables are covered. The two spec-documented overrides (reconnect-
 Decisions consciously NOT actioned in this PR, with rationale (per `procedure_codex_review_re_flags_operator_accepted_limitations` + the reviewer-oscillation rule):
 
 - **No send watchdog (round-3 removed it; round-4 re-flagged its absence).** Two opposing flips on one finding: a watchdog dups a slow-successful send (round-3 B1); no watchdog wedges a hung send until reload (round-4 B2). Per the oscillation-stop rule, the documented decision stands: **no-dup beats wedge-recovery** in a double-send-guard feature; the residual (a pathological hung local `addToOutbox` wedging one convo until reload) is rare and reload-recoverable. A true fix needs **idempotent retry** (stable outbox key + observable indeterminate state) — filed as a follow-up alongside the upstream server-idempotency work.
-- **Draft persistence is best-effort across reload (round-4 B3 re-flag).** A `setItem` quota/SecurityError is swallowed with a console warn; the draft is **never lost in-session** (in-memory authoritative) — only a reload after a storage failure loses it. For convenience state on a single-user tool, a durable-save-failure toast is disproportionate; the boolean/return-status surfacing is a follow-up if it ever proves needed.
+- **Draft persistence is best-effort across reload (round-4 B3 / round-5 B2 re-flag).** A `setItem` quota/SecurityError is swallowed with a console warn, and an **oversized** draft (`> MAX_DRAFT_BYTES`) is intentionally memory-only (omitted from the localStorage mirror to bound blob size — round-2 B2). In both cases the draft is **never lost in-session** (in-memory authoritative); only a full reload loses it. For convenience state on a single-user tool, a durable-save-failure toast / non-durable badge is disproportionate to a >64 KB-composer or quota-exhausted edge; a `persist()` durability-status return + UI surfacing is a documented follow-up if it ever proves needed.
 - **Source-sheet focus containment (round-4 M3, partial).** This PR adds focus-Done-on-open + focus-restore-on-close (no fall-through to `<body>`). A full focus-trap + app-level `inert` (matching the staged-uploads modal) is a follow-up — proportionate to a dev-facing JSON viewer, not blocking.
 - **Late-resolve B2 test is a documented coverage limitation** (round-4 Claude minor): the shipped switch-effect is flush-only (correct by inspection); the interleave test asserts final state, which can coincide between fixed/buggy variants. The flush-only design is the guarantee, not the test.
 
