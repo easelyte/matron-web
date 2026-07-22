@@ -7,6 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { TextEncoder as NodeTextEncoder } from "node:util";
 
 import {
     archiveStore,
@@ -21,6 +22,8 @@ import { makeRecentFoldersStore } from "../../../src/journal/slash-palette";
 import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
+
+Object.defineProperty(globalThis, "TextEncoder", { value: NodeTextEncoder, configurable: true });
 
 const CONVERSATION = {
     id: "c1",
@@ -225,6 +228,30 @@ async function clickButton(container: HTMLElement, label: string): Promise<void>
         (candidate) => candidate.textContent === label,
     );
     if (!item) throw new Error(`Missing button: ${label}`);
+    await act(async () => item.click());
+}
+
+function renderComposerApp(
+    convoIds: string[],
+): Promise<{ container: HTMLDivElement; root: Root; client: MatronJournalClient }> {
+    return renderAppWithEvents([], convoIds);
+}
+
+function composerValue(container: HTMLElement): string {
+    const textarea = container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
+    if (!textarea) throw new Error("Missing composer textarea");
+    return textarea.value;
+}
+
+async function typeInComposer(container: HTMLElement, value: string): Promise<void> {
+    const textarea = container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
+    if (!textarea) throw new Error("Missing composer textarea");
+    await act(async () => inputTextarea(textarea, value));
+}
+
+async function selectFirstPaletteItem(container: HTMLElement): Promise<void> {
+    const item = container.querySelector<HTMLElement>('[role="option"]');
+    if (!item) throw new Error("Missing palette item");
     await act(async () => item.click());
 }
 
@@ -439,6 +466,90 @@ describe("slash command palette", () => {
         expect(sendMessage).toHaveBeenCalledTimes(2);
         expect(store.matches("")).not.toContain("/op/rejected");
         expect(JSON.stringify(store.matches(""))).toBe(acceptedSnapshot);
+    });
+});
+
+describe("composer drafts", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        jest.useRealTimers();
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    test("draft persists per conversation across navigation", async () => {
+        const result = await renderComposerApp(["c1", "c2"]);
+        rendered = result;
+        await typeInComposer(rendered.container, "draft for one");
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        expect(composerValue(rendered.container)).toBe("");
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        expect(composerValue(rendered.container)).toBe("draft for one");
+    });
+
+    test("a completion pick (folder) is persisted", async () => {
+        jest.spyOn(require("../../../src/journal/slash-palette"), "makeRecentFoldersStore").mockReturnValue({
+            record: jest.fn(),
+            matches: () => ["work/dir"],
+        });
+        const result = await renderComposerApp(["c1", "c2"]);
+        rendered = result;
+        await typeInComposer(rendered.container, "/workdir wo");
+        await selectFirstPaletteItem(rendered.container);
+        const composed = composerValue(rendered.container);
+        expect(composed).not.toBe("/workdir wo");
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        expect(composerValue(rendered.container)).toBe(composed);
+    });
+
+    test("a throwing setItem does not lose the draft on navigation", async () => {
+        const spy = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+            throw new DOMException("q", "QuotaExceededError");
+        });
+        const result = await renderComposerApp(["c1", "c2"]);
+        rendered = result;
+        await typeInComposer(rendered.container, "kept in memory");
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        expect(composerValue(rendered.container)).toBe("kept in memory");
+        spy.mockRestore();
+    });
+
+    test("keystroke debounces the localStorage write (no setItem before 250ms, one after)", async () => {
+        jest.useFakeTimers();
+        const setItem = jest.spyOn(Storage.prototype, "setItem");
+        const result = await renderComposerApp(["c1"]);
+        rendered = result;
+        setItem.mockClear();
+        await typeInComposer(rendered.container, "x");
+        expect(setItem).not.toHaveBeenCalled();
+        await act(async () => {
+            jest.advanceTimersByTime(250);
+        });
+        expect(setItem).toHaveBeenCalledTimes(1);
+        jest.useRealTimers();
     });
 });
 

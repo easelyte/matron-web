@@ -18,6 +18,7 @@ import React, {
 
 import matronLogo from "../../res/matron-logo-simple.svg";
 import { BROWSER_MEMORY_SAFETY_MAX_BYTES, errorMessage, type MatronJournalClient } from "./client";
+import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
 import {
@@ -2176,7 +2177,17 @@ function SlashCommandPalette({
     );
 }
 
-function Composer({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
+function Composer({
+    client,
+    state,
+    drafts,
+    sendingConvos,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    drafts: DraftStore;
+    sendingConvos: React.RefObject<Set<string>>;
+}): React.ReactElement {
     const [body, setBody] = useState("");
     const [highlighted, setHighlighted] = useState<number | null>(null);
     const [dismissed, setDismissed] = useState<string | null>(null);
@@ -2184,18 +2195,62 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
     const [dismissedSeq, setDismissedSeq] = useState(0);
     const textarea = useRef<HTMLTextAreaElement>(null);
     const fileInput = useRef<HTMLInputElement>(null);
+    const convoId = state.selectedConversationId;
+    const convoIdRef = useRef(convoId);
+    convoIdRef.current = convoId;
+    const bodyRef = useRef(body);
+    bodyRef.current = body;
+    const prevConvoIdRef = useRef(convoId);
+    const draftTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const folders = folderSuggestions(body, store);
     const commands = filterCommands(CLAUDE_BRIDGE_COMMANDS, body);
     const open = body !== dismissed && (folders.length > 0 || (isCommandMode(body) && commands.length > 0));
 
+    const cancelDraftDebounce = useCallback(() => {
+        if (draftTimerRef.current) {
+            clearTimeout(draftTimerRef.current);
+            draftTimerRef.current = undefined;
+        }
+    }, []);
+    const flushDraft = useCallback(() => {
+        cancelDraftDebounce();
+        drafts.persist();
+    }, [cancelDraftDebounce, drafts]);
+
+    const setBodyDraft = useCallback(
+        (next: string) => {
+            setBody(next);
+            const cid = convoIdRef.current;
+            if (!cid) return;
+            drafts.setDraft(cid, next);
+            if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+            draftTimerRef.current = setTimeout(() => {
+                drafts.persist();
+                draftTimerRef.current = undefined;
+            }, 250);
+        },
+        [drafts],
+    );
+
+    useLayoutEffect(() => {
+        const prev = prevConvoIdRef.current;
+        if (prev && prev !== convoId) flushDraft();
+        const { text, ok } = convoId ? drafts.read(convoId) : { text: "", ok: true };
+        setBody(ok ? text : "");
+        setDismissed(null);
+        setHighlighted(null);
+        if (textarea.current) textarea.current.style.height = "auto";
+        prevConvoIdRef.current = convoId;
+    }, [convoId]); // eslint-disable-line react-hooks/exhaustive-deps
+
     const selectCommand = (command: BotCommand): void => {
-        setBody(applyCommand(command.trigger));
+        setBodyDraft(applyCommand(command.trigger));
         setHighlighted(null);
         textarea.current?.focus();
     };
     const selectFolder = (path: string): void => {
         const nextBody = applyFolder(body, path);
-        setBody(nextBody);
+        setBodyDraft(nextBody);
         setDismissed(nextBody);
         setHighlighted(null);
         textarea.current?.focus();
@@ -2246,7 +2301,7 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
                                 value={body}
                                 onChange={(event) => {
                                     const nextBody = event.target.value;
-                                    setBody(nextBody);
+                                    setBodyDraft(nextBody);
                                     setHighlighted(null);
                                     if (dismissed !== null && nextBody !== dismissed) setDismissed(null);
                                     event.target.style.height = "auto";
@@ -2623,6 +2678,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     const [dragActive, setDragActive] = useState(state.dragActive);
     const appContent = useRef<HTMLDivElement>(null);
     const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
+    const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
+    const sendingConvos = useRef<Set<string>>(new Set());
 
     useEffect(() => {
         if (uploadDialogWasOpen.current && !state.stagedUploads) {
@@ -2684,7 +2741,16 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 )}
                                 <RunningSubagentStrip client={client} state={state} />
                                 <Timeline client={client} state={state} isReadOnly={childMode} />
-                                {childMode ? <ReadOnlyHint /> : <Composer client={client} state={state} />}
+                                {childMode ? (
+                                    <ReadOnlyHint />
+                                ) : (
+                                    <Composer
+                                        client={client}
+                                        state={state}
+                                        drafts={drafts}
+                                        sendingConvos={sendingConvos}
+                                    />
+                                )}
                             </div>
                         </div>
                     ) : (
