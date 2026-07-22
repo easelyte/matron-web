@@ -17,6 +17,7 @@ import {
     pinnedStore,
     unreadStore,
 } from "../../../src/journal/client";
+import { makeDraftStore } from "../../../src/journal/composer-drafts";
 import { copyText, MatronApp } from "../../../src/journal/components";
 import { makeRecentFoldersStore } from "../../../src/journal/slash-palette";
 import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
@@ -233,8 +234,38 @@ async function clickButton(container: HTMLElement, label: string): Promise<void>
 
 function renderComposerApp(
     convoIds: string[],
+    client?: MatronJournalClient,
 ): Promise<{ container: HTMLDivElement; root: Root; client: MatronJournalClient }> {
+    if (client) {
+        const conversations = convoIds.map((id) => ({ ...CONVERSATION, id, title: id }));
+        internals(client).state = {
+            ...client.getSnapshot(),
+            conversations,
+            selectedConversationId: convoIds[0] ?? null,
+            events: [],
+        };
+        internals(client).database = {
+            events: jest.fn(async () => []),
+            outbox: jest.fn(async () => []),
+        };
+        return renderClient(client).then((rendered) => ({ ...rendered, client }));
+    }
     return renderAppWithEvents([], convoIds);
+}
+
+function renderComposerAppWithChild(
+    parentId: string,
+    childId: string,
+): Promise<{ container: HTMLDivElement; root: Root; client: MatronJournalClient }> {
+    const parent = { ...CONVERSATION, id: parentId, title: parentId };
+    const child = { ...CONVERSATION, id: childId, title: childId, parent_convo_id: parentId };
+    const client = signedInWithRooms([parent, child]);
+    internals(client).state = { ...client.getSnapshot(), selectedConversationId: parentId };
+    internals(client).database = {
+        events: jest.fn(async () => []),
+        outbox: jest.fn(async () => []),
+    };
+    return renderClient(client).then((rendered) => ({ ...rendered, client }));
 }
 
 function composerValue(container: HTMLElement): string {
@@ -247,6 +278,12 @@ async function typeInComposer(container: HTMLElement, value: string): Promise<vo
     const textarea = container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
     if (!textarea) throw new Error("Missing composer textarea");
     await act(async () => inputTextarea(textarea, value));
+}
+
+async function pressEnter(container: HTMLElement): Promise<void> {
+    const textarea = container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
+    if (!textarea) throw new Error("Missing composer textarea");
+    await keydown(textarea, "Enter");
 }
 
 async function selectFirstPaletteItem(container: HTMLElement): Promise<void> {
@@ -374,7 +411,7 @@ describe("slash command palette", () => {
         expect(enter.dispatched).toBe(false);
         expect(enter.event.defaultPrevented).toBe(true);
         expect(sendMessage).toHaveBeenCalledTimes(1);
-        expect(sendMessage).toHaveBeenCalledWith("/st");
+        expect(sendMessage).toHaveBeenCalledWith("/st", "c1");
     });
 
     it("dismisses the palette with Escape without changing the body", async () => {
@@ -550,6 +587,161 @@ describe("composer drafts", () => {
         });
         expect(setItem).toHaveBeenCalledTimes(1);
         jest.useRealTimers();
+    });
+});
+
+describe("composer sends", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        jest.useRealTimers();
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    test("two rapid Enters send once", async () => {
+        let resolve!: (value: boolean) => void;
+        const client = signedInClient();
+        const send = jest
+            .spyOn(client, "sendMessage")
+            .mockReturnValue(new Promise((promiseResolve) => (resolve = promiseResolve)));
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+        await typeInComposer(result.container, "hi");
+        await pressEnter(result.container);
+        await pressEnter(result.container);
+        expect(send).toHaveBeenCalledTimes(1);
+        await act(async () => {
+            resolve(true);
+        });
+    });
+
+    test("cross-convo: send in A pending, Enter in B not blocked; A resolve leaves B untouched; A draft cleared", async () => {
+        let resolveA!: (value: boolean) => void;
+        const client = signedInClient();
+        const send = jest
+            .spyOn(client, "sendMessage")
+            .mockReturnValueOnce(new Promise((promiseResolve) => (resolveA = promiseResolve)))
+            .mockResolvedValue(true);
+        const result = await renderComposerApp(["c1", "c2"], client);
+        rendered = result;
+        await typeInComposer(result.container, "X");
+        await pressEnter(result.container);
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        await typeInComposer(result.container, "B-msg");
+        await pressEnter(result.container);
+        expect(send).toHaveBeenNthCalledWith(2, "B-msg", "c2");
+        await act(async () => {
+            resolveA(true);
+        });
+        expect(composerValue(result.container)).toBe("");
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        expect(composerValue(result.container)).toBe("");
+    });
+
+    test("same-convo interleave: follow-up Y typed during a pending send is preserved", async () => {
+        let resolveX!: (value: boolean) => void;
+        const client = signedInClient();
+        jest.spyOn(client, "sendMessage").mockReturnValueOnce(
+            new Promise((promiseResolve) => (resolveX = promiseResolve)),
+        );
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+        await typeInComposer(result.container, "X");
+        await pressEnter(result.container);
+        await typeInComposer(result.container, "Y");
+        await act(async () => {
+            resolveX(true);
+        });
+        expect(composerValue(result.container)).toBe("Y");
+        expect(makeDraftStore(SESSION).read("c1").text).toBe("Y");
+    });
+
+    test("late resolve after a conversation switch does not resurrect the sent draft", async () => {
+        let resolveX!: (value: boolean) => void;
+        const client = signedInClient();
+        jest.spyOn(client, "sendMessage").mockReturnValueOnce(
+            new Promise((promiseResolve) => (resolveX = promiseResolve)),
+        );
+        const result = await renderComposerApp(["c1", "c2"], client);
+        rendered = result;
+        await typeInComposer(result.container, "X");
+        await pressEnter(result.container);
+        await act(async () => {
+            resolveX(true);
+            await result.client.selectConversation("c2");
+        });
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        expect(composerValue(result.container)).toBe("");
+        expect(makeDraftStore(SESSION).read("c1").text).toBe("");
+    });
+
+    test("recent-folder is recorded on a successful folder-bearing send", async () => {
+        const record = jest.fn();
+        jest.spyOn(require("../../../src/journal/slash-palette"), "makeRecentFoldersStore").mockReturnValue({
+            record,
+            matches: () => [],
+        });
+        const client = signedInClient();
+        jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+        await typeInComposer(result.container, "/start work/dir do it");
+        await pressEnter(result.container);
+        await act(async () => undefined);
+        expect(record).toHaveBeenCalledWith("work/dir");
+    });
+
+    test("an addToOutbox rejection is caught (no unhandled rejection), text retained, lock released", async () => {
+        const client = signedInClient();
+        jest.spyOn(client, "sendMessage").mockRejectedValueOnce(new DOMException("quota", "QuotaExceededError"));
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+        await typeInComposer(result.container, "hi");
+        await pressEnter(result.container);
+        await act(async () => undefined);
+        expect(composerValue(result.container)).toBe("hi");
+        jest.spyOn(client, "sendMessage").mockResolvedValueOnce(true);
+        await pressEnter(result.container);
+        await act(async () => undefined);
+        expect(composerValue(result.container)).toBe("");
+    });
+
+    test("remount (in-flight send -> child -> parent -> Enter) does not duplicate", async () => {
+        let resolveX!: (value: boolean) => void;
+        const result = await renderComposerAppWithChild("c1", "c1-child");
+        rendered = result;
+        const send = jest
+            .spyOn(result.client, "sendMessage")
+            .mockReturnValueOnce(new Promise((promiseResolve) => (resolveX = promiseResolve)));
+        await typeInComposer(result.container, "X");
+        await pressEnter(result.container);
+        await act(async () => {
+            await result.client.selectConversation("c1-child");
+        });
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        await typeInComposer(result.container, "X");
+        await pressEnter(result.container);
+        expect(send).toHaveBeenCalledTimes(1);
+        await act(async () => {
+            resolveX(true);
+        });
     });
 });
 

@@ -2256,12 +2256,27 @@ function Composer({
         textarea.current?.focus();
     };
     const send = async (): Promise<void> => {
-        if (await client.sendMessage(body)) {
-            const folder = recentFolderArgument(body);
-            if (folder) store.record(folder);
-            setBody("");
-            setDismissed(null);
-            if (textarea.current) textarea.current.style.height = "auto";
+        const cid = convoIdRef.current;
+        const submitted = body;
+        if (!cid || sendingConvos.current.has(cid)) return;
+        sendingConvos.current.add(cid);
+        try {
+            if (await client.sendMessage(submitted, cid)) {
+                const folder = recentFolderArgument(submitted);
+                if (folder) store.record(folder);
+                cancelDraftDebounce();
+                if (drafts.read(cid).text === submitted) drafts.clear(cid);
+                else drafts.persist();
+                if (convoIdRef.current === cid && bodyRef.current === submitted) {
+                    setBody("");
+                    setDismissed(null);
+                    if (textarea.current) textarea.current.style.height = "auto";
+                }
+            }
+        } catch (error) {
+            console.warn("matron: message not queued (outbox write failed)", error);
+        } finally {
+            sendingConvos.current.delete(cid);
         }
     };
     return (
