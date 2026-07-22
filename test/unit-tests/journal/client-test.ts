@@ -92,6 +92,8 @@ interface ClientInternals {
     readHighWater: Map<string, number>;
     readTimers: Map<string, number>;
     pendingFiles: Map<string, File>;
+    inFlightUploads: Map<string, AbortController>;
+    uploadConvos: Map<string, string>;
     transientAttachmentErrors: Map<string, PendingMessage>;
     dismissedAttachments: Set<string>;
     pendingAck: number;
@@ -993,6 +995,62 @@ describe("MatronJournalClient attachment send state machine", () => {
             }),
         ]);
     });
+
+    it.each([
+        ["aborts", "c1", true],
+        ["does not abort", "c2", false],
+    ] as const)(
+        "%s an in-flight upload when a convo_meta event targets %s",
+        async (_label, eventConvoId, shouldAbort) => {
+            const client = new MatronJournalClient();
+            const state = internals(client);
+            const { database } = attachmentDatabase();
+            let uploadStarted!: () => void;
+            let releaseUpload!: (value: { media_id: string }) => void;
+            let uploadSignal: AbortSignal | undefined;
+            const started = new Promise<void>((resolve) => (uploadStarted = resolve));
+            const uploadMedia = jest.fn(
+                (_bytes: ArrayBuffer, _contentType: string, signal?: AbortSignal) =>
+                    new Promise<{ media_id: string }>((resolve, reject) => {
+                        uploadSignal = signal;
+                        releaseUpload = resolve;
+                        uploadStarted();
+                        signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+                            once: true,
+                        });
+                    }),
+            );
+            const childConversations = CONVERSATIONS.map((conversation) =>
+                conversation.id === "c1" ? { ...conversation, parent_convo_id: "parent" } : conversation,
+            );
+            database.conversations = jest
+                .fn()
+                .mockResolvedValue(eventConvoId === "c1" ? childConversations : CONVERSATIONS);
+            state.state = signedInState(client);
+            state.database = database;
+            state.api = { messages: jest.fn().mockResolvedValue({ events: [] }), uploadMedia };
+            state.connection = { send: jest.fn().mockReturnValue(true) };
+
+            const upload = client.sendAttachment(fileFixture("held.bin", "application/octet-stream", [1]), "c1");
+            await started;
+
+            await state.handleJournal({
+                kind: "journal",
+                seq: 21,
+                convo_id: eventConvoId,
+                ts: Date.now(),
+                sender: "user:2",
+                type: "convo_meta",
+                payload: { parent_convo_id: "parent" },
+            });
+
+            expect(uploadSignal?.aborted).toBe(shouldAbort);
+            if (!shouldAbort) releaseUpload({ media_id: "media-1" });
+            await upload;
+            expect(state.inFlightUploads.size).toBe(0);
+            expect(state.uploadConvos.size).toBe(0);
+        },
+    );
 
     it("confirms head-only, advances pages, and serializes uploads in confirm order", async () => {
         const client = new MatronJournalClient();

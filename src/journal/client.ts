@@ -225,6 +225,7 @@ export class MatronJournalClient {
     private readonly attachmentOperations = new Map<string, Promise<void>>();
     private readonly retryingAttachments = new Set<string>();
     private inFlightUploads = new Map<string, AbortController>();
+    private readonly uploadConvos = new Map<string, string>();
     private readonly issuedRefreshEpochs = new Map<string, number>();
     private readonly appliedRefreshEpochs = new Map<string, number>();
     private sessionGen = 0;
@@ -296,6 +297,7 @@ export class MatronJournalClient {
         this.sessionGen += 1;
         for (const controller of this.inFlightUploads.values()) controller.abort();
         this.inFlightUploads.clear();
+        this.uploadConvos.clear();
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
         this.transientAttachmentErrors.clear();
@@ -627,6 +629,7 @@ export class MatronJournalClient {
         const controller = new AbortController();
         const timer = window.setTimeout(() => controller.abort(), uploadTimeoutMsFor(file.size));
         this.inFlightUploads.set(message.localId, controller);
+        this.uploadConvos.set(message.localId, message.convoId);
         let mediaId: string;
         try {
             const bytes = await Promise.race([file.arrayBuffer(), abortPromise(controller.signal)]);
@@ -667,6 +670,7 @@ export class MatronJournalClient {
             window.clearTimeout(timer);
             if (this.inFlightUploads.get(message.localId) === controller) {
                 this.inFlightUploads.delete(message.localId);
+                this.uploadConvos.delete(message.localId);
             }
         }
 
@@ -923,6 +927,7 @@ export class MatronJournalClient {
         this.sessionGen += 1;
         for (const controller of this.inFlightUploads.values()) controller.abort();
         this.inFlightUploads.clear();
+        this.uploadConvos.clear();
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
         this.stagedSendChain = Promise.resolve();
@@ -1230,6 +1235,7 @@ export class MatronJournalClient {
         }
 
         await this.refreshConversations();
+        this.abortUploadsForChildConvos();
         if (event.convo_id === this.state.selectedConversationId) {
             await this.refreshSelectedConversation(event.convo_id);
             if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
@@ -1408,6 +1414,12 @@ export class MatronJournalClient {
     private isChildConvo(convoId: string): boolean {
         const conversation = this.state.conversations.find((candidate) => candidate.id === convoId);
         return !!conversation && isSubChat(conversation);
+    }
+
+    private abortUploadsForChildConvos(): void {
+        for (const [localId, convoId] of this.uploadConvos) {
+            if (this.isChildConvo(convoId)) this.inFlightUploads.get(localId)?.abort();
+        }
     }
 
     private markChildBlocked(message: PendingMessage): void {
