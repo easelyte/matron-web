@@ -1290,12 +1290,79 @@ export interface DiffCardData {
     displayPath?: string;
     filePath?: string;
     viewerUrl?: string;
+    viewerUrlExp?: number; // unix seconds from token payload; undefined if unreadable
     tool?: string;
     label?: string;
     added?: number;
     removed?: number;
     truncated: boolean;
     newFile: boolean;
+}
+
+// Module-level, once per page load: distinguishes "bridge withheld a link"
+// (no token param at all → expected, silent) from "a token was present but
+// undecodable" (schema drift → a signal worth one console warning). Throttled
+// to one warn per session so a fleet-wide token-format change is visible in a
+// console without spamming N cards. See M3 / P3 (fail-visible).
+let _viewerExpDecodeWarned = false;
+
+// A legitimate bridge token is base64url(JSON{path,exp,workdir}) + '.' + sig. Its
+// worst case is NOT tiny: generateFileLink embeds two full absolute paths, so with
+// both near PATH_MAX the encoded token approaches ~11KB. 16384 covers that with
+// margin while still bounding pathological (multi-MB) input far below any DoS size.
+// The bound is applied to the RAW viewerUrl string FIRST — before new URL() — so an
+// oversized durable event is rejected pre-parse (P8 Guard Boundary Inputs). Note the
+// residual: parseDiffPayload's own new URL(payload.viewer_url) at components.tsx:1305
+// (pre-existing #455 code, unchanged here) already parses the full string before this
+// runs, so this bound protects only the work THIS function adds, not that prior parse.
+const MAX_VIEWER_TOKEN_LEN = 16384;
+
+function decodeViewerExp(viewerUrl: string): number | undefined {
+    if (viewerUrl.length > MAX_VIEWER_TOKEN_LEN) return undefined; // bound raw input BEFORE any parse (silent; not a schema-drift signal)
+    let token: string | null = null;
+    try {
+        // Defensive re-parse: in the real integration path parseDiffPayload already
+        // validated this exact string with new URL() (components.tsx:1301-1309), so
+        // this catch is unreachable via that caller — it future-proofs a direct call.
+        token = new URL(viewerUrl).searchParams.get("token");
+    } catch {
+        return undefined; // malformed URL — not a token-schema signal, stay silent
+    }
+    if (!token) return undefined; // no token param → nothing to decode (silent)
+    try {
+        const payload = token.split(".")[0];
+        if (!payload) throw new Error("empty token payload");
+        const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+        const json = JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)));
+        // Range-sanity: require a POSITIVE, *1000-SAFE INTEGER exp. Integer is
+        // load-bearing (not cosmetic): the render compares floor(Date.now()/1000)
+        // to exp+grace, so a fractional exp (K+0.2) could leave the floored clock
+        // forever below the threshold while the timer's msLeft<=0 branch writes the
+        // same floored value — no state change, no re-arm, link wedged live. The
+        // exp*1000 ceiling matters too: a huge-but-"integer" value (1e308 passes
+        // Number.isInteger; 9e15 is a non-safe integer) makes exp*1000 lose
+        // precision or become Infinity, so the clamp re-arms forever and the link
+        // stays live — the exact failure this feature removes. The bridge always
+        // mints a small floored-seconds exp (Math.floor(...) at index.js:343), so
+        // these bounds match the producer and are defense-in-depth against a forged
+        // durable event. MAX_EXP = floor(MAX_SAFE_INTEGER / 1000) keeps exp*1000 exact.
+        const MAX_EXP = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
+        if (!Number.isSafeInteger(json.exp) || json.exp <= 0 || json.exp > MAX_EXP) {
+            throw new Error("no valid in-range integer exp");
+        }
+        return json.exp;
+    } catch (err) {
+        // A token WAS present but did not decode to a valid exp → schema-drift
+        // signal. Warn once; still return undefined (degrade to live-link).
+        if (!_viewerExpDecodeWarned) {
+            _viewerExpDecodeWarned = true;
+            console.warn(
+                "DiffCard: viewer_url token present but exp undecodable — expiry detection disabled for this token shape",
+                err,
+            );
+        }
+        return undefined;
+    }
 }
 
 export function parseDiffPayload(payload: EventPayload): DiffCardData {
@@ -1308,6 +1375,13 @@ export function parseDiffPayload(payload: EventPayload): DiffCardData {
             viewerUrl = undefined;
         }
     }
+    // NOTE: the oversized-token bound lives ONLY inside decodeViewerExp (below),
+    // not on this link-render guard. An oversized-but-valid viewer_url must still
+    // render as a live link (viewer stays authoritative) — it just skips expiry
+    // detection. Gating the link itself on length regressed valid long links to
+    // no-link (Codex phase-1 review). The viewer_url string is already received +
+    // JSON-parsed by the journal client before this runs, so the pre-existing
+    // new URL() above is not a fresh unbounded-allocation DoS surface.
 
     return {
         diff: asString(payload.diff, asString(payload.patch, JSON.stringify(payload, null, 2))),
@@ -1315,6 +1389,7 @@ export function parseDiffPayload(payload: EventPayload): DiffCardData {
             typeof payload.display_path === "string" && payload.display_path ? payload.display_path : undefined,
         filePath: typeof payload.file_path === "string" && payload.file_path ? payload.file_path : undefined,
         viewerUrl,
+        viewerUrlExp: viewerUrl ? decodeViewerExp(viewerUrl) : undefined,
         tool: typeof payload.tool === "string" && payload.tool ? payload.tool : undefined,
         label: typeof payload.label === "string" && payload.label ? payload.label : undefined,
         added: typeof payload.added === "number" ? payload.added : undefined,
@@ -1325,9 +1400,14 @@ export function parseDiffPayload(payload: EventPayload): DiffCardData {
 }
 
 const MAX_DIFF_LINES = 5000;
+const CLOCK_SKEW_GRACE_SEC = 30;
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
     const [expanded, setExpanded] = useState(false);
+    const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+    const expiresAt = data.viewerUrlExp;
+    const expired = expiresAt !== undefined && nowSec >= expiresAt + CLOCK_SKEW_GRACE_SEC;
     const allLines = data.diff.replace(/\r\n?/g, "\n").replace(/\n+$/, "").split("\n");
     const overflowed = allLines.length > MAX_DIFF_LINES;
     const lines = overflowed ? allLines.slice(0, MAX_DIFF_LINES) : allLines;
@@ -1336,6 +1416,20 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
     const path = data.displayPath ?? data.filePath ?? "file";
     const filename = path.split(/[\\/]/).at(-1) || "file";
     const visibleLines = expanded ? lines : lines.slice(0, 12);
+
+    useEffect(() => {
+        if (expiresAt === undefined || expired) return;
+
+        const bump = (): void => setNowSec(Math.floor(Date.now() / 1000));
+        const msLeft = (expiresAt + CLOCK_SKEW_GRACE_SEC) * 1000 - Date.now();
+        if (msLeft <= 0) {
+            bump();
+            return;
+        }
+
+        const timer = setTimeout(bump, Math.min(msLeft + 500, MAX_TIMEOUT_MS));
+        return (): void => clearTimeout(timer);
+    }, [expiresAt, expired, nowSec]);
 
     const toggleExpanded = (): void => setExpanded((current) => !current);
     const lineClass = (line: string): string => {
@@ -1367,7 +1461,7 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
                     </button>
                 )}
                 <FileEditIcon aria-hidden="true" />
-                {data.viewerUrl ? (
+                {data.viewerUrl && !expired ? (
                     <a
                         className="mj_DiffCard_filename mj_DiffCard_link"
                         href={data.viewerUrl}
@@ -1376,6 +1470,16 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
                     >
                         {filename}
                     </a>
+                ) : data.viewerUrl && expired ? (
+                    <>
+                        <span
+                            className="mj_DiffCard_filename mj_DiffCard_expired"
+                            title="Viewer link expired — re-open the file from a fresh edit"
+                        >
+                            {filename}
+                        </span>
+                        <span className="mj_DiffCard_expiredNote">link expired</span>
+                    </>
                 ) : (
                     <span className="mj_DiffCard_filename">{filename}</span>
                 )}

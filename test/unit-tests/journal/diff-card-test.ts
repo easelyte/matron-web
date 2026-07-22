@@ -21,6 +21,10 @@ type MountedComponent = {
 
 const mountedComponents: MountedComponent[] = [];
 
+function makeToken(payloadObj: Record<string, unknown>): string {
+    return `https://x.test/view?token=${Buffer.from(JSON.stringify(payloadObj)).toString("base64url")}.sig`;
+}
+
 async function mountDiff(payload: Record<string, unknown>): Promise<MountedComponent> {
     const container = document.createElement("div");
     const root = createRoot(container);
@@ -79,6 +83,7 @@ describe("parseDiffPayload", () => {
             displayPath: "src/example.ts",
             filePath: "/workspace/src/example.ts",
             viewerUrl: "https://example.test/view?token=secret",
+            viewerUrlExp: undefined,
             tool: "edit",
             label: "Updated",
             added: 2,
@@ -94,6 +99,7 @@ describe("parseDiffPayload", () => {
             displayPath: undefined,
             filePath: undefined,
             viewerUrl: undefined,
+            viewerUrlExp: undefined,
             tool: undefined,
             label: undefined,
             added: undefined,
@@ -128,6 +134,45 @@ describe("parseDiffPayload", () => {
         expect(parseDiffPayload({ diff: "x", viewer_url: "https://example.test/view" }).viewerUrl).toBe(
             "https://example.test/view",
         );
+    });
+
+    it("decodes a future integer viewer expiry", () => {
+        const future = 2_000_000_000;
+        expect(parseDiffPayload({ diff: "x", viewer_url: makeToken({ exp: future }) }).viewerUrlExp).toBe(future);
+    });
+
+    it("decodes a past integer viewer expiry", () => {
+        const past = 1_000_000_000;
+        expect(parseDiffPayload({ diff: "x", viewer_url: makeToken({ exp: past }) }).viewerUrlExp).toBe(past);
+    });
+
+    it.each([-1, 0, 1000.5, Number.MAX_SAFE_INTEGER])("rejects out-of-range viewer expiry %p", (exp) => {
+        expect(parseDiffPayload({ diff: "x", viewer_url: makeToken({ exp }) }).viewerUrlExp).toBeUndefined();
+    });
+
+    it("keeps an oversized viewer URL as a live link but skips expiry decoding", () => {
+        const oversized = "https://x.test/view?token=" + "A".repeat(20000);
+        const parsed = parseDiffPayload({ diff: "x", viewer_url: oversized });
+        // The oversized bound lives in decodeViewerExp only, not the link guard:
+        // a valid https URL still renders (viewer stays authoritative); expiry
+        // detection is skipped (undefined), degrading to today's live-link.
+        expect(parsed.viewerUrl).toBe(oversized);
+        expect(parsed.viewerUrlExp).toBeUndefined();
+    });
+
+    it("warns exactly once across undecodable tokens, silent for non-token rejects", () => {
+        jest.isolateModules(() => {
+            const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { parseDiffPayload: pdp } = require("../../../src/journal/components");
+            pdp({ diff: "x" });
+            pdp({ diff: "x", viewer_url: "https://x.test/view?token=" + "A".repeat(20000) });
+            expect(warn).not.toHaveBeenCalled();
+            pdp({ diff: "x", viewer_url: "https://x.test/view?token=secret" });
+            pdp({ diff: "x", viewer_url: makeToken({ exp: -1 }) });
+            expect(warn).toHaveBeenCalledTimes(1);
+            warn.mockRestore();
+        });
     });
 
     it("treats empty optional strings as absent", () => {
@@ -174,6 +219,13 @@ describe("DiffCard", () => {
         const plain = await mountDiff({ diff: "x", file_path: "b.ts", viewer_url: null });
         expect(plain.container.querySelector("a")).toBeNull();
         expect(plain.container.querySelector("span.mj_DiffCard_filename")?.textContent).toBe("b.ts");
+    });
+
+    it("renders a plain filename without an expired note when no viewer URL is provided", async () => {
+        const { container } = await mountDiff({ diff: "x", file_path: "plain.ts" });
+        expect(container.querySelector("a")).toBeNull();
+        expect(container.querySelector("span.mj_DiffCard_filename")?.textContent).toBe("plain.ts");
+        expect(container.querySelector(".mj_DiffCard_expiredNote")).toBeNull();
     });
 
     it("renders counts and the new-file badge only when provided", async () => {
@@ -276,6 +328,91 @@ describe("DiffCard", () => {
         const { container } = await mountDiff({ diff: "x", truncated: true });
         expect(container.querySelector('[title="diff truncated"]')?.textContent).toBe("…");
         expect(container.querySelector(".mj_DiffCard_truncated")?.textContent).toBe("… diff truncated");
+    });
+});
+
+describe("DiffCard viewer link expiry", () => {
+    // These mirror the unexported values in components.tsx. Update both places
+    // together if the implementation constants change.
+    const FIXED_MS = 1_700_000_000_000;
+    const nowSec = Math.floor(FIXED_MS / 1000);
+    const CLOCK_SKEW_GRACE_SEC = 30;
+    const MAX_TIMEOUT_MS = 2_147_483_647;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(FIXED_MS);
+    });
+
+    afterEach(() => jest.useRealTimers());
+
+    it("renders future links as live and links beyond the grace period as expired", async () => {
+        const live = await mountDiff({
+            diff: "x",
+            file_path: "live.ts",
+            viewer_url: makeToken({ exp: nowSec + 3600 }),
+        });
+        expect(live.container.querySelector("a.mj_DiffCard_filename")).not.toBeNull();
+
+        const expired = await mountDiff({
+            diff: "x",
+            file_path: "expired.ts",
+            viewer_url: makeToken({ exp: nowSec - 3600 }),
+        });
+        expect(expired.container.querySelector("a")).toBeNull();
+        expect(expired.container.querySelector(".mj_DiffCard_expired")?.textContent).toBe("expired.ts");
+        expect(expired.container.querySelector(".mj_DiffCard_expiredNote")?.textContent).toBe("link expired");
+    });
+
+    it("keeps a recently expired link live during the clock-skew grace period", async () => {
+        const { container } = await mountDiff({
+            diff: "x",
+            file_path: "grace.ts",
+            viewer_url: makeToken({ exp: nowSec - 5 }),
+        });
+        expect(container.querySelector("a.mj_DiffCard_filename")?.textContent).toBe("grace.ts");
+        expect(container.querySelector(".mj_DiffCard_expiredNote")).toBeNull();
+    });
+
+    it("flips a live viewer link to expired after its grace period", async () => {
+        const { container } = await mountDiff({
+            diff: "x",
+            file_path: "flip.ts",
+            viewer_url: makeToken({ exp: nowSec + 60 }),
+        });
+        expect(container.querySelector("a.mj_DiffCard_filename")).not.toBeNull();
+
+        await act(async () => {
+            jest.advanceTimersByTime((60 + CLOCK_SKEW_GRACE_SEC) * 1000 + 500 + 50);
+        });
+
+        expect(container.querySelector("a")).toBeNull();
+        expect(container.querySelector(".mj_DiffCard_expired")?.textContent).toBe("flip.ts");
+    });
+
+    it("clamps long waits and re-arms until the viewer link expires", async () => {
+        const setTimeoutSpy = jest.spyOn(global, "setTimeout");
+        const thirtyDaysSec = 30 * 86400;
+        const { container } = await mountDiff({
+            diff: "x",
+            file_path: "long-lived.ts",
+            viewer_url: makeToken({ exp: nowSec + thirtyDaysSec }),
+        });
+
+        expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), MAX_TIMEOUT_MS);
+        expect(container.querySelector("a.mj_DiffCard_filename")).not.toBeNull();
+
+        await act(async () => {
+            jest.advanceTimersByTime(MAX_TIMEOUT_MS);
+        });
+        expect(container.querySelector("a.mj_DiffCard_filename")).not.toBeNull();
+
+        await act(async () => {
+            jest.advanceTimersByTime(thirtyDaysSec * 1000 - MAX_TIMEOUT_MS + CLOCK_SKEW_GRACE_SEC * 1000 + 1000);
+        });
+        expect(container.querySelector("a")).toBeNull();
+        expect(container.querySelector(".mj_DiffCard_expired")?.textContent).toBe("long-lived.ts");
+        setTimeoutSpy.mockRestore();
     });
 });
 
