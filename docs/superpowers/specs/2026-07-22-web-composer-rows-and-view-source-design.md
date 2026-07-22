@@ -120,9 +120,9 @@ untouched room-list menu (which lives under a different, hook-unaware subtree). 
 hook presentation-free and testable in isolation, and keeps menu markup where Dan keeps his (no split).
 
 **Menu items** (rendered in `Timeline`, positioned `fixed` like the room menu):
-1. **Copy** — shown only for `event.type === "text"` (payload `body`). `navigator.clipboard.writeText(body)`;
-   on absence/failure, fall back to a hidden-textarea `execCommand("copy")` or silently no-op (never throw).
-   Closes the menu.
+1. **Copy** — shown only for `event.type === "text"` (payload `body`). Uses the shared `copyText(body)`
+   helper (`navigator.clipboard.writeText` → hidden-textarea `execCommand("copy")` → silent no-op fallback,
+   all try/catch — never throws). Closes the menu.
 2. **View source** — shown for **all** event kinds (#476). Sets the source-sheet target (below). Closes the menu.
 
 Share is intentionally omitted (see Right-size decisions). The menu therefore has 1–2 items; when only
@@ -149,7 +149,9 @@ and independent of these three loops.
   `sender`, `type`, `payload`) — inside a scrollable, user-selectable `<pre>` (`user-select: text`).
   Mirrors apple's "what does the app see?" DTO view (we don't have the raw server frame client-side).
 - Modal chrome matching `UploadConfirmDialog`: backdrop, titled header ("Event source"), a **Copy** button
-  (copies the JSON) and a **Done**/close button. Closes on Done, backdrop click, and Escape.
+  and a **Done**/close button. Closes on Done, backdrop click, and Escape. The Copy button uses the **same
+  shared `copyText(text)` helper** as the row-menu Copy item (round-2 minor: one clipboard helper with the
+  `navigator.clipboard` → `execCommand` → no-op fallback + try/catch, not two divergent copies).
 - Focus trapped minimally: focus the Done button on open; Escape closes; return focus to the timeline.
 
 **State:** `Timeline` owns `const [sourceEvent, setSourceEvent] = useState<JournalEvent | undefined>()`. The
@@ -182,13 +184,17 @@ React handler. `makeIdSetStore.write` (`conversation-flags.ts` L50–52) is **no
   string-only `read` did not.)
 - `write(convoId, text): void` — `try/catch`-wrapped (warn once on failure, never throw). If
   `text.trim() === ""`, **deletes** the entry (prune-on-empty). If `utf8Length(text) > MAX_DRAFT_BYTES`
-  (const, 64 KiB), the entry is **not** persisted (the oversized text stays live in the composer; a reload
-  simply won't restore it) — bounds the per-entry cost of the synchronous whole-blob serialize.
+  (const, 64 KiB), the entry is **deleted** too (round-2 minor: deleting — not no-op — so a reload restores
+  *nothing* rather than a stale, smaller earlier draft; the oversized text stays live in the composer, it
+  simply won't survive a reload). This bounds the per-entry cost of the synchronous whole-blob serialize.
 - `clear(convoId): void` — deletes the entry + persists (used after a successful send).
-- **Write coalescing:** the Composer calls `write` through a trailing-edge debounce (~250 ms) so rapid
-  keystrokes don't stringify+rewrite the whole blob on every keypress; the debounce is **flushed
-  synchronously** on convo-switch, blur, and send so no committed draft is lost. `clear` bypasses the
-  debounce (immediate). This keeps the hot path off the per-keystroke blob write that round 1 flagged.
+- **Write coalescing:** the Composer schedules `write` through a trailing-edge debounce (~250 ms) that
+  **captures `{convoId, text}` by value at schedule time** (not a lazy ref read — round-2 fix) so rapid
+  keystrokes don't stringify+rewrite the whole blob on every keypress. The single pending timer is **flushed
+  synchronously** on convo-switch and blur (so no committed draft is lost) and **cancelled** on a
+  snapshot-matched send-clear (so it can't re-persist just-sent text — round-2 fix). `clear` writes
+  immediately (bypasses the debounce). This keeps the hot path off the per-keystroke blob write that round 1
+  flagged. Debounce timer + cancel/flush live in the Composer; the store API stays `read`/`write`/`clear`.
 
 Total blob size is bounded in practice by (active-conversation count × ≤`MAX_DRAFT_BYTES`) with
 prune-on-empty removing entries as they clear; there is no per-conversation-count hard cap (conversations
@@ -200,35 +206,50 @@ visible live; over-alerting on it is worse UX than a silent console warn).
 **Composer integration** (unkeyed component; convoId arrives via `state.selectedConversationId`):
 - `const drafts = useMemo(() => makeDraftStore(state.session), [state.session])` (self-guards on undefined
   session — no call-site guard needed, per the store contract).
-- Keep `const convoIdRef = useRef(state.selectedConversationId)` updated every render so async
-  continuations read the *current* convo, not a stale closure.
-- **All body mutations go through one helper** `setBodyDraft(next)` = `setBody(next)` + debounced
-  `drafts.write(convoIdRef.current, next)`. `onChange`, `selectCommand`, and `selectFolder` (the three
-  `setBody` call sites, `components.tsx` L2003–2014, L2059–2066) route through it — this closes the round-1
-  gap where completion picks bypassed `onChange` and their composed body was never persisted.
-- On convoId change (`useEffect` on `state.selectedConversationId`, prevConvo tracked via a ref):
-  1. **flush** the debounce, then `drafts.write(prevConvoId, body)` for the outgoing convo;
-  2. `const { text, ok } = drafts.read(newConvoId)` — set body **only when `ok`** (a failed read leaves the
-     composer empty for the new convo rather than showing the previous convo's text); reset textarea height;
-  3. update both refs.
-  This fixes the cross-convo bleed: each convo shows only its own draft, and a transient storage failure
-  can't leak text across conversations.
-- **Send (per-conversation lock + convo-scoped completion)** — replaces the single `sendingRef`:
+- Keep two refs updated **every render**: `convoIdRef` (= `state.selectedConversationId`) and `bodyRef`
+  (= current `body`), so async continuations read *current* convo/body, not a stale closure.
+- **All body mutations go through one helper** `setBodyDraft(next)` = `setBody(next)` + a debounced draft
+  write **that captures `convoId` by value at call time** — `const cid = convoIdRef.current;` then schedule
+  `drafts.write(cid, next)` bound to `cid` and `next` (round-2 fix: the deferred callback must **not** read
+  `convoIdRef.current` lazily at fire time, or a switch inside the debounce window would write the outgoing
+  text under the incoming convo's key). `onChange`, `selectCommand`, and `selectFolder` (the three `setBody`
+  call sites, `components.tsx` L2003–2014, L2059–2066) route through it — closing the round-1 gap where
+  completion picks bypassed `onChange`.
+- On convoId change (`useEffect` on `state.selectedConversationId`; `prevConvoIdRef` holds the outgoing id):
+  1. **flush** the debounce (commits any pending write bound to `prevConvoId`), then
+     `drafts.write(prevConvoId, bodyRef.current)` belt-and-suspenders for the outgoing convo;
+  2. `const { text, ok } = drafts.read(newConvoId)` — **always assign** `setBody(ok ? text : "")` (round-2
+     fix: an `ok:false` read must set the body to **empty**, never leave the outgoing convo's text in the
+     component-local, unkeyed composer — leaving it would display/allow-sending A's text under B). Use raw
+     `setBody` here, **not** `setBodyDraft`, so loading a draft (or clearing on failure) does not itself
+     schedule a write that could delete/overwrite the newly-selected convo's persisted entry. Reset textarea
+     height. Also reset the slash-palette locals: `setDismissed(null)`, `setHighlighted(null)` (round-2
+     minor: stale `dismissed`/`highlighted` from the prior convo otherwise mis-drive `open`).
+  3. update `prevConvoIdRef`.
+  This fixes the cross-convo bleed on both the happy path and the transient-storage-failure path.
+- **Send (per-conversation lock + snapshot-guarded, convo-scoped completion)** — replaces the single `sendingRef`:
   - `const sendingConvos = useRef(new Set<string>())`.
-  - `send()`: `const convoId = convoIdRef.current; if (!convoId || sendingConvos.current.has(convoId)) return;`
-    then `sendingConvos.current.add(convoId)` (synchronous, pre-`await` → blocks the same-tick second Enter
-    for *this* convo only, so a send in A never drops an Enter in B). `try { if (await
-    client.sendMessage(body)) { … } } finally { sendingConvos.current.delete(convoId); }`.
-  - **Completion is convo-scoped:** on success always `drafts.clear(convoId)` (safe — clears the convo we
-    sent from). Touch the live composer (`setBody("")`, `setDismissed(null)`, reset height) **only when
-    `convoIdRef.current === convoId`** — i.e. the same convo is still on screen. If the operator switched
-    away mid-send, the new convo's draft/body is left untouched (it was already saved by write-through).
-    This kills the round-1 "resolves-after-switch blanks the new convo" blocker.
+  - `send()`: `const convoId = convoIdRef.current; const submitted = body;` then
+    `if (!convoId || sendingConvos.current.has(convoId)) return;` then `sendingConvos.current.add(convoId)`
+    (synchronous, pre-`await` → blocks the same-tick second Enter for *this* convo only, so a send in A never
+    drops an Enter in B). `try { if (await client.sendMessage(submitted)) { …completion… } } finally {
+    sendingConvos.current.delete(convoId); }`.
+  - **Completion is snapshot- AND convo-scoped** (round-2 fix): clear only if the composer still holds the
+    exact text that was sent AND the same convo is on screen — i.e. only when `convoIdRef.current === convoId
+    && bodyRef.current === submitted`. When true: **cancel** any pending debounced write for `convoId`
+    (else the write scheduled by the keystroke just before Enter fires *after* the clear and re-persists the
+    just-sent text — round-2 M2 phantom draft), then `drafts.clear(convoId)` + `setBody("")` +
+    `setDismissed(null)` + reset height. **Otherwise do nothing** — if the operator typed a follow-up `Y` in
+    A while the send was in flight (or switched away), `bodyRef.current !== submitted`, so the still-pending
+    debounced write (=`Y`) is left to fire and `Y` (live + persisted) is preserved, not wiped. This closes
+    the round-1 resolves-after-switch blanking, the round-2 same-convo-interleave erase, and the round-2
+    flush-vs-clear phantom-draft ordering hazard together.
   - **Wedge scope:** `finally` releases the lock on resolve *and* reject; the only residual is a promise
     that never settles, which for this path means a hung local IndexedDB `addToOutbox` (no network in the
-    awaited path). Per-convo scoping bounds even that to the one affected conversation (others still send);
-    no timeout is added because a spurious mid-send unlock would reintroduce the double-send. Documented,
-    not silently assumed.
+    awaited path — verified: `sendMessage` awaits only `addToOutbox` + `refreshSelectedConversation`, both
+    local; the network dispatch `sendPendingMessage` is fire-and-forget, not awaited). Per-convo scoping
+    bounds even that to the one affected conversation; no timeout is added because a spurious mid-send unlock
+    would reintroduce the double-send. Documented, not silently assumed.
 
 Persistence is localStorage → drafts **best-effort** survive both in-app navigation and full page reload
 (the loop's "across navigation"). Best-effort because a storage failure (quota, Safari private mode) is
@@ -248,10 +269,11 @@ useRef(new Set<string>())`), not a single boolean. Rationale for the shape (roun
 - **Keyed by convoId, not global:** a boolean `sendingRef` would silently drop an Enter in convo B while a
   send in A is still in flight (round-1 blocker). Locking per-convo means only a genuine same-convo double
   fire is suppressed.
-- **Completion is convo-scoped** (see above): the live composer is cleared only if the sending convo is
-  still on screen, so an in-flight send that resolves after a switch never blanks the newly selected
-  conversation. The earlier "nothing legitimate is lost" claim was false for the cross-convo interleave and
-  is removed.
+- **Completion is snapshot- AND convo-scoped** (see above): the live composer is cleared only if it still
+  holds the exact sent text *and* the sending convo is on screen (`bodyRef.current === submitted &&
+  convoIdRef.current === convoId`), so neither a resolve-after-switch nor a same-convo follow-up edit typed
+  during the in-flight send is blanked. The earlier "nothing legitimate is lost" claim was false for these
+  interleaves and is removed.
 - `finally` releases on resolve and reject; a never-settling local promise is bounded to the one affected
   convo (Major issue mitigation, above).
 
@@ -308,10 +330,14 @@ Enter (guarded) → sendingRef gate → sendMessage → on success: draftStore.c
   - **menu + sheet close on conversation switch** (change `selectedConversationId` while open → both gone, JSON no longer in DOM);
   - typing a draft in convo A, switching to B, back to A restores A's draft; B stays empty; draft persists across a simulated remount (reload);
   - a **completion pick** (`selectCommand` / `selectFolder`) then reload restores the composed body (write-through covers the non-`onChange` path);
-  - a failed `read` (`ok:false`) on switch leaves the new convo's composer empty, **not** showing the previous convo's text;
+  - a failed `read` (`ok:false`) on switch **assigns empty** to the new convo's composer, **not** the previous convo's text (no cross-convo disclosure);
+  - **switch inside the debounce window:** type in A, switch to B before the ~250 ms debounce fires → A's pending text is written under **A's** key (captured by value), and B loads B's own draft — A's text never lands under B;
+  - a completion pick (`selectCommand`/`selectFolder`) then reload restores the composed body;
+  - oversized draft (`> MAX_DRAFT_BYTES`) then reload restores **nothing** (entry deleted, not a stale earlier draft);
   - successful send clears **that convo's** draft;
   - **double-send:** two synchronous Enter keydowns (same convo) with a slow-resolving `sendMessage` stub → `sendMessage` called exactly once;
-  - **cross-convo interleave:** send in A (slow stub, still pending) → switch to B → Enter in B is **not** blocked (fires its own send); when A resolves, B's live composer body is **untouched**.
+  - **cross-convo interleave:** send in A (slow stub, still pending) → switch to B → Enter in B is **not** blocked (fires its own send); when A resolves, B's live composer body is **untouched**;
+  - **same-convo interleave:** send X in A (slow stub) → type follow-up Y in A while pending → X resolves → Y is **preserved** in both the live composer and the persisted draft (snapshot guard: `bodyRef !== submitted`), and X's draft is **not** cleared out from under Y.
 - `pnpm lint` (tsc + prettier) + full `pnpm test` green before ship.
 
 ## Right-size decisions (quantified)
