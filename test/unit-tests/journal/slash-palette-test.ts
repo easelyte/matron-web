@@ -127,6 +127,9 @@ describe("recentFolderArgument", () => {
         ["/workdir --claude /a b c", "/a b c"],
         ["/start --agent=codex /z", "/z"],
         ["/start —claude /op", "/op"],
+        ["/workdir /srv/repo --codex", "/srv/repo"],
+        ["/workdir --browser /srv/repo --codex", "/srv/repo"],
+        ["/start /op --claude", "/op"],
         ["/start --CLAUDE /op", "--CLAUDE"],
         ["/workdir --bogus /op", "--bogus /op"],
         ["/start now", null],
@@ -231,6 +234,18 @@ describe("folderSuggestions", () => {
 
     it("returns no suggestions outside folder-command completion", () => {
         expect(folderSuggestions("hello", storeWith(["/srv/app"]))).toEqual([]);
+    });
+
+    it("does not re-inject a trailing agent flag through a recorded suggestion", () => {
+        localStorage.clear();
+        const store = makeRecentFoldersStore(session);
+        const folder = recentFolderArgument("/workdir /srv/repo --codex");
+        expect(folder).toBe("/srv/repo");
+        if (folder !== null) store.record(folder);
+
+        const suggestions = folderSuggestions("/workdir /srv/r", store);
+        expect(suggestions).toEqual(["/srv/repo"]);
+        expect(applyFolder("/workdir /srv/r", suggestions[0])).toBe("/workdir /srv/repo");
     });
 
     it("keeps a case-distinct sibling while removing the exact partial", () => {

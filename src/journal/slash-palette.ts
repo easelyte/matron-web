@@ -130,8 +130,10 @@ export function recentFolderArgument(text: string): string | null {
     if (!commandMatch) return null;
 
     const command = commandMatch[1].toLowerCase() as ParsedFolderCommand["command"];
-    const tokens = (commandMatch[2] ?? "").trim().split(/\s+/).filter(Boolean);
-    while (tokens.length > 0 && isRecognizedFolderFlag(tokens[0])) tokens.shift();
+    const tokens = (commandMatch[2] ?? "")
+        .trim()
+        .split(/\s+/)
+        .filter((token) => token.length > 0 && !isRecognizedFolderFlag(token));
     if (tokens.length === 0) return null;
 
     if (command === "start") {
