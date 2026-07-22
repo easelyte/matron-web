@@ -19,7 +19,7 @@ import {
     unreadStore,
 } from "../../../src/journal/client";
 import { makeDraftStore } from "../../../src/journal/composer-drafts";
-import { copyText, MatronApp } from "../../../src/journal/components";
+import { EventContent, MatronApp } from "../../../src/journal/components";
 import { makeRecentFoldersStore } from "../../../src/journal/slash-palette";
 import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
 
@@ -124,31 +124,6 @@ async function openMenu(container: HTMLElement): Promise<void> {
 
 beforeEach(() => localStorage.clear());
 
-test("copyText awaits clipboard and returns true", async () => {
-    const writeText = jest.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
-    await expect(copyText("hello")).resolves.toBe(true);
-    expect(writeText).toHaveBeenCalledWith("hello");
-});
-
-test("copyText falls back to execCommand on rejection and returns true", async () => {
-    Object.assign(navigator, { clipboard: { writeText: jest.fn().mockRejectedValue(new Error("denied")) } });
-    const exec = jest.fn().mockReturnValue(true);
-    (document as any).execCommand = exec;
-    await expect(copyText("hello")).resolves.toBe(true);
-    expect(exec).toHaveBeenCalledWith("copy");
-    expect(document.querySelectorAll("textarea").length).toBe(0);
-});
-
-test("copyText returns false when both paths fail, without throwing, and cleans up the textarea", async () => {
-    Object.assign(navigator, { clipboard: { writeText: jest.fn().mockRejectedValue(new Error("x")) } });
-    (document as any).execCommand = jest.fn(() => {
-        throw new Error("nope");
-    });
-    await expect(copyText("hello")).resolves.toBe(false);
-    expect(document.querySelectorAll("textarea").length).toBe(0);
-});
-
 describe("session-control banners", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
@@ -177,6 +152,80 @@ describe("session-control banners", () => {
         expect(
             [...rendered.container.querySelectorAll('[role="status"]')].map((element) => element.textContent),
         ).toEqual([PREFERENCES_UNAVAILABLE_ERROR, "Couldn't save — device storage is full or unavailable."]);
+    });
+});
+
+describe("markdown render-site integration", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    it("renders markdown only for EventContent text events", async () => {
+        const client = signedInClient();
+        const text = textEvent(1, "**bold text**");
+        const promptReply: JournalEvent = {
+            ...textEvent(2, "unused"),
+            type: "prompt_reply",
+            payload: { choice: "**plain reply**" },
+        };
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        rendered = { container, root };
+
+        await act(async () => {
+            root.render(
+                React.createElement(
+                    React.Fragment,
+                    null,
+                    React.createElement(EventContent, { client, event: text, answeredPrompts: new Set<number>() }),
+                    React.createElement(EventContent, {
+                        client,
+                        event: promptReply,
+                        answeredPrompts: new Set<number>(),
+                    }),
+                ),
+            );
+        });
+
+        expect(container.querySelector(".mj_Markdown strong")?.textContent).toBe("bold text");
+        const plainReply = container.querySelector(".mj_MessageText");
+        expect(plainReply?.textContent).toBe("**plain reply**");
+        expect(plainReply?.querySelector("strong")).toBeNull();
+    });
+
+    it("renders pending markdown and visually trails streaming prose with an external cursor", async () => {
+        const client = signedInClient({
+            pendingMessages: [{ localId: "pending-markdown", convoId: "c1", body: "**pending bold**", createdAt: 1 }],
+        });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            textStreams: { response: "stream text" },
+        };
+
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mx_EventTile_sending .mj_Markdown strong")?.textContent).toBe(
+            "pending bold",
+        );
+        const cursor = rendered.container.querySelector(".mj_Cursor");
+        const streamMarkdown = cursor?.parentElement;
+        const terminalParagraph = streamMarkdown?.querySelector(":scope > p:nth-last-child(2)");
+        expect(streamMarkdown?.classList.contains("mj_Markdown_streaming")).toBe(true);
+        expect(terminalParagraph?.textContent).toBe("stream text");
+        expect(terminalParagraph?.nextElementSibling).toBe(cursor);
+        expect(cursor?.parentElement).toBe(streamMarkdown);
+        expect(terminalParagraph?.contains(cursor ?? null)).toBe(false);
     });
 });
 

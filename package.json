@@ -21,8 +21,13 @@
     "dependencies": {
         "@fontsource/fira-code": "^5.2.7",
         "@fontsource/inter": "^5.2.8",
+        "hast-util-to-string": "^3",
+        "highlight.js": "~11.11.0",
         "react": "^19.2.4",
-        "react-dom": "^19.2.4"
+        "react-dom": "^19.2.4",
+        "react-markdown": "^9",
+        "rehype-highlight": "^7",
+        "remark-gfm": "^4"
     },
     "devDependencies": {
         "@babel/core": "^7.28.0",

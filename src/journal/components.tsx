@@ -23,6 +23,7 @@ import {
     type MatronJournalClient,
     PREFERENCES_UNAVAILABLE_ERROR,
 } from "./client";
+import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
@@ -49,6 +50,7 @@ import {
     UnarchiveIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
+import { MarkdownBody } from "./markdown";
 import {
     applyCommand,
     applyFolder,
@@ -164,30 +166,6 @@ function formatBytes(value: unknown): string | undefined {
     if (value < 1024) return `${value} B`;
     if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
     return `${(value / 1024 / 1024).toFixed(1)} MB`;
-}
-
-export async function copyText(text: string): Promise<boolean> {
-    try {
-        if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(text);
-            return true;
-        }
-    } catch {
-        /* Fall through to execCommand. */
-    }
-    const textarea = document.createElement("textarea");
-    try {
-        textarea.value = text;
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        return document.execCommand("copy");
-    } catch {
-        return false;
-    } finally {
-        textarea.remove();
-    }
 }
 
 function LoginScreen({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
@@ -1857,7 +1835,11 @@ export function EventContent({
 }): React.ReactElement {
     switch (event.type) {
         case "text":
-            return <div className="mj_MessageText">{asString(event.payload.body)}</div>;
+            return (
+                <div className="mj_Markdown">
+                    <MarkdownBody text={asString(event.payload.body)} label={String(event.seq)} />
+                </div>
+            );
         case "prompt":
             return (
                 <PromptCard
@@ -2318,7 +2300,9 @@ function Timeline({
                                 >
                                     <div className="mx_EventTile_line">
                                         <div className="mx_MTextBody mx_EventTile_content">
-                                            <div className="markdown-body mj_MessageText">{message.body}</div>
+                                            <div className="mj_Markdown">
+                                                <MarkdownBody text={message.body} label={message.localId} />
+                                            </div>
                                         </div>
                                     </div>
                                     <span className="mj_SendingLabel">Sending…</span>
@@ -2337,8 +2321,8 @@ function Timeline({
                                 </span>
                                 <div className="mx_EventTile_line">
                                     <div className="mx_MTextBody mx_EventTile_content">
-                                        <div className="markdown-body mj_MessageText">
-                                            {text}
+                                        <div className="mj_Markdown mj_Markdown_streaming">
+                                            <MarkdownBody text={text} streaming label={`stream-${index}`} />
                                             <span className="mj_Cursor" />
                                         </div>
                                     </div>

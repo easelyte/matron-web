@@ -622,6 +622,229 @@ textarea {
     overflow-wrap: anywhere;
 }
 
+.mj_Markdown {
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.mj_Markdown p {
+    margin: var(--cpd-space-3x) 0;
+}
+
+.mj_Markdown p:first-child {
+    margin-top: 0;
+}
+
+.mj_Markdown p:last-child {
+    margin-bottom: 0;
+}
+
+.mj_Markdown_streaming > p:nth-last-child(2),
+.mj_Markdown_streaming > .mj_MarkdownRaw:nth-last-child(2) {
+    display: inline;
+    margin-bottom: 0;
+}
+
+.mj_Markdown ul,
+.mj_Markdown ol {
+    margin: var(--cpd-space-3x) 0;
+    padding-left: var(--cpd-space-5x);
+}
+
+.mj_Markdown li {
+    margin: var(--cpd-space-1x) 0;
+}
+
+.mj_Markdown h1,
+.mj_Markdown h2,
+.mj_Markdown h3,
+.mj_Markdown h4,
+.mj_Markdown h5,
+.mj_Markdown h6 {
+    margin: var(--cpd-space-5x) 0 var(--cpd-space-2x);
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+}
+
+.mj_Markdown h1,
+.mj_Markdown h2 {
+    font: var(--cpd-font-body-md-regular);
+    font-weight: 600;
+}
+
+.mj_Markdown h3,
+.mj_Markdown h4 {
+    font: var(--cpd-font-body-sm-regular);
+    font-weight: 600;
+}
+
+.mj_Markdown h5,
+.mj_Markdown h6 {
+    font: var(--cpd-font-body-xs-semibold);
+}
+
+.mj_Markdown blockquote {
+    margin: var(--cpd-space-3x) 0;
+    border-left: var(--cpd-space-1x) solid var(--cpd-color-border-interactive-secondary);
+    padding-left: var(--cpd-space-3x);
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_Markdown table {
+    width: 100%;
+    margin: var(--cpd-space-3x) 0;
+    border-collapse: collapse;
+}
+
+.mj_Markdown th,
+.mj_Markdown td {
+    border: 1px solid var(--cpd-color-border-disabled);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    text-align: left;
+}
+
+.mj_Markdown th {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+    font-weight: 600;
+}
+
+.mj_Markdown hr {
+    margin: var(--cpd-space-4x) 0;
+    border: 0;
+    border-top: 1px solid var(--cpd-color-border-disabled);
+}
+
+.mj_Markdown a {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_Markdown a:hover {
+    text-decoration: underline;
+}
+
+.mj_Markdown .contains-task-list {
+    padding-left: 0;
+    list-style: none;
+}
+
+.mj_Markdown .task-list-item {
+    list-style: none;
+}
+
+.mj_Markdown .task-list-item input[type="checkbox"] {
+    margin: 0 var(--cpd-space-2x) 0 0;
+    accent-color: var(--cpd-color-icon-accent-primary);
+}
+
+.mj_InlineCode {
+    border-radius: 4px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    padding: 1px var(--cpd-space-1x);
+    font-family: "Fira Code", monospace;
+    font-size: 0.9em;
+}
+
+.mj_MarkdownRaw {
+    white-space: pre-wrap;
+}
+
+.mj_CodeBlock {
+    position: relative;
+    max-width: min(720px, 62vw);
+    max-height: 360px;
+    overflow-x: auto;
+    box-sizing: border-box;
+    margin: var(--cpd-space-3x) 0;
+    border-radius: 6px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    padding: calc(var(--cpd-space-5x) + var(--cpd-space-3x)) var(--cpd-space-3x) var(--cpd-space-3x);
+    font-family: "Fira Code", monospace;
+    font-size: 12px;
+}
+
+.mj_CodeBlock_copy,
+.mj_CodeBlock_lang {
+    position: absolute;
+    top: var(--cpd-space-2x);
+    z-index: 1;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 4px;
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-secondary);
+    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    font: var(--cpd-font-body-xs-regular);
+    opacity: 0;
+}
+
+.mj_CodeBlock_lang {
+    left: var(--cpd-space-2x);
+    pointer-events: none;
+}
+
+.mj_CodeBlock_copy {
+    right: var(--cpd-space-2x);
+    cursor: pointer;
+}
+
+.mj_CodeBlock:hover .mj_CodeBlock_copy,
+.mj_CodeBlock:hover .mj_CodeBlock_lang,
+.mj_CodeBlock:focus-within .mj_CodeBlock_copy,
+.mj_CodeBlock:focus-within .mj_CodeBlock_lang {
+    opacity: 1;
+}
+
+.mj_CodeBlock_copy:hover {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_CodeBlock_copy:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 1px;
+}
+
+.hljs {
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-type,
+.hljs-built_in {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.hljs-string,
+.hljs-attr,
+.hljs-symbol,
+.hljs-bullet {
+    color: var(--cpd-color-text-link-external);
+}
+
+.hljs-comment,
+.hljs-quote,
+.hljs-meta {
+    color: var(--cpd-color-text-secondary);
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-regexp {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-name {
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+}
+
+/* [data-theme="dark"] syntax-token overrides are intentionally deferred to #480. */
+
 .mj_SendingLabel {
     float: right;
     margin: 2px 0 0;
@@ -1411,10 +1634,18 @@ button.mj_File {
     .mj_ToolCard,
     .mj_ToolCard pre,
     .mj_LiveTool pre,
+    .mj_CodeBlock,
     .mj_DiffCard,
     .mj_Unknown pre,
     .mj_Image {
         min-width: 0;
         max-width: 76vw;
+    }
+}
+
+@media (hover: none) {
+    .mj_CodeBlock_copy,
+    .mj_CodeBlock_lang {
+        opacity: 1;
     }
 }
