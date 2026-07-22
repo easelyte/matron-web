@@ -2436,26 +2436,24 @@ describe("session-controls flags", () => {
         setItem.mockRestore();
     });
 
-    it("clears a write failure after a healthy relogin", async () => {
+    it("probes write availability across relogin and clears the warning only after recovery", async () => {
         const client = new MatronJournalClient();
         const database = fakeDatabase();
         jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
         jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
         await internals(client).startSession(SESSION);
 
-        const originalSetItem = Storage.prototype.setItem;
-        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(function (
-            this: Storage,
-            key,
-            value,
-        ) {
-            if (key === pinnedStore.storageKey(SESSION)) throw new Error("full");
-            return originalSetItem.call(this, key, value);
+        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+            throw new Error("full");
         });
         client.pinConversation("c1");
         expect(client.getSnapshot().preferencesUnavailable).toBe(true);
-        setItem.mockRestore();
 
+        await client.logout();
+        await internals(client).startSession(SESSION);
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+
+        setItem.mockRestore();
         await client.logout();
         await internals(client).startSession(SESSION);
 
@@ -2752,7 +2750,7 @@ describe("session creation orchestration", () => {
         return client;
     }
 
-    it("shares an in-flight start request across callers", async () => {
+    it("returns a busy outcome instead of sharing an in-flight start request", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
         const reply = deferred<{ ok: true; origin: "agent"; result: { convo_id: string } }>();
@@ -2763,13 +2761,16 @@ describe("session creation orchestration", () => {
         const first = client.startSessionRpc(9, "/srv/first", false);
         const second = client.startSessionRpc(10, "/srv/second", true);
 
-        expect(second).toBe(first);
+        expect(second).not.toBe(first);
         expect(agentRequest).toHaveBeenCalledTimes(1);
         expect(agentRequest).toHaveBeenCalledWith(9, "start", { workdir: "/srv/first" });
+        await expect(second).resolves.toEqual({
+            kind: "error",
+            message: "A session is already starting — please wait.",
+        });
 
         reply.resolve({ ok: true, origin: "agent", result: { convo_id: "created" } });
         await expect(first).resolves.toEqual({ kind: "created", convoId: "created" });
-        await expect(second).resolves.toEqual({ kind: "created", convoId: "created" });
 
         await client.startSessionRpc(10, "/srv/second", true);
         expect(agentRequest).toHaveBeenCalledTimes(2);

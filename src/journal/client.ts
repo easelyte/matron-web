@@ -401,7 +401,9 @@ export class MatronJournalClient {
     }
 
     public startSessionRpc(agentDeviceId: number, workdir: string, browser: boolean): Promise<StartOutcome> {
-        if (this.startSessionRequest) return this.startSessionRequest;
+        if (this.startSessionRequest) {
+            return Promise.resolve({ kind: "error", message: "A session is already starting — please wait." });
+        }
 
         const request = this.performStartSessionRpc(agentDeviceId, workdir, browser);
         this.startSessionRequest = request;
@@ -1079,7 +1081,21 @@ export class MatronJournalClient {
     private async startSession(session: Session): Promise<void> {
         this.sessionGen += 1;
         this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
-        this.storeWritable = { archive: true, pinned: true, favorite: true, unread: true };
+        const writeProbeKey = `${archiveStore.storageKey(session)}:__wprobe__`;
+        let storeWritable = false;
+        try {
+            localStorage.setItem(writeProbeKey, "1");
+            localStorage.removeItem(writeProbeKey);
+            storeWritable = true;
+        } catch {
+            // The bootstrap reads below may still succeed, but writes are unavailable.
+        }
+        this.storeWritable = {
+            archive: storeWritable,
+            pinned: storeWritable,
+            favorite: storeWritable,
+            unread: storeWritable,
+        };
         for (const controller of this.inFlightUploads.values()) controller.abort();
         this.inFlightUploads.clear();
         this.uploadConvos.clear();
