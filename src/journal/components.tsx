@@ -1290,6 +1290,7 @@ export interface DiffCardData {
     displayPath?: string;
     filePath?: string;
     viewerUrl?: string;
+    viewerUrlExp?: number; // unix seconds from token payload; undefined if unreadable
     tool?: string;
     label?: string;
     added?: number;
@@ -1298,9 +1299,79 @@ export interface DiffCardData {
     newFile: boolean;
 }
 
+// Module-level, once per page load: distinguishes "bridge withheld a link"
+// (no token param at all → expected, silent) from "a token was present but
+// undecodable" (schema drift → a signal worth one console warning). Throttled
+// to one warn per session so a fleet-wide token-format change is visible in a
+// console without spamming N cards. See M3 / P3 (fail-visible).
+let _viewerExpDecodeWarned = false;
+
+// A legitimate bridge token is base64url(JSON{path,exp,workdir}) + '.' + sig. Its
+// worst case is NOT tiny: generateFileLink embeds two full absolute paths, so with
+// both near PATH_MAX the encoded token approaches ~11KB. 16384 covers that with
+// margin while still bounding pathological (multi-MB) input far below any DoS size.
+// The bound is applied to the RAW viewerUrl string FIRST — before new URL() — so an
+// oversized durable event is rejected pre-parse (P8 Guard Boundary Inputs). Note the
+// residual: parseDiffPayload's own new URL(payload.viewer_url) at components.tsx:1305
+// (pre-existing #455 code, unchanged here) already parses the full string before this
+// runs, so this bound protects only the work THIS function adds, not that prior parse.
+const MAX_VIEWER_TOKEN_LEN = 16384;
+
+function decodeViewerExp(viewerUrl: string): number | undefined {
+    if (viewerUrl.length > MAX_VIEWER_TOKEN_LEN) return undefined; // bound raw input BEFORE any parse (silent; not a schema-drift signal)
+    let token: string | null = null;
+    try {
+        // Defensive re-parse: in the real integration path parseDiffPayload already
+        // validated this exact string with new URL() (components.tsx:1301-1309), so
+        // this catch is unreachable via that caller — it future-proofs a direct call.
+        token = new URL(viewerUrl).searchParams.get("token");
+    } catch {
+        return undefined; // malformed URL — not a token-schema signal, stay silent
+    }
+    if (!token) return undefined; // no token param → nothing to decode (silent)
+    try {
+        const payload = token.split(".")[0];
+        if (!payload) throw new Error("empty token payload");
+        const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+        const json = JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)));
+        // Range-sanity: require a POSITIVE, *1000-SAFE INTEGER exp. Integer is
+        // load-bearing (not cosmetic): the render compares floor(Date.now()/1000)
+        // to exp+grace, so a fractional exp (K+0.2) could leave the floored clock
+        // forever below the threshold while the timer's msLeft<=0 branch writes the
+        // same floored value — no state change, no re-arm, link wedged live. The
+        // exp*1000 ceiling matters too: a huge-but-"integer" value (1e308 passes
+        // Number.isInteger; 9e15 is a non-safe integer) makes exp*1000 lose
+        // precision or become Infinity, so the clamp re-arms forever and the link
+        // stays live — the exact failure this feature removes. The bridge always
+        // mints a small floored-seconds exp (Math.floor(...) at index.js:343), so
+        // these bounds match the producer and are defense-in-depth against a forged
+        // durable event. MAX_EXP = floor(MAX_SAFE_INTEGER / 1000) keeps exp*1000 exact.
+        const MAX_EXP = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
+        if (!Number.isSafeInteger(json.exp) || json.exp <= 0 || json.exp > MAX_EXP) {
+            throw new Error("no valid in-range integer exp");
+        }
+        return json.exp;
+    } catch (err) {
+        // A token WAS present but did not decode to a valid exp → schema-drift
+        // signal. Warn once; still return undefined (degrade to live-link).
+        if (!_viewerExpDecodeWarned) {
+            _viewerExpDecodeWarned = true;
+            console.warn(
+                "DiffCard: viewer_url token present but exp undecodable — expiry detection disabled for this token shape",
+                err,
+            );
+        }
+        return undefined;
+    }
+}
+
 export function parseDiffPayload(payload: EventPayload): DiffCardData {
     let viewerUrl: string | undefined;
-    if (typeof payload.viewer_url === "string" && payload.viewer_url) {
+    if (
+        typeof payload.viewer_url === "string" &&
+        payload.viewer_url &&
+        payload.viewer_url.length <= MAX_VIEWER_TOKEN_LEN
+    ) {
         try {
             const url = new URL(payload.viewer_url);
             viewerUrl = url.protocol === "https:" ? payload.viewer_url : undefined;
@@ -1315,6 +1386,7 @@ export function parseDiffPayload(payload: EventPayload): DiffCardData {
             typeof payload.display_path === "string" && payload.display_path ? payload.display_path : undefined,
         filePath: typeof payload.file_path === "string" && payload.file_path ? payload.file_path : undefined,
         viewerUrl,
+        viewerUrlExp: viewerUrl ? decodeViewerExp(viewerUrl) : undefined,
         tool: typeof payload.tool === "string" && payload.tool ? payload.tool : undefined,
         label: typeof payload.label === "string" && payload.label ? payload.label : undefined,
         added: typeof payload.added === "number" ? payload.added : undefined,
