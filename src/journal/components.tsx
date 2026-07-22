@@ -2181,11 +2181,15 @@ function Composer({
     client,
     state,
     drafts,
+    draftReloadTick,
+    reloadDraft,
     sendingConvos,
 }: {
     client: MatronJournalClient;
     state: ClientState;
     drafts: DraftStore;
+    draftReloadTick: number;
+    reloadDraft: (conversationId: string) => void;
     sendingConvos: React.RefObject<Set<string>>;
 }): React.ReactElement {
     const [body, setBody] = useState("");
@@ -2254,7 +2258,7 @@ function Composer({
         setHighlighted(null);
         if (textarea.current) textarea.current.style.height = "auto";
         prevConvoIdRef.current = convoId;
-    }, [convoId]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [convoId, draftReloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const selectCommand = (command: BotCommand): void => {
         setBodyDraft(applyCommand(command.trigger));
@@ -2271,7 +2275,7 @@ function Composer({
     const send = async (): Promise<void> => {
         const cid = convoIdRef.current;
         const submitted = body;
-        if (!cid || sendingConvos.current.has(cid)) return;
+        if (!cid || !submitted.trim() || sendingConvos.current.has(cid)) return;
         sendingConvos.current.add(cid);
         try {
             if (await client.sendMessage(submitted, cid)) {
@@ -2280,6 +2284,7 @@ function Composer({
                 cancelDraftDebounce();
                 if (drafts.read(cid).text === submitted) drafts.clear(cid);
                 else drafts.persist();
+                reloadDraft(cid);
                 if (convoIdRef.current === cid && bodyRef.current === submitted) {
                     setBody("");
                     setDismissed(null);
@@ -2705,6 +2710,7 @@ function RunningSubagentStrip({
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const leftPanel = useLeftPanelResize();
     const [dragActive, setDragActive] = useState(state.dragActive);
+    const [draftReloadTicks, setDraftReloadTicks] = useState<Record<string, number>>({});
     const appContent = useRef<HTMLDivElement>(null);
     const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
@@ -2777,6 +2783,13 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                         client={client}
                                         state={state}
                                         drafts={drafts}
+                                        draftReloadTick={draftReloadTicks[state.selectedConversationId] ?? 0}
+                                        reloadDraft={(conversationId) =>
+                                            setDraftReloadTicks((ticks) => ({
+                                                ...ticks,
+                                                [conversationId]: (ticks[conversationId] ?? 0) + 1,
+                                            }))
+                                        }
                                         sendingConvos={sendingConvos}
                                     />
                                 )}

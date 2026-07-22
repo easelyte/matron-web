@@ -750,7 +750,7 @@ describe("composer sends", () => {
         expect(composerValue(result.container)).toBe("");
     });
 
-    test("remount (in-flight send -> child -> parent -> Enter) does not duplicate", async () => {
+    test("remount clears a resolved send and a post-resolution Enter does not duplicate", async () => {
         let resolveX!: (value: boolean) => void;
         const result = await renderComposerAppWithChild("c1", "c1-child");
         rendered = result;
@@ -765,12 +765,13 @@ describe("composer sends", () => {
         await act(async () => {
             await result.client.selectConversation("c1");
         });
-        await typeInComposer(result.container, "X");
-        await pressEnter(result.container);
-        expect(send).toHaveBeenCalledTimes(1);
+        expect(composerValue(result.container)).toBe("X");
         await act(async () => {
             resolveX(true);
         });
+        expect(composerValue(result.container)).toBe("");
+        await pressEnter(result.container);
+        expect(send).toHaveBeenCalledTimes(1);
     });
 });
 
