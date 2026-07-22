@@ -1400,9 +1400,14 @@ export function parseDiffPayload(payload: EventPayload): DiffCardData {
 }
 
 const MAX_DIFF_LINES = 5000;
+const CLOCK_SKEW_GRACE_SEC = 30;
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
     const [expanded, setExpanded] = useState(false);
+    const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+    const expiresAt = data.viewerUrlExp;
+    const expired = expiresAt !== undefined && nowSec >= expiresAt + CLOCK_SKEW_GRACE_SEC;
     const allLines = data.diff.replace(/\r\n?/g, "\n").replace(/\n+$/, "").split("\n");
     const overflowed = allLines.length > MAX_DIFF_LINES;
     const lines = overflowed ? allLines.slice(0, MAX_DIFF_LINES) : allLines;
@@ -1411,6 +1416,20 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
     const path = data.displayPath ?? data.filePath ?? "file";
     const filename = path.split(/[\\/]/).at(-1) || "file";
     const visibleLines = expanded ? lines : lines.slice(0, 12);
+
+    useEffect(() => {
+        if (expiresAt === undefined || expired) return;
+
+        const bump = (): void => setNowSec(Math.floor(Date.now() / 1000));
+        const msLeft = (expiresAt + CLOCK_SKEW_GRACE_SEC) * 1000 - Date.now();
+        if (msLeft <= 0) {
+            bump();
+            return;
+        }
+
+        const timer = setTimeout(bump, Math.min(msLeft + 500, MAX_TIMEOUT_MS));
+        return (): void => clearTimeout(timer);
+    }, [expiresAt, expired, nowSec]);
 
     const toggleExpanded = (): void => setExpanded((current) => !current);
     const lineClass = (line: string): string => {
@@ -1442,7 +1461,7 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
                     </button>
                 )}
                 <FileEditIcon aria-hidden="true" />
-                {data.viewerUrl ? (
+                {data.viewerUrl && !expired ? (
                     <a
                         className="mj_DiffCard_filename mj_DiffCard_link"
                         href={data.viewerUrl}
@@ -1451,6 +1470,16 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
                     >
                         {filename}
                     </a>
+                ) : data.viewerUrl && expired ? (
+                    <>
+                        <span
+                            className="mj_DiffCard_filename mj_DiffCard_expired"
+                            title="Viewer link expired — re-open the file from a fresh edit"
+                        >
+                            {filename}
+                        </span>
+                        <span className="mj_DiffCard_expiredNote">link expired</span>
+                    </>
                 ) : (
                     <span className="mj_DiffCard_filename">{filename}</span>
                 )}
