@@ -50,6 +50,7 @@
   `interface DraftStore { read(convoId: string): { text: string; ok: boolean }; setDraft(convoId: string, text: string): void; persist(): void; clear(convoId: string): void; }`
   and exported consts `MAX_DRAFT_BYTES`, `MAX_DRAFT_ENTRIES`.
 - **Memory/persist split (round-1 B3 fix):** `setDraft` mutates the in-memory map ONLY (cheap, synchronous — safe to call every keystroke); `persist()` serializes the whole map to localStorage (the expensive `JSON.stringify` + `setItem`, best-effort). The Composer calls `setDraft` on every edit and **debounces `persist()`** so localStorage is written at most once per ~250 ms. `clear` deletes from memory then persists immediately. This makes the debounce real (memory always current for navigation-safety; localStorage coalesced). A single debounce timer is correct because `persist()` writes the *whole* map — there is no per-convo timer to race.
+- **Memory holds oversized drafts too (round-2 B2 / round-3 minor):** the in-memory map keeps every draft including `> MAX_DRAFT_BYTES` ones (so navigating away and back never loses live text); `persist()` omits oversized entries from the localStorage mirror only. Consequence (deliberate tradeoff): `MAX_DRAFT_ENTRIES` (50) bounds the *number* of in-memory drafts, not each entry's byte size — up to 50 large pasted drafts can coexist in memory. Accepted for a single-user local tool (data-loss risk beats unbounded-growth risk; entry count is still capped).
 
 - [ ] **Step 1: Write the failing test file** (`composer-drafts-test.ts`)
 
@@ -613,7 +614,7 @@ git commit -m "fix(client): explicit sendMessage target + outbox-authoritative (
 **Interfaces:**
 - Produces: `export async function copyText(text: string): Promise<boolean>` — awaits `navigator.clipboard.writeText`, falls back to a hidden-`<textarea>` `document.execCommand("copy")`; returns `true` on success, `false` if both paths fail (round-2 B3: an explicit result lets a caller react). Never throws, never leaks an unhandled rejection, and always removes the temp textarea (via `finally`, even if `execCommand` throws).
 
-> **Note (round-2 B3):** the journal web client is served over **HTTPS** (`:8443` Tailscale) — a secure context — so `navigator.clipboard.writeText` is always available and the primary path always succeeds in production; the `false` return and `execCommand` fallback exist only for non-secure/edge environments. A visible copy-failure toast is therefore unnecessary (the failure path is unreachable on the real deploy) — the boolean return is the accepted surface, not a UI affordance.
+> **Note (round-2 B3 / round-3 M2):** the journal web client is served over **HTTPS** (`:8443` Tailscale) — a secure context — so `navigator.clipboard` is present. HTTPS is necessary but not strictly sufficient (the Clipboard API still runs a permission check and can reject with `NotAllowedError`), but every Copy here is invoked by a direct user click (a user gesture), under which `writeText` is granted in practice; the `execCommand` fallback + `false` return cover the residual edge. A visible copy-failure toast is deemed unnecessary for this local single-user tool — the boolean return is the accepted surface. Callers (`void copyText(...)`) intentionally don't block on it; wiring visible failure feedback is a documented follow-up if the edge ever proves real.
 
 - [ ] **Step 1: Write the failing test** (append to `components-test.ts`)
 
@@ -749,9 +750,9 @@ test("View source shows the event DTO JSON; Copy button, Done, Esc, and backdrop
     await openRowMenu(container, 5); await clickMenuItem(container, "View source");
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
     expect(container.querySelector(".mj_EventSource")).toBeNull();
-    // backdrop close
+    // backdrop close (click the scrim, not the panel which stops propagation)
     await openRowMenu(container, 5); await clickMenuItem(container, "View source");
-    await act(async () => { (container.querySelector(".mj_EventSource") as HTMLElement).click(); });
+    await act(async () => { (container.querySelector(".mj_EventSource_scrim") as HTMLElement).click(); });
     expect(container.querySelector(".mj_EventSource")).toBeNull();
 });
 test("long-press opens the menu; a scroll during the press cancels it", async () => {
@@ -782,9 +783,11 @@ function EventSourceSheet({ event, onClose }: { event: JournalEvent; onClose: ()
         return () => document.removeEventListener("keydown", onKey);
     }, [onClose]);
     const json = JSON.stringify(event, null, 2);
+    // Reuse the established dialog scrim/panel structure (mirrors UploadConfirmDialog's
+    // `mj_UploadConfirm_scrim` + panel at components.tsx:2203; styled in journal.pcss by T-4.1).
     return (
-        <div className="mj_ModalOverlay mj_EventSource" role="dialog" aria-label="Event source" onClick={onClose}>
-            <div className="mj_EventSource_panel" onClick={(e) => e.stopPropagation()}>
+        <div className="mj_EventSource_scrim" role="dialog" aria-modal="true" aria-label="Event source" onClick={onClose}>
+            <div className="mj_EventSource" onClick={(e) => e.stopPropagation()}>
                 <header className="mj_EventSource_header"><h2>Event source</h2></header>
                 <pre className="mj_EventSource_json">{json}</pre>
                 <div className="mj_EventSource_actions">
@@ -796,13 +799,13 @@ function EventSourceSheet({ event, onClose }: { event: JournalEvent; onClose: ()
     );
 }
 ```
-In `Timeline`: `const [sourceEvent, setSourceEvent] = useState<JournalEvent | undefined>();` and `const menu = useRowContextMenu<JournalEvent>();`. Pass `rowHandlers={menu.rowHandlers}` to each `EventRow`. In `EventRow`, add props `{ rowHandlers, didFireRef }` and:
+In `Timeline`: `const [sourceEvent, setSourceEvent] = useState<JournalEvent | undefined>();` and `const menu = useRowContextMenu<JournalEvent>();`. Pass `rowHandlers={menu.rowHandlers}` to each `EventRow`. In `EventRow`, add a single prop `rowHandlers` (do NOT add `didFireRef` — it stays internal to the hook; the `<li>` has no `onClick` to suppress, round-3 M3) and:
 ```tsx
 const liRef = useRef<HTMLLIElement>(null);
 const handlers = rowHandlers(event, () => liRef.current!);
 // <li ref={liRef} ...existing... {...handlers}>
 ```
-`ToolStream` / pending placeholder rows do NOT receive `rowHandlers` (scope enforced by construction). The `<li>` has no `onClick` nav, so `didFireRef` is currently reserved (reset per touch press in the hook) — no click to suppress today. Render at the end of `Timeline`:
+`ToolStream` / pending placeholder rows do NOT receive `rowHandlers` (scope enforced by construction). Render at the end of `Timeline`:
 ```tsx
 {menu.state && (
     <div className="mj_HeaderMenu mj_EventRowMenu" role="menu" ref={menu.menuRef}
@@ -906,14 +909,18 @@ test("draft persists per conversation across navigation", async () => {
     await act(async () => { await client.selectConversation("c1"); });
     expect(composerValue(container)).toBe("draft for one");
 });
-test("a completion pick (folder/command) is persisted", async () => {
+test("a completion pick (folder) is persisted", async () => {
+    // Mock the store's matches() so the folder palette actually opens on a real "/workdir <partial>" input.
+    jest.spyOn(require("../../../src/journal/slash-palette"), "makeRecentFoldersStore")
+        .mockReturnValue({ record: jest.fn(), matches: () => ["work/dir"] });
     const { container, client } = renderComposerApp(["c1", "c2"]);
-    await typeInComposer(container, "//wo");                            // triggers folder palette
-    await selectFirstPaletteItem(container);                           // setBody(applyFolder(...))
+    await typeInComposer(container, "/workdir wo");                     // single slash + 'workdir' → palette opens (matches → ["work/dir"])
+    await selectFirstPaletteItem(container);                           // selectFolder → setBodyDraft(applyFolder(...))
     const composed = composerValue(container);
+    expect(composed).not.toBe("/workdir wo");                          // the pick mutated the body via setBodyDraft
     await act(async () => { await client.selectConversation("c2"); });
     await act(async () => { await client.selectConversation("c1"); });
-    expect(composerValue(container)).toBe(composed);
+    expect(composerValue(container)).toBe(composed);                   // completion-pick body persisted across nav
 });
 test("a throwing setItem does not lose the draft on navigation", async () => {
     const spy = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("q", "QuotaExceededError"); });
@@ -965,11 +972,13 @@ const setBodyDraft = useCallback((next: string) => {
     draftTimerRef.current = setTimeout(() => { drafts.persist(); draftTimerRef.current = undefined; }, 250); // localStorage write coalesced
 }, [drafts]);
 
-// Convo switch: stage prev's current body, flush to storage, load new (always assign; ok:false -> empty).
+// Convo switch: flush to storage (do NOT re-stage prev's body — round-3 B2), load new (always assign; ok:false -> empty).
+// setBodyDraft already staged every edit into the memory map, so the map is current for prev; re-staging
+// bodyRef.current here would resurrect a draft a concurrent send-completion just cleared. Just persist.
 // Use setBody directly (NOT setBodyDraft) so loading doesn't schedule a write.
 useEffect(() => {
     const prev = prevConvoIdRef.current;
-    if (prev && prev !== convoId) { drafts.setDraft(prev, bodyRef.current); flushDraft(); }
+    if (prev && prev !== convoId) flushDraft();  // persist the memory map as-is; no re-stage
     const { text, ok } = convoId ? drafts.read(convoId) : { text: "", ok: true };
     setBody(ok ? text : "");
     setDismissed(null);
@@ -1035,62 +1044,54 @@ test("same-convo interleave: follow-up Y typed during a pending send is preserve
     await typeInComposer(container, "Y");                                     // type follow-up while pending
     await act(async () => { resolveX(true); });                              // X resolves
     expect(composerValue(container)).toBe("Y");                              // Y preserved (bodyRef !== submitted)
-    expect(makeDraftStore(SESSION_C1).read("c1").text).toBe("Y");           // Y persisted, X's draft not clobbered
+    expect(makeDraftStore(SESSION).read("c1").text).toBe("Y");             // Y persisted, X's draft not clobbered (SESSION = the file's fixture)
+});
+test("late resolve after a conversation switch does not resurrect the sent draft", async () => {
+    // round-3 B2: X resolves while B is on screen; the switch effect must NOT re-stage A's old body.
+    let resolveX!: (v: boolean) => void;
+    jest.spyOn(client, "sendMessage").mockReturnValueOnce(new Promise((r) => (resolveX = r)));
+    const { container, client: c } = renderComposerApp(["c1", "c2"], client);
+    await typeInComposer(container, "X"); await pressEnter(container);        // X pending in c1
+    await act(async () => { resolveX(true); await c.selectConversation("c2"); }); // resolve + switch in one flush
+    await act(async () => { await c.selectConversation("c1"); });
+    expect(composerValue(container)).toBe("");                               // c1 empty — X not resurrected
+    expect(makeDraftStore(SESSION).read("c1").text).toBe("");
 });
 test("recent-folder is recorded on a successful folder-bearing send", async () => {
     const record = jest.fn();
     jest.spyOn(require("../../../src/journal/slash-palette"), "makeRecentFoldersStore")
-        .mockReturnValue({ record, folders: () => [] });
+        .mockReturnValue({ record, matches: () => [] });   // real RecentFoldersStore = { record, matches }
     jest.spyOn(client, "sendMessage").mockResolvedValue(true);
     const { container } = renderComposerApp(["c1"], client);
-    await typeInComposer(container, "//work/dir do it"); await pressEnter(container);
+    await typeInComposer(container, "/start work/dir do it"); await pressEnter(container); // single slash + literal 'start'
     await act(async () => {}); // flush the awaited send completion
-    expect(record).toHaveBeenCalledWith("work/dir");  // recentFolderArgument("//work/dir do it")
+    expect(record).toHaveBeenCalledWith("work/dir");  // recentFolderArgument("/start work/dir do it") → first token
 });
-test("send watchdog releases a hung lock after the interval", async () => {
-    jest.useFakeTimers();
-    jest.spyOn(client, "sendMessage").mockReturnValue(new Promise(() => {})); // never settles
+test("an addToOutbox rejection is caught (no unhandled rejection), text retained, lock released", async () => {
+    jest.spyOn(client, "sendMessage").mockRejectedValueOnce(new DOMException("quota", "QuotaExceededError"));
     const { container } = renderComposerApp(["c1"], client);
-    await typeInComposer(container, "hi"); await pressEnter(container);
-    (client.sendMessage as jest.Mock).mockResolvedValueOnce(true);
-    jest.advanceTimersByTime(15_000);
-    await typeInComposer(container, "again"); await pressEnter(container);
-    expect(client.sendMessage).toHaveBeenCalledTimes(2);
-    jest.useRealTimers();
-});
-test("ABA: a hung send X's finally does not free a newer send Y's lock", async () => {
-    jest.useFakeTimers();
-    let resolveX!: (v: boolean) => void;
-    const sm = jest.spyOn(client, "sendMessage")
-        .mockReturnValueOnce(new Promise((r) => (resolveX = r)))  // X: settles late (after watchdog)
-        .mockReturnValue(new Promise(() => {}));                  // Y and later: still pending
-    const { container } = renderComposerApp(["c1"], client);
-    await typeInComposer(container, "X"); await pressEnter(container);        // X locks c1
-    await act(async () => { jest.advanceTimersByTime(15_000); });            // watchdog frees c1 (X's token)
-    await typeInComposer(container, "Y"); await pressEnter(container);        // Y re-locks c1 (new token)
-    await act(async () => { resolveX(true); });                              // X's finally runs — must NOT free Y
-    await typeInComposer(container, "Z"); await pressEnter(container);        // Z must be blocked (Y still owns lock)
-    expect(sm).toHaveBeenCalledTimes(2);                                     // X + Y only, never Z
-    jest.useRealTimers();
+    await typeInComposer(container, "hi");
+    await act(async () => { await pressEnter(container); });   // must not throw / reject
+    expect(composerValue(container)).toBe("hi");               // text retained for retry
+    jest.spyOn(client, "sendMessage").mockResolvedValueOnce(true);
+    await act(async () => { await pressEnter(container); });   // lock released → retry succeeds
+    expect(composerValue(container)).toBe("");
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails** — FAIL (double-send fires twice; no watchdog; completion wipes Y).
+- [ ] **Step 2: Run to verify it fails** — FAIL (double-send fires twice; completion wipes Y / resurrects X; rejection unhandled).
 
 - [ ] **Step 3: Implement `send()`**
 
-Use a **per-attempt token** (round-1 M1): the lock is a `Map<convoId, token>`; the watchdog and `finally` release ONLY when their own token still owns the entry, so a stale hung send can't delete a newer send's lock (ABA fix).
+Simple `Set<convoId>` lock (no watchdog — round-3 decision, see note): the lock is added synchronously before the first `await` and released in `finally` on settle. A `catch` (round-3 M1) prevents an `addToOutbox` rejection from becoming a silent unhandled rejection — the text is retained for retry.
 
 ```tsx
-const sendingConvos = useRef(new Map<string, symbol>());
+const sendingConvos = useRef(new Set<string>());
 const send = async (): Promise<void> => {
     const cid = convoIdRef.current;
     const submitted = body;
     if (!cid || sendingConvos.current.has(cid)) return;
-    const token = Symbol("send");
-    sendingConvos.current.set(cid, token);
-    const releaseIfMine = () => { if (sendingConvos.current.get(cid) === token) sendingConvos.current.delete(cid); };
-    const watchdog = setTimeout(releaseIfMine, 15_000);
+    sendingConvos.current.add(cid);                            // synchronous → blocks the same-tick 2nd Enter for cid
     try {
         if (await client.sendMessage(submitted, cid)) {
             const folder = recentFolderArgument(submitted);
@@ -1104,16 +1105,20 @@ const send = async (): Promise<void> => {
                 if (textarea.current) textarea.current.style.height = "auto";
             }
         }
+    } catch (err) {
+        // addToOutbox rejected (quota/transaction) → the message was NOT durably queued. Keep the
+        // composer text so the operator can retry; log rather than throw an unhandled rejection
+        // (round-3 M1). The retained text + failure to send IS the visible signal for this local tool.
+        console.warn("matron: message not queued (outbox write failed)", err);
     } finally {
-        clearTimeout(watchdog);
-        releaseIfMine();                                        // only release if still my token
+        sendingConvos.current.delete(cid);
     }
 };
 ```
 
-> **Note — `sendingConvos.current.has(cid)` guard:** with the `Map`, `has(cid)` is `true` while any attempt for `cid` is in flight (matching the round-4 spec's per-convo lock). The three-send interleave test (below) asserts a stale hung send's `finally` cannot free a newer pending send's lock.
+> **No watchdog (round-3 decision — reviewer oscillation resolved with a documented tradeoff).** An earlier revision added a 15 s watchdog to release a lock on a hung local `addToOutbox`. But a *slow-but-successful* write that commits after the watchdog fires would let a retry create a **second durable message** — reintroducing the exact double-send #478 closes. For a double-send-guard feature, **no-dup strictly beats wedge-recovery**: the watchdog is removed. The only residual is a genuinely-hung local IndexedDB `addToOutbox` (pathological — local IndexedDB resolves or throws in milliseconds; it does not hang), which wedges *only that one conversation's* composer until a **page reload** (fully recoverable, no data loss — the text is still on screen). This is the safer choice and eliminates the ABA-lock class entirely (a plain `Set` suffices — no per-attempt token needed).
 
-> **Accepted limitation (round-1 M2 / spec round-4 B1):** when `refreshSelectedConversation` throws *after* `addToOutbox` succeeds, `sendMessage` still resolves `true` (outbox-authoritative) and the composer clears, but the durable message may not appear as a pending row until the next successful refresh/echo — a brief invisible window in a rare local-storage-read failure. Keeping the composer text instead would reintroduce the double-send this whole feature closes, so clearing is correct. Surfacing an optimistic "queued" row on that partial failure is a documented **follow-up**, not in scope; the message is durable and self-heals on the next refresh.
+> **Accepted limitation (spec round-4 B1):** when `refreshSelectedConversation` throws *after* `addToOutbox` succeeds, `sendMessage` still resolves `true` (outbox-authoritative, now off the awaited path) and the composer clears; the durable message may briefly not appear as a pending row until the next refresh/echo. Keeping the text instead would reintroduce the double-send, so clearing is correct; the message is durable and self-heals. Optimistic-pending-row surfacing is a documented follow-up.
 
 - [ ] **Step 4: Run to verify it passes** — `pnpm exec jest components-test -i` → PASS.
 
@@ -1122,7 +1127,7 @@ const send = async (): Promise<void> => {
 ```bash
 pnpm exec prettier --write src/journal/components.tsx test/unit-tests/journal/components-test.ts
 git add src/journal/components.tsx test/unit-tests/journal/components-test.ts
-git commit -m "fix(composer): per-convo send lock + watchdog + snapshot-guarded completion (#478)"
+git commit -m "fix(composer): per-convo send lock + snapshot-guarded completion + outbox-reject catch (#478)"
 ```
 
 ### T-3.3: Page-teardown draft flush
@@ -1154,20 +1159,16 @@ test("pagehide flushes a pending draft write within the debounce window", async 
 
 ```tsx
 useEffect(() => {
-    const flush = () => {
-        const cid = convoIdRef.current;
-        if (cid) { drafts.setDraft(cid, bodyRef.current); flushDraft(); } // stage current body, cancel debounce, persist now
-    };
-    const onVis = () => { if (document.visibilityState === "hidden") flush(); };
-    window.addEventListener("pagehide", flush);
+    const onVis = () => { if (document.visibilityState === "hidden") flushDraft(); };
+    window.addEventListener("pagehide", flushDraft);
     document.addEventListener("visibilitychange", onVis);
     return () => {
-        window.removeEventListener("pagehide", flush);
+        window.removeEventListener("pagehide", flushDraft);
         document.removeEventListener("visibilitychange", onVis);
     };
-}, [drafts, flushDraft]);
+}, [flushDraft]);
 ```
-Also add a textarea `onBlur={() => { const cid = convoIdRef.current; if (cid) { drafts.setDraft(cid, bodyRef.current); flushDraft(); } }}` for the blur-flush path.
+Also add `onBlur={flushDraft}` to the textarea. All three flush paths just `flushDraft()` (cancel debounce + persist the memory map) — no re-staging of `bodyRef.current` (round-3 B2: `setBodyDraft` already staged every edit into the map, so the map is authoritative; re-staging risks resurrecting a concurrently-cleared draft).
 
 - [ ] **Step 4: Run to verify it passes** — `pnpm exec jest components-test -i -t "pagehide flushes"` → PASS.
 
@@ -1186,46 +1187,60 @@ git commit -m "feat(composer): flush draft on page teardown + blur (#471)"
 ### T-4.1: Menu + source-sheet styles
 
 **Files:**
-- Modify: `src/journal/shell.pcss` (or `journal.pcss` — match where `mj_HeaderMenu` / `mj_RoomItemMenu` / dialog styles live)
+- Modify: `src/journal/journal.pcss` (where the dialog styles `mj_UploadConfirm_scrim` / `mj_UploadConfirm` live; the menu classes `mj_HeaderMenu` / `mj_RoomItemMenu` also live here). CSS only — this task owns NO component file (the `EventSourceSheet` scrim/panel class names were fixed in T-2.1, round-3 M4).
 
 **Interfaces:** none (CSS only).
 
-- [ ] **Step 1: Locate existing menu + modal classes**
+- [ ] **Step 1: Locate the existing menu + dialog rules**
 
-Run: `grep -rn "mj_HeaderMenu\|mj_RoomItemMenu\|mj_ModalOverlay\|UploadConfirm" src/journal/*.pcss` — reuse `mj_HeaderMenu`/`mj_RoomItemMenu_item` for the event-row menu; base the source-sheet overlay/panel on the existing upload-dialog modal classes.
+Run: `grep -n "mj_HeaderMenu\|mj_RoomItemMenu\|mj_UploadConfirm_scrim\|mj_UploadConfirm " src/journal/journal.pcss` — the event-row menu reuses `mj_HeaderMenu`/`mj_RoomItemMenu_item` (no new rules needed beyond an optional `mj_EventRowMenu` width tweak); the source sheet's `mj_EventSource_scrim`/`mj_EventSource` mirror the upload dialog's scrim/panel.
 
-- [ ] **Step 2: Add styles**
+- [ ] **Step 2: Add styles** (in `journal.pcss`)
 
 ```pcss
-.mj_EventRowMenu { /* inherits mj_HeaderMenu; nothing extra needed unless width tuning */ }
+.mj_EventRowMenu { /* inherits mj_HeaderMenu; add width tuning only if needed */ }
 
-.mj_EventSource_panel {
+/* Scrim mirrors mj_UploadConfirm_scrim (fixed, centered, dimmed backdrop). */
+.mj_EventSource_scrim {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 100;
+}
+.mj_EventSource {
     display: flex;
     flex-direction: column;
     max-height: 80vh;
     max-width: min(720px, 92vw);
+    background: var(--cpd-color-bg-canvas-default, #fff);
+    border-radius: 12px;
+    overflow: hidden;
 }
+.mj_EventSource_header { padding: 12px 16px; }
 .mj_EventSource_json {
     overflow: auto;
     user-select: text;
     white-space: pre;
     font-family: var(--mj-mono, ui-monospace, monospace);
     font-size: 0.8125rem;
-    padding: 12px;
+    padding: 12px 16px;
     margin: 0;
     flex: 1 1 auto;
 }
-.mj_EventSource_actions { display: flex; gap: 8px; justify-content: flex-end; padding: 8px 12px; }
+.mj_EventSource_actions { display: flex; gap: 8px; justify-content: flex-end; padding: 8px 16px; }
 ```
-Match the existing modal's overlay class (`mj_ModalOverlay` or the upload dialog's) so `EventSourceSheet` centers correctly; if the upload dialog uses a different overlay class name, use that instead and rename in `EventSourceSheet`.
+Verify the exact background/token variables against the neighbouring `mj_UploadConfirm` rules and reuse them (don't invent new color tokens).
 
-- [ ] **Step 3: Visual smoke** — build and eyeball (deferred to T-4.2's build; no unit test for CSS).
+- [ ] **Step 3: Visual smoke** — deferred to T-4.2's build; no unit test for CSS.
 
 - [ ] **Step 4: Prettier + commit**
 
 ```bash
-pnpm exec prettier --write src/journal/shell.pcss
-git add src/journal/shell.pcss
+pnpm exec prettier --write src/journal/journal.pcss
+git add src/journal/journal.pcss
 git commit -m "style(timeline): event-row menu + event-source sheet styles (#471/#476)"
 ```
 
