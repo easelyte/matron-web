@@ -38,6 +38,7 @@ export interface RowContextMenu<T> {
         onPointerMove(e: React.PointerEvent): void;
         onPointerUp(e: React.PointerEvent): void;
         onPointerCancel(e: React.PointerEvent): void;
+        onClickCapture(e: React.MouseEvent): void;
     };
     menuKeyDown(e: React.KeyboardEvent): void;
 }
@@ -51,6 +52,7 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
     const pressTargetRef = useRef<{ target: T; getRow: () => HTMLElement | null } | undefined>(undefined);
     const controllerRef = useRef<LongPressController | undefined>(undefined);
     const pressScrollCleanupRef = useRef<() => void>(() => undefined);
+    const didFireRef = useRef(false);
 
     const open = useCallback((target: T, left: number, top: number, opener: HTMLElement | null) => {
         openerRef.current = opener;
@@ -66,6 +68,7 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
         controllerRef.current = createLongPressController({
             delayMs: opts?.longPressMs ?? 500,
             onFire: () => {
+                didFireRef.current = true;
                 pressScrollCleanupRef.current();
                 const p = pressTargetRef.current;
                 if (!p) return;
@@ -132,6 +135,7 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
                 else open(target, e.clientX, e.clientY, row);
             },
             onPointerDown(e: React.PointerEvent) {
+                didFireRef.current = false;
                 if (e.pointerType !== "touch") return;
                 pressTargetRef.current = { target, getRow };
                 controllerRef.current?.onPointerDown(e.clientX, e.clientY);
@@ -160,6 +164,12 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
                     controllerRef.current?.onPointerCancel();
                     pressScrollCleanupRef.current();
                 }
+            },
+            onClickCapture(e: React.MouseEvent) {
+                if (!didFireRef.current) return;
+                e.preventDefault();
+                e.stopPropagation();
+                didFireRef.current = false;
             },
         }),
         [open],

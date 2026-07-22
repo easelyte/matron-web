@@ -19,6 +19,7 @@ import React, {
 import matronLogo from "../../res/matron-logo-simple.svg";
 import { BROWSER_MEMORY_SAFETY_MAX_BYTES, errorMessage, type MatronJournalClient } from "./client";
 import { effectiveUnread } from "./conversation-flags";
+import { type RowContextMenu, useRowContextMenu } from "./context-menu";
 import {
     ArchiveIcon,
     AttachmentIcon,
@@ -1624,6 +1625,7 @@ function EventRow({
     isReadOnly = false,
     continuation = false,
     lastInSection = true,
+    rowHandlers,
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
@@ -1631,10 +1633,14 @@ function EventRow({
     isReadOnly?: boolean;
     continuation?: boolean;
     lastInSection?: boolean;
+    rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
     const own = event.sender.startsWith("user:");
+    const liRef = useRef<HTMLLIElement>(null);
+    const handlers = rowHandlers(event, () => liRef.current);
     return (
         <li
+            ref={liRef}
             className={`mx_EventTile${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}`}
             tabIndex={-1}
             aria-live="polite"
@@ -1642,6 +1648,8 @@ function EventRow({
             data-layout="bubble"
             data-self={own}
             data-event-id={event.seq}
+            {...handlers}
+            onClickCapture={handlers.onClickCapture}
         >
             {!own && !continuation && (
                 <span className="mx_DisambiguatedProfile">
@@ -1811,6 +1819,9 @@ function Timeline({
     const pendingScrollFrame = useRef<number | undefined>(undefined);
     const selectedConversationId = useRef(state.selectedConversationId);
     const [isFollowingTail, setFollow] = useState(true);
+    const [sourceEvent, setSourceEvent] = useState<JournalEvent>();
+    const menu = useRowContextMenu<JournalEvent>();
+    const sourceOpenerRef = useRef<HTMLElement | null>(null);
     selectedConversationId.current = state.selectedConversationId;
     const historyScrollAnchor = useRef<
         | {
@@ -1970,6 +1981,7 @@ function Timeline({
                                         lastInSection={
                                             next?.kind !== "event" || next.event.sender !== item.event.sender
                                         }
+                                        rowHandlers={menu.rowHandlers}
                                     />
                                 );
                             }
@@ -2044,6 +2056,48 @@ function Timeline({
                 >
                     ↓
                 </button>
+            )}
+            {menu.state && (
+                <div
+                    className="mj_HeaderMenu mj_EventRowMenu"
+                    role="menu"
+                    ref={menu.menuRef}
+                    style={{ position: "fixed", left: menu.state.left, top: menu.state.top }}
+                    onKeyDown={menu.menuKeyDown}
+                >
+                    {menu.state.target.type === "text" && (
+                        <button
+                            className="mj_RoomItemMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                void copyText(asString(menu.state!.target.payload.body));
+                                menu.close();
+                            }}
+                        >
+                            Copy
+                        </button>
+                    )}
+                    <button
+                        className="mj_RoomItemMenu_item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                            sourceOpenerRef.current = menu.openerRef.current;
+                            setSourceEvent(menu.state!.target);
+                            menu.close();
+                        }}
+                    >
+                        View source
+                    </button>
+                </div>
+            )}
+            {sourceEvent && (
+                <EventSourceSheet
+                    event={sourceEvent}
+                    opener={sourceOpenerRef.current}
+                    onClose={() => setSourceEvent(undefined)}
+                />
             )}
         </main>
     );
@@ -2294,6 +2348,59 @@ function Composer({ client, state }: { client: MatronJournalClient; state: Clien
                             </button>
                         )}
                     </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function EventSourceSheet({
+    event,
+    opener,
+    onClose,
+}: {
+    event: JournalEvent;
+    opener: HTMLElement | null;
+    onClose: () => void;
+}): React.ReactElement {
+    const doneRef = useRef<HTMLButtonElement>(null);
+
+    useEffect(() => {
+        doneRef.current?.focus();
+        return () => {
+            if (opener?.isConnected) opener.focus();
+        };
+    }, [opener]);
+
+    useEffect(() => {
+        const onKey = (event: KeyboardEvent): void => {
+            if (event.key === "Escape") onClose();
+        };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, [onClose]);
+
+    const json = JSON.stringify(event, null, 2);
+    return (
+        <div
+            className="mj_EventSource_scrim"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Event source"
+            onClick={onClose}
+        >
+            <div className="mj_EventSource" onClick={(clickEvent) => clickEvent.stopPropagation()}>
+                <header className="mj_EventSource_header">
+                    <h2>Event source</h2>
+                </header>
+                <pre className="mj_EventSource_json">{json}</pre>
+                <div className="mj_EventSource_actions">
+                    <button type="button" onClick={() => void copyText(json)}>
+                        Copy
+                    </button>
+                    <button type="button" ref={doneRef} onClick={onClose}>
+                        Done
+                    </button>
                 </div>
             </div>
         </div>

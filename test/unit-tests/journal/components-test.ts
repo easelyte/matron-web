@@ -158,6 +158,87 @@ function inputTextarea(textarea: HTMLTextAreaElement, value: string): void {
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+function textEvent(seq: number, body: string): JournalEvent {
+    return { seq, convo_id: "c1", ts: seq, sender: "agent", type: "text", payload: { body } };
+}
+
+function renderAppWithEvents(
+    events: JournalEvent[],
+    convoIds = ["c1"],
+): Promise<{ container: HTMLDivElement; root: Root; client: MatronJournalClient }> {
+    const conversations = convoIds.map((id) => ({ ...CONVERSATION, id, title: id }));
+    const client = signedInWithRooms(conversations);
+    internals(client).state = { ...client.getSnapshot(), events };
+    internals(client).database = {
+        events: jest.fn(async (convoId: string) => (convoId === "c1" ? events : [])),
+        outbox: jest.fn(async () => []),
+    };
+    return renderClient(client).then((rendered) => ({ ...rendered, client }));
+}
+
+async function renderAppWithToolStream(): Promise<{
+    container: HTMLDivElement;
+    root: Root;
+    client: MatronJournalClient;
+}> {
+    const client = signedInClient();
+    internals(client).state = {
+        ...client.getSnapshot(),
+        toolStreams: {
+            running: {
+                messageRef: "running",
+                content: "working",
+                offset: 7,
+                headTruncated: false,
+                tool: "shell",
+                command: "test",
+            },
+        },
+    };
+    return renderClient(client).then((rendered) => ({ ...rendered, client }));
+}
+
+async function rightClick(node: Element): Promise<void> {
+    await act(async () => {
+        node.dispatchEvent(
+            new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 24, clientY: 32 }),
+        );
+    });
+}
+
+async function openRowMenu(container: HTMLElement, seq: number): Promise<void> {
+    const row = container.querySelector(`[data-event-id="${seq}"]`);
+    if (!row) throw new Error(`Missing event row: ${seq}`);
+    await rightClick(row);
+}
+
+async function clickMenuItem(container: HTMLElement, label: string): Promise<void> {
+    const item = [...container.querySelectorAll<HTMLButtonElement>('.mj_EventRowMenu [role="menuitem"]')].find(
+        (candidate) => candidate.textContent === label,
+    );
+    if (!item) throw new Error(`Missing menu item: ${label}`);
+    await act(async () => item.click());
+}
+
+async function clickButton(container: HTMLElement, label: string): Promise<void> {
+    const item = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+        (candidate) => candidate.textContent === label,
+    );
+    if (!item) throw new Error(`Missing button: ${label}`);
+    await act(async () => item.click());
+}
+
+async function touchPress(node: Element): Promise<void> {
+    const event = new MouseEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 12,
+        clientY: 18,
+    });
+    Object.defineProperty(event, "pointerType", { value: "touch" });
+    await act(async () => node.dispatchEvent(event));
+}
+
 async function keydown(
     element: Element,
     key: string,
@@ -737,6 +818,144 @@ describe("attachment composer", () => {
         expect(rows.has(message.localId)).toBe(false);
         expect(internals(client).pendingFiles.has(message.localId)).toBe(false);
         expect(rendered.container.querySelector(".mj_AttachmentChip")).toBeNull();
+    });
+});
+
+describe("EventRow context menu and source sheet", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        jest.useRealTimers();
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    test("right-click a text EventRow opens a menu with Copy and View source", async () => {
+        rendered = await renderAppWithEvents([textEvent(5, "hi")]);
+        await openRowMenu(rendered.container, 5);
+        const items = [...rendered.container.querySelectorAll('.mj_EventRowMenu [role="menuitem"]')].map(
+            (node) => node.textContent,
+        );
+        expect(items).toEqual(["Copy", "View source"]);
+    });
+
+    test("a non-text event hides Copy, keeps View source", async () => {
+        rendered = await renderAppWithEvents([
+            { seq: 6, convo_id: "c1", ts: 1, sender: "agent", type: "diff", payload: {} },
+        ]);
+        await openRowMenu(rendered.container, 6);
+        expect(
+            [...rendered.container.querySelectorAll('.mj_EventRowMenu [role="menuitem"]')].map(
+                (node) => node.textContent,
+            ),
+        ).toEqual(["View source"]);
+    });
+
+    test("a ToolStream / pending placeholder row has no menu on right-click", async () => {
+        rendered = await renderAppWithToolStream();
+        const row = rendered.container.querySelector(".mj_LiveTool")?.closest("li");
+        if (!row) throw new Error("Missing tool stream row");
+        await rightClick(row);
+        expect(rendered.container.querySelector(".mj_EventRowMenu")).toBeNull();
+    });
+
+    test("Copy on a text row calls the clipboard with the body", async () => {
+        const writeText = jest.fn().mockResolvedValue(undefined);
+        Object.assign(navigator, { clipboard: { writeText } });
+        rendered = await renderAppWithEvents([textEvent(5, "hello")]);
+        await openRowMenu(rendered.container, 5);
+        await clickMenuItem(rendered.container, "Copy");
+        expect(writeText).toHaveBeenCalledWith("hello");
+    });
+
+    test("View source shows the event DTO JSON; Copy button, Done, Esc, and backdrop all close", async () => {
+        const writeText = jest.fn().mockResolvedValue(undefined);
+        Object.assign(navigator, { clipboard: { writeText } });
+        rendered = await renderAppWithEvents([textEvent(5, "hi")]);
+        await openRowMenu(rendered.container, 5);
+        await clickMenuItem(rendered.container, "View source");
+        const pre = rendered.container.querySelector(".mj_EventSource_json");
+        expect(pre?.textContent).toContain('"seq": 5');
+        expect(pre?.textContent).toContain('"body": "hi"');
+        await clickButton(rendered.container, "Copy");
+        expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"seq": 5'));
+        await clickButton(rendered.container, "Done");
+        expect(rendered.container.querySelector(".mj_EventSource")).toBeNull();
+        expect(document.activeElement).toBe(rendered.container.querySelector('[data-event-id="5"]'));
+
+        await openRowMenu(rendered.container, 5);
+        await clickMenuItem(rendered.container, "View source");
+        await act(async () => {
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        });
+        expect(rendered.container.querySelector(".mj_EventSource")).toBeNull();
+
+        await openRowMenu(rendered.container, 5);
+        await clickMenuItem(rendered.container, "View source");
+        await act(async () => {
+            (rendered?.container.querySelector(".mj_EventSource_scrim") as HTMLElement).click();
+        });
+        expect(rendered.container.querySelector(".mj_EventSource")).toBeNull();
+    });
+
+    test("long-press opens the menu; a scroll during the press cancels it", async () => {
+        jest.useFakeTimers();
+        rendered = await renderAppWithEvents([textEvent(5, "hi")]);
+        const row = rendered.container.querySelector('[data-event-id="5"]') as HTMLElement;
+        await touchPress(row);
+        await act(async () => {
+            document.dispatchEvent(new Event("scroll", { bubbles: true }));
+            jest.advanceTimersByTime(500);
+        });
+        expect(rendered.container.querySelector(".mj_EventRowMenu")).toBeNull();
+        await touchPress(row);
+        await act(async () => jest.advanceTimersByTime(500));
+        expect(rendered.container.querySelector(".mj_EventRowMenu")).not.toBeNull();
+    });
+
+    test("a long-press timer firing after the row unmounts does not crash", async () => {
+        jest.useFakeTimers();
+        const result = await renderAppWithEvents([textEvent(5, "hi")], ["c1", "c2"]);
+        rendered = result;
+        const row = rendered.container.querySelector('[data-event-id="5"]') as HTMLElement;
+        await touchPress(row);
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        await act(async () => jest.advanceTimersByTime(500));
+        expect(rendered.container.querySelector(".mj_EventRowMenu")).toBeNull();
+    });
+
+    test("long-pressing a prompt button opens the menu without activating the button", async () => {
+        jest.useFakeTimers();
+        const prompt: JournalEvent = {
+            seq: 7,
+            convo_id: "c1",
+            ts: 1,
+            sender: "agent",
+            type: "prompt",
+            payload: { question: "Choose", options: ["Yes"] },
+        };
+        const result = await renderAppWithEvents([prompt]);
+        rendered = result;
+        const sendPromptReply = jest.spyOn(result.client, "sendPromptReply").mockReturnValue(true);
+        const option = [...rendered.container.querySelectorAll<HTMLButtonElement>("button")].find(
+            (candidate) => candidate.textContent === "Yes",
+        );
+        if (!option) throw new Error("Missing prompt option");
+        await touchPress(option);
+        await act(async () => jest.advanceTimersByTime(500));
+        await act(async () => option.click());
+        expect(rendered.container.querySelector(".mj_EventRowMenu")).not.toBeNull();
+        expect(sendPromptReply).not.toHaveBeenCalled();
     });
 });
 
