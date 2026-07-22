@@ -111,7 +111,20 @@ export class JournalDatabase {
         if (!snapshot || !Array.isArray(snapshot.conversations)) throw new Error("malformed snapshot");
         const summaries = snapshot.conversations;
         for (const summary of summaries) {
-            if (!summary || typeof summary.id !== "string") throw new Error("malformed snapshot element");
+            // Validate id AND last_seq up front. last_seq is the freshness authority for the
+            // session_state merge below; a malformed value (null/NaN/non-number) must reject the
+            // whole snapshot atomically (throw → BACKFILL_KEY stays unset → retried next startup),
+            // exactly like a malformed id. Guarding only at-use would skip the session_state update
+            // yet still seal the completion key, permanently sealing a stale state with no retry
+            // (execute-slim phase-1 review — P3 Fail Visible / V6 Classify Errors).
+            if (
+                !summary ||
+                typeof summary.id !== "string" ||
+                typeof summary.last_seq !== "number" ||
+                !Number.isFinite(summary.last_seq)
+            ) {
+                throw new Error("malformed snapshot element");
+            }
         }
 
         const transaction = this.database.transaction(["conversations", "meta"], "readwrite");
@@ -125,12 +138,9 @@ export class JournalDatabase {
                 let link = coerceParentId(existing.parent_convo_id) ?? coerceParentId(summary.parent_convo_id);
                 if (link === summary.id) link = null;
                 existing.parent_convo_id = link;
-                if (
-                    typeof summary.session_state === "string" &&
-                    typeof summary.last_seq === "number" &&
-                    Number.isFinite(summary.last_seq) &&
-                    summary.last_seq >= existing.last_seq
-                ) {
+                // Preserve a locally-newer session_state (cross-tab shared-IndexedDB stale-snapshot
+                // guard). last_seq finiteness is guaranteed by the pre-transaction validation above.
+                if (typeof summary.session_state === "string" && summary.last_seq >= existing.last_seq) {
                     existing.session_state = summary.session_state;
                 }
                 conversations.put(existing);

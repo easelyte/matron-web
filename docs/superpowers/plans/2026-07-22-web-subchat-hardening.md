@@ -98,7 +98,9 @@ if (
     existing.session_state = summary.session_state;
 }
 ```
-Leave the `parent_convo_id` coalesce and the self-parent reject exactly as-is. (Deliberately guard-at-use rather than adding `last_seq` to the method's pre-transaction validation loop: the parent-link backfill must still run for records with a malformed `last_seq`; only the session_state overwrite is freshness-gated. Rejecting the whole summary on a bad `last_seq` would drop a valid parent link — worse.)
+Leave the `parent_convo_id` coalesce and the self-parent reject exactly as-is.
+
+**Implementation revision (execute-slim phase-1 Codex review):** the guard-at-use approach above was superseded during execution. Guarding only at-use skipped the session_state update on a malformed `last_seq` but STILL sealed `BACKFILL_KEY` — permanently sealing a stale state with no retry (a fail-visible violation; the "unassessable freshness" case is undecidable per-row). Final implementation instead validates `last_seq` finiteness in the **pre-transaction validation loop** (alongside the malformed-`id` check): a non-finite `last_seq` rejects the whole snapshot atomically (throw → `BACKFILL_KEY` unset → retried next startup, or corrected by the live `session_status` journal stream). The guard-at-use then simplifies to `typeof summary.session_state === "string" && summary.last_seq >= existing.last_seq` (finiteness guaranteed upstream). The malformed run defers its parent-link backfill to the retry — acceptable, since a non-finite `last_seq` is a server contract violation that shouldn't occur, and this matches the method's existing malformed-element contract.
 
 - [ ] **Step 4: Verify pass**
 
