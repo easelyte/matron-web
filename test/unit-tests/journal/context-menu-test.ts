@@ -67,3 +67,58 @@ test("a fired long-press suppresses the next nested click", async () => {
     container.remove();
     jest.useRealTimers();
 });
+
+test("an unrelated pointer cannot disarm another pointer's long-press click suppression", async () => {
+    jest.useFakeTimers();
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const firstClick = jest.fn();
+    const secondClick = jest.fn();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    function Harness(): React.ReactElement {
+        const menu = useRowContextMenu<string>();
+        const firstRow = useRef<HTMLDivElement>(null);
+        const secondRow = useRef<HTMLDivElement>(null);
+        return React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(
+                "div",
+                { ref: firstRow, ...menu.rowHandlers("first", () => firstRow.current) },
+                React.createElement("button", { onClick: firstClick }, "First action"),
+            ),
+            React.createElement(
+                "div",
+                { ref: secondRow, ...menu.rowHandlers("second", () => secondRow.current) },
+                React.createElement("button", { onClick: secondClick }, "Second action"),
+            ),
+        );
+    }
+
+    const pointerEvent = (type: string, pointerId: number): MouseEvent => {
+        const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
+        Object.defineProperties(event, {
+            pointerType: { value: "touch" },
+            pointerId: { value: pointerId },
+        });
+        return event;
+    };
+
+    await act(async () => root.render(React.createElement(Harness)));
+    const [first, second] = [...container.querySelectorAll("button")];
+    await act(async () => {
+        first.dispatchEvent(pointerEvent("pointerdown", 1));
+        jest.advanceTimersByTime(500);
+        second.dispatchEvent(pointerEvent("pointerdown", 2));
+    });
+    await act(async () => second.dispatchEvent(pointerEvent("click", 2)));
+    expect(secondClick).toHaveBeenCalledTimes(1);
+    await act(async () => first.dispatchEvent(pointerEvent("click", 1)));
+    expect(firstClick).not.toHaveBeenCalled();
+
+    await act(async () => root.unmount());
+    container.remove();
+    jest.useRealTimers();
+});

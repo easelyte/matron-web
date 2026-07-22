@@ -49,7 +49,15 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
     stateRef.current = state;
     const menuRef = useRef<HTMLDivElement | null>(null);
     const openerRef = useRef<HTMLElement | null>(null);
-    const pressTargetRef = useRef<{ target: T; getRow: () => HTMLElement | null } | undefined>(undefined);
+    const pressTargetRef = useRef<
+        | {
+              target: T;
+              getRow: () => HTMLElement | null;
+              pointerId: number;
+              pointerTarget: EventTarget | null;
+          }
+        | undefined
+    >(undefined);
     const controllerRef = useRef<LongPressController | undefined>(undefined);
     const pressScrollCleanupRef = useRef<() => void>(() => undefined);
     const didFireRef = useRef(false);
@@ -135,9 +143,18 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
                 else open(target, e.clientX, e.clientY, row);
             },
             onPointerDown(e: React.PointerEvent) {
-                didFireRef.current = false;
                 if (e.pointerType !== "touch") return;
-                pressTargetRef.current = { target, getRow };
+                const activePress = pressTargetRef.current;
+                if (activePress && (controllerRef.current?.isPending || didFireRef.current)) {
+                    if (activePress.pointerId !== e.pointerId) return;
+                }
+                didFireRef.current = false;
+                pressTargetRef.current = {
+                    target,
+                    getRow,
+                    pointerId: e.pointerId,
+                    pointerTarget: e.currentTarget,
+                };
                 controllerRef.current?.onPointerDown(e.clientX, e.clientY);
                 pressScrollCleanupRef.current();
                 const onScroll = () => {
@@ -151,25 +168,31 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
                 };
             },
             onPointerMove(e: React.PointerEvent) {
-                if (e.pointerType !== "touch") return;
+                if (e.pointerType !== "touch" || pressTargetRef.current?.pointerId !== e.pointerId) return;
                 controllerRef.current?.onPointerMove(e.clientX, e.clientY);
             },
             onPointerUp(e: React.PointerEvent) {
-                if (e.pointerType !== "touch") return;
+                if (e.pointerType !== "touch" || pressTargetRef.current?.pointerId !== e.pointerId) return;
                 controllerRef.current?.onPointerUp();
                 pressScrollCleanupRef.current();
+                if (!didFireRef.current) pressTargetRef.current = undefined;
             },
             onPointerCancel(e: React.PointerEvent) {
-                if (e.pointerType === "touch") {
-                    controllerRef.current?.onPointerCancel();
-                    pressScrollCleanupRef.current();
-                }
+                if (e.pointerType !== "touch" || pressTargetRef.current?.pointerId !== e.pointerId) return;
+                controllerRef.current?.onPointerCancel();
+                pressScrollCleanupRef.current();
+                didFireRef.current = false;
+                pressTargetRef.current = undefined;
             },
             onClickCapture(e: React.MouseEvent) {
-                if (!didFireRef.current) return;
+                const press = pressTargetRef.current;
+                if (!didFireRef.current || !press || e.currentTarget !== press.pointerTarget) return;
+                const pointerId = (e.nativeEvent as PointerEvent).pointerId;
+                if (typeof pointerId === "number" && pointerId !== press.pointerId) return;
                 e.preventDefault();
                 e.stopPropagation();
                 didFireRef.current = false;
+                pressTargetRef.current = undefined;
             },
         }),
         [open],

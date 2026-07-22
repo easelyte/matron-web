@@ -2369,6 +2369,7 @@ function EventSourceSheet({
     opener: HTMLElement | null;
     onClose: () => void;
 }): React.ReactElement {
+    const sheetRef = useRef<HTMLDivElement>(null);
     const doneRef = useRef<HTMLButtonElement>(null);
 
     useEffect(() => {
@@ -2380,7 +2381,28 @@ function EventSourceSheet({
 
     useEffect(() => {
         const onKey = (event: KeyboardEvent): void => {
-            if (event.key === "Escape") onClose();
+            if (event.key === "Escape") {
+                onClose();
+                return;
+            }
+            if (event.key !== "Tab") return;
+            const focusable = [...(sheetRef.current?.querySelectorAll<HTMLElement>("button:not([disabled])") ?? [])];
+            if (focusable.length === 0) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (
+                event.shiftKey &&
+                (document.activeElement === first || !sheetRef.current?.contains(document.activeElement))
+            ) {
+                event.preventDefault();
+                last.focus();
+            } else if (
+                !event.shiftKey &&
+                (document.activeElement === last || !sheetRef.current?.contains(document.activeElement))
+            ) {
+                event.preventDefault();
+                first.focus();
+            }
         };
         document.addEventListener("keydown", onKey);
         return () => document.removeEventListener("keydown", onKey);
@@ -2395,7 +2417,7 @@ function EventSourceSheet({
             aria-label="Event source"
             onClick={onClose}
         >
-            <div className="mj_EventSource" onClick={(clickEvent) => clickEvent.stopPropagation()}>
+            <div ref={sheetRef} className="mj_EventSource" onClick={(clickEvent) => clickEvent.stopPropagation()}>
                 <header className="mj_EventSource_header">
                     <h2>Event source</h2>
                 </header>

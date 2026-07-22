@@ -906,6 +906,31 @@ describe("EventRow context menu and source sheet", () => {
         expect(rendered.container.querySelector(".mj_EventSource")).toBeNull();
     });
 
+    test("View source traps Tab and Shift+Tab within the sheet", async () => {
+        rendered = await renderAppWithEvents([textEvent(5, "hi")]);
+        await openRowMenu(rendered.container, 5);
+        await clickMenuItem(rendered.container, "View source");
+        const sheet = rendered.container.querySelector(".mj_EventSource");
+        const buttons = [...(sheet?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+        expect(buttons.map((candidate) => candidate.textContent)).toEqual(["Copy", "Done"]);
+        expect(document.activeElement).toBe(buttons[1]);
+
+        const forward = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+        await act(async () => document.dispatchEvent(forward));
+        expect(forward.defaultPrevented).toBe(true);
+        expect(document.activeElement).toBe(buttons[0]);
+
+        const backward = new KeyboardEvent("keydown", {
+            key: "Tab",
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+        });
+        await act(async () => document.dispatchEvent(backward));
+        expect(backward.defaultPrevented).toBe(true);
+        expect(document.activeElement).toBe(buttons[1]);
+    });
+
     test("long-press opens the menu; a scroll during the press cancels it", async () => {
         jest.useFakeTimers();
         rendered = await renderAppWithEvents([textEvent(5, "hi")]);
