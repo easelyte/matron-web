@@ -86,6 +86,12 @@ independent composer fix bundled into the same branch/PR.
 
 ### #471 Part A — Timeline event-row context menu (shared surface)
 
+**Menu scope (round-1 clarification):** the context menu is wired **only** onto `EventRow` rows, which are
+backed by a settled `JournalEvent`. The other `mx_EventTile`-classed `<li>` rows the `Timeline` renders —
+`ToolStream` (L1546) and pending/sending placeholders (`mj_AttachmentChip` L1624, `mx_EventTile_sending`
+L1858/L1874) — are **not** backed by a `JournalEvent` and get **no** menu (they have no DTO to view and
+nothing text to copy). `EventSourceSheet`'s prop is `JournalEvent`, so this is enforced by construction.
+
 **Trigger surface:** the `EventRow` `<li className="mx_EventTile">`. Triggers:
 - **Right-click** (`onContextMenu`, `preventDefault`) → open at `{clientX, clientY}` (pointer position).
   Keyboard-invoked contextmenu (Shift+F10 / Menu key) reports `clientX===0 && clientY===0` → open anchored
@@ -103,9 +109,15 @@ is a value of type `T` (here `JournalEvent`):
 - the `useLayoutEffect` viewport clamp + initial-focus-first-menuitem;
 - a `menuKeyDown(event)` handler implementing ArrowUp/Down cycling, Enter/Space activate, Escape close.
 
-The hook returns the state + the handler bundle; the **rendering** (the `mj_HeaderMenu` div + `menuitem`
-buttons) stays in `components.tsx`. This keeps the hook presentation-free and testable in isolation, and
-keeps menu markup where Dan keeps his (no split).
+**DOM ownership (round-1 fix):** the hook owns a `menuRef: RefObject<HTMLDivElement>` that the caller
+attaches to the menu-root div it renders. All measurement (viewport clamp), containment (outside-`pointerdown`
+"is the click inside my menu?"), initial focus, and item navigation operate through `menuRef.current` and
+`menuRef.current.querySelectorAll('[role="menuitem"]')` — **scoped to this menu's own subtree, never global
+`document.querySelector` on role/class**, so the new timeline menu cannot measure, contain, or focus the
+untouched room-list menu (which lives under a different, hook-unaware subtree). The hook returns
+`{ state, menuRef, open, close, rowHandlers(target, rowEl), menuKeyDown }`; the **rendering** (the
+`mj_HeaderMenu` div — with `ref={menuRef}` — + `menuitem` buttons) stays in `components.tsx`. This keeps the
+hook presentation-free and testable in isolation, and keeps menu markup where Dan keeps his (no split).
 
 **Menu items** (rendered in `Timeline`, positioned `fixed` like the room menu):
 1. **Copy** — shown only for `event.type === "text"` (payload `body`). `navigator.clipboard.writeText(body)`;
@@ -117,9 +129,17 @@ Share is intentionally omitted (see Right-size decisions). The menu therefore ha
 "View source" applies it is still a valid single-item menu (matches apple, where View source is the
 universal item).
 
-**A11y:** event rows already carry `tabIndex={-1}`. The `<li>` gains an `onKeyDown` for the ContextMenu key
-/ Shift+F10 to open the menu when the row is focused (cheap, standard, exceeds apple which is long-press
-only). `role="menu"`/`role="menuitem"`, focus management, and Escape handled by the hook.
+**A11y (scope corrected after round 1):** the two open triggers are **pointer-based** — right-click
+(`onContextMenu`) and touch long-press — matching apple's long-press-only affordance. Event rows are
+`tabIndex={-1}` (`components.tsx` L1511) with no roving-tabindex or `.focus()` path anywhere in the file, so
+a keyboard-only user cannot make a row the active element; a per-row `onKeyDown`/Shift+F10 handler could
+never fire and is therefore **not** added (the earlier "exceeds apple" claim was false). Keyboard-invoked
+`contextmenu` (Shift+F10 / Menu key) is still handled *for pointer-focusable elements* via the existing
+`clientX===0 && clientY===0` branch (mirrors the room-list menu, L470) — it just isn't reachable on these
+non-focusable rows today. **Once open**, the menu is fully keyboard-operable (Arrow/Enter/Space/Escape via
+the hook, `role="menu"`/`role="menuitem"`, focus-first-item on open). Keyboard-*opening* on the timeline
+(roving tabindex over rows) is a documented **follow-up**, not in this PR — it's net-new a11y beyond apple
+and independent of these three loops.
 
 ### #476 — Event View Source sheet
 
@@ -136,67 +156,106 @@ only). `role="menu"`/`role="menuitem"`, focus management, and Escape handled by 
 menu's "View source" calls `setSourceEvent(event)`; the sheet renders when defined. Kept in `Timeline` (not
 global `ClientState`) — it's ephemeral view state, no persistence, no cross-component reach.
 
+**Close-on-conversation-switch (round-1 blocker fix):** `Timeline` is rendered **unkeyed** (`components.tsx`
+L2423), so a `selectedConversationId` change does **not** unmount it — a menu/sheet targeting convo A's
+event would otherwise stay visible and copyable over convo B (conversation-scoped view-state leak). Fix:
+`useEffect(() => { menu.close(); setSourceEvent(undefined); }, [state.selectedConversationId])` in
+`Timeline` explicitly closes both surfaces on every convo switch. (Both the menu-close and sheet-clear are
+idempotent no-ops when already closed.) Do **not** rely on unmount teardown for this.
+
 ### #471 Part B — Per-conversation composer draft persistence
 
-**Store `makeDraftStore(session)`** (new `composer-drafts.ts`), mirroring `makeIdSetStore`:
-- key `matron:draft:${encodeURIComponent(session.serverUrl)}:${session.userId}` → JSON object
+**Store `makeDraftStore(session: Session | undefined)`** (new `composer-drafts.ts`). Signature and
+self-guarding mirror **`makeRecentFoldersStore` (`slash-palette.ts` L176–195)**, NOT `makeIdSetStore` —
+`makeRecentFoldersStore` accepts `Session | undefined` and returns an internally no-op object when the
+session is absent, and its `record()` is `try/catch`-wrapped so a storage failure never throws into a
+React handler. `makeIdSetStore.write` (`conversation-flags.ts` L50–52) is **not** fail-soft on write (no
+`try/catch` — throws on quota/`SecurityError`); the draft store must not copy that. Contract:
+- When `session` is `undefined`: every method is a no-op (`read` → `{ text: "", ok: false }`), so call
+  sites need no guard. When present, key
+  `matron:draft:${encodeURIComponent(session.serverUrl)}:${session.userId}` → JSON object
   `{ [convoId: string]: string }`.
-- `read(convoId): string` — fail-soft (storage/JSON errors → `""`, never throw; warn once like the id-set
-  store).
-- `write(convoId, text): void` — sets the entry; if `text.trim() === ""`, **deletes** the entry
-  (prune-on-empty → bounded growth). Persists the whole map.
-- `clear(convoId): void` — deletes the entry + persists (used after a successful send). Equivalent to
-  `write(convoId, "")`; kept as a named method for call-site clarity.
+- `read(convoId): { text: string; ok: boolean }` — fail-soft. `ok:false` on storage/JSON error (or absent
+  session); `ok:true` with `text:""` for a legitimately absent draft. Callers overwrite the live body
+  **only when `ok`** — a transient read failure must not clobber the in-memory draft or leak the previous
+  convo's text. (Mirrors `makeIdSetStore.read`'s `{ ids, ok }` shape, which the old contradictory
+  string-only `read` did not.)
+- `write(convoId, text): void` — `try/catch`-wrapped (warn once on failure, never throw). If
+  `text.trim() === ""`, **deletes** the entry (prune-on-empty). If `utf8Length(text) > MAX_DRAFT_BYTES`
+  (const, 64 KiB), the entry is **not** persisted (the oversized text stays live in the composer; a reload
+  simply won't restore it) — bounds the per-entry cost of the synchronous whole-blob serialize.
+- `clear(convoId): void` — deletes the entry + persists (used after a successful send).
+- **Write coalescing:** the Composer calls `write` through a trailing-edge debounce (~250 ms) so rapid
+  keystrokes don't stringify+rewrite the whole blob on every keypress; the debounce is **flushed
+  synchronously** on convo-switch, blur, and send so no committed draft is lost. `clear` bypasses the
+  debounce (immediate). This keeps the hot path off the per-keystroke blob write that round 1 flagged.
+
+Total blob size is bounded in practice by (active-conversation count × ≤`MAX_DRAFT_BYTES`) with
+prune-on-empty removing entries as they clear; there is no per-conversation-count hard cap (conversations
+are archived, not deleted — `client.ts` archive path), which is acceptable because each entry is capped and
+empty entries are pruned. Draft persistence is **best-effort**, not a durability guarantee (see Error
+handling) — the design does not surface a persist-failure toast (a draft is convenience state, still
+visible live; over-alerting on it is worse UX than a silent console warn).
 
 **Composer integration** (unkeyed component; convoId arrives via `state.selectedConversationId`):
-- `const store = useMemo(() => makeDraftStore(state.session), [state.session])`.
-- Track the current convo with a ref. On convoId change (`useEffect` on `state.selectedConversationId`):
-  1. flush the outgoing convo's current `body` to `store.write(prevConvoId, body)`;
-  2. load `store.read(newConvoId)` into `body` (and reset textarea height);
-  3. update the ref.
-  This fixes the cross-convo bleed: each convo shows only its own draft.
-- `onChange`: existing `setBody(next)` **plus** `store.write(convoId, next)` (write-through; cheap, drafts
-  are small — no debounce needed for correctness, but a trailing microtask/rAF coalesce is acceptable if
-  profiling shows churn).
-- On successful send (`send()` after `sendMessage` returns true): `store.clear(convoId)` in addition to
-  `setBody("")`.
-- Guard: if `state.session` is undefined (signed-out transitions), the store is a no-op; body stays local.
+- `const drafts = useMemo(() => makeDraftStore(state.session), [state.session])` (self-guards on undefined
+  session — no call-site guard needed, per the store contract).
+- Keep `const convoIdRef = useRef(state.selectedConversationId)` updated every render so async
+  continuations read the *current* convo, not a stale closure.
+- **All body mutations go through one helper** `setBodyDraft(next)` = `setBody(next)` + debounced
+  `drafts.write(convoIdRef.current, next)`. `onChange`, `selectCommand`, and `selectFolder` (the three
+  `setBody` call sites, `components.tsx` L2003–2014, L2059–2066) route through it — this closes the round-1
+  gap where completion picks bypassed `onChange` and their composed body was never persisted.
+- On convoId change (`useEffect` on `state.selectedConversationId`, prevConvo tracked via a ref):
+  1. **flush** the debounce, then `drafts.write(prevConvoId, body)` for the outgoing convo;
+  2. `const { text, ok } = drafts.read(newConvoId)` — set body **only when `ok`** (a failed read leaves the
+     composer empty for the new convo rather than showing the previous convo's text); reset textarea height;
+  3. update both refs.
+  This fixes the cross-convo bleed: each convo shows only its own draft, and a transient storage failure
+  can't leak text across conversations.
+- **Send (per-conversation lock + convo-scoped completion)** — replaces the single `sendingRef`:
+  - `const sendingConvos = useRef(new Set<string>())`.
+  - `send()`: `const convoId = convoIdRef.current; if (!convoId || sendingConvos.current.has(convoId)) return;`
+    then `sendingConvos.current.add(convoId)` (synchronous, pre-`await` → blocks the same-tick second Enter
+    for *this* convo only, so a send in A never drops an Enter in B). `try { if (await
+    client.sendMessage(body)) { … } } finally { sendingConvos.current.delete(convoId); }`.
+  - **Completion is convo-scoped:** on success always `drafts.clear(convoId)` (safe — clears the convo we
+    sent from). Touch the live composer (`setBody("")`, `setDismissed(null)`, reset height) **only when
+    `convoIdRef.current === convoId`** — i.e. the same convo is still on screen. If the operator switched
+    away mid-send, the new convo's draft/body is left untouched (it was already saved by write-through).
+    This kills the round-1 "resolves-after-switch blanks the new convo" blocker.
+  - **Wedge scope:** `finally` releases the lock on resolve *and* reject; the only residual is a promise
+    that never settles, which for this path means a hung local IndexedDB `addToOutbox` (no network in the
+    awaited path). Per-convo scoping bounds even that to the one affected conversation (others still send);
+    no timeout is added because a spurious mid-send unlock would reintroduce the double-send. Documented,
+    not silently assumed.
 
-Persistence is localStorage → drafts survive **both** in-app navigation and full page reload, per the
-loop's "across navigation" (localStorage is the strictly-superior default over in-memory).
+Persistence is localStorage → drafts **best-effort** survive both in-app navigation and full page reload
+(the loop's "across navigation"). Best-effort because a storage failure (quota, Safari private mode) is
+swallowed with a console warn; the draft stays live on screen but may not survive a reload. This is the
+right trade for convenience state — see Error handling.
 
 ### #478 — Rapid-Enter double-send guard
 
-In `Composer`, add `const sendingRef = useRef(false)`. Rewrite `send()` (`store` = the existing
-recent-folders store; `drafts` = the new `makeDraftStore` instance; `convoId` =
-`state.selectedConversationId`):
+The guard is the **per-conversation send lock** defined in "#471 Part B → Send" above (`sendingConvos =
+useRef(new Set<string>())`), not a single boolean. Rationale for the shape (round-1 driven):
 
-```
-const send = async (): Promise<void> => {
-    if (sendingRef.current) return;          // synchronous re-entrancy guard
-    sendingRef.current = true;
-    try {
-        if (await client.sendMessage(body)) {
-            const folder = recentFolderArgument(body);
-            if (folder) store.record(folder);
-            if (convoId) drafts.clear(convoId);   // #471: clear this convo's draft
-            setBody("");
-            setDismissed(null);
-            if (textarea.current) textarea.current.style.height = "auto";
-        }
-    } finally {
-        sendingRef.current = false;
-    }
-};
-```
+- The duplicate arises because `send()` is `async` and two Enter keydowns fire as separate tasks before
+  React clears `body`, so both read the stale body and both call `client.sendMessage` (which mints a fresh
+  `crypto.randomUUID()` per call — no server idempotency, `client.ts` L464–482). The lock is added
+  **synchronously before the first `await`**, so the second Enter sees the convo already locked and returns
+  — immune to React state-update batching.
+- **Keyed by convoId, not global:** a boolean `sendingRef` would silently drop an Enter in convo B while a
+  send in A is still in flight (round-1 blocker). Locking per-convo means only a genuine same-convo double
+  fire is suppressed.
+- **Completion is convo-scoped** (see above): the live composer is cleared only if the sending convo is
+  still on screen, so an in-flight send that resolves after a switch never blanks the newly selected
+  conversation. The earlier "nothing legitimate is lost" claim was false for the cross-convo interleave and
+  is removed.
+- `finally` releases on resolve and reject; a never-settling local promise is bounded to the one affected
+  convo (Major issue mitigation, above).
 
-The guard is **synchronous** (a ref, set before the first `await`), so a second Enter keydown dispatched in
-the same tick — before React clears `body` — sees `sendingRef.current === true` and returns without a
-second `sendMessage`. Immune to React state-update batching. The in-flight window is milliseconds
-(IndexedDB outbox add); nothing legitimate is lost (on a successful first send, body is cleared anyway).
-`finally` guarantees the ref clears even if `sendMessage` throws.
-
-(`client.sendMessage` already returns false on empty/child/no-db, so no extra emptiness check is added.)
+`client.sendMessage` already returns false on empty/child/no-db, so no extra emptiness check is added.
 
 ## Data flow
 
@@ -218,25 +277,41 @@ Enter (guarded) → sendingRef gate → sendMessage → on success: draftStore.c
 
 - Clipboard: `navigator.clipboard` may be unavailable (insecure context) or reject — wrap in try/catch,
   fall back to `execCommand` or no-op; never surface an exception into the timeline.
-- localStorage: draft `read`/`write` fail-soft exactly like `makeIdSetStore` (quota/unavailable → warn once,
-  treat as empty; a failed read must not clobber an in-memory draft — load only overwrites on `ok`).
-- Menu/sheet: Escape + outside-click always close; a convo switch or timeline unmount closes both (the
-  hook's effects tear down on unmount; the sheet is conditionally rendered under `Timeline`).
-- Double-send: `finally` guarantees ref reset; a thrown `sendMessage` does not wedge the composer.
+- localStorage: draft `read` **and** `write` are both fail-soft — modeled on `makeRecentFoldersStore.record`
+  (`try/catch`, warn once), **not** `makeIdSetStore.write` (which is unguarded and throws on quota). `read`
+  returns `{ text, ok }`; a failed read (`ok:false`) must **not** clobber the in-memory draft or leak the
+  previous convo's text — the load step overwrites the body only when `ok`. `write` failure is swallowed
+  (draft stays live on screen; persistence is best-effort, not durable — no user-facing error, by design,
+  for convenience state).
+- Menu/sheet: Escape + outside-click always close; a convo switch closes both via the **explicit**
+  `selectedConversationId` effect in `Timeline` (the unkeyed `Timeline` does **not** unmount on switch, so
+  unmount teardown alone is insufficient — see #476 state). The hook's document-level effects still tear
+  down on true unmount (sign-out, etc.).
+- Double-send: the per-convo lock (`sendingConvos` set) releases in `finally` on resolve and reject; a
+  thrown `sendMessage` does not wedge the composer. A never-settling local promise is bounded to the single
+  affected convo (all other conversations still send).
 
 ## Testing
 
-- **`composer-drafts-test.ts`:** write/read round-trip; prune-on-empty deletes the key entry; `clear`;
-  per-session key isolation (different serverUrl/userId → different key); fail-soft read on malformed JSON
-  and on a throwing `localStorage`.
+- **`composer-drafts-test.ts`:** write/read round-trip; `read` returns `{ text, ok }`; `ok:false` on
+  malformed JSON, on a throwing `getItem`, and on `undefined` session; prune-on-empty deletes the entry;
+  `clear`; per-session key isolation (different serverUrl/userId → different key); **write fail-soft** on a
+  throwing `setItem` (no throw propagates); oversized draft (`> MAX_DRAFT_BYTES`) is **not** persisted while
+  smaller ones are; undefined-session store is a full no-op.
 - **`context-menu-test.ts`:** long-press `onFire` → `open` with pointer coords; viewport clamp math
-  (right/bottom edges); keyboard nav index cycling (wrap up/down); Escape close.
+  (right/bottom edges); keyboard nav index cycling (wrap up/down); Escape close; containment/measurement use
+  the passed `menuRef` node (a sibling menu node is not selected).
 - **`components-test.ts` (added cases):**
   - right-click an `EventRow` opens the menu; text event shows Copy, non-text hides it; View source always present;
-  - "View source" opens `EventSourceSheet` with the event's JSON; Copy button copies; Done/Esc closes;
+  - a `ToolStream` / pending placeholder row gets **no** menu on right-click;
+  - "View source" opens `EventSourceSheet` with the event's JSON; Copy button copies; Done/Esc/backdrop closes;
+  - **menu + sheet close on conversation switch** (change `selectedConversationId` while open → both gone, JSON no longer in DOM);
   - typing a draft in convo A, switching to B, back to A restores A's draft; B stays empty; draft persists across a simulated remount (reload);
-  - successful send clears the draft;
-  - **double-send:** two synchronous Enter keydowns with a slow-resolving `sendMessage` stub → `sendMessage` called exactly once.
+  - a **completion pick** (`selectCommand` / `selectFolder`) then reload restores the composed body (write-through covers the non-`onChange` path);
+  - a failed `read` (`ok:false`) on switch leaves the new convo's composer empty, **not** showing the previous convo's text;
+  - successful send clears **that convo's** draft;
+  - **double-send:** two synchronous Enter keydowns (same convo) with a slow-resolving `sendMessage` stub → `sendMessage` called exactly once;
+  - **cross-convo interleave:** send in A (slow stub, still pending) → switch to B → Enter in B is **not** blocked (fires its own send); when A resolves, B's live composer body is **untouched**.
 - `pnpm lint` (tsc + prettier) + full `pnpm test` green before ship.
 
 ## Right-size decisions (quantified)
@@ -245,10 +320,14 @@ Enter (guarded) → sendingRef gate → sendMessage → on success: draftStore.c
   the journal web client is desktop-primary. Real-workflow gain ≈ zero; parity kept via Copy + View source.
 - **Don't refactor the shipped room-list menu.** True DRY (both menus on one hook) is real but touches
   Dan's working code and deepens fork divergence (#448). Deferred to an upstream proposal (Follow-ups).
-- **Single pruned localStorage blob** for drafts, not per-convo keys — simpler, and prune-on-empty bounds
-  growth; no key-enumeration cleanup needed.
-- **No debounce required** for draft writes — they're tiny synchronous localStorage sets; correctness
-  doesn't need it. (Coalescing left as an optional micro-opt if profiling shows churn.)
+- **Single localStorage blob** for drafts, not per-convo keys — simpler, no key-enumeration cleanup.
+  Growth is bounded per-entry by `MAX_DRAFT_BYTES` (64 KiB, oversized drafts not persisted) and by
+  prune-on-empty; total scales with active-conversation count (acceptable — see store contract). Round 1
+  correctly flagged that prune-on-empty alone does not bound total size, hence the per-entry cap.
+- **Trailing debounce (~250 ms) on draft writes, flushed on switch/blur/send** — round 1 flagged that an
+  unguarded per-keystroke whole-blob stringify is a synchronous hot path that degrades with blob size. The
+  debounce coalesces keystrokes; the synchronous flush on convo-switch/blur/send guarantees no committed
+  draft is lost. `clear` bypasses it (immediate).
 
 ## Follow-ups (not in this PR)
 
