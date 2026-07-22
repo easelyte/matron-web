@@ -17,6 +17,7 @@ import {
     unreadStore,
 } from "../../../src/journal/client";
 import { MatronApp } from "../../../src/journal/components";
+import { makeRecentFoldersStore } from "../../../src/journal/slash-palette";
 import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
@@ -131,6 +132,209 @@ function inputTextarea(textarea: HTMLTextAreaElement, value: string): void {
     setter?.call(textarea, value);
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
+
+async function keydown(
+    element: Element,
+    key: string,
+    options: KeyboardEventInit & { keyCode?: number } = {},
+): Promise<{ event: KeyboardEvent; dispatched: boolean }> {
+    const event = new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+        ...options,
+    });
+    if (options.keyCode !== undefined) Object.defineProperty(event, "keyCode", { value: options.keyCode });
+    let dispatched = true;
+    await act(async () => {
+        dispatched = element.dispatchEvent(event);
+        await Promise.resolve();
+    });
+    return { event, dispatched };
+}
+
+describe("slash command palette", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    beforeEach(() => {
+        (Element.prototype.scrollIntoView as jest.Mock).mockClear();
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    const composer = (): HTMLTextAreaElement => {
+        const textarea = rendered?.container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
+        if (!textarea) throw new Error("Missing composer textarea");
+        return textarea;
+    };
+
+    const options = (): HTMLElement[] => [
+        ...(rendered?.container.querySelectorAll<HTMLElement>('[role="option"]') ?? []),
+    ];
+
+    it("opens command rows for a slash-command prefix", async () => {
+        rendered = await renderClient(signedInClient());
+
+        await act(async () => inputTextarea(composer(), "/st"));
+
+        expect(rendered.container.querySelector('[role="listbox"]')).not.toBeNull();
+        expect(options().map((row) => row.querySelector(".mx_SlashPalette_trigger")?.textContent)).toEqual([
+            "/start",
+            "/stop",
+            "/status",
+        ]);
+    });
+
+    it("highlights with ArrowDown and selects with Enter without sending", async () => {
+        const client = signedInClient();
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        rendered = await renderClient(client);
+        await act(async () => inputTextarea(composer(), "/st"));
+
+        const arrow = await keydown(composer(), "ArrowDown");
+        expect(arrow.dispatched).toBe(false);
+        expect(arrow.event.defaultPrevented).toBe(true);
+        expect(options()[0].getAttribute("aria-selected")).toBe("true");
+
+        const enter = await keydown(composer(), "Enter");
+        expect(enter.dispatched).toBe(false);
+        expect(enter.event.defaultPrevented).toBe(true);
+        expect(composer().value).toBe("/start ");
+        expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("leaves Shift+Enter untouched when a row is highlighted", async () => {
+        const client = signedInClient();
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        rendered = await renderClient(client);
+        await act(async () => inputTextarea(composer(), "/st"));
+        await keydown(composer(), "ArrowDown");
+
+        const shifted = await keydown(composer(), "Enter", { shiftKey: true });
+
+        expect(shifted.dispatched).toBe(true);
+        expect(shifted.event.defaultPrevented).toBe(false);
+        expect(composer().value).toBe("/st");
+        expect(options()[0].getAttribute("aria-selected")).toBe("true");
+        expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("sends the literal body on Enter when no row is highlighted", async () => {
+        const client = signedInClient();
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        rendered = await renderClient(client);
+        await act(async () => inputTextarea(composer(), "/st"));
+
+        const enter = await keydown(composer(), "Enter");
+
+        expect(enter.dispatched).toBe(false);
+        expect(enter.event.defaultPrevented).toBe(true);
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+        expect(sendMessage).toHaveBeenCalledWith("/st");
+    });
+
+    it("dismisses the palette with Escape without changing the body", async () => {
+        const client = signedInClient();
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        rendered = await renderClient(client);
+        await act(async () => inputTextarea(composer(), "/st"));
+
+        const escape = await keydown(composer(), "Escape");
+
+        expect(escape.dispatched).toBe(false);
+        expect(escape.event.defaultPrevented).toBe(true);
+        expect(rendered.container.querySelector('[role="listbox"]')).toBeNull();
+        expect(composer().value).toBe("/st");
+        expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("completes the first row with Tab", async () => {
+        const client = signedInClient();
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        rendered = await renderClient(client);
+        await act(async () => inputTextarea(composer(), "/st"));
+
+        const tab = await keydown(composer(), "Tab");
+
+        expect(tab.dispatched).toBe(false);
+        expect(tab.event.defaultPrevented).toBe(true);
+        expect(composer().value).toBe("/start ");
+        expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("does not select, send, or cancel IME Enter events", async () => {
+        const client = signedInClient();
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        rendered = await renderClient(client);
+        await act(async () => inputTextarea(composer(), "/st"));
+        await keydown(composer(), "ArrowDown");
+
+        const composing = await keydown(composer(), "Enter", { isComposing: true });
+        const legacyComposing = await keydown(composer(), "Enter", { keyCode: 229 });
+
+        for (const result of [composing, legacyComposing]) {
+            expect(result.dispatched).toBe(true);
+            expect(result.event.defaultPrevented).toBe(false);
+        }
+        expect(composer().value).toBe("/st");
+        expect(options()[0].getAttribute("aria-selected")).toBe("true");
+        expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("highlights and click-selects a recent folder exactly once", async () => {
+        makeRecentFoldersStore(SESSION).record("/srv/Project");
+        const client = signedInClient();
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        rendered = await renderClient(client);
+        await act(async () => inputTextarea(composer(), "/workdir /srv/P"));
+        expect(options().map((row) => row.textContent)).toEqual(["/srv/Project"]);
+
+        await act(async () =>
+            options()[0].dispatchEvent(new MouseEvent("mouseover", { bubbles: true, cancelable: true })),
+        );
+        expect(options()[0].getAttribute("aria-selected")).toBe("true");
+        expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+
+        const mouseDown = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+        await act(async () => options()[0].dispatchEvent(mouseDown));
+        expect(mouseDown.defaultPrevented).toBe(true);
+        expect(composer().value).toBe("/workdir /srv/P");
+
+        await act(async () => options()[0].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
+        expect(composer().value).toBe("/workdir /srv/Project");
+        expect(sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("records only folder commands accepted by sendMessage", async () => {
+        const store = makeRecentFoldersStore(SESSION);
+        const client = signedInClient();
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+        rendered = await renderClient(client);
+
+        await act(async () => inputTextarea(composer(), "/workdir /op/accepted"));
+        await keydown(composer(), "Enter");
+        expect(store.matches("")).toContain("/op/accepted");
+        const acceptedSnapshot = JSON.stringify(store.matches(""));
+
+        await act(async () => inputTextarea(composer(), "/workdir /op/rejected"));
+        await keydown(composer(), "Enter");
+
+        expect(sendMessage).toHaveBeenCalledTimes(2);
+        expect(store.matches("")).not.toContain("/op/rejected");
+        expect(JSON.stringify(store.matches(""))).toBe(acceptedSnapshot);
+    });
+});
 
 describe("attachment composer", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
