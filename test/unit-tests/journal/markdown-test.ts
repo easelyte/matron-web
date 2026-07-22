@@ -189,6 +189,26 @@ test("copies the exact raw fenced source and gates the success label on copyText
     expect(button?.textContent).toBe("Copied");
 });
 
+test("copies CRLF line endings from a fenced block verbatim", async () => {
+    copyTextMock.mockResolvedValue(true);
+    const container = await renderMarkdown("```ts\r\nconst first = 1;\r\n  const indented = 2;\r\n```");
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Copy code"]');
+
+    await act(async () => button!.click());
+
+    expect(copyTextMock).toHaveBeenCalledWith("const first = 1;\r\n  const indented = 2;\r\n");
+});
+
+test("does not add a trailing newline when copying an unterminated fence", async () => {
+    copyTextMock.mockResolvedValue(true);
+    const container = await renderMarkdown("```ts\nconst partial = 1;");
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Copy code"]');
+
+    await act(async () => button!.click());
+
+    expect(copyTextMock).toHaveBeenCalledWith("const partial = 1;");
+});
+
 test("shows copy failure when copyText returns false", async () => {
     copyTextMock.mockResolvedValue(false);
     const container = await renderMarkdown("```js\nalert('no');\n```");
@@ -283,7 +303,7 @@ test("isolates markdown render failures and logs the failing label", async () =>
     const root = createRoot(container);
     rendered.push({ container, root });
 
-    const badText = "```ts\nfailed\n```";
+    const badText = "    failed";
     await act(async () => {
         root.render(
             React.createElement(React.Fragment, null, [
@@ -313,7 +333,7 @@ test("resets a tripped boundary when the same row receives new text", async () =
     rendered.push({ container, root });
 
     await act(async () => {
-        root.render(React.createElement(MarkdownBody, { text: "```ts\nfailed\n```", label: "stream-row" }));
+        root.render(React.createElement(MarkdownBody, { text: "    failed", label: "stream-row" }));
     });
     expect(container.querySelector(".mj_MarkdownRaw")).not.toBeNull();
 

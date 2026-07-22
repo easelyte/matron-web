@@ -113,9 +113,20 @@ subset}`. An unregistered language (e.g. ` ```notalang `) is **not** relabeled t
 unshifts the `hljs` class onto the node **before** its internal `try/catch`, and on a missing grammar the
 catch returns without removing it — so the `<code>` element ends up `class="hljs language-notalang"` with
 **zero `.hljs-*` token `<span>`s** (verified empirically against `rehype-highlight@7.0.2`). No throw, no
-`plaintext` rewrite. That is the acceptable P3 behavior (readable, no crash). Config is therefore
-`{ languages: CURATED, detect: true }` (no `ignoreMissing`). **Test the *absence of token spans*, not the
-absence of the `hljs` class** (which is always present) — see §Testing.
+`plaintext` rewrite. That is the acceptable P3 behavior (readable, no crash).
+
+**Implementation revision (execute-slim Phase-2 security fix — `detect` DROPPED):** the spec originally
+specified `{ languages: CURATED, detect: true }`. During execution the Phase-2 Codex review measured
+`highlightAuto("a".repeat(20_000))` at **6.9s** of synchronous main-thread work — a real client-side DoS,
+because `detect: true` runs highlight.js auto-detection across all grammars on **untrusted** untyped fences,
+and a single global size cap cannot both permit labeled highlighting of large blocks *and* bound autodetect
+(rehype-highlight's `detect` is a per-render option, not per-block). **Resolution: `detect` is removed**
+(final config `{ languages: CURATED, aliases: ALIASES }`). Consequence: a **labeled** fence (```ts, ```bash,
+…) still highlights via its explicit language class; an **untyped** ``` ``` ``` fence renders as
+unhighlighted `<code>` (no auto-detection). This is a negligible feature loss for this client — Claude Code
+emits labeled fences almost universally — bought against a real P8 DoS on untrusted agent output. The
+unknown-language-fence behavior above is unchanged (still `class="hljs language-x"`, zero token spans, no
+throw). **Test the *absence of token spans*, not the absence of the `hljs` class** — see §Testing.
 
 No `rehype-raw`, no `DOMPurify` (§Security, §mandate_deviation).
 
@@ -132,8 +143,9 @@ boundary) is separately handled by the boundary's **reset-on-`text`-change** (§
 `hasError` as soon as the surviving stream's differing `text` renders. Copy state is local per `CodeBlock`.
 
 - Wraps `react-markdown` with `remarkPlugins={[remarkGfm]}` and, **only when not streaming**,
-  `rehypePlugins={[[rehypeHighlight, { languages: CURATED, detect: true }]]}` (no `ignoreMissing` — it isn't
-  a real option). **During streaming, rehype-highlight is omitted** (§Streaming) — the per-token cost bound.
+  `rehypePlugins={[[rehypeHighlight, { languages: CURATED, aliases: ALIASES }]]}` (no `detect` — dropped as
+  a DoS mitigation, see the Implementation-revision note above; no `ignoreMissing` — not a real option).
+  **During streaming, rehype-highlight is omitted** (§Streaming) — the per-token cost bound.
 - `components` overrides:
   - `pre` — **react-markdown v9 removed the `inline` prop on `code`**, so block detection lives here: the
     `pre` override renders a **`<CodeBlock>`** (copy button + language label + the highlighted `<code>`

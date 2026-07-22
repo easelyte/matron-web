@@ -126,8 +126,28 @@ function fenceLanguage(node: ExtraProps["node"], source: string): string | undef
     return match?.[1]?.slice(0, 16);
 }
 
+function fencedCodeSource(node: ExtraProps["node"], source: string): string | undefined {
+    const start = node?.position?.start.offset;
+    const end = node?.position?.end.offset;
+    if (start === undefined || end === undefined) return undefined;
+
+    const fencedSource = source.slice(start, end);
+    const opening = /^ {0,3}(`{3,}|~{3,})[^\r\n]*(?:\r\n|\n|\r|$)/.exec(fencedSource);
+    if (!opening) return undefined;
+
+    const body = fencedSource.slice(opening[0].length);
+    const bodyWithoutTerminalEol = body.replace(/(?:\r\n|\n|\r)$/, "");
+    const closingLineStart =
+        Math.max(bodyWithoutTerminalEol.lastIndexOf("\n"), bodyWithoutTerminalEol.lastIndexOf("\r")) + 1;
+    const closingLine = bodyWithoutTerminalEol.slice(closingLineStart);
+    const marker = opening[1][0];
+    const closing = new RegExp(`^ {0,3}\\${marker}{${opening[1].length},}[\\t ]*$`);
+
+    return closing.test(closingLine) ? body.slice(0, closingLineStart) : body;
+}
+
 function CodeBlock({ node, source, children, ...props }: CodeBlockProps): React.ReactElement {
-    const raw = node ? toString(node) : "";
+    const raw = fencedCodeSource(node, source) ?? (node ? toString(node) : "");
     const language = fenceLanguage(node, source);
     const [copyLabel, setCopyLabel] = useState("Copy");
     const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
