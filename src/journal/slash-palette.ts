@@ -5,6 +5,8 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import type { Session } from "./types";
+
 export interface BotCommand {
     trigger: string;
     summary: string;
@@ -131,4 +133,80 @@ export function recentFolderArgument(text: string): string | null {
         return path === "now" || path === "fresh" ? null : path;
     }
     return tokens.join(" ");
+}
+
+export interface RecentFoldersStore {
+    record(path: string): void;
+    matches(prefix: string): string[];
+}
+
+const RECENT_FOLDERS_KEY_PREFIX = "matron_journal_recent_start_folders_v1";
+const MAX_RECENT_FOLDERS = 15;
+
+function parseRecentFolders(raw: string | null): string[] {
+    if (raw === null) return [];
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        console.warn("matron: malformed recent folders value, ignoring");
+        return [];
+    }
+
+    if (!Array.isArray(parsed)) {
+        console.warn("matron: recent folders value not an array, ignoring");
+        return [];
+    }
+    return parsed.filter((value): value is string => typeof value === "string");
+}
+
+/**
+ * Persist folders used in attempted start/workdir commands. Recording follows
+ * client outbox acceptance, not bridge-confirmed command success.
+ */
+export function makeRecentFoldersStore(session: Session | undefined): RecentFoldersStore {
+    if (!session) {
+        return {
+            record: () => undefined,
+            matches: () => [],
+        };
+    }
+
+    const key = `${RECENT_FOLDERS_KEY_PREFIX}:${encodeURIComponent(session.serverUrl)}:${session.userId}`;
+
+    return {
+        record(path: string): void {
+            try {
+                const folders = parseRecentFolders(localStorage.getItem(key));
+                const updated = [path, ...folders.filter((folder) => folder !== path)].slice(0, MAX_RECENT_FOLDERS);
+                localStorage.setItem(key, JSON.stringify(updated));
+            } catch {
+                console.warn("matron: recent folders record failed (storage unavailable)");
+            }
+        },
+
+        matches(prefix: string): string[] {
+            try {
+                const normalizedPrefix = prefix.toLowerCase();
+                return parseRecentFolders(localStorage.getItem(key)).filter((folder) =>
+                    folder.toLowerCase().startsWith(normalizedPrefix),
+                );
+            } catch {
+                console.warn("matron: recent folders read failed (storage unavailable)");
+                return [];
+            }
+        },
+    };
+}
+
+export function folderSuggestions(input: string, store: RecentFoldersStore): string[] {
+    const parsed = parseFolderCommand(input);
+    if (!parsed) return [];
+
+    return store
+        .matches(parsed.partial)
+        .filter((folder) => folder !== parsed.partial)
+        .filter((folder) => parsed.command === "workdir" || !/\s/.test(folder))
+        .slice(0, 8);
 }
