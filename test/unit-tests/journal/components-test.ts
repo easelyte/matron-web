@@ -16,7 +16,7 @@ import {
     pinnedStore,
     unreadStore,
 } from "../../../src/journal/client";
-import { MatronApp } from "../../../src/journal/components";
+import { copyText, MatronApp } from "../../../src/journal/components";
 import { makeRecentFoldersStore } from "../../../src/journal/slash-palette";
 import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
 
@@ -118,6 +118,31 @@ async function openMenu(container: HTMLElement): Promise<void> {
 }
 
 beforeEach(() => localStorage.clear());
+
+test("copyText awaits clipboard and returns true", async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    await expect(copyText("hello")).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledWith("hello");
+});
+
+test("copyText falls back to execCommand on rejection and returns true", async () => {
+    Object.assign(navigator, { clipboard: { writeText: jest.fn().mockRejectedValue(new Error("denied")) } });
+    const exec = jest.fn().mockReturnValue(true);
+    (document as any).execCommand = exec;
+    await expect(copyText("hello")).resolves.toBe(true);
+    expect(exec).toHaveBeenCalledWith("copy");
+    expect(document.querySelectorAll("textarea").length).toBe(0);
+});
+
+test("copyText returns false when both paths fail, without throwing, and cleans up the textarea", async () => {
+    Object.assign(navigator, { clipboard: { writeText: jest.fn().mockRejectedValue(new Error("x")) } });
+    (document as any).execCommand = jest.fn(() => {
+        throw new Error("nope");
+    });
+    await expect(copyText("hello")).resolves.toBe(false);
+    expect(document.querySelectorAll("textarea").length).toBe(0);
+});
 
 function fileDragEvent(type: string, file: File): Event {
     const event = new Event(type, { bubbles: true, cancelable: true });

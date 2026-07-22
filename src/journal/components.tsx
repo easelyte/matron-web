@@ -157,6 +157,30 @@ function formatBytes(value: unknown): string | undefined {
     return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
+export async function copyText(text: string): Promise<boolean> {
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch {
+        /* Fall through to execCommand. */
+    }
+    const textarea = document.createElement("textarea");
+    try {
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        return document.execCommand("copy");
+    } catch {
+        return false;
+    } finally {
+        textarea.remove();
+    }
+}
+
 function LoginScreen({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const [server, setServer] = useState(client.suggestedServer());
     const [username, setUsername] = useState("");
