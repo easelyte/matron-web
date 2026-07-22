@@ -65,12 +65,14 @@ import {
     childrenOf,
     type ClientState,
     conversationTitle,
+    type DeviceDTO,
     displaySender,
     type EventPayload,
     isNearBottom,
     type JournalEvent,
     type PendingMessage,
     parentPresent,
+    type RecentFolder,
     runningChildrenOf,
     isSubChat,
     type SessionStatus,
@@ -263,6 +265,306 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
                         )}
                     </div>
                 </main>
+            </div>
+        </div>
+    );
+}
+
+type SheetState =
+    | { step: "loading-agents" }
+    | { step: "agents-error" }
+    | { step: "agents"; agents: DeviceDTO[] }
+    | {
+          step: "folders";
+          agent: DeviceDTO;
+          foldersRequestId: number;
+          folders?: RecentFolder[];
+          foldersError?: string;
+      }
+    | { step: "starting"; agent: DeviceDTO }
+    | { step: "uncertain" }
+    | { step: "error"; agent: DeviceDTO; message: string };
+
+function agentName(agent: DeviceDTO): string {
+    return agent.name?.trim() || `Agent ${agent.device_id}`;
+}
+
+function agentStatus(agent: DeviceDTO): string {
+    if (agent.connected) return "Connected";
+    if (agent.last_seen_at === undefined) return "Offline · last seen unknown";
+    const timestamp = agent.last_seen_at < 1_000_000_000_000 ? agent.last_seen_at * 1000 : agent.last_seen_at;
+    return `Offline · last seen ${new Date(timestamp).toLocaleString()}`;
+}
+
+export function NewSessionSheet({
+    client,
+    onClose,
+}: {
+    client: MatronJournalClient;
+    onClose: () => void;
+}): React.ReactElement {
+    const [sheetState, setSheetState] = useState<SheetState>({ step: "loading-agents" });
+    const [workdir, setWorkdir] = useState("");
+    const [browserTools, setBrowserTools] = useState(false);
+    const [showBack, setShowBack] = useState(false);
+    const sheetStateRef = useRef(sheetState);
+    const agentsRef = useRef<DeviceDTO[]>([]);
+    const agentsRequestIdRef = useRef(0);
+    const foldersRequestIdRef = useRef(0);
+    const startingRef = useRef(false);
+    const mountedRef = useRef(false);
+    const dismissedRef = useRef(false);
+
+    const transition = useCallback((next: SheetState): void => {
+        sheetStateRef.current = next;
+        setSheetState(next);
+    }, []);
+
+    const loadFolders = useCallback(
+        (agent: DeviceDTO, backAvailable: boolean): void => {
+            const foldersRequestId = ++foldersRequestIdRef.current;
+            setShowBack(backAvailable);
+            transition({ step: "folders", agent, foldersRequestId });
+            void client.recentFolders(agent.device_id).then(
+                (folders) => {
+                    const current = sheetStateRef.current;
+                    if (
+                        !mountedRef.current ||
+                        dismissedRef.current ||
+                        current.step !== "folders" ||
+                        current.agent.device_id !== agent.device_id ||
+                        current.foldersRequestId !== foldersRequestId
+                    ) {
+                        return;
+                    }
+                    transition({ ...current, folders });
+                },
+                () => {
+                    const current = sheetStateRef.current;
+                    if (
+                        !mountedRef.current ||
+                        dismissedRef.current ||
+                        current.step !== "folders" ||
+                        current.agent.device_id !== agent.device_id ||
+                        current.foldersRequestId !== foldersRequestId
+                    ) {
+                        return;
+                    }
+                    transition({ ...current, folders: [], foldersError: "Couldn't load recent folders." });
+                },
+            );
+        },
+        [client, transition],
+    );
+
+    const loadAgents = useCallback((): void => {
+        const agentsRequestId = ++agentsRequestIdRef.current;
+        transition({ step: "loading-agents" });
+        void client.listAgents().then(
+            (agents) => {
+                if (!mountedRef.current || dismissedRef.current || agentsRequestId !== agentsRequestIdRef.current) {
+                    return;
+                }
+                agentsRef.current = agents;
+                const connectedAgents = agents.filter((agent) => agent.connected);
+                if (connectedAgents.length === 1) {
+                    loadFolders(connectedAgents[0], false);
+                } else {
+                    setShowBack(true);
+                    transition({ step: "agents", agents });
+                }
+            },
+            () => {
+                if (mountedRef.current && !dismissedRef.current && agentsRequestId === agentsRequestIdRef.current) {
+                    transition({ step: "agents-error" });
+                }
+            },
+        );
+    }, [client, loadFolders, transition]);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        loadAgents();
+        return () => {
+            mountedRef.current = false;
+        };
+    }, [loadAgents]);
+
+    const dismiss = (): void => {
+        dismissedRef.current = true;
+        onClose();
+    };
+
+    const start = async (agent: DeviceDTO, path = workdir, browser = browserTools): Promise<void> => {
+        if (startingRef.current || dismissedRef.current) return;
+        startingRef.current = true;
+        transition({ step: "starting", agent });
+        const outcome = await client.startSessionRpc(agent.device_id, path, browser);
+        if (!mountedRef.current || dismissedRef.current) return;
+        if (outcome.kind === "created") {
+            dismissedRef.current = true;
+            onClose();
+            void client.selectConversation(outcome.convoId, { fromRpcCreate: true });
+            return;
+        }
+        if (outcome.kind === "uncertain") {
+            transition({ step: "uncertain" });
+            return;
+        }
+        startingRef.current = false;
+        transition({ step: "error", agent, message: outcome.message });
+    };
+
+    const folderState = sheetState.step === "folders" ? sheetState : undefined;
+
+    return (
+        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-new-session-title">
+            <div className="mj_UploadConfirm">
+                <div className="mj_UploadConfirm_actions">
+                    <h2 className="mj_UploadConfirm_title" id="mj-new-session-title">
+                        New session
+                    </h2>
+                    <button type="button" aria-label="Close" onClick={dismiss}>
+                        Close
+                    </button>
+                </div>
+
+                {sheetState.step === "loading-agents" && (
+                    <div role="status">
+                        <span className="mj_Spinner" aria-hidden="true" /> Loading agents…
+                    </div>
+                )}
+
+                {sheetState.step === "agents-error" && (
+                    <>
+                        <p className="mj_UploadConfirm_error">Couldn't load agents.</p>
+                        <div className="mj_UploadConfirm_actions">
+                            <button type="button" className="mj_UploadConfirm_send" onClick={loadAgents}>
+                                Retry
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {sheetState.step === "agents" && (
+                    <>
+                        {sheetState.agents.length === 0 ? (
+                            <p>No agents connected — start the bridge on your box.</p>
+                        ) : (
+                            <div role="list" aria-label="Agents">
+                                {sheetState.agents.map((agent) => (
+                                    <button
+                                        key={agent.device_id}
+                                        type="button"
+                                        role="listitem"
+                                        disabled={!agent.connected}
+                                        onClick={() => loadFolders(agent, true)}
+                                    >
+                                        <strong>{agentName(agent)}</strong>
+                                        <span>{agentStatus(agent)}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </>
+                )}
+
+                {folderState && (
+                    <>
+                        <p>Start on {agentName(folderState.agent)}</p>
+                        {folderState.folders === undefined ? (
+                            <div role="status">
+                                <span className="mj_Spinner" aria-hidden="true" /> Loading recent folders…
+                            </div>
+                        ) : (
+                            folderState.folders.length > 0 && (
+                                <div role="list" aria-label="Recent folders">
+                                    {folderState.folders.map((folder) => (
+                                        <button
+                                            key={folder.path}
+                                            type="button"
+                                            role="listitem"
+                                            onClick={() => {
+                                                setWorkdir(folder.path);
+                                                void start(folderState.agent, folder.path, browserTools);
+                                            }}
+                                        >
+                                            {folder.path}
+                                        </button>
+                                    ))}
+                                </div>
+                            )
+                        )}
+                        {folderState.foldersError && (
+                            <p className="mj_UploadConfirm_error">{folderState.foldersError}</p>
+                        )}
+                        <label htmlFor="mj-new-session-workdir">Folder path</label>
+                        <input
+                            id="mj-new-session-workdir"
+                            type="text"
+                            value={workdir}
+                            onChange={(event) => setWorkdir(event.target.value)}
+                            placeholder="Agent default"
+                        />
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={browserTools}
+                                onChange={(event) => setBrowserTools(event.target.checked)}
+                            />{" "}
+                            Browser tools
+                        </label>
+                        <div className="mj_UploadConfirm_actions">
+                            {showBack && (
+                                <button
+                                    type="button"
+                                    onClick={() => transition({ step: "agents", agents: agentsRef.current })}
+                                >
+                                    Back
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                className="mj_UploadConfirm_send"
+                                onClick={() => void start(folderState.agent)}
+                            >
+                                Start
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {sheetState.step === "starting" && (
+                    <div role="status">
+                        <span className="mj_Spinner" aria-hidden="true" /> Starting session…
+                    </div>
+                )}
+
+                {sheetState.step === "uncertain" && (
+                    <>
+                        <p>The session may have started. Check your conversations before trying again.</p>
+                        <div className="mj_UploadConfirm_actions">
+                            <button type="button" onClick={dismiss}>
+                                Close
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {sheetState.step === "error" && (
+                    <>
+                        <p className="mj_UploadConfirm_error">{sheetState.message}</p>
+                        <div className="mj_UploadConfirm_actions">
+                            <button
+                                type="button"
+                                className="mj_UploadConfirm_send"
+                                onClick={() => void start(sheetState.agent)}
+                            >
+                                Retry
+                            </button>
+                        </div>
+                    </>
+                )}
             </div>
         </div>
     );
