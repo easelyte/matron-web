@@ -294,26 +294,42 @@ describe("read-only subagent transcript egress", () => {
     });
 
     it("purges blocked texts atomically on reconnect with one read-only notice", async () => {
-        const texts: PendingMessage[] = [
+        const childTexts: PendingMessage[] = [
             { localId: "text-1", convoId: CHILD.id, body: "do not replay", createdAt: 1 },
             { localId: "text-2", convoId: CHILD.id, body: "also do not replay", createdAt: 2, kind: "text" },
         ];
+        const parentText: PendingMessage = {
+            localId: "parent-text",
+            convoId: PARENT.id,
+            body: "replay me",
+            createdAt: 3,
+        };
         const client = new MatronJournalClient();
         const state = internals(client);
-        const { database, rows } = fakeDatabase(texts);
+        const { database, rows } = fakeDatabase([...childTexts, parentText]);
         const api = {};
         const send = jest.fn().mockReturnValue(true);
         state.state = childState(client);
         state.api = api;
         state.database = database;
         state.connection = { send };
+        database.deleteOutboxRows.mockImplementationOnce(async (localIds) => {
+            expect(state.state.controlError).toBe("Couldn't send to a read-only subagent transcript.");
+            for (const localId of localIds) rows.delete(localId);
+        });
 
         await state.handleReady();
 
         expect(database.deleteOutboxRows).toHaveBeenCalledTimes(1);
         expect(database.deleteOutboxRows).toHaveBeenCalledWith(["text-1", "text-2"]);
-        expect(rows.size).toBe(0);
-        expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "send" }));
+        expect([...rows.keys()]).toEqual([parentText.localId]);
+        expect(send).toHaveBeenCalledWith({
+            op: "send",
+            convo_id: PARENT.id,
+            type: "text",
+            payload: { body: parentText.body, local_id: parentText.localId },
+            local_id: parentText.localId,
+        });
         expect(state.state.controlError).toBe("Couldn't send to a read-only subagent transcript.");
     });
 

@@ -1158,9 +1158,9 @@ export class MatronJournalClient {
             else blockedTextIds.push(message.localId);
         }
         if (blockedTextIds.length > 0) {
+            if (ownsReplay()) this.patch({ controlError: "Couldn't send to a read-only subagent transcript." });
             try {
                 await db.deleteOutboxRows(blockedTextIds);
-                if (ownsReplay()) this.patch({ controlError: "Couldn't send to a read-only subagent transcript." });
             } catch {
                 if (ownsReplay()) {
                     this.patch({ controlError: "Couldn't update blocked messages — device storage is unavailable." });
