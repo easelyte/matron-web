@@ -141,6 +141,36 @@ textarea {
     line-height: 16px;
 }
 
+.mj_HeaderContextRow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.mj_CompactButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--cpd-color-text-secondary);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.mj_CompactButton svg {
+    width: 12px;
+    height: 12px;
+}
+
+.mj_CompactButton:hover {
+    color: var(--cpd-color-text-primary);
+}
+
 .mj_HeaderEmail {
     width: 100%;
     text-align: center;
@@ -1185,9 +1215,39 @@ button.mj_File {
 }
 
 .mj_ConnectionError {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
     margin: var(--cpd-space-2x) 0;
     color: var(--cpd-color-text-critical-primary);
     font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_ConnectionError span[role="status"] {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.mj_ConnectionError_dismiss {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.mj_ConnectionError_dismiss svg {
+    width: 16px;
+    height: 16px;
 }
 
 .mj_Error {

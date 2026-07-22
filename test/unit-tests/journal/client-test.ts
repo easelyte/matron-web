@@ -340,6 +340,33 @@ describe("MatronJournalClient state handling", () => {
         expect(client.getSnapshot().connectionError).toBeUndefined();
     });
 
+    it("bumps connectionErrorSeq on every error set including an identical repeat, never on clear", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const messages = jest
+            .fn()
+            .mockRejectedValueOnce(new Error("same message"))
+            .mockRejectedValueOnce(new Error("same message"))
+            .mockResolvedValueOnce({ events: [] });
+        state.state = signedInState(client);
+        state.database = fakeDatabase();
+        state.api = { messages };
+
+        expect(client.getSnapshot().connectionErrorSeq).toBe(0);
+
+        await client.loadOlderHistory();
+        expect(client.getSnapshot().connectionError).toBe("same message");
+        expect(client.getSnapshot().connectionErrorSeq).toBe(1);
+
+        await client.loadOlderHistory(); // identical string re-set on a non-clearing path
+        expect(client.getSnapshot().connectionError).toBe("same message");
+        expect(client.getSnapshot().connectionErrorSeq).toBe(2); // still bumps
+
+        await client.loadOlderHistory(); // success clears the error
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+        expect(client.getSnapshot().connectionErrorSeq).toBe(2); // clear does NOT bump
+    });
+
     it("keeps initial pagination retryable when the summary says history exists", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);

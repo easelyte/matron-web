@@ -193,6 +193,7 @@ export interface ClientState {
     pendingMessages: PendingMessage[];
     connection: ConnectionState;
     connectionError?: string;
+    connectionErrorSeq: number;
     loadingHistory: boolean;
     hasOlderHistory: boolean;
     activity?: JournalEphemeralFrame["activity"];
