@@ -718,6 +718,18 @@ export class MatronJournalClient {
         if (!this.ownsAttachment(owner, message.localId)) return;
 
         if (this.dismissedAttachments.has(message.localId)) return;
+        // Re-check child state immediately before egress — no await follows, so this synchronous check
+        // and the send are atomic w.r.t. in-memory state. The convo may have transitioned to a read-only
+        // child during the awaits above (concurrent convo_meta / snapshot refresh) after the entry check
+        // at line 701. Defense-in-depth last line; authoritative read-only enforcement is server-side
+        // (#453 three-layer model — a documented server follow-up). (ship-review B1)
+        if (this.isChildConvo(message.convoId)) {
+            this.markChildBlocked(message);
+            if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
+            if (!this.ownsAttachment(owner, message.localId)) return;
+            await this.refreshSelectedConversation(message.convoId, owner.db, owner.gen);
+            return;
+        }
         const ok = this.connection?.send({
             op: "send",
             convo_id: message.convoId,
