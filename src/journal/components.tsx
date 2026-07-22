@@ -1942,10 +1942,8 @@ function SlashCommandPalette({
                           role="option"
                           aria-selected={highlighted === index}
                           onMouseEnter={() => onHighlight(index)}
-                          onMouseDown={(event) => {
-                              event.preventDefault();
-                              onSelectFolder(folder);
-                          }}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => onSelectFolder(folder)}
                       >
                           <span className="mx_SlashPalette_trigger">{folder}</span>
                       </div>
@@ -1961,10 +1959,8 @@ function SlashCommandPalette({
                           role="option"
                           aria-selected={highlighted === index}
                           onMouseEnter={() => onHighlight(index)}
-                          onMouseDown={(event) => {
-                              event.preventDefault();
-                              onSelectCommand(command);
-                          }}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => onSelectCommand(command)}
                       >
                           <span className="mx_SlashPalette_trigger">{command.trigger}</span>
                           {command.argHint && <span className="mx_SlashPalette_argHint">{command.argHint}</span>}
