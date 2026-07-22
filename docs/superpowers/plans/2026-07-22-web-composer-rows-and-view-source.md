@@ -47,8 +47,9 @@
 **Interfaces:**
 - Consumes: `Session` from `./types`; `utf8Length` from `./types`.
 - Produces: `makeDraftStore(session: Session | undefined): DraftStore` where
-  `interface DraftStore { read(convoId: string): { text: string; ok: boolean }; write(convoId: string, text: string): void; clear(convoId: string): void; }`
+  `interface DraftStore { read(convoId: string): { text: string; ok: boolean }; setDraft(convoId: string, text: string): void; persist(): void; clear(convoId: string): void; }`
   and exported consts `MAX_DRAFT_BYTES`, `MAX_DRAFT_ENTRIES`.
+- **Memory/persist split (round-1 B3 fix):** `setDraft` mutates the in-memory map ONLY (cheap, synchronous — safe to call every keystroke); `persist()` serializes the whole map to localStorage (the expensive `JSON.stringify` + `setItem`, best-effort). The Composer calls `setDraft` on every edit and **debounces `persist()`** so localStorage is written at most once per ~250 ms. `clear` deletes from memory then persists immediately. This makes the debounce real (memory always current for navigation-safety; localStorage coalesced). A single debounce timer is correct because `persist()` writes the *whole* map — there is no per-convo timer to race.
 
 - [ ] **Step 1: Write the failing test file** (`composer-drafts-test.ts`)
 
@@ -62,23 +63,29 @@ const KEY = `matron:draft:${encodeURIComponent(SESSION.serverUrl)}:${SESSION.use
 
 beforeEach(() => localStorage.clear());
 
-test("write then read round-trips and persists to localStorage", () => {
+test("setDraft updates memory but does NOT touch localStorage; persist writes it", () => {
     const s = makeDraftStore(SESSION);
-    s.write("c1", "hello");
+    const setItem = jest.spyOn(Storage.prototype, "setItem");
+    s.setDraft("c1", "hello");
     expect(s.read("c1")).toEqual({ text: "hello", ok: true });
+    expect(setItem).not.toHaveBeenCalled();            // memory-only
+    s.persist();
     expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ c1: "hello" });
+    setItem.mockRestore();
 });
 
 test("undefined session is a full no-op, read ok:true empty", () => {
     const s = makeDraftStore(undefined);
-    s.write("c1", "x");
+    s.setDraft("c1", "x");
+    s.persist();
     expect(s.read("c1")).toEqual({ text: "", ok: true });
 });
 
 test("empty text prunes the entry", () => {
     const s = makeDraftStore(SESSION);
-    s.write("c1", "hi");
-    s.write("c1", "   ");
+    s.setDraft("c1", "hi");
+    s.setDraft("c1", "   ");
+    s.persist();
     expect(s.read("c1").text).toBe("");
     expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({});
 });
@@ -86,8 +93,9 @@ test("empty text prunes the entry", () => {
 test("in-memory map survives a throwing setItem (navigation-safe)", () => {
     const s = makeDraftStore(SESSION);
     const spy = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("quota", "QuotaExceededError"); });
-    expect(() => s.write("c1", "kept")).not.toThrow();
-    expect(s.read("c1")).toEqual({ text: "kept", ok: true }); // memory-first
+    s.setDraft("c1", "kept");
+    expect(() => s.persist()).not.toThrow();
+    expect(s.read("c1")).toEqual({ text: "kept", ok: true }); // memory-first, unaffected by persist failure
     spy.mockRestore();
 });
 
@@ -108,11 +116,12 @@ test("array/null top-level treated as empty map", () => {
     expect(makeDraftStore(SESSION).read("c1")).toEqual({ text: "", ok: true });
 });
 
-test("unparseable JSON reads empty and next write resets the blob", () => {
+test("unparseable JSON reads empty and next persist resets the blob", () => {
     localStorage.setItem(KEY, "{not json");
     const s = makeDraftStore(SESSION);
     expect(s.read("c1")).toEqual({ text: "", ok: true });
-    s.write("c2", "new");
+    s.setDraft("c2", "new");
+    s.persist();
     expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ c2: "new" });
 });
 
@@ -123,31 +132,31 @@ test("throwing getItem on a memory-miss read returns ok:false", () => {
     spy.mockRestore();
 });
 
-test("oversized draft deletes the entry (both smaller kept)", () => {
+test("oversized draft deletes the entry (smaller kept)", () => {
     const s = makeDraftStore(SESSION);
-    s.write("c1", "small");
-    s.write("c1", "x".repeat(MAX_DRAFT_BYTES + 1));
+    s.setDraft("c1", "small");
+    s.setDraft("c1", "x".repeat(MAX_DRAFT_BYTES + 1));
     expect(s.read("c1").text).toBe("");
 });
 
 test("per-session key isolation", () => {
-    makeDraftStore(SESSION).write("c1", "a");
+    const a = makeDraftStore(SESSION); a.setDraft("c1", "a"); a.persist();
     const other: Session = { ...SESSION, userId: 99 };
     expect(makeDraftStore(other).read("c1").text).toBe("");
 });
 
 test("entry cap evicts by recency (re-write refreshes position)", () => {
     const s = makeDraftStore(SESSION);
-    for (let i = 0; i < 50; i++) s.write(`k${i}`, `v${i}`);
-    s.write("k0", "refreshed");     // k0 becomes most-recent
-    s.write("k50", "new");          // triggers eviction of the now-oldest (k1)
+    for (let i = 0; i < 50; i++) s.setDraft(`k${i}`, `v${i}`);
+    s.setDraft("k0", "refreshed");     // k0 becomes most-recent
+    s.setDraft("k50", "new");          // triggers eviction of the now-oldest (k1)
     expect(s.read("k0").text).toBe("refreshed");
     expect(s.read("k1").text).toBe("");
 });
 
-test("clear removes the entry from memory and storage", () => {
+test("clear removes the entry from memory and persists immediately", () => {
     const s = makeDraftStore(SESSION);
-    s.write("c1", "x");
+    s.setDraft("c1", "x"); s.persist();
     s.clear("c1");
     expect(s.read("c1").text).toBe("");
     expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({});
@@ -171,13 +180,15 @@ export const MAX_DRAFT_ENTRIES = 50;
 
 export interface DraftStore {
     read(convoId: string): { text: string; ok: boolean };
-    write(convoId: string, text: string): void;
-    clear(convoId: string): void;
+    setDraft(convoId: string, text: string): void; // in-memory only
+    persist(): void;                                 // serialize whole map → localStorage (best-effort)
+    clear(convoId: string): void;                    // memory delete + persist
 }
 
 const NOOP: DraftStore = {
     read: () => ({ text: "", ok: true }),
-    write: () => undefined,
+    setDraft: () => undefined,
+    persist: () => undefined,
     clear: () => undefined,
 };
 
@@ -235,7 +246,7 @@ export function makeDraftStore(session: Session | undefined): DraftStore {
             }
             return { text: mem.get(convoId) ?? "", ok: true };
         },
-        write(convoId, text) {
+        setDraft(convoId, text) {
             if (!hydrated) hydrate();
             mem.delete(convoId); // delete-then-reinsert → recency ordering
             if (text.trim() !== "" && utf8Length(text) <= MAX_DRAFT_BYTES) {
@@ -245,8 +256,9 @@ export function makeDraftStore(session: Session | undefined): DraftStore {
                     mem.delete(oldest);
                 }
             }
-            persist();
+            // NO persist here — memory only; the Composer debounces persist().
         },
+        persist,
         clear(convoId) {
             if (!hydrated) hydrate();
             mem.delete(convoId);
@@ -281,7 +293,7 @@ git commit -m "feat(composer): in-memory-authoritative per-conversation draft st
   - hook `useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContextMenu<T>` where
     `interface RowContextMenu<T> { state: { target: T; left: number; top: number } | undefined; menuRef: React.RefObject<HTMLDivElement>; open(target: T, left: number, top: number, opener: HTMLElement | null): void; close(restoreFocus?: boolean): void; rowHandlers(target: T, getRow: () => HTMLElement): { onContextMenu; onPointerDown; onPointerMove; onPointerUp; onPointerCancel }; menuKeyDown(e: React.KeyboardEvent): void; }`.
 
-> **Test note:** the repo has no hook-testing library. Unit-test the **pure helpers** here; the hook's stateful wiring (open on right-click / long-press, close on switch, keyboard nav) is covered by rendering `EventRow` in `components-test.ts` (T-2.2/T-2.3). This mirrors how `longPress-test.ts` tests the pure controller while its wiring is exercised elsewhere.
+> **Test note:** the repo has no hook-testing library. Unit-test the **pure helpers** here; the hook's stateful wiring (open on right-click / long-press, close on switch, keyboard nav) is covered by rendering `EventRow` in `components-test.ts` (T-2.1). This mirrors how `longPress-test.ts` tests the pure controller while its wiring is exercised elsewhere.
 
 - [ ] **Step 1: Write the failing test** (`context-menu-test.ts`)
 
@@ -355,8 +367,9 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
     const menuRef = useRef<HTMLDivElement | null>(null);
     const openerRef = useRef<HTMLElement | null>(null);
     const didFireRef = useRef(false);
-    const pressTargetRef = useRef<{ target: T; getRow: () => HTMLElement }>();
-    const controllerRef = useRef<LongPressController>();
+    const pressTargetRef = useRef<{ target: T; getRow: () => HTMLElement } | undefined>(undefined);
+    const controllerRef = useRef<LongPressController | undefined>(undefined);
+    const pressScrollCleanupRef = useRef<() => void>(() => undefined); // cancels a PENDING press on scroll
 
     const open = useCallback((target: T, left: number, top: number, opener: HTMLElement | null) => {
         openerRef.current = opener;
@@ -372,6 +385,7 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
         controllerRef.current = createLongPressController({
             delayMs: opts?.longPressMs ?? 500,
             onFire: () => {
+                pressScrollCleanupRef.current();
                 const p = pressTargetRef.current;
                 if (!p) return;
                 didFireRef.current = true;
@@ -409,7 +423,7 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
         menuRef.current.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     }, [state]);
 
-    useEffect(() => () => controllerRef.current?.onPointerCancel(), []);
+    useEffect(() => () => { controllerRef.current?.onPointerCancel(); pressScrollCleanupRef.current(); }, []);
 
     const rowHandlers = useCallback((target: T, getRow: () => HTMLElement) => ({
         onContextMenu(e: React.MouseEvent) {
@@ -424,6 +438,16 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
             didFireRef.current = false;
             pressTargetRef.current = { target, getRow };
             controllerRef.current?.onPointerDown(e.clientX, e.clientY);
+            // Cancel a still-PENDING press on any scroll during the 500ms window (mirrors HEAD's
+            // room-menu press-scroll cleanup, components.tsx:340). The menu-open scroll-close effect
+            // only exists AFTER the menu opens; this covers the pre-open window.
+            pressScrollCleanupRef.current();
+            const onScroll = () => { controllerRef.current?.onPointerCancel(); pressScrollCleanupRef.current(); };
+            document.addEventListener("scroll", onScroll, true);
+            pressScrollCleanupRef.current = () => {
+                document.removeEventListener("scroll", onScroll, true);
+                pressScrollCleanupRef.current = () => undefined;
+            };
         },
         onPointerMove(e: React.PointerEvent) {
             if (e.pointerType !== "touch") return;
@@ -432,9 +456,10 @@ export function useRowContextMenu<T>(opts?: { longPressMs?: number }): RowContex
         onPointerUp(e: React.PointerEvent) {
             if (e.pointerType !== "touch") return;
             controllerRef.current?.onPointerUp();
+            pressScrollCleanupRef.current();
         },
         onPointerCancel(e: React.PointerEvent) {
-            if (e.pointerType === "touch") controllerRef.current?.onPointerCancel();
+            if (e.pointerType === "touch") { controllerRef.current?.onPointerCancel(); pressScrollCleanupRef.current(); }
         },
     }), [open]);
 
@@ -623,37 +648,87 @@ git commit -m "feat(timeline): shared async copyText clipboard helper (#471/#476
 
 Depends on Phase 1 (`useRowContextMenu`, `copyText`). Independent of Phase 3.
 
-### T-2.1: `EventSourceSheet` modal + Timeline `sourceEvent` state
+> **Test-harness note (applies to every `components-test.ts` case in Phases 2–3):** the render helpers must set `internals(client).database = {...}` (the existing pattern at `components-test.ts:~698` / `~895`) BEFORE driving `client.selectConversation(...)` — otherwise `selectConversation` early-returns on the `if (!this.database ...)` guard (`client.ts:331`) and every cross-conversation assertion silently "passes" for the wrong reason (nothing switched). Reuse the existing seeded-client helper; don't hand-roll a bare client.
+
+### T-2.1: Event-row context menu + View Source sheet (atomic)
+
+Merged (round-1 B2): the menu and the sheet are interdependent (the menu's "View source" sets the sheet state), so they land as **one atomic task with one commit** — no intermediate red-test handoff between per-task workers.
 
 **Files:**
-- Modify: `src/journal/components.tsx` (add `EventSourceSheet` beside `UploadConfirmDialog`; add `sourceEvent` state in `Timeline`)
+- Modify: `src/journal/components.tsx` (add `EventSourceSheet` beside `UploadConfirmDialog`; add `sourceEvent` state + `useRowContextMenu` + menu render in `Timeline`; add `rowHandlers` to `EventRow`)
 - Test: `test/unit-tests/journal/components-test.ts`
 
 **Interfaces:**
-- Consumes: `copyText` (T-1.4); `JournalEvent` from `./types`.
-- Produces: `function EventSourceSheet({ event, onClose }: { event: JournalEvent; onClose: () => void }): React.ReactElement`.
+- Consumes: `useRowContextMenu<JournalEvent>` (T-1.2), `copyText` (T-1.4), `JournalEvent`/`asString` from `./types`.
+- Produces: `function EventSourceSheet({ event, onClose }: { event: JournalEvent; onClose: () => void }): React.ReactElement`; an `mj_HeaderMenu mj_EventRowMenu` rendered by `Timeline`; `rowHandlers` spread onto each `EventRow` `<li>` (via new `EventRow` props `rowHandlers` + `didFireRef`).
 
-- [ ] **Step 1: Write the failing test** — render the app with an open conversation + one text event, invoke View source (drive via `setSourceEvent` exercised in T-2.2; here assert the sheet renders the DTO JSON and closes).
+- [ ] **Step 1: Write failing tests** — add local helpers `renderAppWithEvents(events, convoIds?)`, `openRowMenu(container, seq)` (dispatch a `contextmenu` on the `[data-event-id="<seq>"]` `<li>` inside `act`), `clickMenuItem(container, label)`, `clickButton(container, label)`, `rightClick(node)` (all wrap `dispatchEvent`/`click` in `act`). Follow the seeded-client harness note above.
 
 ```ts
-// Given the timeline has an event with seq 5, opening the source sheet shows its JSON and closes on Done.
-test("EventSourceSheet shows the event DTO JSON and closes on Done", async () => {
-    const { container } = renderAppWithEvents([{ seq: 5, convo_id: "c1", ts: 1, sender: "user:u", type: "text", payload: { body: "hi" } }]);
-    await openRowMenu(container, 5);                    // helper: right-click the EventRow (built in T-2.2)
+test("right-click a text EventRow opens a menu with Copy and View source", async () => {
+    const { container } = renderAppWithEvents([textEvent(5, "hi")]);
+    await openRowMenu(container, 5);
+    const items = [...container.querySelectorAll('.mj_EventRowMenu [role="menuitem"]')].map((n) => n.textContent);
+    expect(items).toEqual(["Copy", "View source"]);
+});
+test("a non-text event hides Copy, keeps View source", async () => {
+    const { container } = renderAppWithEvents([{ seq: 6, convo_id: "c1", ts: 1, sender: "agent", type: "diff", payload: {} }]);
+    await openRowMenu(container, 6);
+    expect([...container.querySelectorAll('.mj_EventRowMenu [role="menuitem"]')].map((n) => n.textContent)).toEqual(["View source"]);
+});
+test("a ToolStream / pending placeholder row has no menu on right-click", async () => {
+    const { container } = renderAppWithToolStream();
+    const row = container.querySelector(".mj_LiveTool")!.closest("li")!;
+    await rightClick(row);
+    expect(container.querySelector(".mj_EventRowMenu")).toBeNull();
+});
+test("Copy on a text row calls the clipboard with the body", async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const { container } = renderAppWithEvents([textEvent(5, "hello")]);
+    await openRowMenu(container, 5);
+    await clickMenuItem(container, "Copy");
+    expect(writeText).toHaveBeenCalledWith("hello");
+});
+test("View source shows the event DTO JSON; Copy button, Done, Esc, and backdrop all close", async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const { container } = renderAppWithEvents([textEvent(5, "hi")]);
+    await openRowMenu(container, 5);
     await clickMenuItem(container, "View source");
-    const pre = container.querySelector(".mj_EventSource pre")!;
+    const pre = container.querySelector(".mj_EventSource_json")!;
     expect(pre.textContent).toContain('"seq": 5');
     expect(pre.textContent).toContain('"body": "hi"');
+    await clickButton(container, "Copy");
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"seq": 5'));
     await clickButton(container, "Done");
     expect(container.querySelector(".mj_EventSource")).toBeNull();
+    // Esc close
+    await openRowMenu(container, 5); await clickMenuItem(container, "View source");
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
+    expect(container.querySelector(".mj_EventSource")).toBeNull();
+    // backdrop close
+    await openRowMenu(container, 5); await clickMenuItem(container, "View source");
+    await act(async () => { (container.querySelector(".mj_EventSource") as HTMLElement).click(); });
+    expect(container.querySelector(".mj_EventSource")).toBeNull();
+});
+test("long-press opens the menu; a scroll during the press cancels it", async () => {
+    jest.useFakeTimers();
+    const { container } = renderAppWithEvents([textEvent(5, "hi")]);
+    const li = container.querySelector('[data-event-id="5"]') as HTMLElement;
+    // press then scroll before 500ms → no menu
+    await touchPress(li); await act(async () => { document.dispatchEvent(new Event("scroll", { bubbles: true })); jest.advanceTimersByTime(500); });
+    expect(container.querySelector(".mj_EventRowMenu")).toBeNull();
+    // press, hold 500ms → menu opens
+    await touchPress(li); await act(async () => { jest.advanceTimersByTime(500); });
+    expect(container.querySelector(".mj_EventRowMenu")).not.toBeNull();
+    jest.useRealTimers();
 });
 ```
 
-> Reuse the existing `components-test.ts` render helpers (`createRoot` + `act`). `openRowMenu`/`clickMenuItem`/`clickButton` are small local helpers added alongside these cases (dispatch `contextmenu` / `click` events wrapped in `act`).
+- [ ] **Step 2: Run to verify it fails** — `pnpm exec jest components-test -i -t "EventRow|View source|long-press"` → FAIL.
 
-- [ ] **Step 2: Run to verify it fails** — `pnpm exec jest components-test -i -t EventSourceSheet` → FAIL.
-
-- [ ] **Step 3: Implement `EventSourceSheet`** and add `sourceEvent` state to `Timeline`
+- [ ] **Step 3: Implement `EventSourceSheet`, the hook wiring, and the menu**
 
 ```tsx
 function EventSourceSheet({ event, onClose }: { event: JournalEvent; onClose: () => void }): React.ReactElement {
@@ -679,107 +754,39 @@ function EventSourceSheet({ event, onClose }: { event: JournalEvent; onClose: ()
     );
 }
 ```
-
-In `Timeline`, add: `const [sourceEvent, setSourceEvent] = useState<JournalEvent | undefined>();` and render `{sourceEvent && <EventSourceSheet event={sourceEvent} onClose={() => setSourceEvent(undefined)} />}` at the end of the `Timeline` return.
-
-- [ ] **Step 4: Run to verify it passes** — after T-2.2 wires the menu, this test goes green. If run standalone now, it fails on the missing menu; that's expected — T-2.1 and T-2.2 land together (commit T-2.2 makes the case green). Verify the component compiles: `pnpm exec tsc --noEmit`.
-
-- [ ] **Step 5: Commit** (component + state only; test stays red until T-2.2)
-
-```bash
-pnpm exec prettier --write src/journal/components.tsx
-git add src/journal/components.tsx
-git commit -m "feat(timeline): EventSourceSheet modal + Timeline sourceEvent state (#476)"
-```
-
-### T-2.2: Wire the event-row context menu (Copy + View source)
-
-**Files:**
-- Modify: `src/journal/components.tsx` (`EventRow`, `Timeline`)
-- Test: `test/unit-tests/journal/components-test.ts`
-
-**Interfaces:**
-- Consumes: `useRowContextMenu<JournalEvent>` (T-1.2), `copyText` (T-1.4), `setSourceEvent` (T-2.1).
-- Produces: an `mj_HeaderMenu mj_EventRowMenu` rendered by `Timeline`, plus `rowHandlers` spread onto each `EventRow` `<li>`.
-
-- [ ] **Step 1: Write failing tests**
-
-```ts
-test("right-click a text EventRow opens a menu with Copy and View source", async () => {
-    const { container } = renderAppWithEvents([textEvent(5, "hi")]);
-    await openRowMenu(container, 5);
-    const items = [...container.querySelectorAll('.mj_EventRowMenu [role="menuitem"]')].map((n) => n.textContent);
-    expect(items).toEqual(["Copy", "View source"]);
-});
-test("a non-text event hides Copy, keeps View source", async () => {
-    const { container } = renderAppWithEvents([{ seq: 6, convo_id: "c1", ts: 1, sender: "agent", type: "diff", payload: {} }]);
-    await openRowMenu(container, 6);
-    const items = [...container.querySelectorAll('.mj_EventRowMenu [role="menuitem"]')].map((n) => n.textContent);
-    expect(items).toEqual(["View source"]);
-});
-test("a ToolStream / pending placeholder row has no menu on right-click", async () => {
-    const { container } = renderAppWithToolStream();          // helper: renders a live ToolStream row
-    const row = container.querySelector(".mj_LiveTool")!.closest("li")!;
-    await rightClick(row);
-    expect(container.querySelector(".mj_EventRowMenu")).toBeNull();
-});
-test("Copy on a text row calls the clipboard with the body", async () => {
-    const writeText = jest.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
-    const { container } = renderAppWithEvents([textEvent(5, "hello")]);
-    await openRowMenu(container, 5);
-    await clickMenuItem(container, "Copy");
-    expect(writeText).toHaveBeenCalledWith("hello");
-});
-```
-
-- [ ] **Step 2: Run to verify it fails** — `pnpm exec jest components-test -i -t "EventRow"` → FAIL.
-
-- [ ] **Step 3: Implement** — instantiate the hook in `Timeline`, pass a per-row handler into `EventRow`, render the menu.
-
-In `Timeline`:
-```tsx
-const menu = useRowContextMenu<JournalEvent>();
-// ...pass to EventRow: <EventRow ... rowHandlers={menu.rowHandlers} didFireRef={menu.didFireRef} />
-```
-In `EventRow`, spread handlers onto the `<li>` (bound to this event; the `getRow` returns the `<li>` via a ref):
+In `Timeline`: `const [sourceEvent, setSourceEvent] = useState<JournalEvent | undefined>();` and `const menu = useRowContextMenu<JournalEvent>();`. Pass `rowHandlers={menu.rowHandlers}` to each `EventRow`. In `EventRow`, add props `{ rowHandlers, didFireRef }` and:
 ```tsx
 const liRef = useRef<HTMLLIElement>(null);
 const handlers = rowHandlers(event, () => liRef.current!);
 // <li ref={liRef} ...existing... {...handlers}>
 ```
-In `Timeline`'s return, render the menu when open:
+`ToolStream` / pending placeholder rows do NOT receive `rowHandlers` (scope enforced by construction). The `<li>` has no `onClick` nav, so `didFireRef` is currently reserved (reset per touch press in the hook) — no click to suppress today. Render at the end of `Timeline`:
 ```tsx
 {menu.state && (
     <div className="mj_HeaderMenu mj_EventRowMenu" role="menu" ref={menu.menuRef}
-         style={{ position: "fixed", left: menu.state.left, top: menu.state.top }}
-         onKeyDown={menu.menuKeyDown}>
+         style={{ position: "fixed", left: menu.state.left, top: menu.state.top }} onKeyDown={menu.menuKeyDown}>
         {menu.state.target.type === "text" && (
             <button className="mj_RoomItemMenu_item" type="button" role="menuitem"
-                    onClick={() => { void copyText(asString(menu.state!.target.payload.body)); menu.close(); }}>
-                Copy
-            </button>
+                    onClick={() => { void copyText(asString(menu.state!.target.payload.body)); menu.close(); }}>Copy</button>
         )}
         <button className="mj_RoomItemMenu_item" type="button" role="menuitem"
-                onClick={() => { setSourceEvent(menu.state!.target); menu.close(); }}>
-            View source
-        </button>
+                onClick={() => { setSourceEvent(menu.state!.target); menu.close(); }}>View source</button>
     </div>
 )}
+{sourceEvent && <EventSourceSheet event={sourceEvent} onClose={() => setSourceEvent(undefined)} />}
 ```
-Guard the row `onClick` (existing timestamp anchor etc. are unaffected; the `<li>` has no click nav, so `didFireRef` mainly suppresses the synthetic click after a long-press — add a defensive check only if a click handler is later added). `ToolStream` / pending rows do NOT get `rowHandlers`, satisfying the scope test.
 
-- [ ] **Step 4: Run to verify it passes** — `pnpm exec jest components-test -i` (T-2.1 + T-2.2 cases now green). `pnpm exec tsc --noEmit` clean.
+- [ ] **Step 4: Run to verify it passes** — `pnpm exec jest components-test -i` → PASS (all new + existing). `pnpm exec tsc --noEmit` clean, `pnpm exec prettier --check` clean.
 
 - [ ] **Step 5: Prettier + commit**
 
 ```bash
 pnpm exec prettier --write src/journal/components.tsx test/unit-tests/journal/components-test.ts
 git add src/journal/components.tsx test/unit-tests/journal/components-test.ts
-git commit -m "feat(timeline): event-row context menu — Copy + View source (#471/#476)"
+git commit -m "feat(timeline): event-row menu (Copy + View source) + EventSourceSheet (#471/#476)"
 ```
 
-### T-2.3: Close menu + sheet on conversation switch
+### T-2.2: Close menu + sheet on conversation switch
 
 **Files:**
 - Modify: `src/journal/components.tsx` (`Timeline`)
@@ -867,6 +874,17 @@ test("a throwing setItem does not lose the draft on navigation", async () => {
     expect(composerValue(container)).toBe("kept in memory");
     spy.mockRestore();
 });
+test("keystroke debounces the localStorage write (no setItem before 250ms, one after)", async () => {
+    jest.useFakeTimers();
+    const setItem = jest.spyOn(Storage.prototype, "setItem");
+    const { container } = renderComposerApp(["c1"]);
+    setItem.mockClear();
+    await typeInComposer(container, "x");
+    expect(setItem).not.toHaveBeenCalled();          // memory-only until the debounce fires
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(setItem).toHaveBeenCalledTimes(1);          // single coalesced persist
+    jest.useRealTimers();
+});
 ```
 
 - [ ] **Step 2: Run to verify it fails** — drafts bleed / reset → FAIL.
@@ -879,24 +897,28 @@ const convoId = state.selectedConversationId;
 const convoIdRef = useRef(convoId); convoIdRef.current = convoId;
 const bodyRef = useRef(body); bodyRef.current = body;
 const prevConvoIdRef = useRef(convoId);
-const draftTimerRef = useRef<ReturnType<typeof setTimeout>>();
+const draftTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
+// flushDraft = cancel the pending debounce AND persist now (used on switch/blur/teardown/send).
 const flushDraft = useCallback(() => {
     if (draftTimerRef.current) { clearTimeout(draftTimerRef.current); draftTimerRef.current = undefined; }
-}, []);
+    drafts.persist();
+}, [drafts]);
+
 const setBodyDraft = useCallback((next: string) => {
     setBody(next);
     const cid = convoIdRef.current;
     if (!cid) return;
+    drafts.setDraft(cid, next);                 // in-memory update — immediate, cheap, authoritative
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
-    drafts.write(cid, next);                    // in-memory update is immediate & authoritative...
-    draftTimerRef.current = setTimeout(() => { drafts.write(cid, next); }, 250); // ...localStorage mirror debounced
+    draftTimerRef.current = setTimeout(() => { drafts.persist(); draftTimerRef.current = undefined; }, 250); // localStorage write coalesced
 }, [drafts]);
 
-// Convo switch: flush prev, load new (always assign; ok:false -> empty). setBody directly (not setBodyDraft).
+// Convo switch: stage prev's current body, flush to storage, load new (always assign; ok:false -> empty).
+// Use setBody directly (NOT setBodyDraft) so loading doesn't schedule a write.
 useEffect(() => {
     const prev = prevConvoIdRef.current;
-    if (prev && prev !== convoId) { flushDraft(); drafts.write(prev, bodyRef.current); }
+    if (prev && prev !== convoId) { drafts.setDraft(prev, bodyRef.current); flushDraft(); }
     const { text, ok } = convoId ? drafts.read(convoId) : { text: "", ok: true };
     setBody(ok ? text : "");
     setDismissed(null);
@@ -907,7 +929,7 @@ useEffect(() => {
 ```
 Route the textarea `onChange`, `selectCommand`, and `selectFolder` `setBody(...)` calls through `setBodyDraft(...)`.
 
-> **Note on `drafts.write` inside `setBodyDraft`:** the immediate `drafts.write(cid, next)` keeps the in-memory map current for a memory-first `read` (navigation-safe); the debounced second `write` only coalesces the localStorage serialize. Both bind `cid` by value.
+> **Debounce is now real (round-1 B3 fix):** `setDraft` mutates only the in-memory map (cheap, keeps a memory-first `read` navigation-safe); the expensive `persist()` (whole-map `JSON.stringify` + `setItem`) fires at most once per 250 ms. A single timer is correct because `persist()` writes the *whole* map — no per-convo timer to race. Add a fake-timer test asserting `setItem` is NOT called on a keystroke before 250 ms and IS called once after (see below).
 
 - [ ] **Step 4: Run to verify it passes** — `pnpm exec jest components-test -i` → PASS.
 
@@ -961,26 +983,45 @@ test("send watchdog releases a hung lock after the interval", async () => {
     expect(client.sendMessage).toHaveBeenCalledTimes(2);
     jest.useRealTimers();
 });
+test("ABA: a hung send X's finally does not free a newer send Y's lock", async () => {
+    jest.useFakeTimers();
+    let resolveX!: (v: boolean) => void;
+    const sm = jest.spyOn(client, "sendMessage")
+        .mockReturnValueOnce(new Promise((r) => (resolveX = r)))  // X: settles late (after watchdog)
+        .mockReturnValue(new Promise(() => {}));                  // Y and later: still pending
+    const { container } = renderComposerApp(["c1"], client);
+    await typeInComposer(container, "X"); await pressEnter(container);        // X locks c1
+    await act(async () => { jest.advanceTimersByTime(15_000); });            // watchdog frees c1 (X's token)
+    await typeInComposer(container, "Y"); await pressEnter(container);        // Y re-locks c1 (new token)
+    await act(async () => { resolveX(true); });                              // X's finally runs — must NOT free Y
+    await typeInComposer(container, "Z"); await pressEnter(container);        // Z must be blocked (Y still owns lock)
+    expect(sm).toHaveBeenCalledTimes(2);                                     // X + Y only, never Z
+    jest.useRealTimers();
+});
 ```
 
 - [ ] **Step 2: Run to verify it fails** — FAIL (double-send fires twice; no watchdog; completion wipes Y).
 
 - [ ] **Step 3: Implement `send()`**
 
+Use a **per-attempt token** (round-1 M1): the lock is a `Map<convoId, token>`; the watchdog and `finally` release ONLY when their own token still owns the entry, so a stale hung send can't delete a newer send's lock (ABA fix).
+
 ```tsx
-const sendingConvos = useRef(new Set<string>());
+const sendingConvos = useRef(new Map<string, symbol>());
 const send = async (): Promise<void> => {
     const cid = convoIdRef.current;
     const submitted = body;
     if (!cid || sendingConvos.current.has(cid)) return;
-    sendingConvos.current.add(cid);
-    const watchdog = setTimeout(() => sendingConvos.current.delete(cid), 15_000);
+    const token = Symbol("send");
+    sendingConvos.current.set(cid, token);
+    const releaseIfMine = () => { if (sendingConvos.current.get(cid) === token) sendingConvos.current.delete(cid); };
+    const watchdog = setTimeout(releaseIfMine, 15_000);
     try {
         if (await client.sendMessage(submitted, cid)) {
             const folder = recentFolderArgument(submitted);
             if (folder) store.record(folder);
-            flushDraft();
-            if (drafts.read(cid).text === submitted) drafts.clear(cid);
+            flushDraft();                                       // cancel debounce + persist current map
+            if (drafts.read(cid).text === submitted) drafts.clear(cid); // clear the sent convo's draft (any view)
             if (convoIdRef.current === cid && bodyRef.current === submitted) {
                 setBody("");
                 setDismissed(null);
@@ -989,10 +1030,14 @@ const send = async (): Promise<void> => {
         }
     } finally {
         clearTimeout(watchdog);
-        sendingConvos.current.delete(cid);
+        releaseIfMine();                                        // only release if still my token
     }
 };
 ```
+
+> **Note — `sendingConvos.current.has(cid)` guard:** with the `Map`, `has(cid)` is `true` while any attempt for `cid` is in flight (matching the round-4 spec's per-convo lock). The three-send interleave test (below) asserts a stale hung send's `finally` cannot free a newer pending send's lock.
+
+> **Accepted limitation (round-1 M2 / spec round-4 B1):** when `refreshSelectedConversation` throws *after* `addToOutbox` succeeds, `sendMessage` still resolves `true` (outbox-authoritative) and the composer clears, but the durable message may not appear as a pending row until the next successful refresh/echo — a brief invisible window in a rare local-storage-read failure. Keeping the composer text instead would reintroduce the double-send this whole feature closes, so clearing is correct. Surfacing an optimistic "queued" row on that partial failure is a documented **follow-up**, not in scope; the message is durable and self-heals on the next refresh.
 
 - [ ] **Step 4: Run to verify it passes** — `pnpm exec jest components-test -i` → PASS.
 
@@ -1035,7 +1080,7 @@ test("pagehide flushes a pending draft write within the debounce window", async 
 useEffect(() => {
     const flush = () => {
         const cid = convoIdRef.current;
-        if (cid) { flushDraft(); drafts.write(cid, bodyRef.current); }
+        if (cid) { drafts.setDraft(cid, bodyRef.current); flushDraft(); } // stage current body, cancel debounce, persist now
     };
     const onVis = () => { if (document.visibilityState === "hidden") flush(); };
     window.addEventListener("pagehide", flush);
@@ -1046,7 +1091,7 @@ useEffect(() => {
     };
 }, [drafts, flushDraft]);
 ```
-Also add a textarea `onBlur={() => { const cid = convoIdRef.current; if (cid) { flushDraft(); drafts.write(cid, bodyRef.current); } }}` for the blur-flush path.
+Also add a textarea `onBlur={() => { const cid = convoIdRef.current; if (cid) { drafts.setDraft(cid, bodyRef.current); flushDraft(); } }}` for the blur-flush path.
 
 - [ ] **Step 4: Run to verify it passes** — `pnpm exec jest components-test -i -t "pagehide flushes"` → PASS.
 
@@ -1139,7 +1184,7 @@ git commit -m "chore(web): lint + build fixups for composer-rows feature (#471/#
 ## Dependency graph
 
 - **Phase 1** (T-1.1, T-1.2, T-1.3, T-1.4) — all independent leaves; any order / parallelizable.
-- **Phase 2** (T-2.1 → T-2.2 → T-2.3) — needs T-1.2 + T-1.4. T-2.1 and T-2.2 land together (T-2.1's test goes green at T-2.2).
+- **Phase 2** (T-2.1 → T-2.2) — needs T-1.2 + T-1.4. T-2.1 is the atomic menu+sheet task (one commit); T-2.2 (close-on-switch) needs T-2.1.
 - **Phase 3** (T-3.1 → T-3.2 → T-3.3) — needs T-1.1 + T-1.3. Independent of Phase 2.
 - **Phase 4** (T-4.1, T-4.2) — needs Phases 2 + 3.
 
@@ -1149,9 +1194,9 @@ Under `/execute-slim`, Phases 2 and 3 can be built in either order; Phase 4 is t
 
 | Spec section | Task(s) |
 |---|---|
-| #471 Part A — timeline event-row menu (triggers, scope, menu items, a11y) | T-1.2, T-2.2 |
-| #476 — EventSourceSheet (DTO JSON, scroll/select, Copy/Done/Esc/backdrop) | T-2.1, T-2.2 |
-| Close menu/sheet on conversation switch | T-2.3 |
+| #471 Part A — timeline event-row menu (triggers, scope, menu items, a11y) | T-1.2, T-2.1 |
+| #476 — EventSourceSheet (DTO JSON, scroll/select, Copy/Done/Esc/backdrop) | T-2.1 |
+| Close menu/sheet on conversation switch | T-2.2 |
 | #471 Part B — draft store (in-memory authoritative, {text,ok}, parse-don't-validate, MAX_DRAFT_BYTES, MAX_DRAFT_ENTRIES recency, clear) | T-1.1 |
 | #471 Part B — Composer integration (refs, setBodyDraft capture-by-value, switch effect always-assign, completion-pick persistence) | T-3.1 |
 | #471 Part B — write coalescing / teardown flush / blur flush | T-3.1, T-3.3 |
@@ -1163,3 +1208,15 @@ Under `/execute-slim`, Phases 2 and 3 can be built in either order; Phase 4 is t
 | Reviewer overrides (reconnect-replay dedup, session-tuple) | Out of scope — documented follow-ups in spec |
 
 All spec deliverables are covered. The two spec-documented overrides (reconnect-replay dedup → upstream `matron-journal`; full session-tuple binding → pre-existing follow-up) are intentionally not tasked; they are filed as follow-up loops at ship.
+
+---
+
+## Appendix: Verified Claims (research pass 2026-07-22)
+
+> Note: the Tavily research batch tool was unavailable in this environment (`TAVILY_API_KEY` unset). The claims below are established web-platform facts asserted from knowledge, not tool-verified this run; adversarial reviewers should still challenge them.
+
+✓ **jsdom does not implement `document.execCommand`.** The jest `jsdom` test environment has no working `execCommand`, so the T-1.4 `copyText` fallback path is exercised in tests only via an explicit mock (`(document as any).execCommand = jest.fn()`). In real browsers (the :8443 deploy target) `execCommand("copy")` still works as the clipboard fallback.
+
+✓ **`navigator.clipboard.writeText` returns a Promise that rejects** in insecure contexts / on permission denial. A *synchronous* `try/catch` does NOT catch a promise rejection — hence `copyText` must be `async` and `await` the call (round-4 spec fix); otherwise the fallback never fires and an unhandled rejection escapes. Verified against the spec's own round-4 M5 finding.
+
+✓ **`pagehide` + `visibilitychange`→`hidden` are the reliable teardown-flush events** (bfcache-safe, fire where `unload` does not on mobile). Used in T-3.3 to flush the pending draft mirror. `unload` is deliberately not used.
