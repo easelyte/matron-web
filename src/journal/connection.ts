@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { type ConnectionState, type ServerFrame, websocketUrl } from "./types";
+import { type ConnectionState, type RpcReply, type ServerFrame, websocketUrl } from "./types";
 
 interface JournalConnectionCallbacks {
     cursor(): Promise<number>;
@@ -26,11 +26,24 @@ export class JournalConnection {
     private welcomed = false;
     private replacingSnapshot = false;
     private processing = Promise.resolve();
+    private pendingRpc = new Map<
+        string,
+        {
+            resolve: (reply: RpcReply) => void;
+            timeoutTimer: number;
+            backoffTimer?: number;
+            retriesLeft: number;
+            method: string;
+            params: unknown;
+            agentDeviceId: number;
+        }
+    >();
 
     public constructor(
         private readonly serverUrl: string,
         private readonly token: string,
         private readonly callbacks: JournalConnectionCallbacks,
+        private readonly makeId: () => string = () => crypto.randomUUID(),
     ) {}
 
     public start(): void {
@@ -51,13 +64,61 @@ export class JournalConnection {
         window.removeEventListener("offline", this.onOffline);
         this.socket?.close(1000, "client stopped");
         this.socket = undefined;
+        for (const [requestId, pending] of this.pendingRpc) {
+            window.clearTimeout(pending.timeoutTimer);
+            if (pending.backoffTimer !== undefined) window.clearTimeout(pending.backoffTimer);
+            this.pendingRpc.delete(requestId);
+            pending.resolve({ ok: false, origin: "teardown", code: "teardown" });
+        }
         this.callbacks.onState("offline");
     }
 
     public send(operation: Record<string, unknown>): boolean {
         if (!this.welcomed || this.socket?.readyState !== WebSocket.OPEN) return false;
-        this.socket.send(JSON.stringify(operation));
-        return true;
+        try {
+            this.socket.send(JSON.stringify(operation));
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    public async agentRequest(
+        agentDeviceId: number,
+        method: string,
+        params: unknown,
+        timeoutMs = 30_000,
+    ): Promise<RpcReply> {
+        const requestId = this.makeId();
+        if (this.pendingRpc.has(requestId)) {
+            return { ok: false, origin: "relay", code: "duplicate_request_id" };
+        }
+        const operation = {
+            op: "agent_request",
+            request_id: requestId,
+            agent_device_id: agentDeviceId,
+            method,
+            params,
+        };
+        if (!this.send(operation)) return { ok: false, origin: "relay", code: "not_connected" };
+
+        return new Promise<RpcReply>((resolve) => {
+            const timeoutTimer = window.setTimeout(() => {
+                const pending = this.pendingRpc.get(requestId);
+                if (!pending) return;
+                if (pending.backoffTimer !== undefined) window.clearTimeout(pending.backoffTimer);
+                this.pendingRpc.delete(requestId);
+                resolve({ ok: false, origin: "timeout", code: "timeout" });
+            }, timeoutMs);
+            this.pendingRpc.set(requestId, {
+                resolve,
+                timeoutTimer,
+                retriesLeft: 2,
+                method,
+                params,
+                agentDeviceId,
+            });
+        });
     }
 
     private readonly onOnline = (): void => {
@@ -94,20 +155,21 @@ export class JournalConnection {
 
         socket.onmessage = (message) => {
             if (typeof message.data !== "string") return;
+            let frame: ServerFrame;
+            try {
+                frame = JSON.parse(message.data) as ServerFrame;
+            } catch {
+                return;
+            }
+
+            if (this.isFastPathFrame(frame)) {
+                void this.handleFrame(frame, socket).catch((error) => this.handleProcessingError(error, socket));
+                return;
+            }
+
             this.processing = this.processing
-                .then(async () => {
-                    let frame: ServerFrame;
-                    try {
-                        frame = JSON.parse(message.data) as ServerFrame;
-                    } catch {
-                        return;
-                    }
-                    await this.handleFrame(frame, socket);
-                })
-                .catch((error) => {
-                    this.callbacks.onState("offline", error instanceof Error ? error.message : "Sync failed");
-                    socket.close();
-                });
+                .then(() => this.handleFrame(frame, socket))
+                .catch((error) => this.handleProcessingError(error, socket));
         };
 
         socket.onerror = () => {
@@ -125,6 +187,99 @@ export class JournalConnection {
     }
 
     private async handleFrame(frame: ServerFrame, socket: WebSocket): Promise<void> {
+        if (frame.kind === "rpc") {
+            const response: unknown = frame.response;
+            if (typeof response !== "object" || response === null) {
+                this.logRpcDiag("malformed_rpc");
+                return;
+            }
+            const candidate = response as Record<string, unknown>;
+            const requestId = typeof candidate.request_id === "string" ? candidate.request_id : undefined;
+            if (
+                requestId === undefined ||
+                typeof candidate.ok !== "boolean" ||
+                typeof candidate.agent_device_id !== "number" ||
+                !Number.isFinite(candidate.agent_device_id)
+            ) {
+                this.logRpcDiag("malformed_rpc", requestId);
+                return;
+            }
+
+            let errorCode: string | undefined;
+            let errorDetail: string | undefined;
+            if (!candidate.ok) {
+                if (typeof candidate.error !== "object" || candidate.error === null) {
+                    this.logRpcDiag("malformed_rpc", requestId);
+                    return;
+                }
+                const error = candidate.error as Record<string, unknown>;
+                if (typeof error.code !== "string" || error.code.length === 0) {
+                    this.logRpcDiag("malformed_rpc", requestId);
+                    return;
+                }
+                errorCode = error.code;
+                errorDetail = typeof error.detail === "string" ? error.detail : undefined;
+            }
+
+            const pending = this.pendingRpc.get(requestId);
+            if (!pending) return;
+            if (candidate.agent_device_id !== pending.agentDeviceId) {
+                this.logRpcDiag("malformed_rpc", requestId);
+                return;
+            }
+            if (candidate.ok) {
+                this.resolveRpc(requestId, pending, { ok: true, origin: "agent", result: candidate.result });
+            } else {
+                this.resolveRpc(requestId, pending, {
+                    ok: false,
+                    origin: "agent",
+                    code: errorCode!,
+                    detail: errorDetail,
+                });
+            }
+            return;
+        }
+
+        if (
+            frame.kind === "control" &&
+            frame.op === "error" &&
+            typeof frame.request_id === "string" &&
+            this.pendingRpc.has(frame.request_id)
+        ) {
+            const requestId = frame.request_id;
+            const pending = this.pendingRpc.get(requestId)!;
+            const code = typeof frame.code === "string" && frame.code.length > 0 ? frame.code : "relay_error";
+            const detail = typeof frame.detail === "string" ? frame.detail : undefined;
+            if (code === "relay_error") this.logRpcDiag("malformed_control_error", requestId);
+
+            if (code === "not_ready" && pending.retriesLeft > 0) {
+                if (pending.backoffTimer !== undefined) return;
+                pending.retriesLeft -= 1;
+                pending.backoffTimer = window.setTimeout(() => {
+                    pending.backoffTimer = undefined;
+                    if (!this.pendingRpc.has(requestId)) return;
+                    const sent = this.send({
+                        op: "agent_request",
+                        request_id: requestId,
+                        agent_device_id: pending.agentDeviceId,
+                        method: pending.method,
+                        params: pending.params,
+                    });
+                    if (!sent) {
+                        this.resolveRpc(requestId, pending, {
+                            ok: false,
+                            origin: "relay",
+                            code: "not_connected",
+                        });
+                    }
+                }, 1_000);
+                return;
+            }
+
+            this.resolveRpc(requestId, pending, { ok: false, origin: "relay", code, detail });
+            return;
+        }
+
         if (frame.kind === "control") {
             if (frame.op === "hello_ok") {
                 this.welcomed = true;
@@ -152,6 +307,38 @@ export class JournalConnection {
             }
         }
         await this.callbacks.onFrame(frame);
+    }
+
+    private resolveRpc(
+        requestId: string,
+        pending: typeof this.pendingRpc extends Map<string, infer T> ? T : never,
+        reply: RpcReply,
+    ): void {
+        window.clearTimeout(pending.timeoutTimer);
+        if (pending.backoffTimer !== undefined) window.clearTimeout(pending.backoffTimer);
+        this.pendingRpc.delete(requestId);
+        pending.resolve(reply);
+    }
+
+    private isFastPathFrame(frame: unknown): frame is ServerFrame {
+        if (typeof frame !== "object" || frame === null || !("kind" in frame)) return false;
+        const candidate = frame as Record<string, unknown>;
+        return (
+            candidate.kind === "rpc" ||
+            (candidate.kind === "control" &&
+                candidate.op === "error" &&
+                typeof candidate.request_id === "string" &&
+                this.pendingRpc.has(candidate.request_id))
+        );
+    }
+
+    private handleProcessingError(error: unknown, socket: WebSocket): void {
+        this.callbacks.onState("offline", error instanceof Error ? error.message : "Sync failed");
+        socket.close();
+    }
+
+    private logRpcDiag(event: string, requestId?: string): void {
+        console.warn("matron:rpc", { event, request_id: requestId });
     }
 
     private scheduleReconnect(delayOverride?: number): void {

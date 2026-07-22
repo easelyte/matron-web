@@ -35,6 +35,24 @@ export interface LoginResponse {
     user_id: number;
 }
 
+export interface DeviceDTO {
+    device_id: number;
+    kind: string;
+    name?: string;
+    last_seen_at?: number;
+    connected: boolean;
+    is_self: boolean;
+}
+
+export interface DevicesResponse {
+    devices: DeviceDTO[];
+}
+
+export interface RecentFolder {
+    path: string;
+    last_used: number | null;
+}
+
 export interface Conversation {
     id: string;
     title: string;
@@ -76,7 +94,31 @@ export interface JournalControlFrame {
     code?: string;
     detail?: string;
     ref?: string;
+    request_id?: string;
 }
+
+export interface JournalRpcFrame {
+    kind: "rpc";
+    response?: {
+        request_id: string;
+        agent_device_id: number;
+        ok: boolean;
+        result?: unknown;
+        error?: {
+            code: string;
+            detail?: string;
+        };
+    };
+}
+
+export type RpcReply =
+    | { ok: true; origin: "agent"; result: unknown }
+    | {
+          ok: false;
+          origin: "agent" | "relay" | "timeout" | "teardown";
+          code: string;
+          detail?: string;
+      };
 
 export interface ToolStreamPayload {
     event: "append" | "sync" | "end";
@@ -105,7 +147,7 @@ export interface JournalEphemeralFrame {
     status?: SessionStatus;
 }
 
-export type ServerFrame = JournalEvent | JournalControlFrame | JournalEphemeralFrame;
+export type ServerFrame = JournalEvent | JournalControlFrame | JournalEphemeralFrame | JournalRpcFrame;
 
 export interface SessionStatus {
     model?: string;
@@ -188,6 +230,7 @@ export interface ClientState {
     favoriteIds: Set<string>;
     unreadOverrideIds: Set<string>;
     controlError?: string;
+    preferencesUnavailable?: boolean;
     selectedConversationId?: string;
     events: JournalEvent[];
     pendingMessages: PendingMessage[];

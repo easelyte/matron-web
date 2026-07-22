@@ -6,6 +6,8 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    type DeviceDTO,
+    type DevicesResponse,
     endpointUrl,
     type LoginResponse,
     type MatronConfig,
@@ -51,6 +53,36 @@ function electronBridge(): JournalElectron | undefined {
     return (window as Window & { electron?: JournalElectron }).electron;
 }
 
+type DeviceParseResult = { device: DeviceDTO; reasons: [] } | { reasons: string[] };
+
+function parseDevice(raw: unknown): DeviceParseResult {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { reasons: ["not_object"] };
+
+    const device = raw as Record<string, unknown>;
+    const reasons: string[] = [];
+    if (typeof device.device_id !== "number" || !Number.isFinite(device.device_id)) reasons.push("invalid_device_id");
+    if (typeof device.kind !== "string") reasons.push("invalid_kind");
+    if (typeof device.connected !== "boolean") reasons.push("invalid_connected");
+    if (device.name !== undefined && typeof device.name !== "string") reasons.push("invalid_name");
+    if (device.last_seen_at !== undefined && typeof device.last_seen_at !== "number") {
+        reasons.push("invalid_last_seen_at");
+    }
+    if (typeof device.is_self !== "boolean") reasons.push("invalid_is_self");
+    if (reasons.length > 0) return { reasons };
+
+    return {
+        device: {
+            device_id: device.device_id,
+            kind: device.kind,
+            name: device.name,
+            last_seen_at: device.last_seen_at,
+            connected: device.connected,
+            is_self: device.is_self,
+        } as DeviceDTO,
+        reasons: [],
+    };
+}
+
 export async function loadMatronConfig(): Promise<MatronConfig> {
     const electron = electronBridge();
     if (electron) {
@@ -91,6 +123,8 @@ function messageForCode(code: string | undefined, status: number): string {
 }
 
 export class JournalApi {
+    private devicesRequest?: { promise: Promise<unknown>; controller: AbortController };
+
     public constructor(
         public readonly serverUrl: string,
         private token?: string,
@@ -110,6 +144,66 @@ export class JournalApi {
 
     public snapshot(): Promise<SnapshotResponse> {
         return this.json<SnapshotResponse>("/snapshot");
+    }
+
+    public async devices(): Promise<DevicesResponse> {
+        const request = this.devicesRequest ?? this.startDevicesRequest();
+        const devicesCall = request.promise;
+        // The request may outlive the transport-agnostic timeout (notably in Electron).
+        void devicesCall.catch(() => undefined);
+
+        let timeoutTimer: ReturnType<typeof setTimeout>;
+        const timeoutReject = new Promise<never>((_resolve, reject) => {
+            timeoutTimer = setTimeout(() => {
+                if (this.devicesRequest === request) this.devicesRequest = undefined;
+                void request.promise.catch(() => undefined);
+                reject(new JournalApiError("timeout", 0));
+                request.controller.abort();
+            }, 10_000);
+        });
+
+        let raw: unknown;
+        try {
+            raw = await Promise.race([devicesCall, timeoutReject]);
+        } finally {
+            clearTimeout(timeoutTimer!);
+        }
+
+        if (typeof raw !== "object" || raw === null || Array.isArray(raw) || !("devices" in raw)) {
+            throw new JournalApiError("The journal server returned a malformed devices response.", 200);
+        }
+
+        const rawDevices = (raw as { devices?: unknown }).devices;
+        if (!Array.isArray(rawDevices)) {
+            throw new JournalApiError("The journal server returned a malformed devices response.", 200);
+        }
+
+        const parsedDevices = rawDevices.map(parseDevice);
+        const devices = parsedDevices.flatMap((parsed) => ("device" in parsed ? [parsed.device] : []));
+        if (rawDevices.length > 0 && devices.length === 0) {
+            throw new JournalApiError("The journal server returned a malformed devices response.", 200);
+        }
+        const rejected = parsedDevices.filter((parsed): parsed is { reasons: string[] } => !("device" in parsed));
+        if (rejected.length > 0) {
+            console.warn("matron:devices", {
+                event: "partial_roster",
+                rejected_count: rejected.length,
+                reasons: rejected.map((item) => item.reasons),
+            });
+        }
+
+        return { devices };
+    }
+
+    private startDevicesRequest(): { promise: Promise<unknown>; controller: AbortController } {
+        const controller = new AbortController();
+        const request = { promise: this.json<unknown>("/devices", { signal: controller.signal }), controller };
+        this.devicesRequest = request;
+        const clear = (): void => {
+            if (this.devicesRequest === request) this.devicesRequest = undefined;
+        };
+        void request.promise.then(clear, clear);
+        return request;
     }
 
     public messages(conversationId: string, beforeSeq?: number, limit = 80): Promise<MessagesResponse> {
@@ -170,6 +264,7 @@ export class JournalApi {
             method?: "GET" | "POST";
             body?: Record<string, unknown>;
             authenticated?: boolean;
+            signal?: AbortSignal;
         } = {},
     ): Promise<T> {
         const response = await this.request(path, options);

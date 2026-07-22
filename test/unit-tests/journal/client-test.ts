@@ -82,7 +82,11 @@ interface ClientInternals {
         snapshot?: () => Promise<{ seq: number; conversations: Conversation[] }>;
         uploadMedia?: (bytes: ArrayBuffer, contentType: string, signal?: AbortSignal) => Promise<{ media_id: string }>;
     };
-    connection?: { send: ReturnType<typeof jest.fn>; stop?: ReturnType<typeof jest.fn> };
+    connection?: {
+        send: ReturnType<typeof jest.fn>;
+        stop?: ReturnType<typeof jest.fn>;
+        agentRequest?: ReturnType<typeof jest.fn>;
+    };
     history: Map<string, { initialized: boolean; hasMore: boolean; oldestSeq?: number }>;
     activities: Map<string, unknown>;
     statuses: Map<string, unknown>;
@@ -184,6 +188,14 @@ function fileFixture(
     if (arrayBuffer.getMockImplementation() === undefined) arrayBuffer.mockResolvedValue(bytes.buffer);
     Object.defineProperty(file, "arrayBuffer", { value: arrayBuffer });
     return file;
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((resolvePromise) => {
+        resolve = resolvePromise;
+    });
+    return { promise, resolve };
 }
 
 describe("MatronJournalClient state handling", () => {
@@ -2464,16 +2476,65 @@ describe("session-controls flags", () => {
         expect(snapshot.unreadOverrideIds).toEqual(new Set(["c3"]));
     });
 
-    it("sets controlError when a bootstrap flag read fails", async () => {
+    it("keeps preferences unavailable when one bootstrap read fails and an unrelated write succeeds", async () => {
         const client = new MatronJournalClient();
         jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
         jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
-        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-            throw new Error("unavailable");
+        const originalGetItem = Storage.prototype.getItem;
+        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, key) {
+            if (key === pinnedStore.storageKey(SESSION)) throw new Error("unavailable");
+            return originalGetItem.call(this, key);
         });
         await internals(client).startSession(SESSION);
         getItem.mockRestore();
-        expect(client.getSnapshot().controlError).toBe("Couldn't load saved preferences — device storage unavailable.");
+
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+        client.favoriteConversation("c1");
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+    });
+
+    it("keeps preferences unavailable after a write failure and an unrelated write succeeds", () => {
+        const { client } = withConvos(CONVERSATIONS);
+        const originalSetItem = Storage.prototype.setItem;
+        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+            this: Storage,
+            key,
+            value,
+        ) {
+            if (key === pinnedStore.storageKey(SESSION)) throw new Error("full");
+            return originalSetItem.call(this, key, value);
+        });
+
+        client.pinConversation("c1");
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+        client.favoriteConversation("c2");
+
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+        setItem.mockRestore();
+    });
+
+    it("probes write availability across relogin and clears the warning only after recovery", async () => {
+        const client = new MatronJournalClient();
+        const database = fakeDatabase();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        await internals(client).startSession(SESSION);
+
+        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+            throw new Error("full");
+        });
+        client.pinConversation("c1");
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+
+        await client.logout();
+        await internals(client).startSession(SESSION);
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+
+        setItem.mockRestore();
+        await client.logout();
+        await internals(client).startSession(SESSION);
+
+        expect(client.getSnapshot().preferencesUnavailable).toBe(false);
     });
 
     it("preserves prior in-memory flag sets when replaceSnapshot re-read throws", async () => {
@@ -2491,12 +2552,33 @@ describe("session-controls flags", () => {
         expect(client.getSnapshot().pinnedIds).toEqual(new Set(["c1"]));
     });
 
+    it("degrades on a failed snapshot re-read and recovers after every re-read succeeds", async () => {
+        const { client, state } = withConvos(CONVERSATIONS);
+        state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            snapshot: jest.fn().mockResolvedValue({ seq: 1, conversations: CONVERSATIONS }),
+        };
+        const originalGetItem = Storage.prototype.getItem;
+        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, key) {
+            if (key === favoriteStore.storageKey(SESSION)) throw new Error("unavailable");
+            return originalGetItem.call(this, key);
+        });
+
+        await state.replaceSnapshot();
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+
+        getItem.mockRestore();
+        await state.replaceSnapshot();
+        expect(client.getSnapshot().preferencesUnavailable).toBe(false);
+    });
+
     it("patches the matching set when a foreign-tab storage event fires for each of the four keys", async () => {
         const client = new MatronJournalClient();
         jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
         jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
         await internals(client).startSession(SESSION);
         const fire = (key: string, ids: string[]): void => {
+            localStorage.setItem(key, JSON.stringify(ids));
             window.dispatchEvent(new StorageEvent("storage", { key, newValue: JSON.stringify(ids) }));
         };
         fire(archiveStore.storageKey(SESSION), ["c2"]);
@@ -2507,6 +2589,59 @@ describe("session-controls flags", () => {
         expect(client.getSnapshot().favoriteIds).toEqual(new Set(["c1"]));
         fire(unreadStore.storageKey(SESSION), ["c1"]);
         expect(client.getSnapshot().unreadOverrideIds).toEqual(new Set(["c1"]));
+    });
+
+    it("recovers failed write provenance after a matching foreign-tab write succeeds", async () => {
+        const client = new MatronJournalClient();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        await internals(client).startSession(SESSION);
+        const originalSetItem = Storage.prototype.setItem;
+        const setItem = jest.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+            this: Storage,
+            key,
+            value,
+        ) {
+            if (key === pinnedStore.storageKey(SESSION)) throw new Error("full");
+            return originalSetItem.call(this, key, value);
+        });
+        client.pinConversation("c1");
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+        setItem.mockRestore();
+
+        localStorage.setItem(pinnedStore.storageKey(SESSION), JSON.stringify(["c1"]));
+        window.dispatchEvent(
+            new StorageEvent("storage", {
+                key: pinnedStore.storageKey(SESSION),
+                newValue: JSON.stringify(["c1"]),
+            }),
+        );
+
+        expect(client.getSnapshot().pinnedIds).toEqual(new Set(["c1"]));
+        expect(client.getSnapshot().preferencesUnavailable).toBe(false);
+    });
+
+    it("does not recover from a parseable storage event when the backing store read still fails", async () => {
+        const client = new MatronJournalClient();
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(fakeDatabase() as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        await internals(client).startSession(SESSION);
+        const originalGetItem = Storage.prototype.getItem;
+        const getItem = jest.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, key) {
+            if (key === pinnedStore.storageKey(SESSION)) throw new Error("unavailable");
+            return originalGetItem.call(this, key);
+        });
+
+        window.dispatchEvent(
+            new StorageEvent("storage", {
+                key: pinnedStore.storageKey(SESSION),
+                newValue: JSON.stringify(["c1"]),
+            }),
+        );
+
+        expect(client.getSnapshot().preferencesUnavailable).toBe(true);
+        expect(client.getSnapshot().pinnedIds).toEqual(new Set());
+        getItem.mockRestore();
     });
 
     it("pins/unpins, persisting to the pinned store and patching pinnedIds", () => {
@@ -2672,5 +2807,264 @@ describe("session-controls flags", () => {
         unreadStore.write(SESSION, new Set(["c1"]));
         client.markConversationRead("c1");
         expect(unreadStore.read(SESSION).ids.has("c1")).toBe(false);
+    });
+});
+
+describe("session creation orchestration", () => {
+    afterEach(() => {
+        jest.restoreAllMocks();
+        jest.useRealTimers();
+    });
+
+    function withAgentReply(reply: unknown): MatronJournalClient {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.connection = {
+            send: jest.fn().mockReturnValue(true),
+            agentRequest: jest.fn().mockResolvedValue(reply),
+        };
+        return client;
+    }
+
+    it("returns a busy outcome instead of sharing an in-flight start request", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const reply = deferred<{ ok: true; origin: "agent"; result: { convo_id: string } }>();
+        const agentRequest = jest.fn().mockReturnValue(reply.promise);
+        state.state = signedInState(client);
+        state.connection = { send: jest.fn().mockReturnValue(true), agentRequest };
+
+        const first = client.startSessionRpc(9, "/srv/first", false);
+        const second = client.startSessionRpc(10, "/srv/second", true);
+
+        expect(second).not.toBe(first);
+        expect(agentRequest).toHaveBeenCalledTimes(1);
+        expect(agentRequest).toHaveBeenCalledWith(9, "start", { workdir: "/srv/first" });
+        await expect(second).resolves.toEqual({
+            kind: "error",
+            message: "A session is already starting — please wait.",
+        });
+
+        reply.resolve({ ok: true, origin: "agent", result: { convo_id: "created" } });
+        await expect(first).resolves.toEqual({ kind: "created", convoId: "created" });
+
+        await client.startSessionRpc(10, "/srv/second", true);
+        expect(agentRequest).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+        [
+            "relay not_connected",
+            { ok: false, origin: "relay", code: "not_connected" },
+            { kind: "error", message: "Still connecting — try again in a moment." },
+        ],
+        [
+            "relay not_ready",
+            { ok: false, origin: "relay", code: "not_ready" },
+            { kind: "error", message: "Still connecting — try again in a moment." },
+        ],
+        [
+            "other relay error",
+            { ok: false, origin: "relay", code: "rejected" },
+            { kind: "error", message: "Couldn't reach that box — try again." },
+        ],
+        [
+            "bad workdir",
+            { ok: false, origin: "agent", code: "bad_workdir" },
+            { kind: "error", message: "That folder doesn't exist on the box." },
+        ],
+        ["spawn failure", { ok: false, origin: "agent", code: "spawn_failed" }, { kind: "uncertain" }],
+        ["unsupported mode", { ok: false, origin: "agent", code: "unsupported_mode" }, { kind: "uncertain" }],
+        ["timeout", { ok: false, origin: "timeout", code: "timeout" }, { kind: "uncertain" }],
+        ["teardown", { ok: false, origin: "teardown", code: "teardown" }, { kind: "uncertain" }],
+        ["missing convo id", { ok: true, origin: "agent", result: {} }, { kind: "uncertain" }],
+        ["empty convo id", { ok: true, origin: "agent", result: { convo_id: "" } }, { kind: "uncertain" }],
+        [
+            "created",
+            { ok: true, origin: "agent", result: { convo_id: "new-convo" } },
+            { kind: "created", convoId: "new-convo" },
+        ],
+    ])("maps %s to the specified StartOutcome", async (_label, reply, expected) => {
+        const client = withAgentReply(reply);
+
+        await expect(client.startSessionRpc(9, " /srv/project ", true)).resolves.toEqual(expected);
+        expect(internals(client).connection?.agentRequest).toHaveBeenCalledWith(9, "start", {
+            workdir: "/srv/project",
+            browser: true,
+        });
+    });
+
+    it.each([
+        { folders: null },
+        { folders: [{ path: "", last_used: null }] },
+        { folders: [{ path: "/ok", last_used: "yesterday" }] },
+    ])("returns an empty recent-folder list for malformed result %#", async (result) => {
+        const client = withAgentReply({ ok: true, origin: "agent", result });
+
+        await expect(client.recentFolders(9)).resolves.toEqual([]);
+    });
+
+    it("drops malformed folder items while retaining valid ones", async () => {
+        const client = withAgentReply({
+            ok: true,
+            origin: "agent",
+            result: {
+                folders: [
+                    { path: "/valid", last_used: null },
+                    { path: 42, last_used: 1 },
+                ],
+            },
+        });
+
+        await expect(client.recentFolders(9)).resolves.toEqual([{ path: "/valid", last_used: null }]);
+    });
+
+    it("returns typed not-connected fallbacks while the connection is absent", async () => {
+        const client = new MatronJournalClient();
+        internals(client).state = signedInState(client);
+
+        await expect(client.recentFolders(9)).resolves.toEqual([]);
+        await expect(client.startSessionRpc(9, "", false)).resolves.toEqual({
+            kind: "error",
+            message: "Still connecting — try again in a moment.",
+        });
+    });
+
+    function watchdogClient(
+        database: FakeDatabase = fakeDatabase(),
+        messages: () => Promise<{ events: [] }> = jest.fn().mockResolvedValue({ events: [] }),
+    ): { client: MatronJournalClient; state: ClientInternals } {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages };
+        state.connection = { send: jest.fn().mockReturnValue(true), stop: jest.fn() };
+        return { client, state };
+    }
+
+    it("suppresses a new-conversation 404 but fires the watchdog for the still-selected unsynced convo", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const messages = jest.fn().mockRejectedValue(new JournalApiError("missing", 404, "not_found"));
+        const { client } = watchdogClient(fakeDatabase(), messages);
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+        jest.advanceTimersByTime(10_000);
+
+        expect(client.getSnapshot().connectionError).toBe("Session created but not syncing yet — refresh to retry.");
+    });
+
+    it("does not fire after a matching journal frame syncs the created conversation", async () => {
+        jest.useFakeTimers();
+        const { client, state } = watchdogClient();
+        await client.selectConversation("created", { fromRpcCreate: true });
+
+        await state.handleJournal({
+            seq: 11,
+            convo_id: "created",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+        jest.advanceTimersByTime(10_000);
+
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+    });
+
+    it("arms before selectConversation awaits so an early journal frame cancels the watchdog", async () => {
+        jest.useFakeTimers();
+        const events = deferred<[]>();
+        const database = fakeDatabase({ events: jest.fn().mockReturnValue(events.promise) });
+        const { client, state } = watchdogClient(database);
+
+        const selecting = client.selectConversation("created", { fromRpcCreate: true });
+        const syncing = state.handleJournal({
+            seq: 12,
+            convo_id: "created",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        jest.advanceTimersByTime(10_000);
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+
+        events.resolve([]);
+        await Promise.all([selecting, syncing]);
+    });
+
+    it("retains watchdog protection across navigate-away and ordinary reselect", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        await client.selectConversation("c2");
+        await client.selectConversation("created");
+        jest.advanceTimersByTime(10_000);
+
+        expect(client.getSnapshot().connectionError).toBe("Session created but not syncing yet — refresh to retry.");
+    });
+
+    it("suppresses the watchdog notice when another conversation is selected at expiry", async () => {
+        jest.useFakeTimers();
+        const { client } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        await client.selectConversation("c2");
+        jest.advanceTimersByTime(10_000);
+
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+    });
+
+    it("clears the watchdog on logout and snapshot replacement", async () => {
+        jest.useFakeTimers();
+        const first = watchdogClient();
+        await first.client.selectConversation("created", { fromRpcCreate: true });
+        await first.client.logout();
+        jest.advanceTimersByTime(10_000);
+        expect(first.client.getSnapshot().connectionError).toBeUndefined();
+
+        const second = watchdogClient();
+        second.state.api = {
+            messages: jest.fn().mockResolvedValue({ events: [] }),
+            snapshot: jest.fn().mockResolvedValue({ seq: 30, conversations: CONVERSATIONS }),
+        };
+        await second.client.selectConversation("created", { fromRpcCreate: true });
+        await second.state.replaceSnapshot();
+        jest.advanceTimersByTime(10_000);
+        expect(second.client.getSnapshot().connectionError).toBeUndefined();
+    });
+
+    it("a second RPC create replaces the first watchdog without leaking it", async () => {
+        jest.useFakeTimers();
+        const { client } = watchdogClient();
+
+        await client.selectConversation("created-1", { fromRpcCreate: true });
+        await client.selectConversation("created-2", { fromRpcCreate: true });
+        await client.selectConversation("created-1");
+        jest.advanceTimersByTime(10_000);
+
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+    });
+
+    it("ordinary reselect does not wipe another conversation's in-flight streaming state", async () => {
+        const { client, state } = watchdogClient();
+        const activity = { state: "thinking" as const };
+        state.activities.set("c2", activity);
+        state.textStreams.set("c2", { ref: "partial" });
+        state.toolStreams.set("c2", { ref: { content: "partial" } });
+
+        await client.selectConversation("c1");
+
+        expect(state.activities.get("c2")).toBe(activity);
+        expect(state.textStreams.get("c2")).toEqual({ ref: "partial" });
+        expect(state.toolStreams.get("c2")).toEqual({ ref: { content: "partial" } });
     });
 });

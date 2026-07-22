@@ -320,13 +320,19 @@ describe("archive hydration, selection, and cross-tab synchronization", () => {
         expect(client.getSnapshot().selectedConversationId).toBe("c2");
     });
 
-    it("applies matching non-null storage events and ignores null or non-matching events", async () => {
+    it("re-reads storage on a matching event and ignores non-matching keys", async () => {
         const { client } = await start();
         const key = archivedStorageKey(SESSION);
 
+        // The cross-tab listener now re-reads localStorage via store.read() (exercising the
+        // access boundary) rather than trusting event.newValue, so a real cross-tab write is
+        // simulated by seeding localStorage before dispatching the event.
+        storeArchivedIds(SESSION, new Set(["c2"]));
         window.dispatchEvent(new StorageEvent("storage", { key, newValue: JSON.stringify(["c2"]) }));
         expect(client.getSnapshot().archivedIds).toEqual(new Set(["c2"]));
 
+        // A null (removal) event no longer early-returns; it re-reads. With storage unchanged
+        // the state is unchanged.
         window.dispatchEvent(new StorageEvent("storage", { key, newValue: null }));
         expect(client.getSnapshot().archivedIds).toEqual(new Set(["c2"]));
 
@@ -353,6 +359,10 @@ describe("archive hydration, selection, and cross-tab synchronization", () => {
         const { client } = await start();
 
         await internals(client).replaceSnapshot();
+        // Seed localStorage after the snapshot so the post-snapshot event proves the listener
+        // is still attached (the new listener re-reads via store.read(), so state only moves
+        // to ["c1"] if the listener fired).
+        storeArchivedIds(SESSION, new Set(["c1"]));
         window.dispatchEvent(
             new StorageEvent("storage", {
                 key: archivedStorageKey(SESSION),
