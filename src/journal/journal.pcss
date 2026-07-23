@@ -91,7 +91,7 @@ textarea {
     box-sizing: border-box;
     border: 1px solid rgb(28, 24, 20, 0.08);
     border-radius: 10px;
-    background-color: rgb(255, 254, 250, 0.72);
+    background-color: var(--cpd-color-bg-cluster);
     box-shadow: 0 1px 2px rgb(28, 24, 20, 0.06);
     padding: var(--cpd-space-1x) var(--cpd-space-2x);
 }
@@ -281,7 +281,7 @@ textarea {
     height: 3px;
     overflow: hidden;
     border-radius: 999px;
-    background-color: rgb(28, 24, 20, 0.12);
+    background-color: var(--cpd-color-bg-usage-track);
 }
 
 .mj_UsageFill {
@@ -291,11 +291,11 @@ textarea {
 }
 
 .mj_UsageFill_low {
-    background-color: #34c759;
+    background-color: var(--cpd-color-usage-low);
 }
 
 .mj_UsageFill_medium {
-    background-color: #ff9500;
+    background-color: var(--cpd-color-usage-medium);
 }
 
 /*
@@ -328,7 +328,7 @@ textarea {
 }
 
 .mj_UsageFill_high {
-    background-color: #ff3b30;
+    background-color: var(--cpd-color-usage-high);
 }
 
 .mj_BackButton {
@@ -874,7 +874,7 @@ textarea {
     font-weight: 600;
 }
 
-/* [data-theme="dark"] syntax-token overrides are intentionally deferred to #480. */
+/* [data-theme="dark"] syntax-token overrides are intentionally deferred to the parent theme work. */
 
 .mj_SendingLabel {
     float: right;
@@ -896,7 +896,7 @@ textarea {
     justify-content: center;
     border: 2px dashed var(--cpd-color-icon-accent-primary);
     border-radius: 12px;
-    background: rgb(255 255 255 / 90%);
+    background: var(--cpd-color-bg-scrim-drag);
     box-shadow: 0 8px 24px rgb(15 23 42 / 14%);
     color: var(--cpd-color-text-action-accent);
     font: var(--cpd-font-body-sm-regular);
@@ -1062,13 +1062,13 @@ textarea {
 }
 
 .mj_UploadConfirm_actions button.mj_UploadConfirm_send {
-    background: var(--cpd-color-icon-accent-primary);
-    color: #fff;
+    background: var(--cpd-color-bg-accent-emphasis);
+    color: var(--cpd-color-text-on-accent);
 }
 
 .mj_UploadConfirm_actions button.mj_UploadConfirm_send:hover:not(:disabled) {
-    background: var(--cpd-color-text-action-accent);
-    color: #fff;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
 }
 
 .mj_UploadConfirm_error {
@@ -1089,7 +1089,7 @@ textarea {
     margin-left: auto !important;
     border: 1px solid rgb(13 189 139 / 20%);
     border-radius: 10px;
-    background: #dff7ed;
+    background: var(--cpd-color-bg-self-bubble);
     box-shadow: 0 1px 2px rgb(18 16 14 / 8%);
     color: var(--cpd-color-text-primary);
     padding: var(--cpd-space-2x) var(--cpd-space-3x);
@@ -1266,7 +1266,7 @@ li.mj_AttachmentChip_error {
 }
 
 .mj_ToolCard summary code {
-    border: 1px solid #e1e4e8;
+    border: 1px solid var(--cpd-color-border-subtle);
     border-radius: 4px;
     background: var(--cpd-color-bg-subtle-secondary);
     padding: 3px 4px;
@@ -1572,7 +1572,7 @@ button.mj_File {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #fbfaf6;
+    background: var(--cpd-color-bg-canvas-raised);
 }
 
 .mj_Loading img {
