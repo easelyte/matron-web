@@ -66,6 +66,10 @@ textarea {
     flex: 0 0 auto;
 }
 
+.mx_RoomView_body {
+    container: mj-room / inline-size;
+}
+
 .mx_RoomHeader:hover {
     background-color: var(--cpd-color-bg-canvas-default);
 }
@@ -292,6 +296,35 @@ textarea {
 
 .mj_UsageFill_medium {
     background-color: #ff9500;
+}
+
+/*
+ * The resizable sidebar can make the room much narrower than the viewport.
+ * At 720px the desktop header's two 152px side tracks, title, gaps, and room
+ * padding still fit; below that, let the equal side tracks shrink and compact
+ * usage rows without moving the title off the room's center line.
+ */
+@container mj-room (max-width: 720px) {
+    .mj_ChatHeader {
+        --mj-header-side-min-width: 0px;
+
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        gap: var(--cpd-space-1x);
+    }
+
+    .mj_HeaderTitleCluster {
+        max-width: 40cqi;
+        padding-inline: var(--cpd-space-2x);
+    }
+
+    .mj_UsageRow {
+        grid-template-columns: 1fr;
+        gap: var(--cpd-space-1x);
+    }
+
+    .mj_UsageTrack {
+        width: 58px;
+    }
 }
 
 .mj_UsageFill_high {

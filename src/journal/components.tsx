@@ -1185,24 +1185,21 @@ function useMinuteClock(): number {
 function UsageBars({ limits }: { limits: NonNullable<SessionStatus["limits"]> }): React.ReactElement {
     const now = useMinuteClock();
     return (
-        <div className="mj_UsageBars" aria-label="Usage limits">
+        <div className="mj_UsageBars" role="group" aria-label="Usage limits">
             {limits.slice(0, 3).map((limit) => {
                 const percent = Math.min(Math.max(limit.percent, 0), 100);
                 const reset = resetDisplay(limit.resets_at, limit.resets, now);
                 return (
-                    <div
-                        className="mj_UsageRow"
-                        key={limit.label}
-                        aria-label={`${usageBarLabel(limit.label)}, ${percent}% used${reset ? `, resets ${reset}` : ""}`}
-                        title={reset ? `resets ${reset}` : undefined}
-                    >
+                    <div className="mj_UsageRow" key={limit.label} title={reset ? `resets ${reset}` : undefined}>
                         <span className="mj_UsageLabel">{usageBarLabel(limit.label)}:</span>
                         <span
                             className="mj_UsageTrack"
                             role="progressbar"
+                            aria-label={usageBarLabel(limit.label)}
                             aria-valuemin={0}
                             aria-valuemax={100}
                             aria-valuenow={percent}
+                            aria-valuetext={`${percent}% used${reset ? `, resets ${reset}` : ""}`}
                         >
                             <span
                                 className={`mj_UsageFill mj_UsageFill_${usageLevel(percent)}`}
