@@ -65,6 +65,7 @@ beforeAll(async () => {
 beforeEach(() => {
     jest.restoreAllMocks();
     localStorage.clear();
+    theme.setTheme(null);
     systemPrefersDark = false;
     delete document.documentElement.dataset.theme;
     delete document.documentElement.dataset.themeUser;
@@ -94,8 +95,8 @@ describe("theme preference state machine", () => {
         expect(setItem).not.toHaveBeenCalledWith(theme.THEME_STORAGE_KEY, "null");
     });
 
-    it("applies stored or System preferences and only follows OS changes in System", () => {
-        localStorage.setItem(theme.THEME_STORAGE_KEY, "light");
+    it("applies explicit or System preferences and only follows OS changes in System", () => {
+        theme.setTheme("light");
         expect(theme.applyTheme()).toBe("light");
         expect(document.documentElement.dataset.theme).toBe("light");
         expect(document.documentElement.dataset.themeUser).toBe("light");
@@ -103,7 +104,7 @@ describe("theme preference state machine", () => {
         dispatchSystemTheme(true);
         expect(document.documentElement.dataset.theme).toBe("light");
 
-        localStorage.removeItem(theme.THEME_STORAGE_KEY);
+        theme.setTheme(null);
         dispatchSystemTheme(true);
         expect(document.documentElement.dataset.theme).toBe("dark");
         expect(document.documentElement.dataset.themeUser).toBeUndefined();
@@ -135,10 +136,37 @@ describe("theme preference state machine", () => {
         expect(() => theme.applyTheme()).not.toThrow();
         expect(theme.setTheme("dark")).toBe("dark");
         expect(document.documentElement.dataset.theme).toBe("dark");
+        dispatchSystemTheme(false);
+        expect(document.documentElement.dataset.theme).toBe("dark");
         expect(theme.setTheme("light")).toBe("light");
+        expect(document.documentElement.dataset.theme).toBe("light");
+        dispatchSystemTheme(true);
         expect(document.documentElement.dataset.theme).toBe("light");
         expect(warn).toHaveBeenCalledTimes(1);
         expect(warn).toHaveBeenCalledWith("[theme] localStorage unavailable; preference will not persist");
+    });
+
+    it("applies validated preference changes from another tab", () => {
+        window.dispatchEvent(
+            new StorageEvent("storage", {
+                key: theme.THEME_STORAGE_KEY,
+                newValue: "dark",
+                storageArea: localStorage,
+            }),
+        );
+        expect(document.documentElement.dataset.theme).toBe("dark");
+        expect(document.documentElement.dataset.themeUser).toBe("dark");
+
+        systemPrefersDark = false;
+        window.dispatchEvent(
+            new StorageEvent("storage", {
+                key: theme.THEME_STORAGE_KEY,
+                newValue: "invalid",
+                storageArea: localStorage,
+            }),
+        );
+        expect(document.documentElement.dataset.theme).toBe("light");
+        expect(document.documentElement.dataset.themeUser).toBeUndefined();
     });
 });
 

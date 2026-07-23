@@ -33,8 +33,10 @@ export function getThemePref(): ThemePref {
     }
 }
 
+let currentPref = getThemePref();
+
 export function applyTheme(explicit?: ThemePref): ResolvedTheme {
-    const preference = explicit !== undefined ? explicit : getThemePref();
+    const preference = explicit !== undefined ? explicit : currentPref;
     const resolved = preference ?? (colorScheme.matches ? "dark" : "light");
 
     document.documentElement.dataset.theme = resolved;
@@ -48,6 +50,7 @@ export function applyTheme(explicit?: ThemePref): ResolvedTheme {
 }
 
 export function setTheme(preference: ThemePref): ThemePref {
+    currentPref = preference;
     try {
         if (preference === null) {
             window.localStorage.removeItem(THEME_STORAGE_KEY);
@@ -68,4 +71,10 @@ export function nextThemePref(current: ThemePref): ThemePref {
     return null;
 }
 
+applyTheme();
 colorScheme.addEventListener("change", () => applyTheme());
+window.addEventListener("storage", (event) => {
+    if (event.key !== THEME_STORAGE_KEY) return;
+    currentPref = event.newValue === "light" || event.newValue === "dark" ? event.newValue : null;
+    applyTheme();
+});
