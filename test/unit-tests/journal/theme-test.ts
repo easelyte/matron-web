@@ -69,7 +69,7 @@ function darkCanvasFromStylesheet(source = readFileSync("src/journal/shell.pcss"
     }
     if (closingBrace < 0) throw new Error("Missing closing brace for dark theme block");
 
-    const darkBlock = source.slice(openingBrace + 1, closingBrace);
+    const darkBlock = source.slice(openingBrace + 1, closingBrace).replace(/\/\*[\s\S]*?\*\//g, "");
     const canvas = darkBlock.match(/--cpd-color-bg-canvas-default:\s*(#[0-9a-fA-F]{3,8})/)?.[1];
     if (!canvas) throw new Error("Missing dark canvas token");
     return canvas;
@@ -266,6 +266,16 @@ describe("dark-canvas single-source drift guard", () => {
             :root { --cpd-color-bg-canvas-default: #fff; }
             [data-theme="dark"] { --cpd-color-text-primary: #e6e9ee; }
             .later { --cpd-color-bg-canvas-default: #16191d; }
+        `;
+
+        expect(() => darkCanvasFromStylesheet(source)).toThrow("Missing dark canvas token");
+    });
+
+    it("fails when the dark canvas token is commented out", () => {
+        const source = `
+            [data-theme="dark"] {
+                /* --cpd-color-bg-canvas-default: #16191d; */
+            }
         `;
 
         expect(() => darkCanvasFromStylesheet(source)).toThrow("Missing dark canvas token");
