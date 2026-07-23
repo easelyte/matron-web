@@ -257,6 +257,20 @@ test("a legacy blob with one non-string value keeps its valid string siblings", 
     expect(s.read("c2").text).toBe("valid draft");
 });
 
+test("clearing a never-persisted convo leaves nothing durable on reload even if removeItem throws (final-review round-3)", () => {
+    // Simulates send-within-the-debounce-window: the draft is in memory but was never persisted,
+    // so clear must not have left a durable copy that a fresh store would resurrect.
+    const s = makeDraftStore(SESSION);
+    s.setDraft("c1", "typed but never persisted");
+    const spy = jest.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+        throw new DOMException("denied", "SecurityError");
+    });
+    s.clear("c1");
+    spy.mockRestore();
+    // Fresh store (reload): nothing durable was ever written for c1.
+    expect(makeDraftStore(SESSION).read("c1").text).toBe("");
+});
+
 test("clear does not throw when removeItem fails and flips durability non-durable (accepted edge)", () => {
     // Documented accepted edge (spec FIX 3 / round-6 Major-2): a storage throw during clear leaves a
     // stale copy that read() can surface — clear must NOT crash, and durability flips to the P3 signal.

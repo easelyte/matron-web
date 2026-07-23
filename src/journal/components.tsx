@@ -2570,17 +2570,25 @@ function Composer({
         if (draftTimerRef.current) {
             clearTimeout(draftTimerRef.current);
             draftTimerRef.current = undefined;
-            // A pending debounce is an unpersisted edit. Persist its owning convo before dropping the
-            // timer so cancelling here (e.g. a cross-convo late send: switch to B, type, then A's send
-            // resolves and cancels the shared timer) can't silently strand B's draft (final-review round-2).
+        }
+        draftTimerConvoRef.current = undefined;
+    }, []);
+    // Cancel the pending debounce, but if it belonged to a DIFFERENT conversation than `keepCid`
+    // (a cross-convo late send: switch to B + type while A's send is in flight), flush that convo
+    // first so it isn't stranded. Never flush `keepCid`'s own timer — the caller is about to
+    // clear/persist it explicitly, and force-persisting a just-sent draft here would make it
+    // resurrect after a clear-failure (final-review round-3).
+    const cancelDebounceKeeping = useCallback(
+        (keepCid: string) => {
             const pendingCid = draftTimerConvoRef.current;
-            draftTimerConvoRef.current = undefined;
-            if (pendingCid) {
+            cancelDraftDebounce();
+            if (pendingCid && pendingCid !== keepCid) {
                 drafts.persist(pendingCid);
                 syncDurability(pendingCid);
             }
-        }
-    }, [drafts, syncDurability]);
+        },
+        [cancelDraftDebounce, drafts, syncDurability],
+    );
     const flushDraft = useCallback(() => {
         cancelDraftDebounce();
         const cid = prevConvoIdRef.current;
@@ -2658,7 +2666,9 @@ function Composer({
             if (await client.sendMessage(submitted, cid)) {
                 const folder = recentFolderArgument(submitted);
                 if (folder) store.record(folder);
-                cancelDraftDebounce();
+                // Cancel cid's own pending timer without persisting (we clear/persist it below), but
+                // flush any pending timer owned by another convo the user switched to during the send.
+                cancelDebounceKeeping(cid);
                 const draftUnchanged = (draftRevisions.current.get(cid) ?? 0) === submittedRevision;
                 if (draftUnchanged) drafts.clear(cid);
                 else drafts.persist(cid);
