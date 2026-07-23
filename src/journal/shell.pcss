@@ -6,23 +6,50 @@ Please see LICENSE files in the repository root for full details.
 */
 
 :root {
+    --cpd-color-bg-accent: #087f6d;
+    --cpd-color-bg-accent-emphasis: #0dbd8b;
+    --cpd-color-bg-badge: #656d77;
     --cpd-color-bg-canvas-default: #fff;
+    --cpd-color-bg-canvas-raised: #fbfaf6;
+    --cpd-color-bg-cluster: rgb(255, 254, 250, 0.72);
+    --cpd-color-bg-room-canvas: #f1efe9;
+    --cpd-color-bg-scrim-auth: rgb(255 255 255 / 82%);
+    --cpd-color-bg-scrim-drag: rgb(255 255 255 / 90%);
+    --cpd-color-bg-self-bubble: #dff7ed;
     --cpd-color-bg-subtle-primary: #f7f8fa;
     --cpd-color-bg-subtle-secondary: #f0f2f5;
+    --cpd-color-bg-usage-track: rgb(28, 24, 20, 0.12);
     --cpd-color-border-disabled: #d8dadd;
     --cpd-color-border-interactive-primary: #8f96a0;
     --cpd-color-border-interactive-secondary: #c7cbd1;
+    --cpd-color-border-subtle: #e1e4e8;
     --cpd-color-icon-accent-primary: #0dbd8b;
     --cpd-color-icon-secondary: #656d77;
+    --cpd-color-icon-tertiary: #8090a3;
     --cpd-color-text-action-accent: #087f6d;
     --cpd-color-text-critical-primary: #bd2020;
     --cpd-color-text-link-external: #087f6d;
+    --cpd-color-text-on-accent: #fff;
+    --cpd-color-text-placeholder: #737983;
     --cpd-color-text-primary: #1b1d22;
     --cpd-color-text-secondary: #656d77;
+    --cpd-color-usage-high: #ff3b30;
+    --cpd-color-usage-low: #34c759;
+    --cpd-color-usage-medium: #ff9500;
     --cpd-font-size-root: 16px;
+    --cpd-font-body-2xs-regular: 400 10px/12px Inter, sans-serif;
     --cpd-font-body-xs-regular: 400 12px/16px Inter, sans-serif;
     --cpd-font-body-xs-semibold: 600 12px/16px Inter, sans-serif;
     --cpd-font-body-sm-regular: 400 14px/20px Inter, sans-serif;
+    --cpd-font-body-md-regular: 400 16px/24px Inter, sans-serif;
+    --cpd-font-heading-sm-semibold: 600 18px/28px Inter, sans-serif;
+    --cpd-font-heading-md-semibold: 600 20px/28px Inter, sans-serif;
+    --cpd-font-size-2xs: 10px;
+    --cpd-font-size-xs: 12px;
+    --cpd-font-size-sm: 14px;
+    --cpd-font-size-md: 16px;
+    --cpd-font-size-lg: 18px;
+    --cpd-font-size-xl: 20px;
     --cpd-space-1x: 4px;
     --cpd-space-2x: 8px;
     --cpd-space-3x: 12px;
@@ -30,11 +57,43 @@ Please see LICENSE files in the repository root for full details.
     --cpd-space-5x: 20px;
 }
 
+[data-theme="dark"] {
+    --cpd-color-bg-accent: #0a5f52;
+    --cpd-color-bg-accent-emphasis: #0d7a66;
+    --cpd-color-bg-badge: #4a4f57;
+    --cpd-color-bg-canvas-default: #16191d;
+    --cpd-color-bg-canvas-raised: #1e2228;
+    --cpd-color-bg-cluster: rgb(40, 44, 50, 0.72);
+    --cpd-color-bg-room-canvas: #121417;
+    --cpd-color-bg-scrim-auth: rgb(22, 25, 29, 0.86);
+    --cpd-color-bg-scrim-drag: rgb(22, 25, 29, 0.90);
+    --cpd-color-bg-self-bubble: #12352b;
+    --cpd-color-bg-subtle-primary: #1e2228;
+    --cpd-color-bg-subtle-secondary: #24282f;
+    --cpd-color-bg-usage-track: rgb(255, 255, 255, 0.14);
+    --cpd-color-border-disabled: #33373d;
+    --cpd-color-border-interactive-primary: #6b7079;
+    --cpd-color-border-interactive-secondary: #66707c;
+    --cpd-color-border-subtle: #2b2f35;
+    --cpd-color-icon-accent-primary: #21c9a0;
+    --cpd-color-icon-secondary: #8e959f;
+    --cpd-color-icon-tertiary: #7a828d;
+    --cpd-color-text-action-accent: #21c9a0;
+    --cpd-color-text-critical-primary: #ff6a6a;
+    --cpd-color-text-link-external: #21c9a0;
+    --cpd-color-text-on-accent: #f5f7fa;
+    --cpd-color-text-placeholder: #7d848e;
+    --cpd-color-text-primary: #e6e9ee;
+    --cpd-color-text-secondary: #9aa1ab;
+    --cpd-color-usage-high: #ff3b30;
+    --cpd-color-usage-low: #34c759;
+    --cpd-color-usage-medium: #ff9500;
+}
+
 body {
     background: var(--cpd-color-bg-canvas-default);
     color: var(--cpd-color-text-primary);
     font-family: Inter, "Helvetica Neue", "Segoe UI", Roboto, Ubuntu, "Fira Sans", "Noto Sans", Arial, sans-serif;
-    font-size: 14.0625px;
     font-weight: 400;
     line-height: 1.5;
 }
@@ -86,7 +145,7 @@ button {
 .mx_LeftPanel_outerWrapper {
     position: relative;
     overflow: visible;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mx_LeftPanel_wrapper,
@@ -99,7 +158,7 @@ button {
 
 .mx_RoomListPanel {
     flex-direction: column;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mj_RoomListHeader {
@@ -113,9 +172,7 @@ button {
 .mj_RoomListHeader h1 {
     overflow: hidden;
     margin: 0;
-    font-size: 18px;
-    font-weight: 600;
-    line-height: 28px;
+    font: var(--cpd-font-heading-sm-semibold);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -140,7 +197,7 @@ button {
 }
 
 .mj_IconButton:hover {
-    background: #f0f2f5;
+    background: var(--cpd-color-bg-subtle-secondary);
 }
 
 .mj_IconButton svg {
@@ -160,9 +217,9 @@ button {
     width: 100%;
     height: 36px;
     align-items: center;
-    gap: 10px;
+    gap: var(--cpd-space-2x);
     border-radius: 8px;
-    background: #f0f2f5;
+    background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-secondary);
     padding: 0 12px;
 }
@@ -180,7 +237,7 @@ button {
     outline: 0;
     background: transparent;
     color: var(--cpd-color-text-primary);
-    font-size: 14px;
+    font: var(--cpd-font-body-sm-regular);
 }
 
 .mx_RoomListSearch_input::placeholder {
@@ -217,7 +274,7 @@ button {
 
 .mj_RoomListItem:hover,
 .mj_RoomListItem_selected {
-    background: #f0f2f5;
+    background: var(--cpd-color-bg-subtle-secondary);
 }
 
 .mj_RoomListText {
@@ -239,8 +296,7 @@ button {
 }
 
 .mj_RoomListPreview {
-    font-size: 14px;
-    line-height: 20px;
+    font: var(--cpd-font-body-sm-regular);
 }
 
 .mj_RoomListText_unread .mj_RoomListName,
@@ -255,10 +311,10 @@ button {
     align-items: center;
     justify-content: center;
     border-radius: 10px;
-    background: var(--cpd-color-icon-secondary);
-    color: #fff;
+    background: var(--cpd-color-bg-badge);
+    color: var(--cpd-color-text-on-accent);
     padding: 0 6px;
-    font-size: 11px;
+    font-size: var(--cpd-font-size-2xs);
     line-height: 20px;
 }
 
@@ -305,15 +361,15 @@ button {
 .mx_RoomView_body {
     flex-direction: column;
     overflow: hidden;
-    background: #f1efe9;
+    background: var(--cpd-color-bg-room-canvas);
 }
 
 .mx_RoomHeader {
     width: 100%;
-    min-height: 56px;
+    min-height: 64px;
     box-sizing: border-box;
     padding: 0 12px 0 18px;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mx_RoomView_timeline {
@@ -365,7 +421,7 @@ button {
 .mx_DisambiguatedProfile {
     display: block;
     margin: 0 0 5px 2px;
-    font-size: 14px;
+    font-size: var(--cpd-font-size-sm);
     font-weight: 600;
     line-height: 16px;
 }
@@ -385,7 +441,7 @@ button {
     margin-left: -9px;
     padding: 10px 60px 10px 10px;
     border-radius: 6px;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
     box-shadow: 0 1px 2px rgb(18 16 14 / 8%);
     line-height: 1.2;
 }
@@ -393,7 +449,7 @@ button {
 .mx_EventTile[data-self="true"] .mx_EventTile_line {
     margin-right: -9px;
     margin-left: auto;
-    background: #dff7ed;
+    background: var(--cpd-color-bg-self-bubble);
 }
 
 .mx_EventTile_line > a {
@@ -404,7 +460,7 @@ button {
 
 .mx_MessageTimestamp {
     white-space: nowrap;
-    font-size: 10px !important;
+    font-size: var(--cpd-font-size-2xs);
     line-height: 12px !important;
 }
 
@@ -436,7 +492,7 @@ button {
 .mx_MessageComposer {
     min-height: 56px;
     flex: 0 0 auto;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mx_MessageComposer_wrapper {
@@ -511,15 +567,15 @@ button {
     box-sizing: border-box;
     margin: 8.5px 0;
     padding: 8px 12px;
-    border: 1px solid #f0f2f5;
+    border: 1px solid var(--cpd-color-bg-subtle-secondary);
     border-radius: 8px;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
     font-size: inherit;
     line-height: 1.2;
 }
 
 .mx_BasicMessageComposer_input::placeholder {
-    color: #737983;
+    color: var(--cpd-color-text-placeholder);
 }
 
 .mx_MessageComposer_actions {
@@ -539,7 +595,7 @@ button {
     padding: 0;
     border: 0;
     background: transparent;
-    color: #8090a3;
+    color: var(--cpd-color-icon-tertiary);
 }
 
 .mx_MessageComposer_button svg,
@@ -549,7 +605,7 @@ button {
 }
 
 .mx_MessageComposer_sendMessage {
-    color: #087f6d;
+    color: var(--cpd-color-text-action-accent);
 }
 
 .mx_HomePage {
@@ -557,7 +613,7 @@ button {
     width: 100%;
     align-items: center;
     justify-content: center;
-    background: #f1efe9;
+    background: var(--cpd-color-bg-room-canvas);
 }
 
 .mx_HomePage_default_wrapper {
@@ -574,21 +630,21 @@ button {
     height: 100%;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: calc(var(--cpd-space-5x) + var(--cpd-space-1x));
 }
 
 .mx_AuthPage_modal {
     width: min(440px, 100%);
     overflow: hidden;
     border-radius: 16px;
-    background: rgb(255 255 255 / 82%);
+    background: var(--cpd-color-bg-scrim-auth);
     box-shadow: 0 16px 48px rgb(18 16 14 / 12%);
 }
 
 .mx_AuthPage_modalContent {
     position: relative;
     flex-direction: column;
-    padding: 40px;
+    padding: calc(var(--cpd-space-5x) + var(--cpd-space-5x));
 }
 
 .mx_AuthHeaderLogo {
@@ -608,17 +664,17 @@ button {
 
 .mx_Field {
     position: relative;
-    margin-bottom: 18px;
+    margin-bottom: var(--cpd-space-5x);
 }
 
 .mx_Field input {
     width: 100%;
     height: 48px;
     padding: 18px 12px 6px;
-    border: 1px solid #c7cbd1;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
     border-radius: 8px;
     outline: 0;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mx_Field label {
@@ -634,11 +690,11 @@ button {
 .mx_Field input:not(:placeholder-shown) + label,
 .mx_Field_labelAlwaysTopLeft label {
     top: 4px;
-    font-size: 10px;
+    font-size: var(--cpd-font-size-2xs);
 }
 
 .mx_Field input:focus {
-    border-color: #087f6d;
+    border-color: var(--cpd-color-text-action-accent);
 }
 
 .mx_ErrorMessage {
@@ -649,8 +705,8 @@ button {
     min-height: 40px;
     border: 0;
     border-radius: 8px;
-    background: #087f6d;
-    color: #fff;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
     font-weight: 600;
 }
 

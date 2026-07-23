@@ -155,6 +155,41 @@ describe("session-control banners", () => {
     });
 });
 
+describe("usage limit accessibility", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    it("names each progressbar and announces its percentage and reset", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: {
+                limits: [{ label: "Session", percent: 39, resets: "in 2 hours" }],
+            },
+        };
+
+        rendered = await renderClient(client);
+
+        const group = rendered.container.querySelector('[role="group"][aria-label="Usage limits"]');
+        const progressbar = group?.querySelector('[role="progressbar"]');
+        expect(progressbar?.getAttribute("aria-label")).toBe("Session");
+        expect(progressbar?.getAttribute("aria-valuenow")).toBe("39");
+        expect(progressbar?.getAttribute("aria-valuetext")).toBe("39% used, resets in 2 hours");
+        expect(progressbar?.parentElement?.hasAttribute("aria-label")).toBe(false);
+    });
+});
+
 describe("markdown render-site integration", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 

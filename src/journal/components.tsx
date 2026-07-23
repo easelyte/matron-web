@@ -45,12 +45,16 @@ import {
     SearchIcon,
     SendIcon,
     SettingsIcon,
+    SystemThemeIcon,
+    LightThemeIcon,
+    DarkThemeIcon,
     StarFilledIcon,
     StarIcon,
     UnarchiveIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody } from "./markdown";
+import { getSnapshot, nextThemePref, setTheme, subscribe } from "./theme";
 import {
     applyCommand,
     applyFolder,
@@ -94,7 +98,12 @@ function clampLeftPanelWidth(width: number, containerWidth: number): number {
 }
 
 function initialLeftPanelWidth(): number {
-    const storedWidth = Number.parseInt(window.localStorage.getItem(LEFT_PANEL_SIZE_KEY) ?? "", 10);
+    let storedWidth = Number.NaN;
+    try {
+        storedWidth = Number.parseInt(window.localStorage.getItem(LEFT_PANEL_SIZE_KEY) ?? "", 10);
+    } catch {
+        // Storage can be unavailable; the default width remains usable.
+    }
     return clampLeftPanelWidth(
         Number.isFinite(storedWidth) && storedWidth >= LEFT_PANEL_MIN_WIDTH ? storedWidth : LEFT_PANEL_DEFAULT_WIDTH,
         document.documentElement.clientWidth,
@@ -138,7 +147,11 @@ function useLeftPanelResize(): {
             window.removeEventListener("pointermove", onPointerMove);
             window.removeEventListener("pointerup", stopDragging);
             window.removeEventListener("pointercancel", stopDragging);
-            window.localStorage.setItem(LEFT_PANEL_SIZE_KEY, String(Math.round(widthRef.current)));
+            try {
+                window.localStorage.setItem(LEFT_PANEL_SIZE_KEY, String(Math.round(widthRef.current)));
+            } catch {
+                // Resizing remains available for the current session without persistence.
+            }
             stopDraggingRef.current = () => undefined;
         };
         const onPointerMove = (moveEvent: PointerEvent): void => {
@@ -155,6 +168,25 @@ function useLeftPanelResize(): {
     }, []);
 
     return { width, onPointerDown };
+}
+
+export function ThemeToggle(): React.ReactElement {
+    const preference = useSyncExternalStore(subscribe, getSnapshot);
+    const label = preference === null ? "System" : preference === "light" ? "Light" : "Dark";
+    const icon =
+        preference === null ? <SystemThemeIcon /> : preference === "light" ? <LightThemeIcon /> : <DarkThemeIcon />;
+
+    return (
+        <button
+            className="mj_IconButton"
+            type="button"
+            aria-label={`Theme: ${label}`}
+            title={`Theme: ${label}`}
+            onClick={() => setTheme(nextThemePref(preference))}
+        >
+            {icon}
+        </button>
+    );
 }
 
 function formatTime(timestamp: number): string {
@@ -189,11 +221,16 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
     };
 
     return (
-        <div className="mx_AuthPage" style={{ background: "#fbfaf6" }}>
+        <div className="mx_AuthPage" style={{ background: "var(--cpd-color-bg-canvas-raised)" }}>
             <div className="mx_AuthPage_modal mx_AuthPage_modal_withBlur" style={{ position: "relative" }}>
                 <div
                     className="mx_AuthPage_modalBlur"
-                    style={{ position: "absolute", inset: 0, filter: "blur(40px)", background: "#fbfaf6" }}
+                    style={{
+                        position: "absolute",
+                        inset: 0,
+                        filter: "blur(40px)",
+                        background: "var(--cpd-color-bg-canvas-raised)",
+                    }}
                 />
                 <main
                     className="mx_AuthPage_modalContent"
@@ -874,6 +911,7 @@ function ConversationList({
                                 >
                                     <h1 title="Home">Home</h1>
                                     <div className="mj_RoomListHeaderActions">
+                                        <ThemeToggle />
                                         {hasActiveUnread && (
                                             <button
                                                 className="mj_IconButton mj_MarkAllReadButton"
@@ -1185,30 +1223,27 @@ function useMinuteClock(): number {
 function UsageBars({ limits }: { limits: NonNullable<SessionStatus["limits"]> }): React.ReactElement {
     const now = useMinuteClock();
     return (
-        <div className="mj_UsageBars" aria-label="Usage limits">
+        <div className="mj_UsageBars" role="group" aria-label="Usage limits">
             {limits.slice(0, 3).map((limit) => {
                 const percent = Math.min(Math.max(limit.percent, 0), 100);
                 const reset = resetDisplay(limit.resets_at, limit.resets, now);
                 return (
-                    <div
-                        className="mj_UsageRow"
-                        key={limit.label}
-                        aria-label={`${usageBarLabel(limit.label)}, ${percent}% used${reset ? `, resets ${reset}` : ""}`}
-                    >
+                    <div className="mj_UsageRow" key={limit.label} title={reset ? `resets ${reset}` : undefined}>
                         <span className="mj_UsageLabel">{usageBarLabel(limit.label)}:</span>
                         <span
                             className="mj_UsageTrack"
                             role="progressbar"
+                            aria-label={usageBarLabel(limit.label)}
                             aria-valuemin={0}
                             aria-valuemax={100}
                             aria-valuenow={percent}
+                            aria-valuetext={`${percent}% used${reset ? `, resets ${reset}` : ""}`}
                         >
                             <span
                                 className={`mj_UsageFill mj_UsageFill_${usageLevel(percent)}`}
                                 style={{ width: `${percent}%` }}
                             />
                         </span>
-                        <span className="mj_UsageReset">{reset}</span>
                     </div>
                 );
             })}

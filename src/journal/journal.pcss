@@ -66,13 +66,21 @@ textarea {
     flex: 0 0 auto;
 }
 
+.mx_RoomView_body {
+    container: mj-room / inline-size;
+}
+
 .mx_RoomHeader:hover {
     background-color: var(--cpd-color-bg-canvas-default);
 }
 
 .mj_ChatHeader {
+    --mj-header-side-min-width: 152px;
+
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-columns:
+        minmax(var(--mj-header-side-min-width), 1fr) auto
+        minmax(var(--mj-header-side-min-width), 1fr);
     align-items: center;
     gap: var(--cpd-space-3x);
 }
@@ -83,9 +91,9 @@ textarea {
     box-sizing: border-box;
     border: 1px solid rgb(28, 24, 20, 0.08);
     border-radius: 10px;
-    background-color: rgb(255, 254, 250, 0.72);
+    background-color: var(--cpd-color-bg-cluster);
     box-shadow: 0 1px 2px rgb(28, 24, 20, 0.06);
-    padding: 4px 10px;
+    padding: var(--cpd-space-1x) var(--cpd-space-2x);
 }
 
 .mj_HeaderCluster_empty {
@@ -108,13 +116,13 @@ textarea {
     max-width: min(360px, 38vw);
     align-items: center;
     justify-self: center;
-    padding-inline: 12px;
+    padding-inline: var(--cpd-space-3x);
 }
 
 .mj_HeaderTitleCluster .mx_RoomHeader_heading {
     display: block;
     width: 100%;
-    font-size: 15px;
+    font-size: var(--cpd-font-size-lg);
     font-weight: 600;
     line-height: 18px;
     text-align: center;
@@ -132,19 +140,17 @@ textarea {
 
 .mj_HeaderModel,
 .mj_HeaderEmail {
-    font-size: 10px;
-    line-height: 12px;
+    font: var(--cpd-font-body-2xs-regular);
 }
 
 .mj_HeaderContext {
-    font-size: 12px;
-    line-height: 16px;
+    font: var(--cpd-font-body-xs-regular);
 }
 
 .mj_HeaderContextRow {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--cpd-space-2x);
 }
 
 .mj_CompactButton {
@@ -157,7 +163,7 @@ textarea {
     border: none;
     background: none;
     color: var(--cpd-color-text-secondary);
-    font-size: 12px;
+    font-size: var(--cpd-font-size-xs);
     line-height: 1;
     cursor: pointer;
 }
@@ -239,24 +245,24 @@ textarea {
 }
 
 .mj_UsageCluster {
-    height: 38px;
-    overflow: hidden;
+    min-width: var(--mj-header-side-min-width);
+    min-height: 38px;
     justify-self: end;
-    padding-block: 3px;
+    padding-block: var(--cpd-space-1x);
 }
 
 .mj_UsageBars {
     display: grid;
+    /* Intentional micro-gap: keeps all three usage rows inside the header pill. */
     gap: 2px;
 }
 
 .mj_UsageRow {
     display: grid;
-    grid-template-columns: minmax(34px, auto) 90px minmax(34px, auto);
+    grid-template-columns: minmax(34px, auto) 1fr;
     align-items: center;
-    gap: 5px;
-    font-size: 9px;
-    line-height: 9px;
+    gap: var(--cpd-space-1x);
+    font: var(--cpd-font-body-2xs-regular);
 }
 
 .mj_UsageLabel {
@@ -272,7 +278,7 @@ textarea {
     height: 3px;
     overflow: hidden;
     border-radius: 999px;
-    background-color: rgb(28, 24, 20, 0.12);
+    background-color: var(--cpd-color-bg-usage-track);
 }
 
 .mj_UsageFill {
@@ -282,22 +288,44 @@ textarea {
 }
 
 .mj_UsageFill_low {
-    background-color: #34c759;
+    background-color: var(--cpd-color-usage-low);
 }
 
 .mj_UsageFill_medium {
-    background-color: #ff9500;
+    background-color: var(--cpd-color-usage-medium);
+}
+
+/*
+ * The resizable sidebar can make the room much narrower than the viewport.
+ * At 720px the desktop header's two 152px side tracks, title, gaps, and room
+ * padding still fit; below that, let the equal side tracks shrink and compact
+ * usage rows without moving the title off the room's center line.
+ */
+@container mj-room (max-width: 720px) {
+    .mj_ChatHeader {
+        --mj-header-side-min-width: 0px;
+
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        gap: var(--cpd-space-1x);
+    }
+
+    .mj_HeaderTitleCluster {
+        max-width: 40cqi;
+        padding-inline: var(--cpd-space-2x);
+    }
+
+    .mj_UsageRow {
+        grid-template-columns: 1fr;
+        gap: var(--cpd-space-1x);
+    }
+
+    .mj_UsageTrack {
+        width: 58px;
+    }
 }
 
 .mj_UsageFill_high {
-    background-color: #ff3b30;
-}
-
-.mj_UsageReset {
-    overflow: hidden;
-    color: var(--cpd-color-text-secondary);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    background-color: var(--cpd-color-usage-high);
 }
 
 .mj_BackButton {
@@ -593,7 +621,7 @@ textarea {
     box-shadow: 0 2px 8px rgb(15, 23, 42, 0.18);
     color: var(--cpd-color-text-action-accent);
     cursor: pointer;
-    font-size: 18px;
+    font-size: var(--cpd-font-size-lg);
     line-height: 1;
 }
 
@@ -613,7 +641,7 @@ textarea {
 
 .mx_EventTile[data-layout="bubble"] .mx_MessageTimestamp {
     color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-xs-regular);
+    font-size: var(--cpd-font-size-2xs);
 }
 
 .mj_MessageText {
@@ -762,7 +790,7 @@ textarea {
     background: var(--cpd-color-bg-subtle-secondary);
     padding: calc(var(--cpd-space-5x) + var(--cpd-space-3x)) var(--cpd-space-3x) var(--cpd-space-3x);
     font-family: "Fira Code", monospace;
-    font-size: 12px;
+    font-size: var(--cpd-font-size-xs);
 }
 
 .mj_CodeBlock_copy,
@@ -843,7 +871,7 @@ textarea {
     font-weight: 600;
 }
 
-/* [data-theme="dark"] syntax-token overrides are intentionally deferred to #480. */
+/* [data-theme="dark"] syntax-token overrides are intentionally deferred to the parent theme work. */
 
 .mj_SendingLabel {
     float: right;
@@ -865,7 +893,7 @@ textarea {
     justify-content: center;
     border: 2px dashed var(--cpd-color-icon-accent-primary);
     border-radius: 12px;
-    background: rgb(255 255 255 / 90%);
+    background: var(--cpd-color-bg-scrim-drag);
     box-shadow: 0 8px 24px rgb(15 23 42 / 14%);
     color: var(--cpd-color-text-action-accent);
     font: var(--cpd-font-body-sm-regular);
@@ -903,7 +931,7 @@ textarea {
     margin: 0;
     padding: 12px 16px;
     font-family: var(--mj-mono, ui-monospace, monospace);
-    font-size: 0.8125rem;
+    font-size: var(--cpd-font-size-sm);
     user-select: text;
     white-space: pre;
 }
@@ -946,8 +974,7 @@ textarea {
 .mj_UploadConfirm_title {
     margin: 0;
     overflow-wrap: anywhere;
-    font: var(--cpd-font-body-sm-regular);
-    font-size: 20px;
+    font-size: var(--cpd-font-size-xl);
     font-weight: 600;
     line-height: 26px;
 }
@@ -1031,13 +1058,13 @@ textarea {
 }
 
 .mj_UploadConfirm_actions button.mj_UploadConfirm_send {
-    background: var(--cpd-color-icon-accent-primary);
-    color: #fff;
+    background: var(--cpd-color-bg-accent-emphasis);
+    color: var(--cpd-color-text-on-accent);
 }
 
 .mj_UploadConfirm_actions button.mj_UploadConfirm_send:hover:not(:disabled) {
-    background: var(--cpd-color-text-action-accent);
-    color: #fff;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
 }
 
 .mj_UploadConfirm_error {
@@ -1058,7 +1085,7 @@ textarea {
     margin-left: auto !important;
     border: 1px solid rgb(13 189 139 / 20%);
     border-radius: 10px;
-    background: #dff7ed;
+    background: var(--cpd-color-bg-self-bubble);
     box-shadow: 0 1px 2px rgb(18 16 14 / 8%);
     color: var(--cpd-color-text-primary);
     padding: var(--cpd-space-2x) var(--cpd-space-3x);
@@ -1075,7 +1102,7 @@ textarea {
 .mj_AttachmentChip_caption {
     display: block;
     opacity: 0.8;
-    font-size: 0.9em;
+    font-size: inherit;
 }
 
 .mj_AttachmentChip_name {
@@ -1235,7 +1262,7 @@ li.mj_AttachmentChip_error {
 }
 
 .mj_ToolCard summary code {
-    border: 1px solid #e1e4e8;
+    border: 1px solid var(--cpd-color-border-subtle);
     border-radius: 4px;
     background: var(--cpd-color-bg-subtle-secondary);
     padding: 3px 4px;
@@ -1264,7 +1291,7 @@ li.mj_AttachmentChip_error {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     font-family: "Fira Code", monospace;
-    font-size: 12px;
+    font-size: var(--cpd-font-size-xs);
 }
 
 .mj_DiffCard {
@@ -1337,7 +1364,7 @@ li.mj_AttachmentChip_error {
     padding: 0 var(--cpd-space-3x) var(--cpd-space-3x);
     white-space: pre;
     font-family: "Fira Code", monospace;
-    font-size: 12px;
+    font-size: var(--cpd-font-size-xs);
 }
 
 .mj_DiffLine_hunk {
@@ -1513,7 +1540,7 @@ button.mj_File {
     border: none;
     background: none;
     color: inherit;
-    font-size: 16px;
+    font-size: var(--cpd-font-size-md);
     line-height: 1;
     cursor: pointer;
 }
@@ -1541,7 +1568,7 @@ button.mj_File {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #fbfaf6;
+    background: var(--cpd-color-bg-canvas-raised);
 }
 
 .mj_Loading img {
@@ -1599,12 +1626,14 @@ button.mj_File {
     }
 
     .mj_ChatHeader {
+        --mj-header-side-min-width: 68px;
+
         gap: var(--cpd-space-1x);
         padding-inline: 42px var(--cpd-space-2x);
     }
 
     .mj_HeaderCluster {
-        padding-inline: 6px;
+        padding-inline: var(--cpd-space-1x);
     }
 
     .mj_HeaderTitleCluster {
@@ -1612,8 +1641,8 @@ button.mj_File {
     }
 
     .mj_UsageRow {
-        grid-template-columns: minmax(28px, auto) 58px minmax(28px, auto);
-        gap: 3px;
+        grid-template-columns: 1fr;
+        gap: var(--cpd-space-1x);
     }
 
     .mj_UsageTrack {
