@@ -189,11 +189,16 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
     };
 
     return (
-        <div className="mx_AuthPage" style={{ background: "#fbfaf6" }}>
+        <div className="mx_AuthPage" style={{ background: "var(--cpd-color-bg-canvas-raised)" }}>
             <div className="mx_AuthPage_modal mx_AuthPage_modal_withBlur" style={{ position: "relative" }}>
                 <div
                     className="mx_AuthPage_modalBlur"
-                    style={{ position: "absolute", inset: 0, filter: "blur(40px)", background: "#fbfaf6" }}
+                    style={{
+                        position: "absolute",
+                        inset: 0,
+                        filter: "blur(40px)",
+                        background: "var(--cpd-color-bg-canvas-raised)",
+                    }}
                 />
                 <main
                     className="mx_AuthPage_modalContent"

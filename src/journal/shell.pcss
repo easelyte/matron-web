@@ -103,7 +103,7 @@ button {
 .mx_LeftPanel_outerWrapper {
     position: relative;
     overflow: visible;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mx_LeftPanel_wrapper,
@@ -116,7 +116,7 @@ button {
 
 .mx_RoomListPanel {
     flex-direction: column;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mj_RoomListHeader {
@@ -157,7 +157,7 @@ button {
 }
 
 .mj_IconButton:hover {
-    background: #f0f2f5;
+    background: var(--cpd-color-bg-subtle-secondary);
 }
 
 .mj_IconButton svg {
@@ -179,7 +179,7 @@ button {
     align-items: center;
     gap: 10px;
     border-radius: 8px;
-    background: #f0f2f5;
+    background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-secondary);
     padding: 0 12px;
 }
@@ -234,7 +234,7 @@ button {
 
 .mj_RoomListItem:hover,
 .mj_RoomListItem_selected {
-    background: #f0f2f5;
+    background: var(--cpd-color-bg-subtle-secondary);
 }
 
 .mj_RoomListText {
@@ -272,8 +272,8 @@ button {
     align-items: center;
     justify-content: center;
     border-radius: 10px;
-    background: var(--cpd-color-icon-secondary);
-    color: #fff;
+    background: var(--cpd-color-bg-badge);
+    color: var(--cpd-color-text-on-accent);
     padding: 0 6px;
     font-size: 11px;
     line-height: 20px;
@@ -322,7 +322,7 @@ button {
 .mx_RoomView_body {
     flex-direction: column;
     overflow: hidden;
-    background: #f1efe9;
+    background: var(--cpd-color-bg-room-canvas);
 }
 
 .mx_RoomHeader {
@@ -330,7 +330,7 @@ button {
     min-height: 64px;
     box-sizing: border-box;
     padding: 0 12px 0 18px;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mx_RoomView_timeline {
@@ -402,7 +402,7 @@ button {
     margin-left: -9px;
     padding: 10px 60px 10px 10px;
     border-radius: 6px;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
     box-shadow: 0 1px 2px rgb(18 16 14 / 8%);
     line-height: 1.2;
 }
@@ -410,7 +410,7 @@ button {
 .mx_EventTile[data-self="true"] .mx_EventTile_line {
     margin-right: -9px;
     margin-left: auto;
-    background: #dff7ed;
+    background: var(--cpd-color-bg-self-bubble);
 }
 
 .mx_EventTile_line > a {
@@ -453,7 +453,7 @@ button {
 .mx_MessageComposer {
     min-height: 56px;
     flex: 0 0 auto;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mx_MessageComposer_wrapper {
@@ -528,15 +528,15 @@ button {
     box-sizing: border-box;
     margin: 8.5px 0;
     padding: 8px 12px;
-    border: 1px solid #f0f2f5;
+    border: 1px solid var(--cpd-color-bg-subtle-secondary);
     border-radius: 8px;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
     font-size: inherit;
     line-height: 1.2;
 }
 
 .mx_BasicMessageComposer_input::placeholder {
-    color: #737983;
+    color: var(--cpd-color-text-placeholder);
 }
 
 .mx_MessageComposer_actions {
@@ -556,7 +556,7 @@ button {
     padding: 0;
     border: 0;
     background: transparent;
-    color: #8090a3;
+    color: var(--cpd-color-icon-tertiary);
 }
 
 .mx_MessageComposer_button svg,
@@ -566,7 +566,7 @@ button {
 }
 
 .mx_MessageComposer_sendMessage {
-    color: #087f6d;
+    color: var(--cpd-color-text-action-accent);
 }
 
 .mx_HomePage {
@@ -574,7 +574,7 @@ button {
     width: 100%;
     align-items: center;
     justify-content: center;
-    background: #f1efe9;
+    background: var(--cpd-color-bg-room-canvas);
 }
 
 .mx_HomePage_default_wrapper {
@@ -598,7 +598,7 @@ button {
     width: min(440px, 100%);
     overflow: hidden;
     border-radius: 16px;
-    background: rgb(255 255 255 / 82%);
+    background: var(--cpd-color-bg-scrim-auth);
     box-shadow: 0 16px 48px rgb(18 16 14 / 12%);
 }
 
@@ -632,10 +632,10 @@ button {
     width: 100%;
     height: 48px;
     padding: 18px 12px 6px;
-    border: 1px solid #c7cbd1;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
     border-radius: 8px;
     outline: 0;
-    background: #fff;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mx_Field label {
@@ -655,7 +655,7 @@ button {
 }
 
 .mx_Field input:focus {
-    border-color: #087f6d;
+    border-color: var(--cpd-color-text-action-accent);
 }
 
 .mx_ErrorMessage {
@@ -666,8 +666,8 @@ button {
     min-height: 40px;
     border: 0;
     border-radius: 8px;
-    background: #087f6d;
-    color: #fff;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
     font-weight: 600;
 }
 
