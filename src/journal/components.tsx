@@ -1194,6 +1194,7 @@ function UsageBars({ limits }: { limits: NonNullable<SessionStatus["limits"]> })
                         className="mj_UsageRow"
                         key={limit.label}
                         aria-label={`${usageBarLabel(limit.label)}, ${percent}% used${reset ? `, resets ${reset}` : ""}`}
+                        title={reset ? `resets ${reset}` : undefined}
                     >
                         <span className="mj_UsageLabel">{usageBarLabel(limit.label)}:</span>
                         <span
@@ -1208,7 +1209,6 @@ function UsageBars({ limits }: { limits: NonNullable<SessionStatus["limits"]> })
                                 style={{ width: `${percent}%` }}
                             />
                         </span>
-                        <span className="mj_UsageReset">{reset}</span>
                     </div>
                 );
             })}
