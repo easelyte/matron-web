@@ -88,6 +88,10 @@ export function makeDraftStore(session: Session | undefined): DraftStore {
             localStorage.removeItem(perKey(convoId));
             setDurability(convoId, "ok");
         } catch {
+            // Storage removal failed: keep an in-memory empty tombstone so read() returns "" (mem-first)
+            // instead of resurrecting the stale durable copy in-session (e.g. reloadDraft after a send).
+            // The reload-after-tab-death resurrect remains the documented accepted edge (needs storage).
+            mem.set(convoId, "");
             console.warn("matron: draft clear failed (storage full/unavailable)");
             setDurability(convoId, "non-durable");
         }

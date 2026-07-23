@@ -32,6 +32,8 @@ Principles: **drift-detection over silent coupling** (#494 adds a parity guard a
 
 **Where:** `test/unit-tests/journal/theme-test.ts` (add a describe block).
 
+**⚠ Post-rebase reconciliation (final-review):** the values below (`#16191d`) were current at authoring time. During this session origin/main's v2 warm-neutral palette (e81cf44) changed the dark `--cpd-color-bg-canvas-default` to **`#1a1c20`**. On rebase, the shipped #494 guard **correctly caught** the drift (shell.pcss moved; the two JS `theme-color` copies didn't), so Phase 1 also updates `theme.ts` + `index.html` to `#1a1c20`. The shipped test asserts **parity across the three literals (not a pinned value)** so a legitimate future palette change doesn't churn the test. Read the `#16191d` references below as the historical example; the canonical value is now whatever shell.pcss's dark token holds.
+
 **Problem:** the dark canvas color `#16191d` is duplicated in three places:
 - `src/journal/shell.pcss:64` — `--cpd-color-bg-canvas-default: #16191d;` (the `[data-theme="dark"]` CSS token, canonical source).
 - `src/journal/theme.ts:59` — `applyTheme` sets `<meta theme-color>` to `#16191d` for dark.

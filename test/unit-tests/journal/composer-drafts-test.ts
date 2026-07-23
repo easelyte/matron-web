@@ -268,7 +268,9 @@ test("clear does not throw when removeItem fails and flips durability non-durabl
     });
     expect(() => s.clear("c1")).not.toThrow();
     expect(s.durability("c1")).toBe("non-durable");
+    // In-memory empty tombstone: read returns "" in-session, so the stale durable copy does NOT
+    // resurrect (e.g. via reloadDraft after a send). The un-removed v2 key only resurfaces on a
+    // full reload (the documented accepted edge), and it is never silent draft LOSS.
+    expect(s.read("c1").text).toBe("");
     spy.mockRestore();
-    // The un-removed v2 key remains (the accepted stale-copy edge); it is not silent draft LOSS.
-    expect(s.read("c1").text).toBe("x");
 });

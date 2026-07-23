@@ -883,6 +883,21 @@ describe("composer sends", () => {
         });
     });
 
+    test("a successful send whose draft clear fails does NOT resurrect the sent text (final-review M1)", async () => {
+        const client = signedInClient();
+        jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+        await typeInComposer(result.container, "sent then clear-fails");
+        // removeItem throws during drafts.clear(cid); the in-memory empty tombstone must keep read()
+        // returning "" so reloadDraft after the send does not put the already-sent text back.
+        jest.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+            throw new DOMException("denied", "SecurityError");
+        });
+        await pressEnter(result.container);
+        expect(composerValue(result.container)).toBe("");
+    });
+
     test("cross-convo: send in A pending, Enter in B not blocked; A resolve leaves B untouched; A draft cleared", async () => {
         let resolveA!: (value: boolean) => void;
         const client = signedInClient();
