@@ -1,5 +1,13 @@
 # matron-web styling primitives
 
+> **v2 system layer (2026-07-23).** The token set was extended into a research-grounded design
+> system — see **[docs/design/primitives-v2.md](design/primitives-v2.md)** for the warm-neutral
+> elevation ladder, role type ramp (`--cpd-font-micro/meta/body/label/title/heading`), shared
+> interaction state layer (`--cpd-state-hover/active/selected`), radii (`--cpd-radius-*`), shadows
+> (`--cpd-shadow-*`), focus ring, motion (`--cpd-dur-*`/`--cpd-ease`), and icon sizes. The rules
+> below still hold; the accent is now teal `#0d9488`/`#2dd4bf` and surfaces are one warm-neutral
+> family. New interactive surfaces should compose the state layer, not hand-roll hover colors.
+
 **The canonical reference for all styling work in this repo.** Reach for this before writing any CSS. It exists so we use the shared primitives (design tokens) instead of hardcoded literals — which is what keeps the stylesheet themeable and consistent **without** a CI lint gate. If you're adding a raw `color:`, `font-size:`, or off-grid `padding:`, stop and check whether a token below already covers it.
 
 ## Foundation (do not change)
