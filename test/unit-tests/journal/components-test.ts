@@ -19,7 +19,7 @@ import {
     unreadStore,
 } from "../../../src/journal/client";
 import { makeDraftStore } from "../../../src/journal/composer-drafts";
-import { EventContent, MatronApp } from "../../../src/journal/components";
+import { EventContent, isQueueActionReply, MatronApp } from "../../../src/journal/components";
 import { makeRecentFoldersStore } from "../../../src/journal/slash-palette";
 import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
 
@@ -226,6 +226,74 @@ describe("markdown render-site integration", () => {
         expect(terminalParagraph?.nextElementSibling).toBe(cursor);
         expect(cursor?.parentElement).toBe(streamMarkdown);
         expect(terminalParagraph?.contains(cursor ?? null)).toBe(false);
+    });
+
+    it("hides a queue-action prompt_reply row while keeping ordinary reply bubbles (#490)", async () => {
+        const queueAction: JournalEvent = {
+            ...textEvent(1, "unused"),
+            type: "prompt_reply",
+            payload: { choice: "interrupt", target_seq: 100 },
+        };
+        const ordinaryReply: JournalEvent = {
+            ...textEvent(2, "unused"),
+            type: "prompt_reply",
+            payload: { choice: "Yes please", target_seq: 101 },
+        };
+        const client = signedInClient({ events: [queueAction, ordinaryReply] });
+
+        rendered = await renderClient(client);
+
+        const bubbles = Array.from(rendered.container.querySelectorAll(".mj_MessageText")).map(
+            (node) => node.textContent,
+        );
+        expect(bubbles).toContain("Yes please");
+        expect(bubbles).not.toContain("interrupt");
+    });
+});
+
+describe("isQueueActionReply (queue-action control-token suppression, #490)", () => {
+    const reply = (choice: unknown): JournalEvent => ({
+        seq: 1,
+        convo_id: "c1",
+        ts: 1,
+        sender: "user:fantin",
+        type: "prompt_reply",
+        payload: { choice, target_seq: 10 },
+    });
+
+    it("is true for the ⚡ Send now token (interrupt)", () => {
+        expect(isQueueActionReply(reply("interrupt"))).toBe(true);
+    });
+
+    it("is true for an indexed ✕ Cancel token (cancel:<n>)", () => {
+        expect(isQueueActionReply(reply("cancel:0"))).toBe(true);
+        expect(isQueueActionReply(reply("cancel:12"))).toBe(true);
+    });
+
+    it("is false for an ordinary answer choice", () => {
+        expect(isQueueActionReply(reply("Yes please"))).toBe(false);
+        expect(isQueueActionReply(reply("opt_a"))).toBe(false);
+    });
+
+    it("is false for a picker value (out of scope — not a queue action)", () => {
+        expect(isQueueActionReply(reply("model:opus"))).toBe(false);
+    });
+
+    it("is false for a lookalike that is not the exact wire shape", () => {
+        expect(isQueueActionReply(reply("cancel"))).toBe(false);
+        expect(isQueueActionReply(reply("cancel:x"))).toBe(false);
+        expect(isQueueActionReply(reply("interrupted"))).toBe(false);
+    });
+
+    it("is false for a non-prompt_reply event even if some field looks like a token", () => {
+        const text: JournalEvent = { ...reply("interrupt"), type: "text", payload: { body: "interrupt" } };
+        expect(isQueueActionReply(text)).toBe(false);
+    });
+
+    it("never throws on a missing/non-string choice", () => {
+        expect(isQueueActionReply(reply(undefined))).toBe(false);
+        expect(isQueueActionReply(reply(null))).toBe(false);
+        expect(isQueueActionReply(reply(42))).toBe(false);
     });
 });
 
