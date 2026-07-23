@@ -89,7 +89,7 @@ textarea {
     border-radius: 10px;
     background-color: rgb(255, 254, 250, 0.72);
     box-shadow: 0 1px 2px rgb(28, 24, 20, 0.06);
-    padding: 4px 10px;
+    padding: var(--cpd-space-1x) var(--cpd-space-2x);
 }
 
 .mj_HeaderCluster_empty {
@@ -112,7 +112,7 @@ textarea {
     max-width: min(360px, 38vw);
     align-items: center;
     justify-self: center;
-    padding-inline: 12px;
+    padding-inline: var(--cpd-space-3x);
 }
 
 .mj_HeaderTitleCluster .mx_RoomHeader_heading {
@@ -148,7 +148,7 @@ textarea {
 .mj_HeaderContextRow {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--cpd-space-2x);
 }
 
 .mj_CompactButton {
@@ -246,11 +246,12 @@ textarea {
     min-width: var(--mj-header-side-min-width);
     min-height: 38px;
     justify-self: end;
-    padding-block: 3px;
+    padding-block: var(--cpd-space-1x);
 }
 
 .mj_UsageBars {
     display: grid;
+    /* Intentional micro-gap: keeps all three usage rows inside the header pill. */
     gap: 2px;
 }
 
@@ -258,7 +259,7 @@ textarea {
     display: grid;
     grid-template-columns: minmax(34px, auto) 1fr;
     align-items: center;
-    gap: 5px;
+    gap: var(--cpd-space-1x);
     font-size: 9px;
     line-height: 9px;
 }
@@ -1596,12 +1597,14 @@ button.mj_File {
     }
 
     .mj_ChatHeader {
+        --mj-header-side-min-width: 68px;
+
         gap: var(--cpd-space-1x);
         padding-inline: 42px var(--cpd-space-2x);
     }
 
     .mj_HeaderCluster {
-        padding-inline: 6px;
+        padding-inline: var(--cpd-space-1x);
     }
 
     .mj_HeaderTitleCluster {
@@ -1609,8 +1612,8 @@ button.mj_File {
     }
 
     .mj_UsageRow {
-        grid-template-columns: minmax(28px, auto) 58px minmax(28px, auto);
-        gap: 3px;
+        grid-template-columns: 1fr;
+        gap: var(--cpd-space-1x);
     }
 
     .mj_UsageTrack {
