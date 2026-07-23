@@ -122,9 +122,7 @@ textarea {
 .mj_HeaderTitleCluster .mx_RoomHeader_heading {
     display: block;
     width: 100%;
-    font-size: 15px;
-    font-weight: 600;
-    line-height: 18px;
+    font: var(--cpd-font-heading-sm-semibold);
     text-align: center;
 }
 
@@ -140,13 +138,11 @@ textarea {
 
 .mj_HeaderModel,
 .mj_HeaderEmail {
-    font-size: 10px;
-    line-height: 12px;
+    font: var(--cpd-font-body-2xs-regular);
 }
 
 .mj_HeaderContext {
-    font-size: 12px;
-    line-height: 16px;
+    font: var(--cpd-font-body-xs-regular);
 }
 
 .mj_HeaderContextRow {
@@ -165,7 +161,7 @@ textarea {
     border: none;
     background: none;
     color: var(--cpd-color-text-secondary);
-    font-size: 12px;
+    font-size: var(--cpd-font-size-xs);
     line-height: 1;
     cursor: pointer;
 }
@@ -264,8 +260,7 @@ textarea {
     grid-template-columns: minmax(34px, auto) 1fr;
     align-items: center;
     gap: var(--cpd-space-1x);
-    font-size: 9px;
-    line-height: 9px;
+    font: var(--cpd-font-body-2xs-regular);
 }
 
 .mj_UsageLabel {
@@ -624,7 +619,7 @@ textarea {
     box-shadow: 0 2px 8px rgb(15, 23, 42, 0.18);
     color: var(--cpd-color-text-action-accent);
     cursor: pointer;
-    font-size: 18px;
+    font-size: var(--cpd-font-size-lg);
     line-height: 1;
 }
 
@@ -644,7 +639,7 @@ textarea {
 
 .mx_EventTile[data-layout="bubble"] .mx_MessageTimestamp {
     color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-xs-regular);
+    font-size: var(--cpd-font-size-2xs);
 }
 
 .mj_MessageText {
@@ -793,7 +788,7 @@ textarea {
     background: var(--cpd-color-bg-subtle-secondary);
     padding: calc(var(--cpd-space-5x) + var(--cpd-space-3x)) var(--cpd-space-3x) var(--cpd-space-3x);
     font-family: "Fira Code", monospace;
-    font-size: 12px;
+    font-size: var(--cpd-font-size-xs);
 }
 
 .mj_CodeBlock_copy,
@@ -934,7 +929,7 @@ textarea {
     margin: 0;
     padding: 12px 16px;
     font-family: var(--mj-mono, ui-monospace, monospace);
-    font-size: 0.8125rem;
+    font-size: var(--cpd-font-size-sm);
     user-select: text;
     white-space: pre;
 }
@@ -977,8 +972,7 @@ textarea {
 .mj_UploadConfirm_title {
     margin: 0;
     overflow-wrap: anywhere;
-    font: var(--cpd-font-body-sm-regular);
-    font-size: 20px;
+    font-size: var(--cpd-font-size-xl);
     font-weight: 600;
     line-height: 26px;
 }
@@ -1106,7 +1100,7 @@ textarea {
 .mj_AttachmentChip_caption {
     display: block;
     opacity: 0.8;
-    font-size: 0.9em;
+    font-size: inherit;
 }
 
 .mj_AttachmentChip_name {
@@ -1295,7 +1289,7 @@ li.mj_AttachmentChip_error {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     font-family: "Fira Code", monospace;
-    font-size: 12px;
+    font-size: var(--cpd-font-size-xs);
 }
 
 .mj_DiffCard {
@@ -1368,7 +1362,7 @@ li.mj_AttachmentChip_error {
     padding: 0 var(--cpd-space-3x) var(--cpd-space-3x);
     white-space: pre;
     font-family: "Fira Code", monospace;
-    font-size: 12px;
+    font-size: var(--cpd-font-size-xs);
 }
 
 .mj_DiffLine_hunk {
@@ -1544,7 +1538,7 @@ button.mj_File {
     border: none;
     background: none;
     color: inherit;
-    font-size: 16px;
+    font-size: var(--cpd-font-size-md);
     line-height: 1;
     cursor: pointer;
 }
