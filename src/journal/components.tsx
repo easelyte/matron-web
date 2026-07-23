@@ -54,7 +54,7 @@ import {
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody } from "./markdown";
-import { getThemePref, nextThemePref, setTheme, type ThemePref } from "./theme";
+import { getSnapshot, nextThemePref, setTheme, subscribe } from "./theme";
 import {
     applyCommand,
     applyFolder,
@@ -171,7 +171,7 @@ function useLeftPanelResize(): {
 }
 
 export function ThemeToggle(): React.ReactElement {
-    const [preference, setPreference] = useState<ThemePref>(getThemePref);
+    const preference = useSyncExternalStore(subscribe, getSnapshot);
     const label = preference === null ? "System" : preference === "light" ? "Light" : "Dark";
     const icon =
         preference === null ? <SystemThemeIcon /> : preference === "light" ? <LightThemeIcon /> : <DarkThemeIcon />;
@@ -182,7 +182,7 @@ export function ThemeToggle(): React.ReactElement {
             type="button"
             aria-label={`Theme: ${label}`}
             title={`Theme: ${label}`}
-            onClick={() => setPreference(setTheme(nextThemePref(preference)))}
+            onClick={() => setTheme(nextThemePref(preference))}
         >
             {icon}
         </button>

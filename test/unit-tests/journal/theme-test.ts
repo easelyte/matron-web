@@ -67,6 +67,13 @@ beforeEach(() => {
     localStorage.clear();
     theme.setTheme(null);
     systemPrefersDark = false;
+    let themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (!themeColor) {
+        themeColor = document.createElement("meta");
+        themeColor.name = "theme-color";
+        document.head.append(themeColor);
+    }
+    themeColor.content = "#ffffff";
     delete document.documentElement.dataset.theme;
     delete document.documentElement.dataset.themeUser;
 });
@@ -100,6 +107,7 @@ describe("theme preference state machine", () => {
         expect(theme.applyTheme()).toBe("light");
         expect(document.documentElement.dataset.theme).toBe("light");
         expect(document.documentElement.dataset.themeUser).toBe("light");
+        expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe("#ffffff");
 
         dispatchSystemTheme(true);
         expect(document.documentElement.dataset.theme).toBe("light");
@@ -108,9 +116,11 @@ describe("theme preference state machine", () => {
         dispatchSystemTheme(true);
         expect(document.documentElement.dataset.theme).toBe("dark");
         expect(document.documentElement.dataset.themeUser).toBeUndefined();
+        expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe("#16191d");
 
         dispatchSystemTheme(false);
         expect(document.documentElement.dataset.theme).toBe("light");
+        expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe("#ffffff");
     });
 
     it("cycles System to Light to Dark to System", () => {
@@ -187,6 +197,9 @@ describe("pre-paint bootstrap parity", () => {
         expect(document.documentElement.dataset.themeUser).toBe(
             stored === "light" || stored === "dark" ? stored : undefined,
         );
+        expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe(
+            expected === "dark" ? "#16191d" : "#ffffff",
+        );
     });
 
     it("falls back to the OS preference when storage throws", () => {
@@ -198,6 +211,7 @@ describe("pre-paint bootstrap parity", () => {
         expect(() => new Function(bootstrapScript())()).not.toThrow();
         expect(document.documentElement.dataset.theme).toBe("dark");
         expect(document.documentElement.dataset.themeUser).toBeUndefined();
+        expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe("#16191d");
     });
 
     it("pins the storage key and valid values shared with the inline script", () => {
@@ -250,5 +264,29 @@ describe("ThemeToggle", () => {
         expect(button().getAttribute("aria-label")).toBe("Theme: System");
         expect(button().querySelector("rect")).not.toBeNull();
         expect(document.documentElement.dataset.theme).toBe("light");
+    });
+
+    it("updates the label and glyph when another tab changes the preference", async () => {
+        const button = (): HTMLButtonElement => {
+            const element = container.querySelector<HTMLButtonElement>("button");
+            if (!element) throw new Error("Missing theme toggle");
+            return element;
+        };
+
+        expect(button().getAttribute("aria-label")).toBe("Theme: System");
+
+        await act(async () => {
+            window.dispatchEvent(
+                new StorageEvent("storage", {
+                    key: theme.THEME_STORAGE_KEY,
+                    newValue: "dark",
+                    storageArea: localStorage,
+                }),
+            );
+        });
+
+        expect(button().getAttribute("aria-label")).toBe("Theme: Dark");
+        expect(button().querySelector("rect, circle")).toBeNull();
+        expect(button().querySelector("path")).not.toBeNull();
     });
 });

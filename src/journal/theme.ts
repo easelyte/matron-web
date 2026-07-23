@@ -34,12 +34,29 @@ export function getThemePref(): ThemePref {
 }
 
 let currentPref = getThemePref();
+const subscribers = new Set<() => void>();
+
+export function subscribe(listener: () => void): () => void {
+    subscribers.add(listener);
+    return () => subscribers.delete(listener);
+}
+
+export function getSnapshot(): ThemePref {
+    return currentPref;
+}
+
+function notifySubscribers(): void {
+    for (const listener of subscribers) listener();
+}
 
 export function applyTheme(explicit?: ThemePref): ResolvedTheme {
     const preference = explicit !== undefined ? explicit : currentPref;
     const resolved = preference ?? (colorScheme.matches ? "dark" : "light");
 
     document.documentElement.dataset.theme = resolved;
+    document
+        .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+        ?.setAttribute("content", resolved === "dark" ? "#16191d" : "#ffffff");
     if (preference === null) {
         delete document.documentElement.dataset.themeUser;
     } else {
@@ -62,6 +79,7 @@ export function setTheme(preference: ThemePref): ThemePref {
     }
 
     applyTheme(preference);
+    notifySubscribers();
     return preference;
 }
 
@@ -72,9 +90,13 @@ export function nextThemePref(current: ThemePref): ThemePref {
 }
 
 applyTheme();
-colorScheme.addEventListener("change", () => applyTheme());
+colorScheme.addEventListener("change", () => {
+    applyTheme();
+    notifySubscribers();
+});
 window.addEventListener("storage", (event) => {
     if (event.key !== THEME_STORAGE_KEY) return;
     currentPref = event.newValue === "light" || event.newValue === "dark" ? event.newValue : null;
     applyTheme();
+    notifySubscribers();
 });
