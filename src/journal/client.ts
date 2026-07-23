@@ -607,8 +607,7 @@ export class MatronJournalClient {
         const db = this.database;
         const gen = this.sessionGen;
         const connection = this.connection;
-        const owns = (): boolean =>
-            this.sessionGen === gen && this.database === db && this.connection === connection;
+        const owns = (): boolean => this.sessionGen === gen && this.database === db && this.connection === connection;
         const message: PendingMessage = {
             localId: crypto.randomUUID(),
             convoId: conversationId,
