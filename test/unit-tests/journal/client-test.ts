@@ -108,6 +108,7 @@ interface ClientInternals {
     replaceSnapshot(): Promise<void>;
     handleReady(): Promise<void>;
     refreshSelectedConversation(conversationId: string, database?: FakeDatabase, generation?: number): Promise<void>;
+    sendPendingMessage(message: PendingMessage, connection?: { send: ReturnType<typeof jest.fn> }): void;
     uploadPendingAttachment(message: PendingMessage, file: File, owner: unknown): Promise<void>;
     handleEphemeral(frame: JournalEphemeralFrame): void;
     handleJournal(event: JournalEvent): Promise<void>;
@@ -531,6 +532,83 @@ describe("MatronJournalClient state handling", () => {
         await client.sendMessage("hi", "c2");
 
         expect(database.addToOutbox).toHaveBeenCalledWith(expect.objectContaining({ convoId: "c2", body: "hi" }));
+    });
+
+    it("returns false without dispatch when only the session generation changes during the outbox write", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const outboxWrite = deferred<void>();
+        const database = fakeDatabase({ addToOutbox: jest.fn().mockReturnValue(outboxWrite.promise) });
+        state.state = signedInState(client);
+        state.database = database;
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        const dispatch = jest.spyOn(state, "sendPendingMessage");
+
+        const send = client.sendMessage("hi");
+        expect(database.addToOutbox).toHaveBeenCalledTimes(1);
+        state.sessionGen += 1;
+        outboxWrite.resolve(undefined);
+
+        await expect(send).resolves.toBe(false);
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it("returns false without dispatch when only the database identity changes during the outbox write", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const outboxWrite = deferred<void>();
+        const database = fakeDatabase({ addToOutbox: jest.fn().mockReturnValue(outboxWrite.promise) });
+        state.state = signedInState(client);
+        state.database = database;
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        const dispatch = jest.spyOn(state, "sendPendingMessage");
+
+        const send = client.sendMessage("hi");
+        expect(database.addToOutbox).toHaveBeenCalledTimes(1);
+        state.database = fakeDatabase();
+        outboxWrite.resolve(undefined);
+
+        await expect(send).resolves.toBe(false);
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it("returns false without dispatch when only the connection identity changes during the outbox write", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const outboxWrite = deferred<void>();
+        const database = fakeDatabase({ addToOutbox: jest.fn().mockReturnValue(outboxWrite.promise) });
+        state.state = signedInState(client);
+        state.database = database;
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        const dispatch = jest.spyOn(state, "sendPendingMessage");
+
+        const send = client.sendMessage("hi");
+        expect(database.addToOutbox).toHaveBeenCalledTimes(1);
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        outboxWrite.resolve(undefined);
+
+        await expect(send).resolves.toBe(false);
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it("returns true and dispatches once on the captured connection when the session identity is unchanged", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const outboxWrite = deferred<void>();
+        const database = fakeDatabase({ addToOutbox: jest.fn().mockReturnValue(outboxWrite.promise) });
+        const connection = { send: jest.fn().mockReturnValue(true) };
+        state.state = signedInState(client);
+        state.database = database;
+        state.connection = connection;
+        const dispatch = jest.spyOn(state, "sendPendingMessage");
+
+        const send = client.sendMessage("hi");
+        expect(database.addToOutbox).toHaveBeenCalledTimes(1);
+        outboxWrite.resolve(undefined);
+
+        await expect(send).resolves.toBe(true);
+        expect(dispatch).toHaveBeenCalledTimes(1);
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ convoId: "c1", body: "hi" }), connection);
     });
 
     it("resolves true when refresh throws after addToOutbox", async () => {
