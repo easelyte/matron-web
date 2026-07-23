@@ -71,8 +71,12 @@ textarea {
 }
 
 .mj_ChatHeader {
+    --mj-header-side-min-width: 152px;
+
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-columns:
+        minmax(var(--mj-header-side-min-width), 1fr) auto
+        minmax(var(--mj-header-side-min-width), 1fr);
     align-items: center;
     gap: var(--cpd-space-3x);
 }
@@ -239,8 +243,8 @@ textarea {
 }
 
 .mj_UsageCluster {
-    height: 38px;
-    overflow: hidden;
+    min-width: var(--mj-header-side-min-width);
+    min-height: 38px;
     justify-self: end;
     padding-block: 3px;
 }
