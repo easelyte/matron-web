@@ -2553,16 +2553,11 @@ function Composer({
     convoIdRef.current = convoId;
     const prevConvoIdRef = useRef(convoId);
     const draftTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const draftTimerConvoRef = useRef<string | undefined>(undefined);
     const folders = folderSuggestions(body, store);
     const commands = filterCommands(CLAUDE_BRIDGE_COMMANDS, body);
     const open = body !== dismissed && (folders.length > 0 || (isCommandMode(body) && commands.length > 0));
 
-    const cancelDraftDebounce = useCallback(() => {
-        if (draftTimerRef.current) {
-            clearTimeout(draftTimerRef.current);
-            draftTimerRef.current = undefined;
-        }
-    }, []);
     // Mirror the store's canonical per-convo durability flag into React state, but only for the
     // currently-selected conversation — a late async persist/clear for A must not clobber B's badge.
     const syncDurability = useCallback(
@@ -2571,6 +2566,21 @@ function Composer({
         },
         [drafts],
     );
+    const cancelDraftDebounce = useCallback(() => {
+        if (draftTimerRef.current) {
+            clearTimeout(draftTimerRef.current);
+            draftTimerRef.current = undefined;
+            // A pending debounce is an unpersisted edit. Persist its owning convo before dropping the
+            // timer so cancelling here (e.g. a cross-convo late send: switch to B, type, then A's send
+            // resolves and cancels the shared timer) can't silently strand B's draft (final-review round-2).
+            const pendingCid = draftTimerConvoRef.current;
+            draftTimerConvoRef.current = undefined;
+            if (pendingCid) {
+                drafts.persist(pendingCid);
+                syncDurability(pendingCid);
+            }
+        }
+    }, [drafts, syncDurability]);
     const flushDraft = useCallback(() => {
         cancelDraftDebounce();
         const cid = prevConvoIdRef.current;
@@ -2588,10 +2598,12 @@ function Composer({
             draftRevisions.current.set(cid, (draftRevisions.current.get(cid) ?? 0) + 1);
             drafts.setDraft(cid, next);
             if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+            draftTimerConvoRef.current = cid;
             draftTimerRef.current = setTimeout(() => {
                 drafts.persist(cid);
                 syncDurability(cid);
                 draftTimerRef.current = undefined;
+                draftTimerConvoRef.current = undefined;
             }, 250);
         },
         [draftRevisions, drafts, syncDurability],

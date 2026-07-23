@@ -883,6 +883,34 @@ describe("composer sends", () => {
         });
     });
 
+    test("a late send in A does not strand B's unsent draft typed during the pending send (final-review round-2)", async () => {
+        let resolveA!: (value: boolean) => void;
+        const client = signedInClient();
+        jest.spyOn(client, "sendMessage").mockReturnValueOnce(
+            new Promise((promiseResolve) => (resolveA = promiseResolve)),
+        );
+        const result = await renderComposerApp(["c1", "c2"], client);
+        rendered = result;
+        await typeInComposer(result.container, "A-msg");
+        await pressEnter(result.container); // A send pending
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        await typeInComposer(result.container, "B-draft-unsent"); // schedules B's shared debounce timer
+        await act(async () => {
+            resolveA(true); // A resolves → cancels the shared timer + clears A
+        });
+        // B's draft must have been flushed (persisted) before the timer was cancelled, so switching
+        // away and back restores it — not silently stranded.
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        expect(composerValue(result.container)).toBe("B-draft-unsent");
+    });
+
     test("a successful send whose draft clear fails does NOT resurrect the sent text (final-review M1)", async () => {
         const client = signedInClient();
         jest.spyOn(client, "sendMessage").mockResolvedValue(true);
