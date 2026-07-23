@@ -36,9 +36,11 @@ function parseMap(raw: string): Record<string, string> | undefined {
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
     const out: Record<string, string> = {};
+    // Parse-don't-validate per entry: drop a non-string value but keep valid string siblings, so one
+    // corrupt/legacy-drifted entry can't hide every other valid draft. Only unparseable JSON or a
+    // non-object top level resets the whole map (returns undefined above).
     for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-        if (typeof value !== "string") return undefined;
-        out[key] = value;
+        if (typeof value === "string") out[key] = value;
     }
     return out;
 }
@@ -121,6 +123,12 @@ export function makeDraftStore(session: Session | undefined): DraftStore {
         for (const [convoId, text] of entries) {
             try {
                 const target = perKey(convoId);
+                // v2-precedence: never overwrite an existing v2 value with the stale v1 copy.
+                // ACCEPTED ultra-rare edge: the getItem check and the setItem below are not atomic, so a
+                // concurrent tab that writes a NEWER v2 value for this convo in the gap could be overwritten.
+                // This requires two tabs both active during the ONE-TIME v1->v2 migration window — the same
+                // cross-tab-non-atomic class documented for clear/eviction; a per-namespace lock is
+                // disproportionate for a one-time migration of unsent drafts.
                 if (localStorage.getItem(target) !== null) continue;
                 if (utf8Length(text) > MAX_DRAFT_BYTES || count >= MAX_DRAFT_ENTRIES) {
                     allDurable = false;
@@ -172,6 +180,11 @@ export function makeDraftStore(session: Session | undefined): DraftStore {
         persist(convoId) {
             // Kept as internal edit-order state; writes are always explicitly keyed.
             void lastTouched;
+            // Only persist a conversation that was actually edited this session. A restored-but-
+            // untouched draft is NOT in `mem` (read() is lazy and does not hydrate it), so treating
+            // an absent entry as "" would silently delete the saved draft on any flush (blur/navigate/
+            // pagehide/unmount) without an edit. No mem entry => nothing to write, and nothing to delete.
+            if (!mem.has(convoId)) return;
             const text = mem.get(convoId) ?? "";
             if (text.trim() === "") {
                 deleteEverywhere(convoId);

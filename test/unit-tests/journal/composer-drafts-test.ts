@@ -236,6 +236,27 @@ test("empty-persist while v1 retained does not resurrect a deleted draft on relo
     expect(makeDraftStore(SESSION).read("a").text).toBe("");
 });
 
+test("persist without a prior setDraft is a no-op and does NOT delete a restored draft (Phase-3 blocker)", () => {
+    // Seed a durable draft, then a fresh store (reload) that restores it via read() but never edits.
+    const seed = makeDraftStore(SESSION);
+    seed.setDraft("c1", "saved");
+    seed.persist("c1");
+    expect(localStorage.getItem(v2Key("c1"))).toBe("saved");
+
+    const reloaded = makeDraftStore(SESSION);
+    expect(reloaded.read("c1").text).toBe("saved"); // restored, but mem NOT populated
+    // A lifecycle flush (blur/navigate/pagehide/unmount) calls persist without any setDraft:
+    reloaded.persist("c1");
+    expect(reloaded.read("c1").text).toBe("saved"); // must be preserved, not silently deleted
+    expect(localStorage.getItem(v2Key("c1"))).toBe("saved");
+});
+
+test("a legacy blob with one non-string value keeps its valid string siblings", () => {
+    localStorage.setItem(LEGACY_KEY, JSON.stringify({ broken: 7, c2: "valid draft" }));
+    const s = makeDraftStore(SESSION);
+    expect(s.read("c2").text).toBe("valid draft");
+});
+
 test("clear does not throw when removeItem fails and flips durability non-durable (accepted edge)", () => {
     // Documented accepted edge (spec FIX 3 / round-6 Major-2): a storage throw during clear leaves a
     // stale copy that read() can surface — clear must NOT crash, and durability flips to the P3 signal.
