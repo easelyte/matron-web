@@ -20,7 +20,7 @@
                 const resolved = preference ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
                 document.documentElement.dataset.theme = resolved;
                 document.querySelector('meta[name="theme-color"]').content =
-                    resolved === "dark" ? "#16191d" : "#ffffff";
+                    resolved === "dark" ? "#1a1c20" : "#ffffff";
                 if (preference === null) delete document.documentElement.dataset.themeUser;
                 else document.documentElement.dataset.themeUser = preference;
             })();

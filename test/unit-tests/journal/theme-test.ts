@@ -49,6 +49,32 @@ function bootstrapScript(): string {
     return script[1];
 }
 
+function darkCanvasFromStylesheet(source = readFileSync("src/journal/shell.pcss", "utf8")): string {
+    const selector = '[data-theme="dark"]';
+    const selectorStart = source.indexOf(selector);
+    if (selectorStart < 0) throw new Error("Missing dark theme block");
+
+    const openingBrace = source.indexOf("{", selectorStart + selector.length);
+    if (openingBrace < 0) throw new Error("Missing opening brace for dark theme block");
+
+    let depth = 0;
+    let closingBrace = -1;
+    for (let index = openingBrace; index < source.length; index += 1) {
+        if (source[index] === "{") depth += 1;
+        if (source[index] === "}") depth -= 1;
+        if (depth === 0) {
+            closingBrace = index;
+            break;
+        }
+    }
+    if (closingBrace < 0) throw new Error("Missing closing brace for dark theme block");
+
+    const darkBlock = source.slice(openingBrace + 1, closingBrace).replace(/\/\*[\s\S]*?\*\//g, "");
+    const canvas = darkBlock.match(/--cpd-color-bg-canvas-default:\s*(#[0-9a-fA-F]{3,8})/)?.[1];
+    if (!canvas) throw new Error("Missing dark canvas token");
+    return canvas;
+}
+
 beforeAll(async () => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     Object.defineProperty(globalThis, "TextEncoder", { value: NodeTextEncoder, configurable: true });
@@ -116,7 +142,7 @@ describe("theme preference state machine", () => {
         dispatchSystemTheme(true);
         expect(document.documentElement.dataset.theme).toBe("dark");
         expect(document.documentElement.dataset.themeUser).toBeUndefined();
-        expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe("#16191d");
+        expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe("#1a1c20");
 
         dispatchSystemTheme(false);
         expect(document.documentElement.dataset.theme).toBe("light");
@@ -198,7 +224,7 @@ describe("pre-paint bootstrap parity", () => {
             stored === "light" || stored === "dark" ? stored : undefined,
         );
         expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe(
-            expected === "dark" ? "#16191d" : "#ffffff",
+            expected === "dark" ? "#1a1c20" : "#ffffff",
         );
     });
 
@@ -211,13 +237,52 @@ describe("pre-paint bootstrap parity", () => {
         expect(() => new Function(bootstrapScript())()).not.toThrow();
         expect(document.documentElement.dataset.theme).toBe("dark");
         expect(document.documentElement.dataset.themeUser).toBeUndefined();
-        expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe("#16191d");
+        expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe("#1a1c20");
     });
 
     it("pins the storage key and valid values shared with the inline script", () => {
         const key = bootstrapScript().match(/localStorage\.getItem\("([^"]+)"\)/)?.[1];
         expect(key).toBe(theme.THEME_STORAGE_KEY);
         expect(theme.THEME_VALUES).toEqual(["light", "dark"]);
+    });
+});
+
+describe("dark-canvas single-source drift guard", () => {
+    it("keeps the three dark canvas literals in parity", () => {
+        const themeSource = readFileSync("src/journal/theme.ts", "utf8");
+        const themeCanvas = themeSource.match(/resolved === "dark"\s*\?\s*"(#[0-9a-fA-F]{3,8})"/)?.[1];
+        const bootstrapCanvas = bootstrapScript().match(/resolved === "dark"\s*\?\s*"(#[0-9a-fA-F]{3,8})"/)?.[1];
+
+        if (!themeCanvas) throw new Error("Missing dark canvas literal in theme.ts");
+        if (!bootstrapCanvas) throw new Error("Missing dark canvas literal in bootstrap script");
+
+        // Parity guard across three literals (drift detection, not a single source of truth):
+        // assert they all agree, rather than pinning a specific value that a legitimate palette
+        // change would have to churn here too. The shell.pcss token is the reference.
+        const canvases = [darkCanvasFromStylesheet(), themeCanvas, bootstrapCanvas].map((value) => value.toLowerCase());
+        expect(new Set(canvases).size).toBe(1);
+        expect(canvases[1]).toBe(canvases[0]); // theme.ts === stylesheet
+        expect(canvases[2]).toBe(canvases[0]); // bootstrap === stylesheet
+    });
+
+    it("fails when the dark block omits the token even if it exists elsewhere", () => {
+        const source = `
+            :root { --cpd-color-bg-canvas-default: #fff; }
+            [data-theme="dark"] { --cpd-color-text-primary: #e6e9ee; }
+            .later { --cpd-color-bg-canvas-default: #16191d; }
+        `;
+
+        expect(() => darkCanvasFromStylesheet(source)).toThrow("Missing dark canvas token");
+    });
+
+    it("fails when the dark canvas token is commented out", () => {
+        const source = `
+            [data-theme="dark"] {
+                /* --cpd-color-bg-canvas-default: #16191d; */
+            }
+        `;
+
+        expect(() => darkCanvasFromStylesheet(source)).toThrow("Missing dark canvas token");
     });
 });
 

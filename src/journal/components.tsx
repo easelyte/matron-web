@@ -2543,6 +2543,7 @@ function Composer({
     const [body, setBody] = useState("");
     const [highlighted, setHighlighted] = useState<number | null>(null);
     const [dismissed, setDismissed] = useState<string | null>(null);
+    const [nonDurable, setNonDurable] = useState(false);
     const store = useMemo(() => makeRecentFoldersStore(state.session), [state.session]);
     const [dismissedSeq, setDismissedSeq] = useState(0);
     const textarea = useRef<HTMLTextAreaElement>(null);
@@ -2552,20 +2553,50 @@ function Composer({
     convoIdRef.current = convoId;
     const prevConvoIdRef = useRef(convoId);
     const draftTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const draftTimerConvoRef = useRef<string | undefined>(undefined);
     const folders = folderSuggestions(body, store);
     const commands = filterCommands(CLAUDE_BRIDGE_COMMANDS, body);
     const open = body !== dismissed && (folders.length > 0 || (isCommandMode(body) && commands.length > 0));
 
+    // Mirror the store's canonical per-convo durability flag into React state, but only for the
+    // currently-selected conversation — a late async persist/clear for A must not clobber B's badge.
+    const syncDurability = useCallback(
+        (cid: string) => {
+            if (convoIdRef.current === cid) setNonDurable(drafts.durability(cid) === "non-durable");
+        },
+        [drafts],
+    );
     const cancelDraftDebounce = useCallback(() => {
         if (draftTimerRef.current) {
             clearTimeout(draftTimerRef.current);
             draftTimerRef.current = undefined;
         }
+        draftTimerConvoRef.current = undefined;
     }, []);
+    // Cancel the pending debounce, but if it belonged to a DIFFERENT conversation than `keepCid`
+    // (a cross-convo late send: switch to B + type while A's send is in flight), flush that convo
+    // first so it isn't stranded. Never flush `keepCid`'s own timer — the caller is about to
+    // clear/persist it explicitly, and force-persisting a just-sent draft here would make it
+    // resurrect after a clear-failure (final-review round-3).
+    const cancelDebounceKeeping = useCallback(
+        (keepCid: string) => {
+            const pendingCid = draftTimerConvoRef.current;
+            cancelDraftDebounce();
+            if (pendingCid && pendingCid !== keepCid) {
+                drafts.persist(pendingCid);
+                syncDurability(pendingCid);
+            }
+        },
+        [cancelDraftDebounce, drafts, syncDurability],
+    );
     const flushDraft = useCallback(() => {
         cancelDraftDebounce();
-        drafts.persist();
-    }, [cancelDraftDebounce, drafts]);
+        const cid = prevConvoIdRef.current;
+        if (cid) {
+            drafts.persist(cid);
+            syncDurability(cid);
+        }
+    }, [cancelDraftDebounce, drafts, syncDurability]);
 
     const setBodyDraft = useCallback(
         (next: string) => {
@@ -2575,12 +2606,15 @@ function Composer({
             draftRevisions.current.set(cid, (draftRevisions.current.get(cid) ?? 0) + 1);
             drafts.setDraft(cid, next);
             if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+            draftTimerConvoRef.current = cid;
             draftTimerRef.current = setTimeout(() => {
-                drafts.persist();
+                drafts.persist(cid);
+                syncDurability(cid);
                 draftTimerRef.current = undefined;
+                draftTimerConvoRef.current = undefined;
             }, 250);
         },
-        [draftRevisions, drafts],
+        [draftRevisions, drafts, syncDurability],
     );
 
     useEffect(() => {
@@ -2603,6 +2637,9 @@ function Composer({
         setBody(ok ? text : "");
         setDismissed(null);
         setHighlighted(null);
+        // Sync the badge FROM the store for the newly-selected convo — never a blind reset, so a
+        // still-non-durable convo keeps its warning across switch-away/back (and a clear-failure flag surfaces).
+        setNonDurable(convoId ? drafts.durability(convoId) === "non-durable" : false);
         if (textarea.current) textarea.current.style.height = "auto";
         prevConvoIdRef.current = convoId;
     }, [convoId, draftReloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2629,10 +2666,13 @@ function Composer({
             if (await client.sendMessage(submitted, cid)) {
                 const folder = recentFolderArgument(submitted);
                 if (folder) store.record(folder);
-                cancelDraftDebounce();
+                // Cancel cid's own pending timer without persisting (we clear/persist it below), but
+                // flush any pending timer owned by another convo the user switched to during the send.
+                cancelDebounceKeeping(cid);
                 const draftUnchanged = (draftRevisions.current.get(cid) ?? 0) === submittedRevision;
                 if (draftUnchanged) drafts.clear(cid);
-                else drafts.persist();
+                else drafts.persist(cid);
+                syncDurability(cid);
                 reloadDraft(cid);
                 if (draftUnchanged && convoIdRef.current === cid) {
                     setBody("");
@@ -2661,6 +2701,11 @@ function Composer({
                         >
                             <CloseIcon />
                         </button>
+                    </div>
+                )}
+                {nonDurable && (
+                    <div className="mj_DraftNonDurable" role="status">
+                        Draft won't be saved — storage full
                     </div>
                 )}
                 {open && (

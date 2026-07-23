@@ -604,13 +604,18 @@ export class MatronJournalClient {
         const conversationId = targetConvoId ?? this.state.selectedConversationId;
         if (!body || !conversationId || !this.database) return false;
         if (this.isChildConvo(conversationId)) return false;
+        const db = this.database;
+        const gen = this.sessionGen;
+        const connection = this.connection;
+        const owns = (): boolean => this.sessionGen === gen && this.database === db && this.connection === connection;
         const message: PendingMessage = {
             localId: crypto.randomUUID(),
             convoId: conversationId,
             body,
             createdAt: Date.now(),
         };
-        await this.database.addToOutbox(message); // the only awaited durable step
+        await db.addToOutbox(message); // the only awaited durable step
+        if (!owns()) return false;
         // sendTick is a synchronous "a send happened → scroll to bottom" signal; bump it now (the
         // message is durably queued) rather than gating it behind the async refresh below.
         if (this.state.selectedConversationId === conversationId) {
@@ -630,7 +635,7 @@ export class MatronJournalClient {
             }
         })();
         try {
-            this.sendPendingMessage(message);
+            this.sendPendingMessage(message, connection);
         } catch (error) {
             console.warn("matron: post-send dispatch threw (message still queued)", error);
         }

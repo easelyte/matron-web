@@ -804,6 +804,49 @@ describe("composer drafts", () => {
         expect(composerValue(result.container)).toBe("edit before unmount");
         jest.useRealTimers();
     });
+
+    test("a failed draft persist surfaces the non-durable badge (T-3.3 render contract)", async () => {
+        jest.useFakeTimers();
+        const spy = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+            throw new DOMException("q", "QuotaExceededError");
+        });
+        const result = await renderComposerApp(["c1"]);
+        rendered = result;
+        expect(result.container.querySelector(".mj_DraftNonDurable")).toBeNull();
+        await typeInComposer(result.container, "unsaveable");
+        await act(async () => {
+            jest.advanceTimersByTime(250);
+        });
+        expect(result.container.querySelector(".mj_DraftNonDurable")).not.toBeNull();
+        spy.mockRestore();
+        jest.useRealTimers();
+    });
+
+    test("the non-durable badge survives switching away and back (round-6 B2)", async () => {
+        jest.useFakeTimers();
+        const spy = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+            throw new DOMException("q", "QuotaExceededError");
+        });
+        const result = await renderComposerApp(["c1", "c2"]);
+        rendered = result;
+        await typeInComposer(result.container, "unsaveable");
+        await act(async () => {
+            jest.advanceTimersByTime(250);
+        });
+        expect(result.container.querySelector(".mj_DraftNonDurable")).not.toBeNull();
+        // Switch away to c2 (never failed) → badge clears (synced from c2's ok flag).
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        expect(result.container.querySelector(".mj_DraftNonDurable")).toBeNull();
+        // Switch back to c1 → badge reappears (synced FROM the store, not a blind reset).
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        expect(result.container.querySelector(".mj_DraftNonDurable")).not.toBeNull();
+        spy.mockRestore();
+        jest.useRealTimers();
+    });
 });
 
 describe("composer sends", () => {
@@ -838,6 +881,49 @@ describe("composer sends", () => {
         await act(async () => {
             resolve(true);
         });
+    });
+
+    test("a late send in A does not strand B's unsent draft typed during the pending send (final-review round-2)", async () => {
+        let resolveA!: (value: boolean) => void;
+        const client = signedInClient();
+        jest.spyOn(client, "sendMessage").mockReturnValueOnce(
+            new Promise((promiseResolve) => (resolveA = promiseResolve)),
+        );
+        const result = await renderComposerApp(["c1", "c2"], client);
+        rendered = result;
+        await typeInComposer(result.container, "A-msg");
+        await pressEnter(result.container); // A send pending
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        await typeInComposer(result.container, "B-draft-unsent"); // schedules B's shared debounce timer
+        await act(async () => {
+            resolveA(true); // A resolves → cancels the shared timer + clears A
+        });
+        // B's draft must have been flushed (persisted) before the timer was cancelled, so switching
+        // away and back restores it — not silently stranded.
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        expect(composerValue(result.container)).toBe("B-draft-unsent");
+    });
+
+    test("a successful send whose draft clear fails does NOT resurrect the sent text (final-review M1)", async () => {
+        const client = signedInClient();
+        jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+        await typeInComposer(result.container, "sent then clear-fails");
+        // removeItem throws during drafts.clear(cid); the in-memory empty tombstone must keep read()
+        // returning "" so reloadDraft after the send does not put the already-sent text back.
+        jest.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+            throw new DOMException("denied", "SecurityError");
+        });
+        await pressEnter(result.container);
+        expect(composerValue(result.container)).toBe("");
     });
 
     test("cross-convo: send in A pending, Enter in B not blocked; A resolve leaves B untouched; A draft cleared", async () => {
