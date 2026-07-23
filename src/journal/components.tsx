@@ -2543,6 +2543,7 @@ function Composer({
     const [body, setBody] = useState("");
     const [highlighted, setHighlighted] = useState<number | null>(null);
     const [dismissed, setDismissed] = useState<string | null>(null);
+    const [nonDurable, setNonDurable] = useState(false);
     const store = useMemo(() => makeRecentFoldersStore(state.session), [state.session]);
     const [dismissedSeq, setDismissedSeq] = useState(0);
     const textarea = useRef<HTMLTextAreaElement>(null);
@@ -2562,10 +2563,22 @@ function Composer({
             draftTimerRef.current = undefined;
         }
     }, []);
+    // Mirror the store's canonical per-convo durability flag into React state, but only for the
+    // currently-selected conversation — a late async persist/clear for A must not clobber B's badge.
+    const syncDurability = useCallback(
+        (cid: string) => {
+            if (convoIdRef.current === cid) setNonDurable(drafts.durability(cid) === "non-durable");
+        },
+        [drafts],
+    );
     const flushDraft = useCallback(() => {
         cancelDraftDebounce();
-        drafts.persist();
-    }, [cancelDraftDebounce, drafts]);
+        const cid = prevConvoIdRef.current;
+        if (cid) {
+            drafts.persist(cid);
+            syncDurability(cid);
+        }
+    }, [cancelDraftDebounce, drafts, syncDurability]);
 
     const setBodyDraft = useCallback(
         (next: string) => {
@@ -2576,11 +2589,12 @@ function Composer({
             drafts.setDraft(cid, next);
             if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
             draftTimerRef.current = setTimeout(() => {
-                drafts.persist();
+                drafts.persist(cid);
+                syncDurability(cid);
                 draftTimerRef.current = undefined;
             }, 250);
         },
-        [draftRevisions, drafts],
+        [draftRevisions, drafts, syncDurability],
     );
 
     useEffect(() => {
@@ -2603,6 +2617,9 @@ function Composer({
         setBody(ok ? text : "");
         setDismissed(null);
         setHighlighted(null);
+        // Sync the badge FROM the store for the newly-selected convo — never a blind reset, so a
+        // still-non-durable convo keeps its warning across switch-away/back (and a clear-failure flag surfaces).
+        setNonDurable(convoId ? drafts.durability(convoId) === "non-durable" : false);
         if (textarea.current) textarea.current.style.height = "auto";
         prevConvoIdRef.current = convoId;
     }, [convoId, draftReloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2632,7 +2649,8 @@ function Composer({
                 cancelDraftDebounce();
                 const draftUnchanged = (draftRevisions.current.get(cid) ?? 0) === submittedRevision;
                 if (draftUnchanged) drafts.clear(cid);
-                else drafts.persist();
+                else drafts.persist(cid);
+                syncDurability(cid);
                 reloadDraft(cid);
                 if (draftUnchanged && convoIdRef.current === cid) {
                     setBody("");
@@ -2661,6 +2679,11 @@ function Composer({
                         >
                             <CloseIcon />
                         </button>
+                    </div>
+                )}
+                {nonDurable && (
+                    <div className="mj_DraftNonDurable" role="status">
+                        Draft won't be saved — storage full
                     </div>
                 )}
                 {open && (
