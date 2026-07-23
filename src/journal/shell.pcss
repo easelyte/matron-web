@@ -6,36 +6,70 @@ Please see LICENSE files in the repository root for full details.
 */
 
 :root {
-    --cpd-color-bg-accent: #087f6d;
-    --cpd-color-bg-accent-emphasis: #0dbd8b;
-    --cpd-color-bg-badge: #656d77;
+    /* --- v2 warm-neutral surfaces + brighter teal accent (docs/design/primitives-v2.md) --- */
+    --cpd-color-bg-accent: #0f766e;
+    --cpd-color-bg-accent-emphasis: #0d9488;
+    --cpd-color-bg-badge: #7d756b;
+    --cpd-color-bg-app: #f4f2ee;
     --cpd-color-bg-canvas-default: #fff;
-    --cpd-color-bg-canvas-raised: #fbfaf6;
-    --cpd-color-bg-cluster: rgb(255, 254, 250, 0.72);
-    --cpd-color-bg-room-canvas: #f1efe9;
+    --cpd-color-bg-canvas-raised: #faf8f4;
+    --cpd-color-bg-cluster: rgb(250, 248, 244, 0.72);
+    --cpd-color-bg-room-canvas: #efece6;
     --cpd-color-bg-scrim-auth: rgb(255 255 255 / 82%);
     --cpd-color-bg-scrim-drag: rgb(255 255 255 / 90%);
-    --cpd-color-bg-self-bubble: #dff7ed;
-    --cpd-color-bg-subtle-primary: #f7f8fa;
-    --cpd-color-bg-subtle-secondary: #f0f2f5;
+    --cpd-color-bg-self-bubble: #e6f4ef;
+    --cpd-color-bg-subtle-primary: #f2efe9;
+    --cpd-color-bg-subtle-secondary: #eae5dd;
     --cpd-color-bg-usage-track: rgb(28, 24, 20, 0.12);
-    --cpd-color-border-disabled: #d8dadd;
-    --cpd-color-border-interactive-primary: #8f96a0;
-    --cpd-color-border-interactive-secondary: #c7cbd1;
-    --cpd-color-border-subtle: #e1e4e8;
-    --cpd-color-icon-accent-primary: #0dbd8b;
-    --cpd-color-icon-secondary: #656d77;
-    --cpd-color-icon-tertiary: #8090a3;
-    --cpd-color-text-action-accent: #087f6d;
+    --cpd-color-border-disabled: #ded8ce;
+    --cpd-color-border-interactive-primary: #b3aa9c;
+    --cpd-color-border-interactive-secondary: #d8d1c5;
+    --cpd-color-border-subtle: #e7e2d9;
+    --cpd-color-border-strong: #d8d1c5;
+    --cpd-color-icon-accent-primary: #0d9488;
+    --cpd-color-icon-secondary: #6b655c;
+    --cpd-color-icon-tertiary: #9a938a;
+    --cpd-color-text-action-accent: #0d9488;
     --cpd-color-text-critical-primary: #bd2020;
-    --cpd-color-text-link-external: #087f6d;
+    --cpd-color-text-link-external: #0d9488;
     --cpd-color-text-on-accent: #fff;
-    --cpd-color-text-placeholder: #737983;
-    --cpd-color-text-primary: #1b1d22;
-    --cpd-color-text-secondary: #656d77;
+    --cpd-color-text-placeholder: #9a938a;
+    --cpd-color-text-primary: #1b1815;
+    --cpd-color-text-secondary: #6b655c;
+    --cpd-color-text-tertiary: #9a938a;
     --cpd-color-usage-high: #ff3b30;
     --cpd-color-usage-low: #34c759;
     --cpd-color-usage-medium: #ff9500;
+
+    /* --- v2 interaction state layer (Radix 3/4/5 + M3 opacities) --- */
+    --cpd-state-hover: rgb(28 24 20 / 0.05);
+    --cpd-state-active: rgb(28 24 20 / 0.09);
+    --cpd-state-selected: rgb(13 148 136 / 0.10);
+
+    /* --- v2 motion + focus --- */
+    --cpd-focus-ring: 0 0 0 2px var(--cpd-color-bg-canvas-default), 0 0 0 4px var(--cpd-color-text-action-accent);
+    --cpd-dur-fast: 120ms;
+    --cpd-dur-med: 180ms;
+    --cpd-ease: cubic-bezier(0.2, 0, 0, 1);
+
+    /* --- v2 radii --- */
+    --cpd-radius-xs: 4px;
+    --cpd-radius-sm: 6px;
+    --cpd-radius-md: 8px;
+    --cpd-radius-lg: 12px;
+    --cpd-radius-xl: 16px;
+    --cpd-radius-pill: 999px;
+
+    /* --- v2 elevation shadows --- */
+    --cpd-shadow-sm: 0 1px 2px rgb(28 24 20 / 0.06);
+    --cpd-shadow-md: 0 4px 12px rgb(28 24 20 / 0.10);
+    --cpd-shadow-lg: 0 16px 48px rgb(28 24 20 / 0.16);
+
+    /* --- v2 icon sizes --- */
+    --cpd-icon-sm: 14px;
+    --cpd-icon-md: 16px;
+    --cpd-icon-lg: 20px;
+
     --cpd-font-size-root: 16px;
     --cpd-font-body-2xs-regular: 400 10px/12px Inter, sans-serif;
     --cpd-font-body-xs-regular: 400 12px/16px Inter, sans-serif;
@@ -44,50 +78,81 @@ Please see LICENSE files in the repository root for full details.
     --cpd-font-body-md-regular: 400 16px/24px Inter, sans-serif;
     --cpd-font-heading-sm-semibold: 600 18px/28px Inter, sans-serif;
     --cpd-font-heading-md-semibold: 600 20px/28px Inter, sans-serif;
+
+    /* --- v2 role type ramp (M3 roles, RUI non-linear) --- */
+    --cpd-font-micro: 400 11px/14px Inter, sans-serif;
+    --cpd-font-meta: 400 12px/16px Inter, sans-serif;
+    --cpd-font-body: 400 14px/21px Inter, sans-serif;
+    --cpd-font-body-strong: 500 14px/21px Inter, sans-serif;
+    --cpd-font-label: 500 13px/16px Inter, sans-serif;
+    --cpd-font-title: 600 15px/20px Inter, sans-serif;
+    --cpd-font-heading: 600 18px/24px Inter, sans-serif;
+
     --cpd-font-size-2xs: 10px;
     --cpd-font-size-xs: 12px;
     --cpd-font-size-sm: 14px;
     --cpd-font-size-md: 16px;
     --cpd-font-size-lg: 18px;
     --cpd-font-size-xl: 20px;
+
+    /* --- v2 spacing: 4px base, non-linear ramp (Refactoring UI) --- */
+    --cpd-space-0-5x: 2px;
     --cpd-space-1x: 4px;
     --cpd-space-2x: 8px;
     --cpd-space-3x: 12px;
     --cpd-space-4x: 16px;
     --cpd-space-5x: 20px;
+    --cpd-space-6x: 24px;
+    --cpd-space-8x: 32px;
+    --cpd-space-10x: 40px;
+    --cpd-space-12x: 48px;
 }
 
 [data-theme="dark"] {
-    --cpd-color-bg-accent: #0a5f52;
-    --cpd-color-bg-accent-emphasis: #0d7a66;
-    --cpd-color-bg-badge: #4a4f57;
-    --cpd-color-bg-canvas-default: #16191d;
-    --cpd-color-bg-canvas-raised: #1e2228;
-    --cpd-color-bg-cluster: rgb(40, 44, 50, 0.72);
-    --cpd-color-bg-room-canvas: #121417;
-    --cpd-color-bg-scrim-auth: rgb(22, 25, 29, 0.86);
-    --cpd-color-bg-scrim-drag: rgb(22, 25, 29, 0.90);
-    --cpd-color-bg-self-bubble: #12352b;
-    --cpd-color-bg-subtle-primary: #1e2228;
-    --cpd-color-bg-subtle-secondary: #24282f;
-    --cpd-color-bg-usage-track: rgb(255, 255, 255, 0.14);
-    --cpd-color-border-disabled: #33373d;
-    --cpd-color-border-interactive-primary: #6b7079;
-    --cpd-color-border-interactive-secondary: #66707c;
-    --cpd-color-border-subtle: #2b2f35;
-    --cpd-color-icon-accent-primary: #21c9a0;
-    --cpd-color-icon-secondary: #8e959f;
-    --cpd-color-icon-tertiary: #7a828d;
-    --cpd-color-text-action-accent: #21c9a0;
+    /* Dark surfaces get progressively LIGHTER for elevation (Material dark research); depth = lightness. */
+    --cpd-color-bg-accent: #0f766e;
+    --cpd-color-bg-accent-emphasis: #14b8a6;
+    --cpd-color-bg-badge: #3a3f46;
+    --cpd-color-bg-app: #121316;
+    --cpd-color-bg-canvas-default: #1a1c20;
+    --cpd-color-bg-canvas-raised: #212429;
+    --cpd-color-bg-cluster: rgb(33, 36, 41, 0.72);
+    --cpd-color-bg-room-canvas: #151619;
+    --cpd-color-bg-scrim-auth: rgb(18, 19, 22, 0.86);
+    --cpd-color-bg-scrim-drag: rgb(18, 19, 22, 0.90);
+    --cpd-color-bg-self-bubble: #123530;
+    --cpd-color-bg-subtle-primary: #212429;
+    --cpd-color-bg-subtle-secondary: #282c32;
+    --cpd-color-bg-usage-track: rgb(255, 255, 255, 0.12);
+    --cpd-color-border-disabled: #2a2d33;
+    --cpd-color-border-interactive-primary: #5a5f67;
+    --cpd-color-border-interactive-secondary: #3a3f46;
+    --cpd-color-border-subtle: #2a2d33;
+    --cpd-color-border-strong: #3a3f46;
+    --cpd-color-icon-accent-primary: #2dd4bf;
+    --cpd-color-icon-secondary: #9a948b;
+    --cpd-color-icon-tertiary: #6d675f;
+    --cpd-color-text-action-accent: #2dd4bf;
     --cpd-color-text-critical-primary: #ff6a6a;
-    --cpd-color-text-link-external: #21c9a0;
+    --cpd-color-text-link-external: #2dd4bf;
     --cpd-color-text-on-accent: #f5f7fa;
-    --cpd-color-text-placeholder: #7d848e;
-    --cpd-color-text-primary: #e6e9ee;
-    --cpd-color-text-secondary: #9aa1ab;
+    --cpd-color-text-placeholder: #6d675f;
+    --cpd-color-text-primary: #e7e4df;
+    --cpd-color-text-secondary: #9a948b;
+    --cpd-color-text-tertiary: #6d675f;
     --cpd-color-usage-high: #ff3b30;
     --cpd-color-usage-low: #34c759;
     --cpd-color-usage-medium: #ff9500;
+
+    /* v2 interaction state layer (light-ink overlays on dark) */
+    --cpd-state-hover: rgb(255 255 255 / 0.06);
+    --cpd-state-active: rgb(255 255 255 / 0.10);
+    --cpd-state-selected: rgb(45 212 191 / 0.14);
+
+    /* In dark, shadows are near-invisible — surface lightness carries elevation; shadows keep shape only. */
+    --cpd-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+    --cpd-shadow-md: 0 4px 12px rgb(0 0 0 / 0.4);
+    --cpd-shadow-lg: 0 16px 48px rgb(0 0 0 / 0.5);
 }
 
 body {
@@ -172,7 +237,7 @@ button {
 .mj_RoomListHeader h1 {
     overflow: hidden;
     margin: 0;
-    font: var(--cpd-font-heading-sm-semibold);
+    font: var(--cpd-font-title);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -185,24 +250,26 @@ button {
 
 .mj_IconButton {
     display: inline-flex;
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
     align-items: center;
     justify-content: center;
-    padding: 4px;
+    padding: var(--cpd-space-1x);
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: transparent;
     color: var(--cpd-color-icon-secondary);
+    transition: background var(--cpd-dur-fast) var(--cpd-ease), color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
 .mj_IconButton:hover {
-    background: var(--cpd-color-bg-subtle-secondary);
+    background: var(--cpd-state-hover);
+    color: var(--cpd-color-text-primary);
 }
 
 .mj_IconButton svg {
-    width: 20px;
-    height: 20px;
+    width: var(--cpd-icon-lg);
+    height: var(--cpd-icon-lg);
 }
 
 .mx_RoomListSearch {
@@ -256,25 +323,41 @@ button {
 }
 
 .mj_RoomListItem {
+    position: relative;
     display: flex;
     width: calc(100% - 12px);
     box-sizing: border-box;
     min-height: 56px;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
-    margin: 0 4px 4px;
-    padding: 8px 12px 8px 4px;
+    gap: var(--cpd-space-2x);
+    margin: 0 var(--cpd-space-1x) var(--cpd-space-1x);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x) var(--cpd-space-2x) var(--cpd-space-3x);
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: transparent;
     color: var(--cpd-color-text-primary);
     text-align: left;
+    transition: background var(--cpd-dur-fast) var(--cpd-ease);
 }
 
-.mj_RoomListItem:hover,
+.mj_RoomListItem:hover {
+    background: var(--cpd-state-hover);
+}
+
 .mj_RoomListItem_selected {
-    background: var(--cpd-color-bg-subtle-secondary);
+    background: var(--cpd-state-selected);
+}
+
+.mj_RoomListItem_selected::before {
+    content: "";
+    position: absolute;
+    top: var(--cpd-space-1x);
+    bottom: var(--cpd-space-1x);
+    left: 0;
+    width: 3px;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-text-action-accent);
 }
 
 .mj_RoomListText {
@@ -291,16 +374,16 @@ button {
 }
 
 .mj_RoomListName {
-    font-weight: 600;
-    line-height: 20px;
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-label);
 }
 
 .mj_RoomListPreview {
-    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-meta);
 }
 
-.mj_RoomListText_unread .mj_RoomListName,
-.mj_RoomListText_unread .mj_RoomListPreview {
+.mj_RoomListText_unread .mj_RoomListName {
     font-weight: 600;
 }
 
@@ -343,7 +426,7 @@ button {
 }
 
 .mx_ResizeHandle:hover::after {
-    background: rgb(13 189 139 / 18%);
+    background: rgb(13 148 136 / 18%);
 }
 
 .mx_RoomView_wrapper,
@@ -366,7 +449,7 @@ button {
 
 .mx_RoomHeader {
     width: 100%;
-    min-height: 64px;
+    min-height: 84px;
     box-sizing: border-box;
     padding: 0 12px 0 18px;
     background: var(--cpd-color-bg-canvas-default);
@@ -420,10 +503,10 @@ button {
 
 .mx_DisambiguatedProfile {
     display: block;
-    margin: 0 0 5px 2px;
-    font-size: var(--cpd-font-size-sm);
+    margin: 0 0 var(--cpd-space-1x) var(--cpd-space-0-5x);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-meta);
     font-weight: 600;
-    line-height: 16px;
 }
 
 .mx_EventTile_avatar {
@@ -437,18 +520,20 @@ button {
     min-height: 36px;
     box-sizing: border-box;
     position: relative;
-    gap: 5px;
+    gap: var(--cpd-space-1x);
     margin-left: -9px;
-    padding: 10px 60px 10px 10px;
-    border-radius: 6px;
+    padding: var(--cpd-space-3x) 56px var(--cpd-space-3x) var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-canvas-default);
-    box-shadow: 0 1px 2px rgb(18 16 14 / 8%);
-    line-height: 1.2;
+    box-shadow: var(--cpd-shadow-sm);
+    line-height: 1.5;
 }
 
 .mx_EventTile[data-self="true"] .mx_EventTile_line {
     margin-right: -9px;
     margin-left: auto;
+    border-color: transparent;
     background: var(--cpd-color-bg-self-bubble);
 }
 
@@ -460,8 +545,9 @@ button {
 
 .mx_MessageTimestamp {
     white-space: nowrap;
+    color: var(--cpd-color-text-tertiary);
     font-size: var(--cpd-font-size-2xs);
-    line-height: 12px !important;
+    line-height: 14px !important;
 }
 
 .mx_EventTile_content {
@@ -563,15 +649,21 @@ button {
 }
 
 .mx_BasicMessageComposer_input {
-    min-height: 38px;
+    min-height: 40px;
     box-sizing: border-box;
-    margin: 8.5px 0;
-    padding: 8px 12px;
-    border: 1px solid var(--cpd-color-bg-subtle-secondary);
-    border-radius: 8px;
+    margin: var(--cpd-space-2x) 0;
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-strong);
+    border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-canvas-default);
     font-size: inherit;
-    line-height: 1.2;
+    line-height: 1.5;
+    transition: border-color var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mx_BasicMessageComposer_input:focus {
+    border-color: var(--cpd-color-text-action-accent);
+    outline: none;
 }
 
 .mx_BasicMessageComposer_input::placeholder {

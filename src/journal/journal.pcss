@@ -75,7 +75,7 @@ textarea {
 }
 
 .mj_ChatHeader {
-    --mj-header-side-min-width: 152px;
+    --mj-header-side-min-width: 220px;
 
     display: grid;
     grid-template-columns:
@@ -89,11 +89,11 @@ textarea {
     min-width: 0;
     max-width: 100%;
     box-sizing: border-box;
-    border: 1px solid rgb(28, 24, 20, 0.08);
-    border-radius: 10px;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
     background-color: var(--cpd-color-bg-cluster);
-    box-shadow: 0 1px 2px rgb(28, 24, 20, 0.06);
-    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    box-shadow: var(--cpd-shadow-sm);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
 }
 
 .mj_HeaderCluster_empty {
@@ -103,7 +103,7 @@ textarea {
 .mj_ModelContextCluster,
 .mj_HeaderTitleCluster {
     display: flex;
-    height: 38px;
+    min-height: 58px;
     flex-direction: column;
     justify-content: center;
 }
@@ -122,9 +122,7 @@ textarea {
 .mj_HeaderTitleCluster .mx_RoomHeader_heading {
     display: block;
     width: 100%;
-    font-size: var(--cpd-font-size-lg);
-    font-weight: 600;
-    line-height: 18px;
+    font: var(--cpd-font-title);
     text-align: center;
 }
 
@@ -140,11 +138,15 @@ textarea {
 
 .mj_HeaderModel,
 .mj_HeaderEmail {
-    font: var(--cpd-font-body-2xs-regular);
+    font: var(--cpd-font-micro);
+}
+
+.mj_HeaderEmail {
+    color: var(--cpd-color-text-tertiary);
 }
 
 .mj_HeaderContext {
-    font: var(--cpd-font-body-xs-regular);
+    font: var(--cpd-font-meta);
 }
 
 .mj_HeaderContextRow {
@@ -246,7 +248,7 @@ textarea {
 
 .mj_UsageCluster {
     min-width: var(--mj-header-side-min-width);
-    min-height: 38px;
+    min-height: 58px;
     justify-self: end;
     padding-block: var(--cpd-space-1x);
 }
@@ -262,7 +264,8 @@ textarea {
     grid-template-columns: minmax(34px, auto) 1fr;
     align-items: center;
     gap: var(--cpd-space-1x);
-    font: var(--cpd-font-body-2xs-regular);
+    font-size: var(--cpd-font-size-xs);
+    line-height: 15px;
 }
 
 .mj_UsageLabel {
@@ -274,7 +277,7 @@ textarea {
 
 .mj_UsageTrack {
     display: block;
-    width: 90px;
+    width: 100%;
     height: 3px;
     overflow: hidden;
     border-radius: 999px;
@@ -428,7 +431,7 @@ textarea {
     height: 12px;
     flex: 0 0 auto;
     box-sizing: border-box;
-    border: 2px solid rgb(8 127 109 / 25%);
+    border: 2px solid rgb(13 148 136 / 25%);
     border-top-color: var(--cpd-color-text-action-accent);
     border-radius: 50%;
     animation: mj-spin 0.8s linear infinite;
@@ -456,17 +459,23 @@ textarea {
 .mj_RoomListTab {
     flex: 1 1 0;
     border: 0;
-    border-radius: 9999px;
+    border-radius: var(--cpd-radius-pill);
     background: transparent;
     color: var(--cpd-color-text-secondary);
     cursor: pointer;
     padding: var(--cpd-space-1x) var(--cpd-space-3x);
-    font: var(--cpd-font-body-sm-regular);
+    font: var(--cpd-font-label);
+    transition: background var(--cpd-dur-fast) var(--cpd-ease), color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
-.mj_RoomListTab_active {
-    background: var(--cpd-color-bg-subtle-primary);
-    color: var(--cpd-color-text-primary);
+.mj_RoomListTab:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_RoomListTab_active,
+.mj_RoomListTab_active:hover {
+    background: var(--cpd-state-selected);
+    color: var(--cpd-color-text-action-accent);
 }
 
 .mj_RoomListTab:focus-visible {
@@ -640,18 +649,23 @@ textarea {
 }
 
 .mx_EventTile[data-layout="bubble"] .mx_MessageTimestamp {
-    color: var(--cpd-color-text-secondary);
+    color: var(--cpd-color-text-tertiary);
     font-size: var(--cpd-font-size-2xs);
 }
 
 .mj_MessageText {
     min-width: 0;
+    /* Readability measure: ~75ch at the 15px root (Refactoring UI 45-75ch band). Fixed px, not
+       ch/em — ch drifts with the resolved font, and on a wide monitor an uncapped bubble runs
+       to ~140ch. Code/diff children carry their own wider max and let the bubble grow past this. */
+    max-width: 640px;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
 }
 
 .mj_Markdown {
     min-width: 0;
+    max-width: 640px;
     white-space: normal;
     overflow-wrap: anywhere;
 }
@@ -1083,10 +1097,10 @@ textarea {
     gap: var(--cpd-space-3x);
     box-sizing: border-box;
     margin-left: auto !important;
-    border: 1px solid rgb(13 189 139 / 20%);
-    border-radius: 10px;
+    border: 1px solid rgb(13 148 136 / 20%);
+    border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-self-bubble);
-    box-shadow: 0 1px 2px rgb(18 16 14 / 8%);
+    box-shadow: var(--cpd-shadow-sm);
     color: var(--cpd-color-text-primary);
     padding: var(--cpd-space-2x) var(--cpd-space-3x);
     font: var(--cpd-font-body-sm-regular);
@@ -1129,7 +1143,7 @@ textarea {
     width: 12px;
     height: 12px;
     box-sizing: border-box;
-    border: 2px solid rgb(8 127 109 / 25%);
+    border: 2px solid rgb(13 148 136 / 25%);
     border-top-color: var(--cpd-color-text-action-accent);
     border-radius: 50%;
     animation: mj-spin 0.8s linear infinite;
