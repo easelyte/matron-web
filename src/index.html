@@ -10,6 +10,19 @@
         <meta property="og:image" content="opengraph.png" />
         <link rel="manifest" href="manifest.json" />
         <link rel="icon" href="vector-icons/24.png" />
+        <script>
+            (() => {
+                let preference = null;
+                try {
+                    const stored = localStorage.getItem("matron-theme");
+                    preference = stored === "light" || stored === "dark" ? stored : null;
+                } catch {}
+                const resolved = preference ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+                document.documentElement.dataset.theme = resolved;
+                if (preference === null) delete document.documentElement.dataset.themeUser;
+                else document.documentElement.dataset.themeUser = preference;
+            })();
+        </script>
         <title>Matron</title>
     </head>
     <body>

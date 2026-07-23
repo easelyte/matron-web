@@ -45,12 +45,16 @@ import {
     SearchIcon,
     SendIcon,
     SettingsIcon,
+    SystemThemeIcon,
+    LightThemeIcon,
+    DarkThemeIcon,
     StarFilledIcon,
     StarIcon,
     UnarchiveIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody } from "./markdown";
+import { getThemePref, nextThemePref, setTheme, type ThemePref } from "./theme";
 import {
     applyCommand,
     applyFolder,
@@ -94,7 +98,12 @@ function clampLeftPanelWidth(width: number, containerWidth: number): number {
 }
 
 function initialLeftPanelWidth(): number {
-    const storedWidth = Number.parseInt(window.localStorage.getItem(LEFT_PANEL_SIZE_KEY) ?? "", 10);
+    let storedWidth = Number.NaN;
+    try {
+        storedWidth = Number.parseInt(window.localStorage.getItem(LEFT_PANEL_SIZE_KEY) ?? "", 10);
+    } catch {
+        // Storage can be unavailable; the default width remains usable.
+    }
     return clampLeftPanelWidth(
         Number.isFinite(storedWidth) && storedWidth >= LEFT_PANEL_MIN_WIDTH ? storedWidth : LEFT_PANEL_DEFAULT_WIDTH,
         document.documentElement.clientWidth,
@@ -138,7 +147,11 @@ function useLeftPanelResize(): {
             window.removeEventListener("pointermove", onPointerMove);
             window.removeEventListener("pointerup", stopDragging);
             window.removeEventListener("pointercancel", stopDragging);
-            window.localStorage.setItem(LEFT_PANEL_SIZE_KEY, String(Math.round(widthRef.current)));
+            try {
+                window.localStorage.setItem(LEFT_PANEL_SIZE_KEY, String(Math.round(widthRef.current)));
+            } catch {
+                // Resizing remains available for the current session without persistence.
+            }
             stopDraggingRef.current = () => undefined;
         };
         const onPointerMove = (moveEvent: PointerEvent): void => {
@@ -155,6 +168,25 @@ function useLeftPanelResize(): {
     }, []);
 
     return { width, onPointerDown };
+}
+
+export function ThemeToggle(): React.ReactElement {
+    const [preference, setPreference] = useState<ThemePref>(getThemePref);
+    const label = preference === null ? "System" : preference === "light" ? "Light" : "Dark";
+    const icon =
+        preference === null ? <SystemThemeIcon /> : preference === "light" ? <LightThemeIcon /> : <DarkThemeIcon />;
+
+    return (
+        <button
+            className="mj_IconButton"
+            type="button"
+            aria-label={`Theme: ${label}`}
+            title={`Theme: ${label}`}
+            onClick={() => setPreference(setTheme(nextThemePref(preference)))}
+        >
+            {icon}
+        </button>
+    );
 }
 
 function formatTime(timestamp: number): string {
@@ -879,6 +911,7 @@ function ConversationList({
                                 >
                                     <h1 title="Home">Home</h1>
                                     <div className="mj_RoomListHeaderActions">
+                                        <ThemeToggle />
                                         {hasActiveUnread && (
                                             <button
                                                 className="mj_IconButton mj_MarkAllReadButton"
