@@ -142,7 +142,7 @@ describe("theme preference state machine", () => {
         dispatchSystemTheme(true);
         expect(document.documentElement.dataset.theme).toBe("dark");
         expect(document.documentElement.dataset.themeUser).toBeUndefined();
-        expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe("#16191d");
+        expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe("#1a1c20");
 
         dispatchSystemTheme(false);
         expect(document.documentElement.dataset.theme).toBe("light");
@@ -224,7 +224,7 @@ describe("pre-paint bootstrap parity", () => {
             stored === "light" || stored === "dark" ? stored : undefined,
         );
         expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe(
-            expected === "dark" ? "#16191d" : "#ffffff",
+            expected === "dark" ? "#1a1c20" : "#ffffff",
         );
     });
 
@@ -237,7 +237,7 @@ describe("pre-paint bootstrap parity", () => {
         expect(() => new Function(bootstrapScript())()).not.toThrow();
         expect(document.documentElement.dataset.theme).toBe("dark");
         expect(document.documentElement.dataset.themeUser).toBeUndefined();
-        expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe("#16191d");
+        expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe("#1a1c20");
     });
 
     it("pins the storage key and valid values shared with the inline script", () => {
@@ -256,9 +256,13 @@ describe("dark-canvas single-source drift guard", () => {
         if (!themeCanvas) throw new Error("Missing dark canvas literal in theme.ts");
         if (!bootstrapCanvas) throw new Error("Missing dark canvas literal in bootstrap script");
 
-        // This is a parity guard across three literals, not a single source of truth.
+        // Parity guard across three literals (drift detection, not a single source of truth):
+        // assert they all agree, rather than pinning a specific value that a legitimate palette
+        // change would have to churn here too. The shell.pcss token is the reference.
         const canvases = [darkCanvasFromStylesheet(), themeCanvas, bootstrapCanvas].map((value) => value.toLowerCase());
-        expect(canvases).toEqual(["#16191d", "#16191d", "#16191d"]);
+        expect(new Set(canvases).size).toBe(1);
+        expect(canvases[1]).toBe(canvases[0]); // theme.ts === stylesheet
+        expect(canvases[2]).toBe(canvases[0]); // bootstrap === stylesheet
     });
 
     it("fails when the dark block omits the token even if it exists elsewhere", () => {

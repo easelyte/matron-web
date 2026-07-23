@@ -56,7 +56,7 @@ export function applyTheme(explicit?: ThemePref): ResolvedTheme {
     document.documentElement.dataset.theme = resolved;
     document
         .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
-        ?.setAttribute("content", resolved === "dark" ? "#16191d" : "#ffffff");
+        ?.setAttribute("content", resolved === "dark" ? "#1a1c20" : "#ffffff");
     if (preference === null) {
         delete document.documentElement.dataset.themeUser;
     } else {
