@@ -823,6 +823,7 @@ function ConversationList({
         openRoomMenuRef.current(conversationId, rect.right, rect.bottom, opener);
     };
 
+    const renderNow = Date.now();
     const renderConversation = (conversation: ClientState["conversations"][number]): React.ReactElement => {
         const selected = state.selectedConversationId === conversation.id;
         const overrideUnread = state.unreadOverrideIds.has(conversation.id) && conversation.unread_count === 0;
@@ -896,13 +897,18 @@ function ConversationList({
                             <StarFilledIcon aria-hidden />
                         </span>
                     )}
-                    {conversation.unread_count > 0 ? (
-                        <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
-                            {conversation.unread_count}
+                    <span className="mj_RoomListMeta">
+                        <span className="mj_RoomListTime">
+                            {formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow)}
                         </span>
-                    ) : overrideUnread ? (
-                        <span className="mj_UnreadDot" aria-hidden />
-                    ) : null}
+                        {conversation.unread_count > 0 ? (
+                            <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
+                                {conversation.unread_count}
+                            </span>
+                        ) : overrideUnread ? (
+                            <span className="mj_UnreadDot" aria-hidden />
+                        ) : null}
+                    </span>
                 </button>
                 <button
                     className="mj_RoomItemMenu_trigger"
