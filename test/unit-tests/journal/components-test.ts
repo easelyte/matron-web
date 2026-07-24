@@ -456,6 +456,11 @@ describe("message model DOM contracts", () => {
         expect(eventRow?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(1);
         expect(textStreamRow?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(1);
         expect(toolStreamRow?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(1);
+
+        const avatar = eventRow?.querySelector<HTMLElement>(".mj_MsgAvatar");
+        expect(avatar?.tagName).toBe("SPAN");
+        expect(avatar?.getAttribute("aria-hidden")).toBe("true");
+        expect(avatar?.style.maskImage).toContain("matron-logo");
     });
 });
 

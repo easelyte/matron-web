@@ -2029,7 +2029,9 @@ function EventRow({
 }
 
 function MsgAvatar(): React.ReactElement {
-    return <img className="mj_MsgAvatar" src={matronLogo} alt="" aria-hidden />;
+    const mask = `url("${matronLogo}")`;
+
+    return <span className="mj_MsgAvatar" style={{ WebkitMaskImage: mask, maskImage: mask }} aria-hidden />;
 }
 
 function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {

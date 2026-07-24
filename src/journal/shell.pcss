@@ -518,14 +518,29 @@ button {
 }
 
 .mx_DisambiguatedProfile > a {
+    flex-shrink: 0;
     color: inherit;
     text-decoration: none;
+}
+
+.mx_DisambiguatedProfile_displayName {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .mj_MsgAvatar {
     width: var(--cpd-icon-md);
     height: var(--cpd-icon-md);
-    opacity: 0.6;
+    flex-shrink: 0;
+    background-color: var(--cpd-color-icon-secondary);
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: contain;
+    mask-size: contain;
 }
 
 .mx_EventTile_avatar {
