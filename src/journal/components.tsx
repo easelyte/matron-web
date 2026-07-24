@@ -829,13 +829,14 @@ function ConversationList({
         const overrideUnread = state.unreadOverrideIds.has(conversation.id) && conversation.unread_count === 0;
         const unread = effectiveUnread(conversation, state.unreadOverrideIds);
         const name = conversationTitle(conversation);
+        const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
         return (
             <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
                 <button
                     className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open room ${name}${overrideUnread ? ", marked unread" : ""}`}
+                    aria-label={`Open room ${name}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}`}
                     onClick={(event) => {
                         if (longPressFiredRef.current) {
                             longPressFiredRef.current = false;
@@ -898,9 +899,7 @@ function ConversationList({
                         </span>
                     )}
                     <span className="mj_RoomListMeta">
-                        <span className="mj_RoomListTime">
-                            {formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow)}
-                        </span>
+                        <span className="mj_RoomListTime">{relativeTimestamp}</span>
                         {conversation.unread_count > 0 ? (
                             <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
                                 {conversation.unread_count}

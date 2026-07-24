@@ -2089,6 +2089,14 @@ describe("conversation row affordances", () => {
         expect(names[1]).toBe("Room A");
     });
 
+    it("includes the visible last-activity timestamp in the row button's accessible name", async () => {
+        rendered = await renderClient(signedInClient());
+        const row = rendered.container.querySelector<HTMLButtonElement>('button[aria-label^="Open room"]');
+        const timestamp = rendered.container.querySelector(".mj_RoomListTime")?.textContent;
+        expect(timestamp).toBeTruthy();
+        expect(row?.getAttribute("aria-label")).toContain(`last activity ${timestamp}`);
+    });
+
     it("override-unread row announces marked-unread in the row button's accessible name and renders no numeric badge", async () => {
         unreadStore.write(SESSION, new Set([CONVERSATION.id]));
         rendered = await renderClient(signedInClient());

@@ -424,8 +424,10 @@ button {
     transition: opacity var(--cpd-dur-fast) var(--cpd-ease);
 }
 
-.mj_RoomListItem_wrapper:hover .mj_RoomListTime {
-    opacity: 0;
+@media (hover: hover) and (pointer: fine) {
+    .mj_RoomListItem_wrapper:hover .mj_RoomListTime {
+        opacity: 0;
+    }
 }
 
 .mj_RoomListItem_wrapper:focus-within .mj_RoomListMeta {
