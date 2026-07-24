@@ -183,11 +183,13 @@ function CodeBlock({ node, source, children, ...props }: CodeBlockProps): React.
 
     return (
         <pre {...props} className="mj_CodeBlock">
-            {language ? <span className="mj_CodeBlock_lang">{language}</span> : null}
+            <span className="mj_CodeBlock_header">
+                {language ? <span className="mj_CodeBlock_lang">{language}</span> : null}
+                <button className="mj_CodeBlock_copy" type="button" aria-label="Copy code" onClick={handleCopy}>
+                    {copyLabel}
+                </button>
+            </span>
             {children}
-            <button className="mj_CodeBlock_copy" type="button" aria-label="Copy code" onClick={handleCopy}>
-                {copyLabel}
-            </button>
         </pre>
     );
 }

@@ -240,15 +240,20 @@ describe("DiffCard", () => {
         expect(bare.container.querySelector(".mj_DiffCard_badge")).toBeNull();
     });
 
-    it("classifies diff lines by prefix", async () => {
-        const { container } = await mountDiff({ diff: "+added\n-removed\n@@ hunk @@\n context" });
-        const rows = Array.from(container.querySelectorAll(".mj_DiffCard_body > div"));
+    it("renders classified diff lines in a shared width track", async () => {
+        const longContext = ` ${"context ".repeat(40)}`;
+        const { container } = await mountDiff({ diff: `+a\n-b\n@@ hunk @@\n${longContext}` });
+        const body = container.querySelector(".mj_DiffCard_body");
+        const track = body?.querySelector(":scope > .mj_DiffCard_track");
+        const rows = Array.from(track?.children ?? []);
+        expect(track?.parentElement).toBe(body);
         expect(rows.map((row) => row.className)).toEqual([
             "mj_DiffLine_add",
             "mj_DiffLine_del",
             "mj_DiffLine_hunk",
             "mj_DiffLine_ctx",
         ]);
+        expect(rows[3]?.textContent).toBe(longContext);
     });
 
     it("has no expansion controls for at most twelve lines", async () => {
@@ -257,7 +262,7 @@ describe("DiffCard", () => {
         });
         expect(container.querySelector("button[aria-expanded]")).toBeNull();
         expect(container.querySelector(".mj_DiffCard_more")).toBeNull();
-        expect(container.querySelectorAll(".mj_DiffCard_body > div")).toHaveLength(12);
+        expect(container.querySelectorAll(".mj_DiffCard_track > div")).toHaveLength(12);
     });
 
     it("expands and collapses from the accessible chevron button", async () => {
@@ -266,20 +271,23 @@ describe("DiffCard", () => {
         });
         const chevron = container.querySelector<HTMLButtonElement>('button[aria-label="Expand diff"]');
         expect(chevron?.getAttribute("aria-expanded")).toBe("false");
-        expect(container.querySelectorAll(".mj_DiffCard_body > div")).toHaveLength(12);
+        expect(container.querySelectorAll(".mj_DiffCard_track > div")).toHaveLength(12);
         expect(container.querySelector<HTMLButtonElement>(".mj_DiffCard_more")?.textContent).toBe("+2 more lines");
+        expect(container.querySelector(".mj_DiffCard_more")?.parentElement).toBe(
+            container.querySelector(".mj_DiffCard_body"),
+        );
 
         await act(async () => chevron?.click());
         const collapse = container.querySelector<HTMLButtonElement>('button[aria-label="Collapse diff"]');
         expect(collapse?.getAttribute("aria-expanded")).toBe("true");
-        expect(container.querySelectorAll(".mj_DiffCard_body > div")).toHaveLength(14);
+        expect(container.querySelectorAll(".mj_DiffCard_track > div")).toHaveLength(14);
         expect(container.querySelector(".mj_DiffCard_more")).toBeNull();
 
         await act(async () => collapse?.click());
         expect(container.querySelector('button[aria-label="Expand diff"]')?.getAttribute("aria-expanded")).toBe(
             "false",
         );
-        expect(container.querySelectorAll(".mj_DiffCard_body > div")).toHaveLength(12);
+        expect(container.querySelectorAll(".mj_DiffCard_track > div")).toHaveLength(12);
         expect(container.querySelector(".mj_DiffCard_more")).not.toBeNull();
     });
 
@@ -290,7 +298,7 @@ describe("DiffCard", () => {
         const more = container.querySelector<HTMLButtonElement>("button.mj_DiffCard_more");
         expect(more?.textContent).toBe("+1 more lines");
         await act(async () => more?.click());
-        expect(container.querySelectorAll(".mj_DiffCard_body > div")).toHaveLength(13);
+        expect(container.querySelectorAll(".mj_DiffCard_track > div")).toHaveLength(13);
         expect(container.querySelector('button[aria-label="Collapse diff"]')).not.toBeNull();
     });
 
@@ -299,17 +307,17 @@ describe("DiffCard", () => {
         const { container } = await mountDiff({ diff });
         expect(container.querySelector("button[aria-expanded]")).toBeNull();
         expect(container.querySelector(".mj_DiffCard_more")).toBeNull();
-        expect(container.querySelectorAll(".mj_DiffCard_body > div")).toHaveLength(12);
+        expect(container.querySelectorAll(".mj_DiffCard_track > div")).toHaveLength(12);
     });
 
     it("preserves leading whitespace in rendered text", async () => {
         const { container } = await mountDiff({ diff: "    indented" });
-        expect(container.querySelector(".mj_DiffCard_body > div")?.textContent).toBe("    indented");
+        expect(container.querySelector(".mj_DiffCard_track > div")?.textContent).toBe("    indented");
     });
 
     it("normalizes CRLF so rows do not retain carriage returns", async () => {
         const { container } = await mountDiff({ diff: "line 1\r\nline 2\r\n" });
-        const rows = container.querySelectorAll(".mj_DiffCard_body > div");
+        const rows = container.querySelectorAll(".mj_DiffCard_track > div");
         expect(rows).toHaveLength(2);
         expect(rows[0]?.textContent).toBe("line 1");
         expect(rows[1]?.textContent).toBe("line 2");
@@ -320,7 +328,7 @@ describe("DiffCard", () => {
             diff: Array.from({ length: 6000 }, (_, index) => `line ${index}`).join("\n"),
         });
         await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Expand diff"]')?.click());
-        expect(container.querySelectorAll(".mj_DiffCard_body > div.mj_DiffLine_ctx")).toHaveLength(5000);
+        expect(container.querySelectorAll(".mj_DiffCard_track > div.mj_DiffLine_ctx")).toHaveLength(5000);
         expect(container.querySelector(".mj_DiffCard_truncated")?.textContent).toContain("diff too large");
     });
 

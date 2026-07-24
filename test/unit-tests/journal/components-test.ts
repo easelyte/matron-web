@@ -386,6 +386,84 @@ async function renderAppWithToolStream(): Promise<{
     return renderClient(client).then((rendered) => ({ ...rendered, client }));
 }
 
+describe("message model DOM contracts", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    it("renders a first-in-group non-self timestamp exactly once in the header", async () => {
+        rendered = await renderClient(signedInClient({ events: [textEvent(1, "first")] }));
+
+        const row = rendered.container.querySelector('[data-event-id="1"]');
+        expect(row?.querySelectorAll("time")).toHaveLength(1);
+        expect(row?.querySelectorAll(".mx_DisambiguatedProfile time")).toHaveLength(1);
+        expect(row?.querySelectorAll(".mx_EventTile_line time")).toHaveLength(0);
+    });
+
+    it("renders a continuation timestamp exactly once in the line", async () => {
+        rendered = await renderClient(
+            signedInClient({ events: [textEvent(1, "first"), textEvent(2, "continuation")] }),
+        );
+
+        const row = rendered.container.querySelector('[data-event-id="2"]');
+        expect(row?.classList.contains("mx_EventTile_continuation")).toBe(true);
+        expect(row?.querySelectorAll("time")).toHaveLength(1);
+        expect(row?.querySelectorAll(".mx_DisambiguatedProfile time")).toHaveLength(0);
+        expect(row?.querySelectorAll(".mx_EventTile_line time")).toHaveLength(1);
+    });
+
+    it("renders a self timestamp exactly once and no avatar", async () => {
+        const event = { ...textEvent(1, "self"), sender: "user:dan" };
+        rendered = await renderClient(signedInClient({ events: [event] }));
+
+        const row = rendered.container.querySelector('[data-event-id="1"]');
+        expect(row?.querySelectorAll("time")).toHaveLength(1);
+        expect(row?.querySelectorAll(".mx_EventTile_line time")).toHaveLength(1);
+        expect(row?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(0);
+    });
+
+    it("renders exactly one avatar at every non-self header site", async () => {
+        const client = signedInClient({ events: [textEvent(1, "persisted")] });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            textStreams: { response: "streaming" },
+            toolStreams: {
+                running: {
+                    messageRef: "running",
+                    content: "working",
+                    offset: 7,
+                    headTruncated: false,
+                    tool: "shell",
+                    command: "test",
+                },
+            },
+        };
+        rendered = await renderClient(client);
+
+        const eventRow = rendered.container.querySelector('[data-event-id="1"]');
+        const textStreamRow = rendered.container.querySelector(".mj_Cursor")?.closest(".mx_EventTile");
+        const toolStreamRow = rendered.container.querySelector(".mj_LiveTool")?.closest(".mx_EventTile");
+        expect(eventRow?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(1);
+        expect(textStreamRow?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(1);
+        expect(toolStreamRow?.querySelectorAll(".mj_MsgAvatar")).toHaveLength(1);
+
+        const avatar = eventRow?.querySelector<HTMLElement>(".mj_MsgAvatar");
+        expect(avatar?.tagName).toBe("SPAN");
+        expect(avatar?.getAttribute("aria-hidden")).toBe("true");
+        expect(avatar?.style.maskImage).toContain("matron-logo");
+    });
+});
+
 async function rightClick(node: Element): Promise<void> {
     await act(async () => {
         node.dispatchEvent(
@@ -539,6 +617,14 @@ describe("slash command palette", () => {
     const options = (): HTMLElement[] => [
         ...(rendered?.container.querySelectorAll<HTMLElement>('[role="option"]') ?? []),
     ];
+
+    it("associates the composer instructions with the textarea", async () => {
+        rendered = await renderClient(signedInClient());
+
+        const descriptionId = composer().getAttribute("aria-describedby");
+        expect(descriptionId).toBe("mj-composer-hint");
+        expect(document.getElementById(descriptionId!)?.textContent).toContain("/ commands · shift+enter for newline");
+    });
 
     it("opens command rows for a slash-command prefix", async () => {
         rendered = await renderClient(signedInClient());

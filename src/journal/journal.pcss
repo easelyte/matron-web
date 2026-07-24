@@ -82,6 +82,8 @@ textarea {
         minmax(var(--mj-header-side-min-width), 1fr) auto
         minmax(var(--mj-header-side-min-width), 1fr);
     align-items: center;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-default);
     gap: var(--cpd-space-3x);
 }
 
@@ -93,7 +95,7 @@ textarea {
     border-radius: var(--cpd-radius-lg);
     background-color: var(--cpd-color-bg-cluster);
     box-shadow: var(--cpd-shadow-sm);
-    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    padding: var(--cpd-space-1x) var(--cpd-space-3x);
 }
 
 .mj_HeaderCluster_empty {
@@ -146,7 +148,7 @@ textarea {
 }
 
 .mj_HeaderContext {
-    font: var(--cpd-font-meta);
+    font: var(--cpd-font-micro);
 }
 
 .mj_HeaderContextRow {
@@ -264,8 +266,7 @@ textarea {
     grid-template-columns: minmax(34px, auto) 1fr;
     align-items: center;
     gap: var(--cpd-space-1x);
-    font-size: var(--cpd-font-size-xs);
-    line-height: 15px;
+    font: var(--cpd-font-micro);
 }
 
 .mj_UsageLabel {
@@ -278,7 +279,7 @@ textarea {
 .mj_UsageTrack {
     display: block;
     width: 100%;
-    height: 3px;
+    height: var(--cpd-space-1x);
     overflow: hidden;
     border-radius: 999px;
     background-color: var(--cpd-color-bg-usage-track);
@@ -465,7 +466,9 @@ textarea {
     cursor: pointer;
     padding: var(--cpd-space-1x) var(--cpd-space-3x);
     font: var(--cpd-font-label);
-    transition: background var(--cpd-dur-fast) var(--cpd-ease), color var(--cpd-dur-fast) var(--cpd-ease);
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
 .mj_RoomListTab:hover {
@@ -649,8 +652,16 @@ textarea {
 }
 
 .mx_EventTile[data-layout="bubble"] .mx_MessageTimestamp {
-    color: var(--cpd-color-text-tertiary);
+    color: var(--cpd-color-text-secondary);
     font-size: var(--cpd-font-size-2xs);
+}
+
+/* Self-bubble is a distinct surface: dark #123530 + secondary #9a948b = 4.43:1
+   (just under AA 4.5 for the 10px timestamp). Use primary on the self bubble so
+   it clears AA on both bubble themes (final-review r3 B3). */
+.mx_EventTile[data-self="true"] .mx_MessageTimestamp {
+    color: var(--cpd-color-text-primary);
+    opacity: 0.75;
 }
 
 .mj_MessageText {
@@ -797,45 +808,58 @@ textarea {
     position: relative;
     max-width: min(720px, 62vw);
     max-height: 360px;
-    overflow-x: auto;
+    overflow: auto;
     box-sizing: border-box;
     margin: var(--cpd-space-3x) 0;
-    border-radius: 6px;
-    background: var(--cpd-color-bg-subtle-secondary);
-    padding: calc(var(--cpd-space-5x) + var(--cpd-space-3x)) var(--cpd-space-3x) var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
+    padding: 0;
     font-family: "Fira Code", monospace;
     font-size: var(--cpd-font-size-xs);
 }
 
+.mj_CodeBlock_header {
+    position: sticky;
+    z-index: 1;
+    top: 0;
+    left: 0;
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-raised);
+    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    opacity: 1;
+}
+
 .mj_CodeBlock_copy,
 .mj_CodeBlock_lang {
-    position: absolute;
-    top: var(--cpd-space-2x);
-    z-index: 1;
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: 4px;
-    background: var(--cpd-color-bg-canvas-default);
+    border: 0;
+    background: transparent;
     color: var(--cpd-color-text-secondary);
-    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    padding: var(--cpd-space-1x);
     font: var(--cpd-font-body-xs-regular);
-    opacity: 0;
+    opacity: 1;
 }
 
 .mj_CodeBlock_lang {
-    left: var(--cpd-space-2x);
     pointer-events: none;
 }
 
 .mj_CodeBlock_copy {
-    right: var(--cpd-space-2x);
+    margin-left: auto;
     cursor: pointer;
 }
 
-.mj_CodeBlock:hover .mj_CodeBlock_copy,
-.mj_CodeBlock:hover .mj_CodeBlock_lang,
-.mj_CodeBlock:focus-within .mj_CodeBlock_copy,
-.mj_CodeBlock:focus-within .mj_CodeBlock_lang {
-    opacity: 1;
+.mj_CodeBlock > code {
+    display: block;
+    width: max-content;
+    min-width: 100%;
+    box-sizing: border-box;
+    padding: var(--cpd-space-3x);
 }
 
 .mj_CodeBlock_copy:hover {
@@ -885,7 +909,43 @@ textarea {
     font-weight: 600;
 }
 
-/* [data-theme="dark"] syntax-token overrides are intentionally deferred to the parent theme work. */
+[data-theme="dark"] .hljs {
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+}
+
+[data-theme="dark"] .hljs-keyword,
+[data-theme="dark"] .hljs-selector-tag,
+[data-theme="dark"] .hljs-type,
+[data-theme="dark"] .hljs-built_in {
+    color: var(--cpd-color-text-action-accent);
+}
+
+[data-theme="dark"] .hljs-string,
+[data-theme="dark"] .hljs-attr,
+[data-theme="dark"] .hljs-symbol,
+[data-theme="dark"] .hljs-bullet {
+    color: var(--cpd-color-text-link-external);
+}
+
+[data-theme="dark"] .hljs-comment,
+[data-theme="dark"] .hljs-quote,
+[data-theme="dark"] .hljs-meta {
+    color: var(--cpd-color-text-secondary);
+}
+
+[data-theme="dark"] .hljs-number,
+[data-theme="dark"] .hljs-literal,
+[data-theme="dark"] .hljs-regexp {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+[data-theme="dark"] .hljs-title,
+[data-theme="dark"] .hljs-section,
+[data-theme="dark"] .hljs-name {
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+}
 
 .mj_SendingLabel {
     float: right;
@@ -1081,6 +1141,10 @@ textarea {
     color: var(--cpd-color-text-on-accent);
 }
 
+[data-theme="dark"] .mj_UploadConfirm_actions button.mj_UploadConfirm_send:hover:not(:disabled) {
+    background: var(--cpd-color-bg-accent-emphasis);
+}
+
 .mj_UploadConfirm_error {
     margin: 0;
     color: var(--cpd-color-text-critical-primary);
@@ -1261,14 +1325,24 @@ li.mj_AttachmentChip_error {
 
 .mj_ToolCard {
     min-width: min(480px, 60vw);
+    overflow: hidden;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mj_ToolCard summary {
     display: flex;
     align-items: center;
     gap: var(--cpd-space-2x);
+    background: var(--cpd-color-bg-canvas-raised);
     cursor: pointer;
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
     list-style: none;
+}
+
+.mj_ToolCard[open] summary {
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
 }
 
 .mj_ToolCard summary::-webkit-details-marker {
@@ -1308,11 +1382,18 @@ li.mj_AttachmentChip_error {
     font-size: var(--cpd-font-size-xs);
 }
 
+.mj_ToolCard pre {
+    margin: 0;
+    border-radius: 0;
+    background: var(--cpd-color-bg-canvas-default);
+}
+
 .mj_DiffCard {
     min-width: 0;
     overflow: hidden;
-    border-radius: 8px;
-    background: var(--cpd-color-bg-subtle-secondary);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mj_DiffCard_header {
@@ -1371,6 +1452,28 @@ li.mj_AttachmentChip_error {
     color: var(--cpd-color-text-critical-primary);
 }
 
+.mj_DiffLine_add {
+    background: var(--cpd-color-bg-diff-add);
+}
+
+.mj_DiffLine_del {
+    background: var(--cpd-color-bg-diff-del);
+}
+
+.mj_DiffLine_add,
+.mj_DiffLine_del,
+.mj_DiffLine_ctx,
+.mj_DiffLine_hunk {
+    display: block;
+}
+
+.mj_DiffCard_track {
+    display: flex;
+    flex-direction: column;
+    width: max-content;
+    min-width: 100%;
+}
+
 .mj_DiffCard_body {
     max-width: min(720px, 62vw);
     overflow-x: auto;
@@ -1400,7 +1503,9 @@ li.mj_AttachmentChip_error {
     margin-top: var(--cpd-space-2x);
 }
 
-.mj_ToolCard_failed summary {
+.mj_ToolCard_failed summary,
+.mj_ToolCard_failed summary span:last-child,
+.mj_ToolCard_failed summary span:nth-last-child(2) {
     color: var(--cpd-color-text-critical-primary);
 }
 
@@ -1690,12 +1795,5 @@ button.mj_File {
     .mj_Image {
         min-width: 0;
         max-width: 76vw;
-    }
-}
-
-@media (hover: none) {
-    .mj_CodeBlock_copy,
-    .mj_CodeBlock_lang {
-        opacity: 1;
     }
 }

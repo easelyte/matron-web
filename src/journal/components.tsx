@@ -1838,11 +1838,13 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
                 {data.truncated && <span title="diff truncated">…</span>}
             </div>
             <div className="mj_DiffCard_body">
-                {visibleLines.map((line, index) => (
-                    <div className={lineClass(line)} key={`${index}:${line}`}>
-                        {line}
-                    </div>
-                ))}
+                <div className="mj_DiffCard_track">
+                    {visibleLines.map((line, index) => (
+                        <div className={lineClass(line)} key={`${index}:${line}`}>
+                            {line}
+                        </div>
+                    ))}
+                </div>
                 {expandable && !expanded && (
                     <button type="button" className="mj_DiffCard_more" onClick={toggleExpanded}>
                         +{lineCount - 12} more lines
@@ -1996,15 +1998,23 @@ function EventRow({
         >
             {!own && !continuation && (
                 <span className="mx_DisambiguatedProfile">
+                    <MsgAvatar />
                     <span className="mx_DisambiguatedProfile_displayName">{displaySender(event.sender)}</span>
+                    <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
+                        <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                            {formatTime(event.ts)}
+                        </time>
+                    </a>
                 </span>
             )}
             <div className="mx_EventTile_line">
-                <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                    <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
-                        {formatTime(event.ts)}
-                    </time>
-                </a>
+                {(own || continuation) && (
+                    <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
+                        <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                            {formatTime(event.ts)}
+                        </time>
+                    </a>
+                )}
                 <div className="mx_MTextBody mx_EventTile_content">
                     <div className="markdown-body">
                         <EventContent
@@ -2020,10 +2030,17 @@ function EventRow({
     );
 }
 
+function MsgAvatar(): React.ReactElement {
+    const mask = `url("${matronLogo}")`;
+
+    return <span className="mj_MsgAvatar" style={{ WebkitMaskImage: mask, maskImage: mask }} aria-hidden />;
+}
+
 function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {
     return (
         <li className="mx_EventTile mx_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
             <span className="mx_DisambiguatedProfile">
+                <MsgAvatar />
                 <span className="mx_DisambiguatedProfile_displayName">agent</span>
             </span>
             <div className="mx_EventTile_line">
@@ -2370,6 +2387,7 @@ function Timeline({
                                 data-self="false"
                             >
                                 <span className="mx_DisambiguatedProfile">
+                                    <MsgAvatar />
                                     <span className="mx_DisambiguatedProfile_displayName">agent</span>
                                 </span>
                                 <div className="mx_EventTile_line">
@@ -2790,6 +2808,7 @@ function Composer({
                                         : "Messages will send when reconnected"
                                 }
                                 aria-label="Message your agent"
+                                aria-describedby="mj-composer-hint"
                                 role="combobox"
                                 aria-expanded={open}
                                 aria-controls={SLASH_LISTBOX_ID}
@@ -2838,6 +2857,9 @@ function Composer({
                         )}
                     </div>
                 </div>
+                <span id="mj-composer-hint" className="mj_ComposerHint">
+                    / commands · shift+enter for newline
+                </span>
             </div>
         </div>
     );
