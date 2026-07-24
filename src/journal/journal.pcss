@@ -656,6 +656,14 @@ textarea {
     font-size: var(--cpd-font-size-2xs);
 }
 
+/* Self-bubble is a distinct surface: dark #123530 + secondary #9a948b = 4.43:1
+   (just under AA 4.5 for the 10px timestamp). Use primary on the self bubble so
+   it clears AA on both bubble themes (final-review r3 B3). */
+.mx_EventTile[data-self="true"] .mx_MessageTimestamp {
+    color: var(--cpd-color-text-primary);
+    opacity: 0.75;
+}
+
 .mj_MessageText {
     min-width: 0;
     /* Readability measure: ~75ch at the 15px root (Refactoring UI 45-75ch band). Fixed px, not
