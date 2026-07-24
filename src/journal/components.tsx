@@ -12,6 +12,7 @@ import React, {
     useLayoutEffect,
     useMemo,
     useRef,
+    useReducer,
     useState,
     useSyncExternalStore,
 } from "react";
@@ -659,6 +660,14 @@ function ConversationList({
         () => undefined,
     );
     const longPressControllerRef = useRef<LongPressController | undefined>(undefined);
+    const [, forceDayTick] = useReducer((n) => n + 1, 0);
+
+    useEffect(() => {
+        const now = new Date();
+        const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+        const timer = setTimeout(forceDayTick, nextMidnight - now.getTime() + 1000);
+        return () => clearTimeout(timer);
+    });
 
     roomMenuRef.current = roomMenu;
     openRoomMenuRef.current = (conversationId, left, top, opener): void => {
