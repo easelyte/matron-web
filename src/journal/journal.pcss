@@ -885,7 +885,43 @@ textarea {
     font-weight: 600;
 }
 
-/* [data-theme="dark"] syntax-token overrides are intentionally deferred to the parent theme work. */
+[data-theme="dark"] .hljs {
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+}
+
+[data-theme="dark"] .hljs-keyword,
+[data-theme="dark"] .hljs-selector-tag,
+[data-theme="dark"] .hljs-type,
+[data-theme="dark"] .hljs-built_in {
+    color: #2dd4bf;
+}
+
+[data-theme="dark"] .hljs-string,
+[data-theme="dark"] .hljs-attr,
+[data-theme="dark"] .hljs-symbol,
+[data-theme="dark"] .hljs-bullet {
+    color: var(--cpd-color-text-link-external);
+}
+
+[data-theme="dark"] .hljs-comment,
+[data-theme="dark"] .hljs-quote,
+[data-theme="dark"] .hljs-meta {
+    color: var(--cpd-color-text-secondary);
+}
+
+[data-theme="dark"] .hljs-number,
+[data-theme="dark"] .hljs-literal,
+[data-theme="dark"] .hljs-regexp {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+[data-theme="dark"] .hljs-title,
+[data-theme="dark"] .hljs-section,
+[data-theme="dark"] .hljs-name {
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+}
 
 .mj_SendingLabel {
     float: right;
