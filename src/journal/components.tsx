@@ -644,10 +644,9 @@ function ConversationList({
     width: number;
 }): React.ReactElement {
     const [query, setQuery] = useState("");
-    const [tab, setTab] = useState<"all" | "favorites">("all");
+    const [tab, setTab] = useState<"active" | "favorites" | "archived">("active");
     const [accountOpen, setAccountOpen] = useState(false);
     const [newSessionOpen, setNewSessionOpen] = useState(false);
-    const [archivedExpanded, setArchivedExpanded] = useState(false);
     const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
     const roomMenuRef = useRef(roomMenu);
     const roomMenuElementRef = useRef<HTMLDivElement>(null);
@@ -792,15 +791,26 @@ function ConversationList({
         ...activeAll.filter((conversation) => state.pinnedIds.has(conversation.id)),
         ...activeAll.filter((conversation) => !state.pinnedIds.has(conversation.id)),
     ];
-    const visibleActive =
-        tab === "favorites" ? active.filter((conversation) => state.favoriteIds.has(conversation.id)) : active;
+    const archived = conversations.filter((conversation) => state.archivedIds.has(conversation.id));
+    const visibleRows =
+        tab === "favorites"
+            ? active.filter((conversation) => state.favoriteIds.has(conversation.id))
+            : tab === "archived"
+              ? archived
+              : active;
+    const hasAnyActive = state.conversations.some(
+        (conversation) => !state.archivedIds.has(conversation.id) && !parentPresent(conversation, ids),
+    );
     const hasAnyFavorite = state.conversations.some(
         (conversation) =>
             state.favoriteIds.has(conversation.id) &&
             !state.archivedIds.has(conversation.id) &&
             !parentPresent(conversation, ids),
     );
-    const archived = conversations.filter((conversation) => state.archivedIds.has(conversation.id));
+    const archivedAll = state.conversations.filter(
+        (conversation) => state.archivedIds.has(conversation.id) && !parentPresent(conversation, ids),
+    );
+    const archivedTotal = archivedAll.length;
     // Visibility is computed from the UNFILTERED conversation set (minus archived), NOT the
     // search-filtered `active` — mark-all operates on the full active partition regardless of
     // the search box, so the button must not vanish just because the search hides the unread rows.
@@ -983,29 +993,35 @@ function ConversationList({
                                         </button>
                                     </div>
                                 </header>
-                                <div className="mj_RoomListTabs" aria-label="Filter conversations">
-                                    <button
-                                        type="button"
-                                        className={`mj_RoomListTab${tab === "all" ? " mj_RoomListTab_active" : ""}`}
-                                        aria-pressed={tab === "all"}
-                                        onClick={(event) => {
-                                            setTab("all");
-                                            event.currentTarget.focus({ preventScroll: true });
-                                        }}
-                                    >
-                                        All
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className={`mj_RoomListTab${tab === "favorites" ? " mj_RoomListTab_active" : ""}`}
-                                        aria-pressed={tab === "favorites"}
-                                        onClick={(event) => {
-                                            setTab("favorites");
-                                            event.currentTarget.focus({ preventScroll: true });
-                                        }}
-                                    >
-                                        Favorites
-                                    </button>
+                                <div
+                                    className="mj_RoomListTabs"
+                                    role="group"
+                                    aria-label="Filter conversations"
+                                >
+                                    {(
+                                        [
+                                            ["active", "Active"],
+                                            ["favorites", "Favorites"],
+                                            ["archived", "Archived"],
+                                        ] as const
+                                    ).map(([key, label]) => (
+                                        <button
+                                            key={key}
+                                            type="button"
+                                            data-tab={key}
+                                            className={`mj_RoomListTab${tab === key ? " mj_RoomListTab_active" : ""}`}
+                                            aria-pressed={tab === key}
+                                            onClick={(event) => {
+                                                setTab(key);
+                                                event.currentTarget.focus({ preventScroll: true });
+                                            }}
+                                        >
+                                            {label}
+                                            {key === "archived" && archivedTotal > 0 && (
+                                                <span className="mj_RoomListTab_count"> ({archivedTotal})</span>
+                                            )}
+                                        </button>
+                                    ))}
                                 </div>
                                 <div data-testid="room-list-search" className="mx_RoomListSearch" role="search">
                                     <label
@@ -1041,41 +1057,28 @@ function ConversationList({
                                     role="list"
                                     aria-label="Conversations"
                                 >
-                                    {visibleActive.map((conversation) => renderConversation(conversation))}
+                                    {visibleRows.map((conversation) => renderConversation(conversation))}
+                                    {tab === "active" && !hasAnyActive && (
+                                        <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
+                                    )}
+                                    {tab === "active" && hasAnyActive && !visibleRows.length && (
+                                        <p className="mj_RoomListEmpty">No conversations match your search.</p>
+                                    )}
                                     {tab === "favorites" && !hasAnyFavorite && (
                                         <p className="mj_RoomListEmpty">No favorite conversations yet.</p>
                                     )}
-                                    {tab === "favorites" && hasAnyFavorite && !visibleActive.length && (
+                                    {tab === "favorites" && hasAnyFavorite && !visibleRows.length && (
                                         <p className="mj_RoomListEmpty">No favorites match your search.</p>
                                     )}
-                                    {tab === "all" && !active.length && !archived.length && (
-                                        <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
+                                    {tab === "archived" && archivedTotal === 0 && (
+                                        <p className="mj_RoomListEmpty">No archived conversations.</p>
+                                    )}
+                                    {tab === "archived" && archivedTotal > 0 && !visibleRows.length && (
+                                        <p className="mj_RoomListEmpty">
+                                            No archived conversations match your search.
+                                        </p>
                                     )}
                                 </div>
-                                {tab === "all" && archived.length > 0 && (
-                                    <>
-                                        <button
-                                            className="mj_RoomList_archivedToggle"
-                                            type="button"
-                                            aria-expanded={archivedExpanded}
-                                            aria-controls="mj-room-list-archived"
-                                            onClick={() => setArchivedExpanded((expanded) => !expanded)}
-                                        >
-                                            Archived{" "}
-                                            <span className="mj_RoomList_archivedCount">({archived.length})</span>
-                                        </button>
-                                        {archivedExpanded && (
-                                            <div
-                                                id="mj-room-list-archived"
-                                                className="mj_RoomList_archivedSection"
-                                                role="list"
-                                                aria-label="Archived conversations"
-                                            >
-                                                {archived.map((conversation) => renderConversation(conversation))}
-                                            </div>
-                                        )}
-                                    </>
-                                )}
                             </nav>
                         </div>
                     </div>
