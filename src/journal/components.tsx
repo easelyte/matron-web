@@ -10,6 +10,7 @@ import React, {
     type RefObject,
     useCallback,
     useEffect,
+    useId,
     useLayoutEffect,
     useMemo,
     useRef,
@@ -68,7 +69,7 @@ import {
     makeRecentFoldersStore,
     recentFolderArgument,
 } from "./slash-palette";
-import { compactTokens, normalizePercent, resetDisplay, usageBarLabel, usageLevel } from "./status";
+import { compactTokens, normalizePercent, resetDisplay, usageBarLabel, usageLevel, worstLimit } from "./status";
 import {
     asNumber,
     asString,
@@ -1383,6 +1384,208 @@ export function UsageCluster({ limits }: { limits: NonNullable<SessionStatus["li
                     );
                 })}
         </div>
+    );
+}
+
+export function HeaderShell({
+    mode,
+    onBack,
+    backLabel,
+    left,
+    title,
+    titleMeta,
+    limits,
+    collapse,
+}: {
+    mode: "parent" | "child";
+    onBack: () => void;
+    backLabel: string;
+    left: React.ReactNode;
+    title: string;
+    titleMeta: React.ReactNode;
+    limits?: NonNullable<SessionStatus["limits"]>;
+    collapse: { usageCollapsed: boolean; titleCollapsed: boolean };
+}): React.ReactElement {
+    const { usageCollapsed, titleCollapsed } = collapse;
+    const [usagePopoverOpen, setUsagePopoverOpen] = useState(false);
+    const [titlePopoverOpen, setTitlePopoverOpen] = useState(false);
+    const backButtonRef = useRef<HTMLButtonElement>(null);
+    const usageOpenerRef = useRef<HTMLButtonElement>(null);
+    const usagePanelRef = useRef<HTMLDivElement>(null);
+    const titleOpenerRef = useRef<HTMLButtonElement>(null);
+    const titlePanelRef = useRef<HTMLDivElement>(null);
+    const focusHeldRef = useRef(false);
+    const usagePopoverId = useId();
+    const titlePopoverId = useId();
+    const closeUsagePopover = useCallback(() => setUsagePopoverOpen(false), []);
+    const closeTitlePopover = useCallback(() => setTitlePopoverOpen(false), []);
+
+    useDismissablePopover(usagePopoverOpen, closeUsagePopover, {
+        openerRef: usageOpenerRef,
+        panelRef: usagePanelRef,
+    });
+    useDismissablePopover(titlePopoverOpen, closeTitlePopover, {
+        openerRef: titleOpenerRef,
+        panelRef: titlePanelRef,
+    });
+
+    useLayoutEffect(() => {
+        if (usagePopoverOpen) usagePanelRef.current?.focus();
+    }, [usagePopoverOpen]);
+    useLayoutEffect(() => {
+        if (titlePopoverOpen) titlePanelRef.current?.focus();
+    }, [titlePopoverOpen]);
+
+    useEffect(() => {
+        let restoreFocus = false;
+        const activeElement = document.activeElement;
+        const titleHasFocus =
+            titleOpenerRef.current?.contains(activeElement) || titlePanelRef.current?.contains(activeElement);
+        const usageHasFocus =
+            usageOpenerRef.current?.contains(activeElement) || usagePanelRef.current?.contains(activeElement);
+        if (!usageCollapsed || !limits?.length) {
+            restoreFocus ||= focusHeldRef.current && (usagePopoverOpen || !titleHasFocus);
+            if (usagePopoverOpen) setUsagePopoverOpen(false);
+        }
+        if (!titleCollapsed) {
+            restoreFocus ||= focusHeldRef.current && (titlePopoverOpen || !usageHasFocus);
+            if (titlePopoverOpen) setTitlePopoverOpen(false);
+        }
+        if (restoreFocus) backButtonRef.current?.focus();
+    }, [usageCollapsed, titleCollapsed, limits?.length]);
+
+    const onTriggerFocus = (): void => {
+        focusHeldRef.current = true;
+    };
+    const onTriggerBlur = (event: React.FocusEvent<HTMLButtonElement>): void => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) focusHeldRef.current = false;
+    };
+    const onPanelFocus = (): void => {
+        focusHeldRef.current = true;
+    };
+    const onPanelBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) focusHeldRef.current = false;
+    };
+
+    const worst = limits ? worstLimit(limits) : undefined;
+    const unknownCount = limits?.filter((limit) => normalizePercent(limit.percent) === null).length ?? 0;
+    const worstNormalized = worst ? (normalizePercent(worst.percent) ?? 0) : undefined;
+    const worstReset = worst ? resetDisplay(worst.resets_at, worst.resets) : "";
+    const usageLabel =
+        worstNormalized === undefined
+            ? `Usage — ${unknownCount} ${unknownCount === 1 ? "metric" : "metrics"} unknown`
+            : `Usage — worst limit ${Math.round(worstNormalized)}%${worstReset ? `, resets ${worstReset}` : ""}${
+                  unknownCount ? `, ${unknownCount} ${unknownCount === 1 ? "metric" : "metrics"} unknown` : ""
+              }`;
+
+    return (
+        <header className={`mx_RoomHeader light-panel mj_ChatHeader${mode === "child" ? " mj_SubChatHeader" : ""}`}>
+            <button ref={backButtonRef} type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
+                <ChevronLeftIcon />
+            </button>
+            {!titleCollapsed && <div className="mj_HeaderCluster mj_ModelContextCluster">{left}</div>}
+            {titleCollapsed ? (
+                <button
+                    ref={titleOpenerRef}
+                    type="button"
+                    className="mj_HeaderMiniTitle"
+                    aria-expanded={titlePopoverOpen}
+                    aria-controls={titlePopoverId}
+                    onFocus={onTriggerFocus}
+                    onBlur={onTriggerBlur}
+                    onClick={() => {
+                        setUsagePopoverOpen(false);
+                        setTitlePopoverOpen((open) => !open);
+                    }}
+                >
+                    <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
+                    <span aria-hidden="true">▾</span>
+                </button>
+            ) : (
+                <div className="mj_HeaderCluster mj_HeaderTitleCluster">
+                    <div dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
+                        <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
+                    </div>
+                    {titleMeta}
+                </div>
+            )}
+            {usageCollapsed && limits?.length ? (
+                <button
+                    ref={usageOpenerRef}
+                    type="button"
+                    className="mj_HeaderMiniUsage"
+                    aria-label={usageLabel}
+                    aria-expanded={usagePopoverOpen}
+                    aria-controls={usagePopoverId}
+                    onFocus={onTriggerFocus}
+                    onBlur={onTriggerBlur}
+                    onClick={() => {
+                        setTitlePopoverOpen(false);
+                        setUsagePopoverOpen((open) => !open);
+                    }}
+                >
+                    {worstNormalized === undefined ? (
+                        <span className="mj_HeaderMiniUsageUnknown">—</span>
+                    ) : (
+                        <>
+                            <span
+                                className={`mj_HeaderMiniUsageDot mj_HeaderMiniUsageDot_${usageLevel(worstNormalized)}`}
+                                aria-hidden="true"
+                            >
+                                ⬤
+                            </span>
+                            <span>{Math.round(worstNormalized)}%</span>
+                            {unknownCount > 0 && (
+                                <span className="mj_HeaderMiniUsageUnknown" aria-hidden="true">
+                                    ·—
+                                </span>
+                            )}
+                        </>
+                    )}
+                </button>
+            ) : (
+                <div
+                    className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
+                    aria-hidden={!limits?.length}
+                >
+                    {!usageCollapsed && limits?.length ? <UsageCluster limits={limits} /> : null}
+                </div>
+            )}
+            {titlePopoverOpen && (
+                <div
+                    ref={titlePanelRef}
+                    id={titlePopoverId}
+                    className="mj_HeaderMenu mj_TitlePopover"
+                    role="group"
+                    aria-label="Conversation details"
+                    tabIndex={-1}
+                    onFocusCapture={onPanelFocus}
+                    onBlur={onPanelBlur}
+                >
+                    <div className="mj_HeaderCluster mj_HeaderTitleCluster">
+                        <div dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
+                            <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
+                        </div>
+                        {titleMeta}
+                    </div>
+                    <div className="mj_HeaderCluster mj_ModelContextCluster">{left}</div>
+                </div>
+            )}
+            {usagePopoverOpen && limits?.length && (
+                <div
+                    ref={usagePanelRef}
+                    id={usagePopoverId}
+                    className="mj_HeaderMenu mj_UsagePopover"
+                    role="group"
+                    aria-label="Usage details"
+                    tabIndex={-1}
+                    onFocusCapture={onPanelFocus}
+                    onBlur={onPanelBlur}
+                >
+                    <UsageCluster limits={limits} />
+                </div>
+            )}
+        </header>
     );
 }
 
