@@ -61,11 +61,11 @@ Phase 1 and Phase 2 both edit `ConversationList`/`renderConversation` but disjoi
 
 ## Phase 1 — #507 sidebar timestamps
 
-### T-1.1: Export `formatRelativeDay` formatter + add `useReducer` import
-- [ ] In `src/journal/components.tsx`, add `useReducer` to the React import (currently L8-17: `useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore` — `useReducer` absent).
+### T-1.1: Export `formatRelativeDay` formatter
 - [ ] Directly after `formatTime` (L192-194), add the **exported** `formatRelativeDay` exactly as the spec Feature-1 formatter block specifies: non-finite guard → `""`, invalid-Date guard → `""`, `daysAgo === 0` → `formatTime` (today/same-day-skew), `1..6` → `Intl` `weekday: "short"`, else (older OR future calendar day) → `Intl` month/day (+year when `!sameYear`). `now: number = Date.now()` default param. `export function` (test seam — spec Codex-r2).
+- [ ] **Do NOT add the `useReducer` import here** — `tsconfig` has `noUnusedLocals: true`, so an import with no usage until T-1.2 fails the build (execute T-1.1 exit-5 lesson). The `useReducer` import is added in T-1.2 together with its usage.
 - **Files:** `src/journal/components.tsx`
-- **Acceptance:** TS compiles; `formatRelativeDay` is a named export; `formatTime` stays private (unchanged); no other formatter behavior touched. `grep -n "export function formatRelativeDay" src/journal/components.tsx` hits once; `useReducer` present in import.
+- **Acceptance:** TS compiles clean (no unused import); `formatRelativeDay` is a named export; `formatTime` stays private (unchanged); no other formatter behavior touched. `grep -n "export function formatRelativeDay" src/journal/components.tsx` hits once.
 
 ### T-1.2: Midnight-invalidation effect in `ConversationList`
 - [ ] Inside `ConversationList`, add `const [, forceDayTick] = useReducer((n) => n + 1, 0);` and the self-re-arming `useEffect` (no dep array) that `setTimeout`s `forceDayTick` to `nextLocalMidnight - now + 1000ms`, returning `clearTimeout` for cleanup — exactly as spec Feature-1 "Midnight invalidation" block.
