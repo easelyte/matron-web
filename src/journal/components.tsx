@@ -68,7 +68,7 @@ import {
     makeRecentFoldersStore,
     recentFolderArgument,
 } from "./slash-palette";
-import { compactTokens, resetDisplay, usageBarLabel, usageLevel } from "./status";
+import { compactTokens, normalizePercent, resetDisplay, usageBarLabel, usageLevel } from "./status";
 import {
     asNumber,
     asString,
@@ -1347,33 +1347,41 @@ function useMinuteClock(): number {
     return now;
 }
 
-function UsageBars({ limits }: { limits: NonNullable<SessionStatus["limits"]> }): React.ReactElement {
+export function UsageCluster({ limits }: { limits: NonNullable<SessionStatus["limits"]> }): React.ReactElement {
     const now = useMinuteClock();
     return (
         <div className="mj_UsageBars" role="group" aria-label="Usage limits">
-            {limits.slice(0, 3).map((limit) => {
-                const percent = Math.min(Math.max(limit.percent, 0), 100);
-                const reset = resetDisplay(limit.resets_at, limit.resets, now);
-                return (
-                    <div className="mj_UsageRow" key={limit.label} title={reset ? `resets ${reset}` : undefined}>
-                        <span className="mj_UsageLabel">{usageBarLabel(limit.label)}:</span>
-                        <span
-                            className="mj_UsageTrack"
-                            role="progressbar"
-                            aria-label={usageBarLabel(limit.label)}
-                            aria-valuemin={0}
-                            aria-valuemax={100}
-                            aria-valuenow={percent}
-                            aria-valuetext={`${percent}% used${reset ? `, resets ${reset}` : ""}`}
-                        >
+            {limits
+                .filter((limit) => limit.label.trim())
+                .map((limit, index) => {
+                    const norm = normalizePercent(limit.percent);
+                    const reset = resetDisplay(limit.resets_at, limit.resets, now);
+                    const level = norm === null ? "unknown" : usageLevel(norm);
+                    return (
+                        <div className="mj_UsageRow" key={index} title={reset ? `resets ${reset}` : undefined}>
+                            <span className="mj_UsageLabel">{usageBarLabel(limit.label)}:</span>
                             <span
-                                className={`mj_UsageFill mj_UsageFill_${usageLevel(percent)}`}
-                                style={{ width: `${percent}%` }}
-                            />
-                        </span>
-                    </div>
-                );
-            })}
+                                className="mj_UsageTrack"
+                                role="progressbar"
+                                aria-label={usageBarLabel(limit.label)}
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-valuenow={norm ?? undefined}
+                                aria-valuetext={
+                                    norm === null ? "usage unknown" : `${norm}% used${reset ? `, resets ${reset}` : ""}`
+                                }
+                            >
+                                <span
+                                    className={`mj_UsageFill mj_UsageFill_${level}`}
+                                    style={{ width: norm === null ? "100%" : `${norm}%` }}
+                                />
+                            </span>
+                            <span className={`mj_UsagePercent mj_UsagePercent_${level}`}>
+                                {norm === null ? "—" : `${Math.round(norm)}%`}
+                            </span>
+                        </div>
+                    );
+                })}
         </div>
     );
 }
@@ -1469,7 +1477,7 @@ function ChatHeader({ client, state }: { client: MatronJournalClient; state: Cli
                 className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
                 aria-hidden={!limits?.length}
             >
-                {limits?.length ? <UsageBars limits={limits} /> : null}
+                {limits?.length ? <UsageCluster limits={limits} /> : null}
             </div>
         </header>
     );
@@ -1568,7 +1576,7 @@ function SubChatHeader({ client, state }: { client: MatronJournalClient; state: 
                 className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
                 aria-hidden={!limits?.length}
             >
-                {limits?.length ? <UsageBars limits={limits} /> : null}
+                {limits?.length ? <UsageCluster limits={limits} /> : null}
             </div>
         </header>
     );
