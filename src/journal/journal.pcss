@@ -1364,8 +1364,9 @@ li.mj_AttachmentChip_error {
 .mj_DiffCard {
     min-width: 0;
     overflow: hidden;
-    border-radius: 8px;
-    background: var(--cpd-color-bg-subtle-secondary);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mj_DiffCard_header {
@@ -1422,6 +1423,23 @@ li.mj_AttachmentChip_error {
 .mj_DiffCard_removed,
 .mj_DiffLine_del {
     color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_DiffLine_add {
+    background: var(--cpd-color-bg-diff-add);
+}
+
+.mj_DiffLine_del {
+    background: var(--cpd-color-bg-diff-del);
+}
+
+.mj_DiffLine_add,
+.mj_DiffLine_del,
+.mj_DiffLine_ctx,
+.mj_DiffLine_hunk {
+    display: block;
+    width: max-content;
+    min-width: 100%;
 }
 
 .mj_DiffCard_body {
