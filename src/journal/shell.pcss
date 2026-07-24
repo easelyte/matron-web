@@ -536,6 +536,18 @@ button {
     line-height: 1.5;
 }
 
+.mx_EventTile[data-self="false"] .mx_EventTile_line {
+    margin-left: 0;
+    padding: var(--cpd-space-1x) var(--cpd-space-0-5x);
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+}
+
+.mx_EventTile_continuation[data-self="false"] .mx_EventTile_line {
+    padding-right: 56px;
+}
+
 .mx_EventTile[data-self="true"] .mx_EventTile_line {
     margin-right: -9px;
     margin-left: auto;
