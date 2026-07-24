@@ -193,6 +193,28 @@ function formatTime(timestamp: number): string {
     return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
 }
 
+// EXPORTED: the render callsite uses it, and unit tests import it directly to inject `now`.
+// `formatTime` stays private; only this helper needs the test seam.
+export function formatRelativeDay(timestamp: number, now: number = Date.now()): string {
+    if (!Number.isFinite(timestamp)) return ""; // Non-finite → no throw, empty string.
+    const then = new Date(timestamp);
+    if (Number.isNaN(then.getTime())) return ""; // Invalid Date → Intl.format would throw; bail.
+    const today = new Date(now);
+    const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const dayMs = 86_400_000;
+    const daysAgo = Math.round((startOf(today) - startOf(then)) / dayMs);
+    if (daysAgo === 0) return formatTime(timestamp); // Today (including same-day minor-future skew) → clock.
+    if (daysAgo >= 1 && daysAgo <= 6) {
+        return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(then);
+    }
+    // Older than six days or a genuinely future calendar day falls through to a dated label.
+    const sameYear = then.getFullYear() === today.getFullYear();
+    return new Intl.DateTimeFormat(
+        undefined,
+        sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" },
+    ).format(then);
+}
+
 function formatBytes(value: unknown): string | undefined {
     if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
     if (value < 1024) return `${value} B`;
