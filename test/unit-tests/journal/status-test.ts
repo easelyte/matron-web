@@ -8,9 +8,11 @@ Please see LICENSE files in the repository root for full details.
 import {
     compactTokens,
     mergeSessionStatus,
+    normalizePercent,
     resetDisplay,
     usageBarLabel,
     usageLevel,
+    worstLimit,
 } from "../../../src/journal/status";
 
 describe("journal session status presentation", () => {
@@ -41,6 +43,32 @@ describe("journal session status presentation", () => {
             "medium",
             "high",
         ]);
+    });
+
+    it("normalizes finite percentages without hiding unknown values", () => {
+        expect(normalizePercent(NaN)).toBeNull();
+        expect(normalizePercent(Infinity)).toBeNull();
+        expect(normalizePercent(-Infinity)).toBeNull();
+        expect(normalizePercent(-5)).toBe(0);
+        expect(normalizePercent(150)).toBe(100);
+        expect(normalizePercent(42.4)).toBe(42.4);
+    });
+
+    it("returns the first worst finite limit and ignores unknown values", () => {
+        expect(worstLimit([])).toBeUndefined();
+        expect(worstLimit([{ label: "unknown", percent: NaN }])).toBeUndefined();
+
+        const mixed = [
+            { label: "a", percent: NaN },
+            { label: "b", percent: 10 },
+        ];
+        expect(worstLimit(mixed)).toBe(mixed[1]);
+
+        const tied = [
+            { label: "first", percent: 80 },
+            { label: "second", percent: 80 },
+        ];
+        expect(worstLimit(tied)).toBe(tied[0]);
     });
 
     it("retains fields omitted by partial status updates", () => {

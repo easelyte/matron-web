@@ -7,6 +7,27 @@ Please see LICENSE files in the repository root for full details.
 
 import { type SessionStatus } from "./types";
 
+export function normalizePercent(p: number): number | null {
+    return Number.isFinite(p) ? Math.min(Math.max(p, 0), 100) : null;
+}
+
+export function worstLimit(
+    limits: NonNullable<SessionStatus["limits"]>,
+): NonNullable<SessionStatus["limits"]>[number] | undefined {
+    let worst: NonNullable<SessionStatus["limits"]>[number] | undefined;
+    let worstPercent = -Infinity;
+
+    for (const limit of limits) {
+        const percent = normalizePercent(limit.percent);
+        if (percent !== null && percent > worstPercent) {
+            worst = limit;
+            worstPercent = percent;
+        }
+    }
+
+    return worst;
+}
+
 export function compactTokens(tokens: number): string {
     if (tokens < 1_000) return String(tokens);
     if (tokens < 1_000_000) return `${Math.round(tokens / 1_000)}k`;
