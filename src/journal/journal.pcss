@@ -894,7 +894,7 @@ textarea {
 [data-theme="dark"] .hljs-selector-tag,
 [data-theme="dark"] .hljs-type,
 [data-theme="dark"] .hljs-built_in {
-    color: #2dd4bf;
+    color: var(--cpd-color-text-action-accent);
 }
 
 [data-theme="dark"] .hljs-string,
@@ -1115,6 +1115,10 @@ textarea {
 .mj_UploadConfirm_actions button.mj_UploadConfirm_send:hover:not(:disabled) {
     background: var(--cpd-color-bg-accent);
     color: var(--cpd-color-text-on-accent);
+}
+
+[data-theme="dark"] .mj_UploadConfirm_actions button.mj_UploadConfirm_send:hover:not(:disabled) {
+    background: var(--cpd-color-bg-accent-emphasis);
 }
 
 .mj_UploadConfirm_error {
