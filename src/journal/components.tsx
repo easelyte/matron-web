@@ -3258,6 +3258,61 @@ function RunningSubagentStrip({
     );
 }
 
+export function SubagentStrip({
+    client,
+    state,
+    mode,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    mode: "parent" | "child";
+}): React.ReactElement | null {
+    const selected = state.conversations.find((conversation) => conversation.id === state.selectedConversationId);
+    const parentId = mode === "parent" ? state.selectedConversationId : selected?.parent_convo_id;
+    const children = childrenOf(state.conversations, parentId);
+    if (children.length === 0) return null;
+
+    const ordered = [
+        ...children.filter((child) => child.session_state === "running"),
+        ...children.filter((child) => child.session_state !== "running"),
+    ];
+    return (
+        <div className="mj_SubagentStrip" role="list">
+            {ordered.map((child) => {
+                const isCurrent = mode === "child" && child.id === state.selectedConversationId;
+                const isRunning = child.session_state === "running";
+                const className = [
+                    "mj_SubagentPill",
+                    !isRunning && "mj_SubagentPill_finished",
+                    isCurrent && "mj_SubagentPill_current",
+                ]
+                    .filter(Boolean)
+                    .join(" ");
+                return (
+                    <div key={child.id} role="listitem" className="mj_SubagentPill_wrapper">
+                        <button
+                            className={className}
+                            aria-label={`Open subagent ${conversationTitle(child)}`}
+                            aria-current={isCurrent ? "true" : undefined}
+                            disabled={isCurrent}
+                            onClick={() => void client.selectConversation(child.id)}
+                        >
+                            {isCurrent ? (
+                                <span aria-hidden="true">✓</span>
+                            ) : isRunning ? (
+                                <span className="mj_Spinner" aria-hidden="true" />
+                            ) : (
+                                <span aria-hidden="true">○</span>
+                            )}
+                            {conversationTitle(child)}
+                        </button>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const leftPanel = useLeftPanelResize();
     const [dragActive, setDragActive] = useState(state.dragActive);
