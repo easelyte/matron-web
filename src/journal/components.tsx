@@ -1287,6 +1287,57 @@ export function useDismissablePopover(
     }, [open, close, openerRef, panelRef]);
 }
 
+const USAGE_COLLAPSE_PX = 700;
+const TITLE_COLLAPSE_PX = 460;
+
+export function useAdaptiveHeader(bodyEl: HTMLElement | null): {
+    usageCollapsed: boolean;
+    titleCollapsed: boolean;
+} {
+    const [collapse, setCollapse] = useState({ usageCollapsed: false, titleCollapsed: false });
+    const collapseRef = useRef(collapse);
+
+    useEffect(() => {
+        if (bodyEl == null || typeof ResizeObserver === "undefined") {
+            if (collapseRef.current.usageCollapsed || collapseRef.current.titleCollapsed) {
+                const expanded = { usageCollapsed: false, titleCollapsed: false };
+                collapseRef.current = expanded;
+                setCollapse(expanded);
+            }
+            return;
+        }
+
+        let latestWidth = 0;
+        let frame: number | null = null;
+        const observer = new ResizeObserver((entries) => {
+            const entry = entries[0];
+            latestWidth = entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
+            if (frame != null) return;
+            frame = requestAnimationFrame(() => {
+                frame = null;
+                const usageCollapsed = latestWidth < USAGE_COLLAPSE_PX;
+                const titleCollapsed = latestWidth < TITLE_COLLAPSE_PX;
+                if (
+                    collapseRef.current.usageCollapsed !== usageCollapsed ||
+                    collapseRef.current.titleCollapsed !== titleCollapsed
+                ) {
+                    const next = { usageCollapsed, titleCollapsed };
+                    collapseRef.current = next;
+                    setCollapse(next);
+                }
+            });
+        });
+        observer.observe(bodyEl);
+
+        return () => {
+            observer.disconnect();
+            if (frame != null) cancelAnimationFrame(frame);
+        };
+    }, [bodyEl]);
+
+    return collapse;
+}
+
 function useMinuteClock(): number {
     const [now, setNow] = useState(Date.now);
     useEffect(() => {

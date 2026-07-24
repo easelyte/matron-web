@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { useDismissablePopover } from "../../../src/journal/components";
+import { useAdaptiveHeader, useDismissablePopover } from "../../../src/journal/components";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -39,6 +39,27 @@ async function mountProbe(close = jest.fn()): Promise<MountedProbe> {
     mountedProbes.push(mounted);
     await act(async () => root.render(React.createElement(Probe, { close })));
     return mounted;
+}
+
+function AdaptiveProbe({ el, onRender }: { el: HTMLElement | null; onRender?: () => void }): React.ReactElement {
+    onRender?.();
+    return React.createElement("output", null, JSON.stringify(useAdaptiveHeader(el)));
+}
+
+async function mountAdaptiveProbe(
+    el: HTMLElement | null,
+    onRender?: () => void,
+): Promise<MountedProbe & { render: (nextEl: HTMLElement | null) => Promise<void> }> {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const mounted = { container, root };
+    mountedProbes.push(mounted);
+    const render = async (nextEl: HTMLElement | null): Promise<void> => {
+        await act(async () => root.render(React.createElement(AdaptiveProbe, { el: nextEl, onRender })));
+    };
+    await render(el);
+    return { ...mounted, render };
 }
 
 beforeAll(() => {
@@ -121,5 +142,134 @@ describe("useDismissablePopover", () => {
             mountedProbes.findIndex((mounted) => mounted.root === root),
             1,
         );
+    });
+});
+
+describe("useAdaptiveHeader", () => {
+    type ObserverCallback = ResizeObserverCallback;
+    type ObserverRecord = {
+        callback: ObserverCallback;
+        disconnect: jest.Mock;
+        observe: jest.Mock;
+    };
+
+    let observers: ObserverRecord[];
+    let frames: Map<number, FrameRequestCallback>;
+    let nextFrame: number;
+
+    beforeEach(() => {
+        observers = [];
+        frames = new Map();
+        nextFrame = 1;
+        class MockResizeObserver {
+            public readonly disconnect = jest.fn();
+            public readonly observe = jest.fn();
+
+            public constructor(callback: ObserverCallback) {
+                observers.push({ callback, disconnect: this.disconnect, observe: this.observe });
+            }
+        }
+        globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+        jest.spyOn(globalThis, "requestAnimationFrame").mockImplementation((callback) => {
+            const handle = nextFrame++;
+            frames.set(handle, callback);
+            return handle;
+        });
+        jest.spyOn(globalThis, "cancelAnimationFrame").mockImplementation((handle) => {
+            frames.delete(handle);
+        });
+    });
+
+    const resize = (observer: ObserverRecord, target: Element, width: number): void => {
+        observer.callback(
+            [
+                {
+                    target,
+                    borderBoxSize: [{ inlineSize: width, blockSize: 0 }],
+                    contentBoxSize: [],
+                    devicePixelContentBoxSize: [],
+                    contentRect: { width } as DOMRectReadOnly,
+                },
+            ],
+            {} as ResizeObserver,
+        );
+    };
+
+    const flushFrames = async (): Promise<void> => {
+        const queued = [...frames.values()];
+        frames.clear();
+        await act(async () => queued.forEach((callback) => callback(performance.now())));
+    };
+
+    it("maps observed widths to usage and title collapse flags", async () => {
+        const el = document.createElement("div");
+        const probe = await mountAdaptiveProbe(el);
+        const observer = observers[0];
+
+        expect(observer.observe).toHaveBeenCalledWith(el);
+        expect(probe.container.textContent).toBe('{"usageCollapsed":false,"titleCollapsed":false}');
+
+        resize(observer, el, 900);
+        await flushFrames();
+        expect(probe.container.textContent).toBe('{"usageCollapsed":false,"titleCollapsed":false}');
+
+        resize(observer, el, 560);
+        await flushFrames();
+        expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
+
+        resize(observer, el, 400);
+        await flushFrames();
+        expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":true}');
+    });
+
+    it("coalesces resize callbacks into one frame and renders only when flags flip", async () => {
+        const el = document.createElement("div");
+        const onRender = jest.fn();
+        await mountAdaptiveProbe(el, onRender);
+        const observer = observers[0];
+
+        resize(observer, el, 900);
+        resize(observer, el, 850);
+        expect(frames.size).toBe(1);
+        await flushFrames();
+        expect(onRender).toHaveBeenCalledTimes(1);
+
+        resize(observer, el, 560);
+        await flushFrames();
+        expect(onRender).toHaveBeenCalledTimes(2);
+
+        resize(observer, el, 550);
+        await flushFrames();
+        expect(onRender).toHaveBeenCalledTimes(2);
+    });
+
+    it("fails soft for a null element or missing ResizeObserver", async () => {
+        const nullProbe = await mountAdaptiveProbe(null);
+        expect(nullProbe.container.textContent).toBe('{"usageCollapsed":false,"titleCollapsed":false}');
+        expect(observers).toHaveLength(0);
+
+        delete (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+        const elProbe = await mountAdaptiveProbe(document.createElement("div"));
+        expect(elProbe.container.textContent).toBe('{"usageCollapsed":false,"titleCollapsed":false}');
+        expect(observers).toHaveLength(0);
+    });
+
+    it("disconnects the old observer and observes a new element when identity changes", async () => {
+        const firstEl = document.createElement("div");
+        const secondEl = document.createElement("div");
+        const probe = await mountAdaptiveProbe(firstEl);
+        const firstObserver = observers[0];
+        resize(firstObserver, firstEl, 400);
+
+        await probe.render(secondEl);
+
+        expect(firstObserver.disconnect).toHaveBeenCalledTimes(1);
+        expect(globalThis.cancelAnimationFrame).toHaveBeenCalled();
+        expect(observers).toHaveLength(2);
+        expect(observers[1].observe).toHaveBeenCalledWith(secondEl);
+
+        resize(observers[1], secondEl, 560);
+        await flushFrames();
+        expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
     });
 });
