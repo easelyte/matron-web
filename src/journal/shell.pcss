@@ -409,6 +409,29 @@ button {
     font-weight: 600;
 }
 
+.mj_RoomListMeta {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--cpd-space-0-5x);
+}
+
+.mj_RoomListTime {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-2xs-regular);
+    white-space: nowrap;
+    transition: opacity var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_RoomListItem_wrapper:hover .mj_RoomListTime {
+    opacity: 0;
+}
+
+.mj_RoomListItem_wrapper:focus-within .mj_RoomListMeta {
+    padding-right: var(--cpd-space-5x);
+}
+
 .mj_RoomListEmpty {
     color: var(--cpd-color-text-secondary);
     padding: 12px;
