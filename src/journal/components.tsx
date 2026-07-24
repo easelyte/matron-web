@@ -993,11 +993,7 @@ function ConversationList({
                                         </button>
                                     </div>
                                 </header>
-                                <div
-                                    className="mj_RoomListTabs"
-                                    role="group"
-                                    aria-label="Filter conversations"
-                                >
+                                <div className="mj_RoomListTabs" role="group" aria-label="Filter conversations">
                                     {(
                                         [
                                             ["active", "Active"],
@@ -1077,9 +1073,7 @@ function ConversationList({
                                         <p className="mj_RoomListEmpty">No archived conversations.</p>
                                     )}
                                     {tab === "archived" && archivedTotal > 0 && !visibleRows.length && (
-                                        <p className="mj_RoomListEmpty">
-                                            No archived conversations match your search.
-                                        </p>
+                                        <p className="mj_RoomListEmpty">No archived conversations match your search.</p>
                                     )}
                                 </div>
                             </nav>
