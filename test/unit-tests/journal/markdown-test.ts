@@ -177,6 +177,21 @@ test("renders an unterminated TypeScript fence safely while streaming", async ()
     expect(container.querySelector(".hljs")).toBeNull();
 });
 
+test("renders one code-block header with language and a wired copy button", async () => {
+    copyTextMock.mockResolvedValue(true);
+    const container = await renderMarkdown("```ts\nconst answer = 42;\n```");
+    const headers = container.querySelectorAll(".mj_CodeBlock_header");
+    const header = headers[0];
+    const language = header?.querySelector(".mj_CodeBlock_lang");
+    const button = header?.querySelector<HTMLButtonElement>('button[aria-label="Copy code"]');
+
+    expect(headers).toHaveLength(1);
+    expect(language?.textContent).toBe("ts");
+    expect(button).not.toBeNull();
+    await act(async () => button!.click());
+    expect(copyTextMock).toHaveBeenCalledWith("const answer = 42;\n");
+});
+
 test("copies the exact raw fenced source and gates the success label on copyText", async () => {
     copyTextMock.mockResolvedValue(true);
     const container = await renderMarkdown("```ts\nconst first = 1;\n  const indented = 2;\n```");

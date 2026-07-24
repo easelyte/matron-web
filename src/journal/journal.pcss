@@ -797,45 +797,58 @@ textarea {
     position: relative;
     max-width: min(720px, 62vw);
     max-height: 360px;
-    overflow-x: auto;
+    overflow: auto;
     box-sizing: border-box;
     margin: var(--cpd-space-3x) 0;
-    border-radius: 6px;
-    background: var(--cpd-color-bg-subtle-secondary);
-    padding: calc(var(--cpd-space-5x) + var(--cpd-space-3x)) var(--cpd-space-3x) var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
+    padding: 0;
     font-family: "Fira Code", monospace;
     font-size: var(--cpd-font-size-xs);
 }
 
+.mj_CodeBlock_header {
+    position: sticky;
+    z-index: 1;
+    top: 0;
+    left: 0;
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-raised);
+    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    opacity: 1;
+}
+
 .mj_CodeBlock_copy,
 .mj_CodeBlock_lang {
-    position: absolute;
-    top: var(--cpd-space-2x);
-    z-index: 1;
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: 4px;
-    background: var(--cpd-color-bg-canvas-default);
+    border: 0;
+    background: transparent;
     color: var(--cpd-color-text-secondary);
-    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    padding: var(--cpd-space-1x);
     font: var(--cpd-font-body-xs-regular);
-    opacity: 0;
+    opacity: 1;
 }
 
 .mj_CodeBlock_lang {
-    left: var(--cpd-space-2x);
     pointer-events: none;
 }
 
 .mj_CodeBlock_copy {
-    right: var(--cpd-space-2x);
+    margin-left: auto;
     cursor: pointer;
 }
 
-.mj_CodeBlock:hover .mj_CodeBlock_copy,
-.mj_CodeBlock:hover .mj_CodeBlock_lang,
-.mj_CodeBlock:focus-within .mj_CodeBlock_copy,
-.mj_CodeBlock:focus-within .mj_CodeBlock_lang {
-    opacity: 1;
+.mj_CodeBlock > code {
+    display: block;
+    width: max-content;
+    min-width: 100%;
+    box-sizing: border-box;
+    padding: var(--cpd-space-3x);
 }
 
 .mj_CodeBlock_copy:hover {
@@ -1730,12 +1743,5 @@ button.mj_File {
     .mj_Image {
         min-width: 0;
         max-width: 76vw;
-    }
-}
-
-@media (hover: none) {
-    .mj_CodeBlock_copy,
-    .mj_CodeBlock_lang {
-        opacity: 1;
     }
 }
