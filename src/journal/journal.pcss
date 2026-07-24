@@ -1314,14 +1314,24 @@ li.mj_AttachmentChip_error {
 
 .mj_ToolCard {
     min-width: min(480px, 60vw);
+    overflow: hidden;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mj_ToolCard summary {
     display: flex;
     align-items: center;
     gap: var(--cpd-space-2x);
+    background: var(--cpd-color-bg-canvas-raised);
     cursor: pointer;
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
     list-style: none;
+}
+
+.mj_ToolCard[open] summary {
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
 }
 
 .mj_ToolCard summary::-webkit-details-marker {
@@ -1359,6 +1369,12 @@ li.mj_AttachmentChip_error {
     overflow-wrap: anywhere;
     font-family: "Fira Code", monospace;
     font-size: var(--cpd-font-size-xs);
+}
+
+.mj_ToolCard pre {
+    margin: 0;
+    border-radius: 0;
+    background: var(--cpd-color-bg-canvas-default);
 }
 
 .mj_DiffCard {
@@ -1471,7 +1487,9 @@ li.mj_AttachmentChip_error {
     margin-top: var(--cpd-space-2x);
 }
 
-.mj_ToolCard_failed summary {
+.mj_ToolCard_failed summary,
+.mj_ToolCard_failed summary span:last-child,
+.mj_ToolCard_failed summary span:nth-last-child(2) {
     color: var(--cpd-color-text-critical-primary);
 }
 
