@@ -2246,6 +2246,28 @@ describe("conversation list tabs", () => {
         expect(rendered.container.textContent).toContain("Your agent conversations will appear here.");
     });
 
+    it("shows the no-active state when every conversation is archived", async () => {
+        archiveStore.write(SESSION, new Set([CONVERSATION.id]));
+        rendered = await renderClient(signedInClient());
+        expect(rendered.container.textContent).toContain("No active conversations.");
+        expect(rendered.container.textContent).not.toContain("Your agent conversations will appear here.");
+    });
+
+    it("hides Mark all as read on Archived without clearing unread active conversations", async () => {
+        const unread = { ...CONVERSATION, unread_count: 1 };
+        const archived = { ...CONVERSATION, id: "archived", title: "Archived Room" };
+        archiveStore.write(SESSION, new Set([archived.id]));
+        const client = signedInWithRooms([unread, archived]);
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector('button[aria-label="Mark all as read"]')).not.toBeNull();
+        await act(async () => tabButton(rendered!.container, "archived").click());
+        expect(rendered.container.querySelector('button[aria-label="Mark all as read"]')).toBeNull();
+        expect(
+            client.getSnapshot().conversations.find((conversation) => conversation.id === unread.id)?.unread_count,
+        ).toBe(1);
+    });
+
     it("shows the active search-empty state when active conversations are hidden by search", async () => {
         rendered = await renderClient(signedInClient());
         const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;

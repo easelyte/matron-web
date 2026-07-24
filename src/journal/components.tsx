@@ -958,7 +958,7 @@ function ConversationList({
                                     <h1 title="Home">Home</h1>
                                     <div className="mj_RoomListHeaderActions">
                                         <ThemeToggle />
-                                        {hasActiveUnread && (
+                                        {tab !== "archived" && hasActiveUnread && (
                                             <button
                                                 className="mj_IconButton mj_MarkAllReadButton"
                                                 type="button"
@@ -1058,8 +1058,11 @@ function ConversationList({
                                     aria-label="Conversations"
                                 >
                                     {visibleRows.map((conversation) => renderConversation(conversation))}
-                                    {tab === "active" && !hasAnyActive && (
+                                    {tab === "active" && state.conversations.length === 0 && (
                                         <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
+                                    )}
+                                    {tab === "active" && state.conversations.length > 0 && !hasAnyActive && (
+                                        <p className="mj_RoomListEmpty">No active conversations.</p>
                                     )}
                                     {tab === "active" && hasAnyActive && !visibleRows.length && (
                                         <p className="mj_RoomListEmpty">No conversations match your search.</p>
