@@ -70,7 +70,7 @@ T-1.1/1.2/1.3 are mutually independent (parallelizable). T-2.1/2.2 independent; 
 - [ ] Module constants `const USAGE_COLLAPSE_PX = 700; const TITLE_COLLAPSE_PX = 460;` (invariant `TITLE < USAGE`).
 - [ ] Signature `useAdaptiveHeader(bodyEl: HTMLElement | null): { usageCollapsed: boolean; titleCollapsed: boolean }`. Takes the **element as a value** (from a state-backed callback ref), NOT a stable `RefObject` — `.mx_RoomView_body` is conditionally mounted (spec §2/§7, B1).
 - [ ] `useEffect` **keyed on `bodyEl`**: if `bodyEl == null` or `typeof ResizeObserver === "undefined"` → set `{false,false}`, install nothing (fail-soft). Else attach a `ResizeObserver` on `bodyEl`; callback stashes latest width (`entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width`), schedules one rAF if none pending; the frame computes `width < USAGE_COLLAPSE_PX` / `< TITLE_COLLAPSE_PX` and `setState` **only on flag flip**. Cleanup on every `bodyEl` change + unmount: `observer.disconnect()` + `cancelAnimationFrame`.
-- [ ] **Test (jsdom, mock `ResizeObserver` on `globalThis`):** fire widths 900 / 560 / 400 → `{false,false}` / `{true,false}` / `{true,true}`; assert rAF-coalescing doesn't over-render (flag-flip only); assert `undefined` `ResizeObserver` → `{false,false}` + no throw. (The mount→unmount→remount reattachment is asserted through the full-app render in T-4.1, which is where `bodyEl` actually toggles.)
+- [ ] **Test (jsdom, `adaptive-header-test.ts`, mock `ResizeObserver` on `globalThis`):** fire widths 900 / 560 / 400 → `{false,false}` / `{true,false}` / `{true,true}`; assert rAF-coalescing doesn't over-render (flag-flip only); assert `undefined` `ResizeObserver` → `{false,false}` + no throw. **Own the mount→unmount→remount lifecycle case here too** (full-app `createRoot` render, since `bodyEl` only toggles through the real app): render with no conversation selected → select → fire below-threshold entry → assert collapse fires → `client.clearSelection()` → reselect → fire entry → assert collapse **still** fires (observer reattached to the new node). This is `adaptive-header-test.ts` (this task's file), not the visual gate.
 
 **Acceptance:** thresholds map correctly; reattaches when `bodyEl` identity changes; fail-soft when `ResizeObserver` absent. Spec §2, AC#3.
 
@@ -165,7 +165,7 @@ T-1.1/1.2/1.3 are mutually independent (parallelizable). T-2.1/2.2 independent; 
 ### T-4.2: Lint, full suite, Codex review, rebase
 
 - [ ] `corepack pnpm lint` (types + prettier) green.
-- [ ] `corepack pnpm test` (jest) green — including the new `usage-cluster-test.ts`, `adaptive-header-test.ts`, extended `subchat-strip-test.ts`, and B1 lifecycle test (render with no conversation → select → below-threshold entry collapses → `clearSelection()` → reselect → entry still collapses; observer reattached).
+- [ ] `corepack pnpm test` (jest) green — including the new `usage-cluster-test.ts`, `adaptive-header-test.ts` (threshold + B1 mount/remount lifecycle, per T-1.3), and extended `subchat-strip-test.ts`.
 - [ ] Codex adversarial review on the branch diff (`/codex-review` or `codex_adversarial_exec.sh --kind diff`); residuals either fixed or filed as follow-up loops.
 - [ ] **Rebase `vps-header` on `origin/main`** (the two sibling windows may have merged); re-verify no header-region conflicts; re-run lint + test.
 
@@ -201,3 +201,15 @@ No uncovered spec part. No new auth/RLS/payments/deployment/data-loss surface (p
 > - **Heavy plan** (R100, `risk: high`, auth/RLS/payments/data-loss): `/execute-heavy-codex` — per-task implementer + spec-compliance + quality + fix-mode chain via Codex, Sonnet only at every 5th phase + end-of-plan.
 >
 > Steps use checkbox (`- [ ]`) syntax for tracking.
+
+---
+
+## Appendix: Verified Claims (research pass 2026-07-24)
+
+Tavily unavailable in this context (`TAVILY_API_KEY` unset); c1/c2 verified via WebSearch against MDN + a11y sources, c3 grounded in the CSS Containment spec.
+
+✓ **c1 — ResizeObserver width source.** `ResizeObserverEntry.borderBoxSize` is an **array** of `{ inlineSize, blockSize }`; `inlineSize` is width in horizontal writing-mode. `contentRect` is a legacy back-compat property retained for older browsers. The plan's `entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width` (T-1.3) is correct — the `?.[0]?.` chaining also tolerates old Firefox's single-object `contentBoxSize` quirk by falling through to `contentRect.width`. Source: [MDN ResizeObserverEntry](https://developer.mozilla.org/en-US/docs/Web/API/ResizeObserverEntry).
+
+✓ **c2 — `display:contents` strips ARIA role (validates the T-3.3 `inline-flex` mandate).** Applying `display:contents` removes the element (and its role) from the accessibility tree in multiple browsers; `<button style="display:contents">` loses button semantics. Chrome fixed the general regression in 89 but **Chrome 113 reportedly re-broke buttons/lists/tables on Windows/Android**, and Safari lagged (< 16). The plan is correct to pin `.mj_SubagentPill_wrapper { display: inline-flex }` (NOT `display:contents`) so the `role="listitem"` wrapper stays in the a11y tree (T-3.3, round-3 fix). Sources: [Adrian Roselli — display:contents is not a CSS reset](https://adrianroselli.com/2018/05/display-contents-is-not-a-css-reset.html), [Adrian Roselli 2022 update](https://adrianroselli.com/2022/07/its-mid-2022-and-browsers-mostly-safari-still-break-accessibility-via-display-properties.html).
+
+✓ **c3 — container queries key off the nearest ancestor container.** `@container` queries resolve against the nearest ancestor establishing a containment context (`.mx_RoomView_body`'s `container: mj-room`), not the queried element's own box. A non-portaled descendant (the popover — no `createPortal` in `components.tsx`) is therefore subject to the ancestor query. This grounds the T-3.3 decision to remove the usage label-drop entirely (a scoped-selector fix alone would still be evaluated in the ancestor's context). Source: CSS Containment Module Level 3 (`@container` resolves against query container ancestor).
