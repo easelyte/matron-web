@@ -1998,14 +1998,21 @@ function EventRow({
                 <span className="mx_DisambiguatedProfile">
                     <MsgAvatar />
                     <span className="mx_DisambiguatedProfile_displayName">{displaySender(event.sender)}</span>
+                    <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
+                        <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                            {formatTime(event.ts)}
+                        </time>
+                    </a>
                 </span>
             )}
             <div className="mx_EventTile_line">
-                <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                    <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
-                        {formatTime(event.ts)}
-                    </time>
-                </a>
+                {(own || continuation) && (
+                    <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
+                        <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                            {formatTime(event.ts)}
+                        </time>
+                    </a>
+                )}
                 <div className="mx_MTextBody mx_EventTile_content">
                     <div className="markdown-body">
                         <EventContent

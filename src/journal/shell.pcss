@@ -517,6 +517,11 @@ button {
     font-weight: 600;
 }
 
+.mx_DisambiguatedProfile > a {
+    color: inherit;
+    text-decoration: none;
+}
+
 .mj_MsgAvatar {
     width: var(--cpd-icon-md);
     height: var(--cpd-icon-md);
@@ -554,6 +559,12 @@ button {
 
 .mx_EventTile_continuation[data-self="false"] .mx_EventTile_line {
     padding-right: 56px;
+}
+
+.mx_EventTile_continuation[data-self="false"] .mx_EventTile_line > a {
+    color: var(--cpd-color-text-tertiary);
+    font-size: var(--cpd-font-size-2xs);
+    opacity: 1;
 }
 
 .mx_EventTile[data-self="true"] .mx_EventTile_line {
