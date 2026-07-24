@@ -1996,6 +1996,7 @@ function EventRow({
         >
             {!own && !continuation && (
                 <span className="mx_DisambiguatedProfile">
+                    <MsgAvatar />
                     <span className="mx_DisambiguatedProfile_displayName">{displaySender(event.sender)}</span>
                 </span>
             )}
@@ -2020,10 +2021,15 @@ function EventRow({
     );
 }
 
+function MsgAvatar(): React.ReactElement {
+    return <img className="mj_MsgAvatar" src={matronLogo} alt="" aria-hidden />;
+}
+
 function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {
     return (
         <li className="mx_EventTile mx_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
             <span className="mx_DisambiguatedProfile">
+                <MsgAvatar />
                 <span className="mx_DisambiguatedProfile_displayName">agent</span>
             </span>
             <div className="mx_EventTile_line">
@@ -2370,6 +2376,7 @@ function Timeline({
                                 data-self="false"
                             >
                                 <span className="mx_DisambiguatedProfile">
+                                    <MsgAvatar />
                                     <span className="mx_DisambiguatedProfile_displayName">agent</span>
                                 </span>
                                 <div className="mx_EventTile_line">
