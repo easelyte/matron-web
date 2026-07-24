@@ -331,7 +331,7 @@ button {
 .mj_RoomListItem {
     position: relative;
     display: flex;
-    width: calc(100% - 12px);
+    width: calc(100% - var(--cpd-space-3x));
     box-sizing: border-box;
     min-height: 56px;
     align-items: center;
@@ -369,7 +369,9 @@ button {
 .mj_RoomListText {
     display: flex;
     min-width: 0;
+    flex: 1 1 0;
     flex-direction: column;
+    gap: var(--cpd-space-0-5x);
 }
 
 .mj_RoomListName,
@@ -395,16 +397,16 @@ button {
 
 .mj_UnreadBadge {
     display: inline-flex;
-    min-width: 20px;
-    height: 20px;
+    min-width: var(--cpd-space-5x);
+    height: var(--cpd-space-5x);
     align-items: center;
     justify-content: center;
-    border-radius: 10px;
+    border-radius: var(--cpd-radius-pill);
     background: var(--cpd-color-bg-badge);
     color: var(--cpd-color-text-on-badge);
     padding: 0 6px;
-    font-size: var(--cpd-font-size-2xs);
-    line-height: 20px;
+    font: var(--cpd-font-body-2xs-regular);
+    font-weight: 600;
 }
 
 .mj_RoomListEmpty {
