@@ -112,10 +112,8 @@ function menuItem(container: HTMLElement, text: string): Element | undefined {
     return [...container.querySelectorAll('[role="menuitem"]')].find((element) => element.textContent?.includes(text));
 }
 
-function tabButton(container: HTMLElement, text: "All" | "Favorites"): HTMLButtonElement {
-    return [...container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].find(
-        (candidate) => candidate.textContent === text,
-    )!;
+function tabButton(container: HTMLElement, key: "active" | "favorites" | "archived"): HTMLButtonElement {
+    return container.querySelector<HTMLButtonElement>(`[data-tab="${key}"]`)!;
 }
 
 async function openMenu(container: HTMLElement): Promise<void> {
@@ -1984,8 +1982,7 @@ describe("conversation menu controls", () => {
     it("menu offers neither Mark-read nor Mark-unread for an archived row (read affordances are active-only)", async () => {
         archiveStore.write(SESSION, new Set([CONVERSATION.id]));
         rendered = await renderClient(signedInClient());
-        const toggle = rendered.container.querySelector<HTMLButtonElement>(".mj_RoomList_archivedToggle")!;
-        await act(async () => toggle.click());
+        await act(async () => tabButton(rendered!.container, "archived").click());
         await openMenu(rendered.container);
         expect(menuItem(rendered.container, "Mark as unread")).toBeFalsy();
         expect(menuItem(rendered.container, "Mark as read")).toBeFalsy();
@@ -1996,7 +1993,7 @@ describe("conversation menu controls", () => {
         favoriteStore.write(SESSION, new Set([CONVERSATION.id]));
         const client = signedInClient();
         rendered = await renderClient(client);
-        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        await act(async () => tabButton(rendered!.container, "favorites").click());
         await openMenu(rendered.container);
         await act(async () => (menuItem(rendered!.container, "Remove from Favorites") as HTMLElement).click());
 
@@ -2166,7 +2163,7 @@ describe("conversation timestamp midnight invalidation", () => {
         // Isolate the effect from MatronApp's other timers, then use a tab rerender to re-arm it.
         jest.clearAllTimers();
         const baselineTimerCount = jest.getTimerCount();
-        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        await act(async () => tabButton(rendered!.container, "favorites").click());
         expect(jest.getTimerCount()).toBeGreaterThanOrEqual(1);
         await act(async () => rendered?.root.unmount());
         rendered.container.remove();
@@ -2189,30 +2186,43 @@ describe("conversation list tabs", () => {
         jest.restoreAllMocks();
     });
 
-    it("renders All + Favorites buttons with aria-pressed tracking the active view", async () => {
-        rendered = await renderClient(signedInClient());
-        expect(tabButton(rendered.container, "All").getAttribute("aria-pressed")).toBe("true");
-        expect(tabButton(rendered.container, "Favorites").getAttribute("aria-pressed")).toBe("false");
-    });
-
-    it("clicking Favorites filters to favorited rows, sets aria-pressed, focuses the tab, hides archived section", async () => {
+    it("switches among Active, Favorites, and Archived with selection, focus, count, and row visibility", async () => {
         const fav = { ...CONVERSATION, id: "fav", title: "Fav Room" };
         const other = { ...CONVERSATION, id: "other", title: "Other Room" };
+        const archived = { ...CONVERSATION, id: "archived", title: "Archived Room" };
         favoriteStore.write(SESSION, new Set(["fav"]));
-        rendered = await renderClient(signedInWithRooms([fav, other]));
-        await act(async () => tabButton(rendered!.container, "Favorites").click());
-        expect(tabButton(rendered.container, "Favorites").getAttribute("aria-pressed")).toBe("true");
-        expect(document.activeElement).toBe(tabButton(rendered.container, "Favorites"));
-        const names = [...rendered.container.querySelectorAll('[data-testid="room-name"]')].map(
-            (element) => element.textContent,
-        );
-        expect(names).toEqual(["Fav Room"]);
-        expect(rendered.container.querySelector(".mj_RoomList_archivedToggle")).toBeNull();
+        archiveStore.write(SESSION, new Set(["archived"]));
+        rendered = await renderClient(signedInWithRooms([fav, other, archived]));
+        const names = (): Array<string | null> =>
+            [...rendered!.container.querySelectorAll('[data-testid="room-name"]')].map(
+                (element) => element.textContent,
+            );
+
+        expect(rendered.container.querySelector('[role="group"][aria-label="Filter conversations"]')).not.toBeNull();
+        expect(tabButton(rendered.container, "active").getAttribute("aria-pressed")).toBe("true");
+        expect(tabButton(rendered.container, "favorites").getAttribute("aria-pressed")).toBe("false");
+        expect(tabButton(rendered.container, "archived").getAttribute("aria-pressed")).toBe("false");
+        expect(tabButton(rendered.container, "archived").textContent).toBe("Archived (1)");
+        expect(names()).toEqual(["Fav Room", "Other Room"]);
+
+        await act(async () => tabButton(rendered!.container, "favorites").click());
+        expect(tabButton(rendered.container, "active").getAttribute("aria-pressed")).toBe("false");
+        expect(tabButton(rendered.container, "favorites").getAttribute("aria-pressed")).toBe("true");
+        expect(tabButton(rendered.container, "archived").getAttribute("aria-pressed")).toBe("false");
+        expect(document.activeElement).toBe(tabButton(rendered.container, "favorites"));
+        expect(names()).toEqual(["Fav Room"]);
+
+        await act(async () => tabButton(rendered!.container, "archived").click());
+        expect(tabButton(rendered.container, "active").getAttribute("aria-pressed")).toBe("false");
+        expect(tabButton(rendered.container, "favorites").getAttribute("aria-pressed")).toBe("false");
+        expect(tabButton(rendered.container, "archived").getAttribute("aria-pressed")).toBe("true");
+        expect(document.activeElement).toBe(tabButton(rendered.container, "archived"));
+        expect(names()).toEqual(["Archived Room"]);
     });
 
     it("shows the no-favorites-yet state when nothing is starred", async () => {
         rendered = await renderClient(signedInClient());
-        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        await act(async () => tabButton(rendered!.container, "favorites").click());
         expect(rendered.container.textContent).toContain("No favorite conversations yet.");
     });
 
@@ -2220,7 +2230,7 @@ describe("conversation list tabs", () => {
         const fav = { ...CONVERSATION, id: "fav", title: "Alpha" };
         favoriteStore.write(SESSION, new Set(["fav"]));
         rendered = await renderClient(signedInWithRooms([fav]));
-        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        await act(async () => tabButton(rendered!.container, "favorites").click());
         const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
         await act(async () => {
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -2231,10 +2241,45 @@ describe("conversation list tabs", () => {
         expect(rendered.container.textContent).not.toContain("No favorite conversations yet.");
     });
 
+    it("shows the first-run state when there is no active population", async () => {
+        rendered = await renderClient(signedInWithRooms([]));
+        expect(rendered.container.textContent).toContain("Your agent conversations will appear here.");
+    });
+
+    it("shows the active search-empty state when active conversations are hidden by search", async () => {
+        rendered = await renderClient(signedInClient());
+        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+            setter?.call(search, "zzz-no-match");
+            search.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        expect(rendered.container.textContent).toContain("No conversations match your search.");
+    });
+
+    it("shows the no-archived state when there is no archived population", async () => {
+        rendered = await renderClient(signedInClient());
+        await act(async () => tabButton(rendered!.container, "archived").click());
+        expect(rendered.container.textContent).toContain("No archived conversations.");
+    });
+
+    it("shows the archived search-empty state when archived conversations are hidden by search", async () => {
+        archiveStore.write(SESSION, new Set([CONVERSATION.id]));
+        rendered = await renderClient(signedInClient());
+        await act(async () => tabButton(rendered!.container, "archived").click());
+        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+            setter?.call(search, "zzz-no-match");
+            search.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        expect(rendered.container.textContent).toContain("No archived conversations match your search.");
+    });
+
     it("switching tabs leaves selectedConversationId unchanged when the selected row is filtered out", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
-        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        await act(async () => tabButton(rendered!.container, "favorites").click());
         expect(client.getSnapshot().selectedConversationId).toBe(CONVERSATION.id);
     });
 });
