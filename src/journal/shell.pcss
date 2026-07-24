@@ -140,7 +140,7 @@ Please see LICENSE files in the repository root for full details.
     --cpd-color-text-action-accent: #2dd4bf;
     --cpd-color-text-critical-primary: #ff6a6a;
     --cpd-color-text-link-external: #2dd4bf;
-    --cpd-color-text-on-accent: #f5f7fa;
+    --cpd-color-text-on-accent: #0b201c;
     --cpd-color-text-on-badge: #fff;
     --cpd-color-text-placeholder: #6d675f;
     --cpd-color-text-primary: #e7e4df;
@@ -401,7 +401,7 @@ button {
     justify-content: center;
     border-radius: 10px;
     background: var(--cpd-color-bg-badge);
-    color: var(--cpd-color-text-on-accent);
+    color: var(--cpd-color-text-on-badge);
     padding: 0 6px;
     font-size: var(--cpd-font-size-2xs);
     line-height: 20px;
@@ -806,6 +806,10 @@ button {
     background: var(--cpd-color-bg-accent);
     color: var(--cpd-color-text-on-accent);
     font-weight: 600;
+}
+
+[data-theme="dark"] .mx_Login_submit {
+    color: #f5f7fa;
 }
 
 .mx_Login_submit:disabled {
