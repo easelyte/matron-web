@@ -466,7 +466,9 @@ textarea {
     cursor: pointer;
     padding: var(--cpd-space-1x) var(--cpd-space-3x);
     font: var(--cpd-font-label);
-    transition: background var(--cpd-dur-fast) var(--cpd-ease), color var(--cpd-dur-fast) var(--cpd-ease);
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
 .mj_RoomListTab:hover {
@@ -1455,6 +1457,11 @@ li.mj_AttachmentChip_error {
 .mj_DiffLine_ctx,
 .mj_DiffLine_hunk {
     display: block;
+}
+
+.mj_DiffCard_track {
+    display: flex;
+    flex-direction: column;
     width: max-content;
     min-width: 100%;
 }

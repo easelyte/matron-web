@@ -1838,11 +1838,13 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
                 {data.truncated && <span title="diff truncated">…</span>}
             </div>
             <div className="mj_DiffCard_body">
-                {visibleLines.map((line, index) => (
-                    <div className={lineClass(line)} key={`${index}:${line}`}>
-                        {line}
-                    </div>
-                ))}
+                <div className="mj_DiffCard_track">
+                    {visibleLines.map((line, index) => (
+                        <div className={lineClass(line)} key={`${index}:${line}`}>
+                            {line}
+                        </div>
+                    ))}
+                </div>
                 {expandable && !expanded && (
                     <button type="button" className="mj_DiffCard_more" onClick={toggleExpanded}>
                         +{lineCount - 12} more lines
