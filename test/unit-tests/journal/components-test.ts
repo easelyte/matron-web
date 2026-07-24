@@ -2098,6 +2098,77 @@ describe("conversation row affordances", () => {
     });
 });
 
+describe("conversation timestamp midnight invalidation", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+    let originalTZ: string | undefined;
+
+    beforeEach(() => {
+        originalTZ = process.env.TZ;
+        process.env.TZ = "UTC";
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date(2026, 2, 20, 23, 59, 59, 500));
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.useRealTimers();
+        if (originalTZ === undefined) {
+            delete process.env.TZ;
+        } else {
+            process.env.TZ = originalTZ;
+        }
+    });
+
+    it("reclassifies at midnight, re-arms each day, and clears its timer on unmount", async () => {
+        const lastTimestamp = Date.now();
+        favoriteStore.write(SESSION, new Set([CONVERSATION.id]));
+        const client = signedInWithRooms([{ ...CONVERSATION, created_at: lastTimestamp, last_ts: lastTimestamp }]);
+        internals(client).state = { ...client.getSnapshot(), selectedConversationId: undefined };
+        rendered = await renderClient(client);
+        const timestamp = (): string | null =>
+            rendered!.container.querySelector(".mj_RoomListTime")?.textContent ?? null;
+        const expectedClock = new Intl.DateTimeFormat(undefined, {
+            hour: "numeric",
+            minute: "2-digit",
+        }).format(new Date(lastTimestamp));
+        const expectedWeekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(
+            new Date(lastTimestamp),
+        );
+
+        expect(timestamp()).toBe(expectedClock);
+
+        await act(async () => {
+            jest.advanceTimersByTime(1_600);
+        });
+
+        expect(timestamp()).toBe(expectedWeekday);
+        expect(timestamp()).not.toBe(expectedClock);
+        expect(jest.getTimerCount()).toBeGreaterThanOrEqual(1);
+
+        await act(async () => {
+            jest.advanceTimersByTime(86_400_000);
+        });
+
+        expect(jest.getTimerCount()).toBeGreaterThanOrEqual(1);
+
+        // Isolate the effect from MatronApp's other timers, then use a tab rerender to re-arm it.
+        jest.clearAllTimers();
+        const baselineTimerCount = jest.getTimerCount();
+        await act(async () => tabButton(rendered!.container, "Favorites").click());
+        expect(jest.getTimerCount()).toBeGreaterThanOrEqual(1);
+        await act(async () => rendered?.root.unmount());
+        rendered.container.remove();
+        rendered = undefined;
+        // Drain short app cleanup work; a leaked next-midnight timer would remain queued.
+        jest.advanceTimersByTime(1_000);
+        expect(jest.getTimerCount()).toBe(baselineTimerCount);
+    });
+});
+
 describe("conversation list tabs", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
