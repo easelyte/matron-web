@@ -2806,6 +2806,7 @@ function Composer({
                                         : "Messages will send when reconnected"
                                 }
                                 aria-label="Message your agent"
+                                aria-describedby="mj-composer-hint"
                                 role="combobox"
                                 aria-expanded={open}
                                 aria-controls={SLASH_LISTBOX_ID}
@@ -2854,7 +2855,9 @@ function Composer({
                         )}
                     </div>
                 </div>
-                <span className="mj_ComposerHint">/ commands · shift+enter for newline</span>
+                <span id="mj-composer-hint" className="mj_ComposerHint">
+                    / commands · shift+enter for newline
+                </span>
             </div>
         </div>
     );

@@ -618,6 +618,14 @@ describe("slash command palette", () => {
         ...(rendered?.container.querySelectorAll<HTMLElement>('[role="option"]') ?? []),
     ];
 
+    it("associates the composer instructions with the textarea", async () => {
+        rendered = await renderClient(signedInClient());
+
+        const descriptionId = composer().getAttribute("aria-describedby");
+        expect(descriptionId).toBe("mj-composer-hint");
+        expect(document.getElementById(descriptionId!)?.textContent).toContain("/ commands · shift+enter for newline");
+    });
+
     it("opens command rows for a slash-command prefix", async () => {
         rendered = await renderClient(signedInClient());
 
