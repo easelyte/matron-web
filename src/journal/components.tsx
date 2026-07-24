@@ -2854,6 +2854,7 @@ function Composer({
                         )}
                     </div>
                 </div>
+                <span className="mj_ComposerHint">/ commands · shift+enter for newline</span>
             </div>
         </div>
     );
