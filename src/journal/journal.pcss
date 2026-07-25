@@ -1450,17 +1450,16 @@ textarea {
     color: var(--cpd-color-text-tertiary);
 }
 
-/* v4: pointer focus = border-color accent only (no ring). */
-.mj_UploadConfirm_caption:focus {
-    border-color: var(--cpd-color-text-action-accent);
-    outline: none;
-}
-
-/* v4: keyboard focus adds the 2px accent outline at 2px offset — required for a11y,
-   especially since the upload dialog auto-focuses this field on open. */
+/* v4 mock (upload-modal-mock.png): the upload caption stays NEUTRAL on focus — no teal.
+   It does not accent-tint or ring like the composer input. Because the dialog auto-focuses
+   this field on open AND text inputs match :focus-visible on every focus, a teal ring/border
+   would make every upload read "active/teal" against the mock's calm neutral. Instead focus
+   darkens the border (border-strong → interactive-primary): a visible, neutral focus
+   indicator for both pointer and keyboard (the text caret backs it up), no accent. */
+.mj_UploadConfirm_caption:focus,
 .mj_UploadConfirm_caption:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    border-color: var(--cpd-color-border-interactive-primary);
+    outline: none;
 }
 
 .mj_UploadConfirm_actions {
