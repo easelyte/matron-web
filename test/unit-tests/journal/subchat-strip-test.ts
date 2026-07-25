@@ -154,7 +154,7 @@ describe("subagent strip", () => {
     });
 });
 
-describe("running subagent strip", () => {
+describe("subagent strip integration", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
     beforeAll(() => {
@@ -170,7 +170,7 @@ describe("running subagent strip", () => {
         jest.restoreAllMocks();
     });
 
-    it("renders one pill per running child and opens the clicked child", async () => {
+    it("renders every child in running-first order and opens the clicked child", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),
             conversation("running-a", "Research", "running", "parent"),
@@ -183,21 +183,26 @@ describe("running subagent strip", () => {
         rendered = await renderClient(client);
 
         const pills = rendered.container.querySelectorAll(".mj_SubagentPill");
-        expect(pills).toHaveLength(2);
-        expect([...pills].map((pill) => pill.textContent)).toEqual(["Research", "Draft"]);
+        expect(pills).toHaveLength(3);
+        expect([...pills].map((pill) => pill.textContent)).toEqual(["Research", "Draft", "○Finished"]);
+        expect(pills[2].classList.contains("mj_SubagentPill_finished")).toBe(true);
 
         await act(async () => (pills[1] as HTMLButtonElement).click());
         expect(selectConversation).toHaveBeenCalledWith("running-b");
     });
 
-    it("renders nothing when the selected conversation has no running children", async () => {
+    it("renders finished children when the selected conversation has no running children", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),
             conversation("finished", "Finished", "done", "parent"),
         ];
         rendered = await renderClient(signedInClient(conversations, "parent"));
 
-        expect(rendered.container.querySelector(".mj_SubagentStrip")).toBeNull();
+        const strip = rendered.container.querySelector(".mj_SubagentStrip");
+        const pill = strip?.querySelector(".mj_SubagentPill");
+        expect(strip).not.toBeNull();
+        expect(pill?.textContent).toBe("○Finished");
+        expect(pill?.classList.contains("mj_SubagentPill_finished")).toBe(true);
     });
 
     it("does not render the removed parent header switcher", async () => {
@@ -209,7 +214,7 @@ describe("running subagent strip", () => {
 
         rendered = await renderClient(client);
 
-        expect(rendered.container.querySelector(".mj_SubagentStrip")).toBeNull();
+        expect(rendered.container.querySelector(".mj_SubagentStrip")).not.toBeNull();
         expect(rendered.container.querySelector(".mj_SubagentSwitcher")).toBeNull();
     });
 
@@ -223,16 +228,17 @@ describe("running subagent strip", () => {
         ).toBe(false);
     });
 
-    it("shows running grandchildren when viewing a child", async () => {
+    it("shows siblings rather than grandchildren when viewing a child", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),
             conversation("child", "Child", "running", "parent"),
+            conversation("sibling", "Sibling", "done", "parent"),
             conversation("grandchild", "Grandchild", "running", "child"),
         ];
         rendered = await renderClient(signedInClient(conversations, "child"));
 
         const pills = rendered.container.querySelectorAll(".mj_SubagentPill");
-        expect(pills).toHaveLength(1);
-        expect(pills[0].textContent).toBe("Grandchild");
+        expect(pills).toHaveLength(2);
+        expect([...pills].map((pill) => pill.textContent)).toEqual(["✓Child", "○Sibling"]);
     });
 });
