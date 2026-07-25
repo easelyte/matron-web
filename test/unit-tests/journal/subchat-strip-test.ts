@@ -115,7 +115,7 @@ describe("subagent strip", () => {
         const pills = list?.querySelectorAll<HTMLButtonElement>(".mj_SubagentPill");
         expect(wrappers).toHaveLength(3);
         expect(pills).toHaveLength(3);
-        expect([...pills!].map((pill) => pill.textContent)).toEqual(["Running", "○Finished", "○Queued"]);
+        expect([...pills!].map((pill) => pill.textContent)).toEqual(["Running", "Finished", "Queued"]);
         expect(pills?.[0].querySelector(".mj_Spinner")).not.toBeNull();
         expect(pills?.[1].classList.contains("mj_SubagentPill_finished")).toBe(true);
         expect(pills?.[2].classList.contains("mj_SubagentPill_finished")).toBe(true);
@@ -139,7 +139,7 @@ describe("subagent strip", () => {
 
         const pills = rendered.container.querySelectorAll<HTMLButtonElement>(".mj_SubagentPill");
         expect(pills).toHaveLength(2);
-        expect([...pills].map((pill) => pill.textContent)).toEqual(["✓Current", "○Sibling"]);
+        expect([...pills].map((pill) => pill.textContent)).toEqual(["Current", "Sibling"]);
         expect(pills[0].classList.contains("mj_SubagentPill_current")).toBe(true);
         expect(pills[0].getAttribute("aria-current")).toBe("true");
         expect(pills[0].disabled).toBe(true);
@@ -184,7 +184,7 @@ describe("subagent strip integration", () => {
 
         const pills = rendered.container.querySelectorAll(".mj_SubagentPill");
         expect(pills).toHaveLength(3);
-        expect([...pills].map((pill) => pill.textContent)).toEqual(["Research", "Draft", "○Finished"]);
+        expect([...pills].map((pill) => pill.textContent)).toEqual(["Research", "Draft", "Finished"]);
         expect(pills[2].classList.contains("mj_SubagentPill_finished")).toBe(true);
 
         await act(async () => (pills[1] as HTMLButtonElement).click());
@@ -201,7 +201,7 @@ describe("subagent strip integration", () => {
         const strip = rendered.container.querySelector(".mj_SubagentStrip");
         const pill = strip?.querySelector(".mj_SubagentPill");
         expect(strip).not.toBeNull();
-        expect(pill?.textContent).toBe("○Finished");
+        expect(pill?.textContent).toBe("Finished");
         expect(pill?.classList.contains("mj_SubagentPill_finished")).toBe(true);
     });
 
@@ -240,6 +240,6 @@ describe("subagent strip integration", () => {
 
         const pills = rendered.container.querySelectorAll(".mj_SubagentPill");
         expect(pills).toHaveLength(2);
-        expect([...pills].map((pill) => pill.textContent)).toEqual(["✓Child", "○Sibling"]);
+        expect([...pills].map((pill) => pill.textContent)).toEqual(["Child", "Sibling"]);
     });
 });

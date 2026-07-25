@@ -110,6 +110,14 @@ export function MarkReadIcon(props: IconProps): React.ReactElement {
     );
 }
 
+export function CheckIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="m5 12 4 4 10-10" />
+        </Icon>
+    );
+}
+
 export function PinIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>

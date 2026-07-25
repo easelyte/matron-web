@@ -416,9 +416,10 @@ describe("useAdaptiveHeader", () => {
 });
 
 describe("HeaderShell", () => {
-    it("keeps one stable, flush-left level-one title heading at every width", async () => {
-        // v4: the title stays visible + flush-left and truncates at all widths;
-        // at <560 it carries a native full-title tooltip instead of a popover.
+    it("keeps exactly one level-one title heading at every width", async () => {
+        // v4: exactly one h1 title at all widths. At <560 the h1 is the disclosure's
+        // stable `before` slot (with a full-title tooltip) + a focusable details
+        // trigger; at full width it's the flush-left cluster heading.
         const mounted = await mountHeader({
             title: "Stable conversation title",
             collapse: { usageCollapsed: false, titleCollapsed: true },
@@ -429,7 +430,7 @@ describe("HeaderShell", () => {
         expect(headings[0].textContent).toBe("Stable conversation title");
         expect(headings[0].closest(".mj_HeaderTitleCluster")).not.toBeNull();
         expect(headings[0].getAttribute("title")).toBe("Stable conversation title");
-        expect(mounted.container.querySelector(".mj_HeaderMiniTitle")).toBeNull();
+        expect(mounted.container.querySelector(".mj_HeaderTitleDisclosure")).not.toBeNull();
 
         await act(async () =>
             mounted.root.render(
@@ -445,8 +446,9 @@ describe("HeaderShell", () => {
 
         const expandedHeadings = mounted.container.querySelectorAll('[role="heading"][aria-level="1"]');
         expect(expandedHeadings).toHaveLength(1);
-        expect(expandedHeadings[0]).toBe(headings[0]);
-        // Full width → no collapsed tooltip.
+        expect(expandedHeadings[0].textContent).toBe("Stable conversation title");
+        // Full width → no collapsed disclosure or tooltip.
+        expect(mounted.container.querySelector(".mj_HeaderTitleDisclosure")).toBeNull();
         expect(expandedHeadings[0].getAttribute("title")).toBeNull();
     });
 
@@ -561,5 +563,61 @@ describe("HeaderShell", () => {
         expect(header?.tabIndex).toBe(-1);
         expect(document.activeElement).toBe(header);
         expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it("hover-opens the collapsed usage disclosure without stealing focus, and closes on mouse-leave", async () => {
+        const mounted = await mountHeader({
+            limits: [{ label: "ctx", percent: 72 }],
+            collapse: { usageCollapsed: true, titleCollapsed: false },
+        });
+        // Simulate focus living elsewhere (e.g. the composer).
+        const outside = document.createElement("input");
+        document.body.append(outside);
+        outside.focus();
+        expect(document.activeElement).toBe(outside);
+
+        const disclosure = mounted.container.querySelector<HTMLElement>(".mj_HeaderUsageDisclosure")!;
+        // React derives onMouseEnter/Leave from native mouseover/mouseout + relatedTarget.
+        await act(async () =>
+            disclosure.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body })),
+        );
+        // Popover is open but focus stayed on the outside input (hover must not steal it).
+        expect(mounted.container.querySelector(".mj_UsagePopover")).not.toBeNull();
+        expect(document.activeElement).toBe(outside);
+
+        await act(async () =>
+            disclosure.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body })),
+        );
+        expect(mounted.container.querySelector(".mj_UsagePopover")).toBeNull();
+        expect(document.activeElement).toBe(outside);
+        outside.remove();
+    });
+
+    it("exposes run-state to assistive tech and a focusable details disclosure when compact", async () => {
+        const mounted = await mountHeader({
+            title: "Deploy run",
+            hasSubtitle: true,
+            subtitle: React.createElement("span", { className: "mj_HeaderModel" }, "claude-sonnet-4-5"),
+            subtitleCompact: React.createElement(
+                "span",
+                { className: "mj_HeaderMetaCompact" },
+                React.createElement("span", { className: "mj_SrOnly" }, "running"),
+                React.createElement("span", { className: "mj_HeaderModelShort" }, "sonnet-4-5"),
+            ),
+            collapse: { usageCollapsed: true, titleCollapsed: true },
+        });
+        // Run-state is present as real (non-aria-hidden) text for screen readers.
+        const srStatus = mounted.container.querySelector(".mj_SrOnly");
+        expect(srStatus?.textContent).toBe("running");
+        expect(srStatus?.getAttribute("aria-hidden")).toBeNull();
+
+        // The details trigger is a real, focusable button; clicking it reveals the popover.
+        const trigger = mounted.container.querySelector<HTMLButtonElement>(".mj_HeaderTitleDisclosure")!;
+        expect(trigger.getAttribute("aria-expanded")).toBe("false");
+        await act(async () => trigger.click());
+        const popover = mounted.container.querySelector(".mj_TitlePopover");
+        expect(popover?.textContent).toContain("Deploy run");
+        expect(popover?.textContent).toContain("claude-sonnet-4-5");
+        expect(trigger.getAttribute("aria-expanded")).toBe("true");
     });
 });

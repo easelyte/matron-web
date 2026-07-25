@@ -489,7 +489,68 @@ textarea {
 /* Compact title block (<560): title + status-dot/short-model, hover → popover. */
 .mj_HeaderTitleCluster_compact {
     position: relative;
+    gap: 2px;
     padding: 0;
+}
+
+/* <560 title disclosure: the h1 (before) sits on top; this focusable trigger
+   (compact subtitle + chevron) below opens a popover with the full title +
+   subtitle. Stacked, not side-by-side, so the title doesn't get squeezed. */
+.mj_HeaderTitleDisclosure {
+    display: inline-flex;
+    min-width: 0;
+    max-width: 100%;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    padding: 0;
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    color: var(--cpd-color-text-tertiary);
+    cursor: pointer;
+}
+
+.mj_HeaderTitleDisclosure:hover {
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_HeaderTitleDisclosure:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_HeaderTitleDisclosure svg {
+    width: 14px;
+    height: 14px;
+    flex: none;
+}
+
+.mj_TitlePopover {
+    top: calc(100% + var(--cpd-space-1x));
+    left: 0;
+    width: max-content;
+    max-width: min(320px, calc(100vw - 32px));
+}
+
+.mj_TitlePopoverTitle {
+    font: var(--cpd-font-heading-sm-semibold);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 17px;
+    color: var(--cpd-color-text-primary);
+}
+
+/* Visually hidden but exposed to assistive tech (e.g. compact run-state). */
+.mj_SrOnly {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
 }
 
 /* Compact subtitle: status dot + short model name. */
@@ -607,12 +668,24 @@ textarea {
     min-width: 0;
     flex: 0 0 auto;
     align-items: center;
+    /* v4: strip padding 7×14, gap 8. */
     gap: var(--cpd-space-2x);
     overflow-x: auto;
     border-bottom: 1px solid var(--cpd-color-border-disabled);
     background: var(--cpd-color-bg-canvas-default);
-    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+    padding: 7px 14px;
     scrollbar-width: thin;
+}
+
+/* v4 label.caps: 10px / 500 / 14px, uppercase, +0.06em, tertiary ink. */
+.mj_SubagentStripLabel {
+    flex: none;
+    color: var(--cpd-color-text-tertiary);
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 14px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
 }
 
 .mj_SubagentPill_wrapper {
@@ -625,7 +698,7 @@ textarea {
     max-width: min(240px, 70vw);
     flex: 0 0 auto;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: var(--cpd-space-1x);
     overflow: hidden;
     box-sizing: border-box;
     border: 1px solid var(--cpd-color-border-disabled);
@@ -634,7 +707,27 @@ textarea {
     color: var(--cpd-color-text-primary);
     cursor: pointer;
     padding: var(--cpd-space-1x) var(--cpd-space-3x);
-    font: var(--cpd-font-body-sm-regular);
+    /* v4 meta.md: 12px / 400 / 16px. */
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SubagentPill_icon {
+    flex: none;
+    width: 13px;
+    height: 13px;
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_SubagentPill_finished .mj_SubagentPill_icon {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_SubagentPill_name {
+    overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -2060,7 +2153,9 @@ button.mj_File {
     .mj_AttachmentChip_spinner,
     .mj_Spinner,
     .mj_VoiceRecording_dot,
-    .mj_VoiceRecording_waveformFallback {
+    .mj_VoiceRecording_waveformFallback,
+    .mj_HeaderStatusDot_running,
+    .mj_RoomListStatus_running {
         animation: none;
     }
 }

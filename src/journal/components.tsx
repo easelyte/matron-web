@@ -34,6 +34,8 @@ import { type RowContextMenu, useRowContextMenu } from "./context-menu";
 import {
     ArchiveIcon,
     AttachmentIcon,
+    CheckIcon,
+    ChevronDownIcon,
     ChevronLeftIcon,
     CloseIcon,
     CompactIcon,
@@ -1440,16 +1442,18 @@ export function UsageCluster({
     );
 }
 
-// A header disclosure that opens on hover, focus, or click, and dismisses on
-// mouse-leave (unless focus is held inside), Escape, or outside-click. Wrapping
-// trigger + panel in one relatively-positioned group lets the mouse travel from
-// the trigger into the panel without the popover closing. `onControlGone`
-// restores focus to the stable header when the trigger unmounts (band change).
+// A header disclosure. It opens on hover (pointer) OR click/keyboard, but only
+// click/keyboard activation ("pinned") moves focus into the panel — hovering must
+// never steal focus from e.g. the composer. Hover-open dismisses on mouse-leave;
+// pinned-open dismisses on Escape, outside-click, or focus leaving the group.
+// Wrapping `before` (e.g. the h1) + trigger + panel in one relatively-positioned
+// group lets the mouse travel from the trigger into the panel without closing.
 function HeaderDisclosure({
     className,
     triggerClassName,
     panelClassName,
     label,
+    before,
     trigger,
     children,
     headerRef,
@@ -1458,38 +1462,47 @@ function HeaderDisclosure({
     triggerClassName: string;
     panelClassName: string;
     label: string;
+    before?: React.ReactNode;
     trigger: React.ReactNode;
     children: React.ReactNode;
     headerRef: React.RefObject<HTMLElement | null>;
 }): React.ReactElement {
-    const [open, setOpen] = useState(false);
+    const [hoverOpen, setHoverOpen] = useState(false);
+    const [pinned, setPinned] = useState(false);
+    const open = hoverOpen || pinned;
     const openerRef = useRef<HTMLButtonElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
-    const focusHeld = useRef(false);
     const popoverId = useId();
-    const close = useCallback(() => setOpen(false), []);
+    const close = useCallback(() => {
+        setHoverOpen(false);
+        setPinned(false);
+    }, []);
     useDismissablePopover(open, close, { openerRef, panelRef });
+    // Move focus into the panel ONLY for click/keyboard activation — never on hover.
     useLayoutEffect(() => {
-        if (open) panelRef.current?.focus();
-    }, [open]);
-    // Trigger unmounts (its band exited) while focus was held → restore to header.
+        if (pinned) panelRef.current?.focus();
+    }, [pinned]);
+    // If this disclosure unmounts (its band exited) while pinned — focus is inside
+    // it — restore focus to the stable header before the browser drops it to <body>.
+    const pinnedRef = useRef(pinned);
+    pinnedRef.current = pinned;
     useEffect(
         () => () => {
-            if (focusHeld.current) {
-                headerRef.current?.focus();
-                focusHeld.current = false;
-            }
+            if (pinnedRef.current) headerRef.current?.focus();
         },
         [headerRef],
     );
     return (
         <div
             className={className}
-            onMouseEnter={() => setOpen(true)}
-            onMouseLeave={() => {
-                if (!focusHeld.current) setOpen(false);
+            onMouseEnter={() => setHoverOpen(true)}
+            onMouseLeave={() => setHoverOpen(false)}
+            onBlur={(event) => {
+                // Focus left the whole disclosure (tabbed away) → unpin + close.
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close();
             }}
         >
+            {before}
             <button
                 ref={openerRef}
                 type="button"
@@ -1497,13 +1510,7 @@ function HeaderDisclosure({
                 aria-label={label}
                 aria-expanded={open}
                 aria-controls={popoverId}
-                onFocus={() => {
-                    focusHeld.current = true;
-                }}
-                onBlur={(event) => {
-                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) focusHeld.current = false;
-                }}
-                onClick={() => setOpen((value) => !value)}
+                onClick={() => setPinned((value) => !value)}
             >
                 {trigger}
             </button>
@@ -1515,13 +1522,6 @@ function HeaderDisclosure({
                     role="group"
                     aria-label={label}
                     tabIndex={-1}
-                    onFocusCapture={() => {
-                        focusHeld.current = true;
-                    }}
-                    onBlur={(event) => {
-                        if (!event.currentTarget.contains(event.relatedTarget as Node | null))
-                            focusHeld.current = false;
-                    }}
                 >
                     {children}
                 </div>
@@ -1581,23 +1581,43 @@ export function HeaderShell({
             <button type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
                 <ChevronLeftIcon />
             </button>
-            <div
-                className={`mj_HeaderCluster mj_HeaderTitleCluster${
-                    titleCollapsed ? " mj_HeaderTitleCluster_compact" : ""
-                }`}
-            >
-                <div
-                    id={titleHeadingId}
-                    dir="auto"
-                    role="heading"
-                    aria-level={1}
-                    className="mx_RoomHeader_heading"
-                    title={titleCollapsed ? title : undefined}
+            {titleCollapsed ? (
+                <HeaderDisclosure
+                    className="mj_HeaderCluster mj_HeaderTitleCluster mj_HeaderTitleCluster_compact"
+                    triggerClassName="mj_HeaderTitleDisclosure"
+                    panelClassName="mj_HeaderMenu mj_TitlePopover"
+                    label="Conversation details"
+                    headerRef={headerRef}
+                    before={
+                        <div
+                            id={titleHeadingId}
+                            dir="auto"
+                            role="heading"
+                            aria-level={1}
+                            className="mx_RoomHeader_heading"
+                            title={title}
+                        >
+                            <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
+                        </div>
+                    }
+                    trigger={
+                        <>
+                            {subtitleCompact}
+                            <ChevronDownIcon aria-hidden="true" />
+                        </>
+                    }
                 >
-                    <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
+                    <div className="mj_TitlePopoverTitle">{title}</div>
+                    {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
+                </HeaderDisclosure>
+            ) : (
+                <div className="mj_HeaderCluster mj_HeaderTitleCluster">
+                    <div id={titleHeadingId} dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
+                        <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
+                    </div>
+                    {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
                 </div>
-                {hasSubtitle && (titleCollapsed ? subtitleCompact : <div className="mj_HeaderMeta">{subtitle}</div>)}
-            </div>
+            )}
             <div className="mj_HeaderControls">
                 {usageCollapsed && ctxMeter ? (
                     <HeaderDisclosure
@@ -1656,6 +1676,7 @@ function ChatHeader({
                         {runState && (
                             <span className={`mj_HeaderStatusDot mj_HeaderStatusDot_${runState}`} aria-hidden="true" />
                         )}
+                        {runState && <span className="mj_SrOnly">{runState}</span>}
                         {shortModel && <span className="mj_HeaderModelShort">{shortModel}</span>}
                     </span>
                 )
@@ -1740,6 +1761,7 @@ function SubChatHeader({
                         className={`mj_HeaderStatusDot mj_HeaderStatusDot_${running ? "running" : "idle"}`}
                         aria-hidden="true"
                     />
+                    <span className="mj_SrOnly">{running ? "Running" : "Finished"}</span>
                     {shortModel && <span className="mj_HeaderModelShort">{shortModel}</span>}
                 </span>
             }
@@ -3886,6 +3908,9 @@ export function SubagentStrip({
     const ordered = runningFirst(siblingOrChildren);
     return (
         <div className="mj_SubagentStrip" role="list">
+            <span className="mj_SubagentStripLabel" aria-hidden="true">
+                Subagents
+            </span>
             {ordered.map((child) => {
                 const isCurrent = mode === "child" && child.id === state.selectedConversationId;
                 const isRunning = child.session_state === "running";
@@ -3905,14 +3930,12 @@ export function SubagentStrip({
                             disabled={isCurrent}
                             onClick={() => void client.selectConversation(child.id)}
                         >
-                            {isCurrent ? (
-                                <span aria-hidden="true">✓</span>
-                            ) : isRunning ? (
+                            {isRunning ? (
                                 <span className="mj_Spinner" aria-hidden="true" />
                             ) : (
-                                <span aria-hidden="true">○</span>
+                                <CheckIcon className="mj_SubagentPill_icon" aria-hidden="true" />
                             )}
-                            {conversationTitle(child)}
+                            <span className="mj_SubagentPill_name">{conversationTitle(child)}</span>
                         </button>
                     </div>
                 );
