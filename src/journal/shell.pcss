@@ -733,7 +733,11 @@ button {
     margin: var(--cpd-space-2x) 0;
     padding: var(--cpd-space-2x) var(--cpd-space-3x);
     border: 1px solid var(--cpd-color-border-strong);
-    border-radius: var(--cpd-radius-pill);
+    /* Bounded radius, not pill: the textarea grows multi-line (max-height 160px);
+       a 999px pill curves into the text and clips the first/last line. The v3 mock
+       is a rounded rectangle. --cpd-radius-xl (16px) reads soft/rounded at single
+       line and never clips when tall. (#517) */
+    border-radius: var(--cpd-radius-xl);
     background: var(--cpd-color-bg-canvas-default);
     font-size: inherit;
     line-height: 1.5;

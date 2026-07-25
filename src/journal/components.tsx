@@ -1370,7 +1370,7 @@ export function UsageCluster({
                     const level = norm === null ? "unknown" : usageLevel(norm);
                     return (
                         <div className="mj_UsageRow" key={index} title={reset ? `resets ${reset}` : undefined}>
-                            <span className="mj_UsageLabel">{usageBarLabel(limit.label)}:</span>
+                            <span className="mj_UsageLabel">{usageBarLabel(limit.label)}</span>
                             <span
                                 className="mj_UsageTrack"
                                 role="progressbar"

@@ -88,13 +88,13 @@ textarea {
 }
 
 .mj_HeaderCluster {
+    /* v3 mock floats the header content on the banner background — no bordered,
+       shadowed chip boxes. Unbox for fidelity + declutter (#518). */
     min-width: 0;
     max-width: 100%;
     box-sizing: border-box;
-    border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: var(--cpd-radius-lg);
-    background-color: var(--cpd-color-bg-cluster);
-    box-shadow: var(--cpd-shadow-sm);
+    border: 0;
+    background: transparent;
     padding: var(--cpd-space-1x) var(--cpd-space-3x);
 }
 
@@ -269,13 +269,17 @@ textarea {
 }
 
 .mj_UsageBars {
+    /* v3 mock: 2×2 grid (ctx/5h top, fbl/wk bottom) — not a vertical stack.
+       This also fits all 4 metrics in ~2 rows so none is clipped (#518). */
     display: grid;
-    gap: var(--cpd-space-0-5x);
+    grid-template-columns: 1fr 1fr;
+    column-gap: var(--cpd-space-4x);
+    row-gap: var(--cpd-space-1x);
 }
 
 .mj_UsageCluster .mj_UsageBars {
-    max-height: 100%;
-    overflow-y: auto;
+    /* 4 metrics fit the 2×2 grid inside the header height — no overflow-scroll
+       (was clipping the 4th metric off-screen, #518). */
     overscroll-behavior: contain;
 }
 
@@ -297,9 +301,9 @@ textarea {
 .mj_UsageTrack {
     display: block;
     width: 100%;
-    height: var(--cpd-space-1x);
+    height: 6px; /* thicker rounded bar per v3 mock (was 4px flat-ish) (#518) */
     overflow: hidden;
-    border-radius: 999px;
+    border-radius: var(--cpd-radius-pill);
     background-color: var(--cpd-color-bg-usage-track);
 }
 
