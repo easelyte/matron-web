@@ -1611,107 +1611,78 @@ export function HeaderShell({
     );
 }
 
-function ChatHeader({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
+function ChatHeader({
+    client,
+    state,
+    collapse = { usageCollapsed: false, titleCollapsed: false },
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    collapse?: { usageCollapsed: boolean; titleCollapsed: boolean };
+}): React.ReactElement {
     const conversation = client.selectedConversation();
     const title = conversation ? conversationTitle(conversation) : "Conversation";
-    const children = childrenOf(state.conversations, conversation?.id);
-    const [subagentsOpen, setSubagentsOpen] = useState(false);
     const status = state.sessionStatus;
     const hasModelContext = Boolean(status?.model || status?.context);
     const limits = status?.limits?.filter((limit) => limit.label.trim());
     return (
-        <header className="mx_RoomHeader light-panel mj_ChatHeader">
-            <button
-                className="mj_BackButton"
-                onClick={() => client.clearSelection()}
-                aria-label="Back to conversations"
-            >
-                <ChevronLeftIcon />
-            </button>
-            <div
-                className={`mj_HeaderCluster mj_ModelContextCluster${hasModelContext ? "" : " mj_HeaderCluster_empty"}`}
-                aria-hidden={!hasModelContext}
-            >
-                {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
-                {status?.context && (
-                    <span className="mj_HeaderContextRow">
-                        <span
-                            className="mj_HeaderContext"
-                            title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
-                        >
-                            Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
+        <HeaderShell
+            mode="parent"
+            onBack={() => client.clearSelection()}
+            backLabel="Back to conversations"
+            left={
+                <>
+                    {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
+                    {status?.context && (
+                        <span className="mj_HeaderContextRow">
+                            <span
+                                className="mj_HeaderContext"
+                                title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
+                            >
+                                Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
+                            </span>
+                            <button
+                                className="mj_CompactButton"
+                                type="button"
+                                aria-label="Compact conversation"
+                                title="Compact the conversation — sends /compact"
+                                onClick={() =>
+                                    void client
+                                        .sendMessage("/compact")
+                                        .catch((error) => console.warn("Compact command failed to send:", error))
+                                }
+                            >
+                                <CompactIcon />
+                            </button>
                         </span>
-                        <button
-                            className="mj_CompactButton"
-                            type="button"
-                            aria-label="Compact conversation"
-                            title="Compact the conversation — sends /compact"
-                            onClick={() =>
-                                void client
-                                    .sendMessage("/compact")
-                                    .catch((error) => console.warn("Compact command failed to send:", error))
-                            }
-                        >
-                            <CompactIcon />
-                        </button>
-                    </span>
-                )}
-            </div>
-            <div className="mj_HeaderCluster mj_HeaderTitleCluster">
-                <div dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
-                    <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
-                </div>
-                {status?.email && (
+                    )}
+                </>
+            }
+            hasLeft={hasModelContext}
+            title={title}
+            titleMeta={
+                status?.email && (
                     <span className="mj_HeaderEmail" title={status.email}>
                         {status.email}
                     </span>
-                )}
-                {children.length > 0 && (
-                    <div className="mj_SubagentSwitcher">
-                        <button
-                            type="button"
-                            className="mj_SubagentSwitcherButton"
-                            aria-haspopup="menu"
-                            aria-expanded={subagentsOpen}
-                            onClick={() => setSubagentsOpen((open) => !open)}
-                        >
-                            {children.length} {children.length === 1 ? "subagent" : "subagents"} ▾
-                        </button>
-                        {subagentsOpen && (
-                            <div className="mj_HeaderMenu mj_SubagentSwitcherMenu" role="menu">
-                                {children.map((child) => (
-                                    <button
-                                        key={child.id}
-                                        type="button"
-                                        role="menuitem"
-                                        onClick={() => {
-                                            setSubagentsOpen(false);
-                                            void client.selectConversation(child.id);
-                                        }}
-                                    >
-                                        <span aria-hidden="true">{child.session_state === "running" ? "●" : "○"}</span>{" "}
-                                        {conversationTitle(child)}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                )}
-            </div>
-            <div
-                className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
-                aria-hidden={!limits?.length}
-            >
-                {limits?.length ? <UsageCluster limits={limits} /> : null}
-            </div>
-        </header>
+                )
+            }
+            limits={limits}
+            collapse={collapse}
+        />
     );
 }
 
-function SubChatHeader({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
+function SubChatHeader({
+    client,
+    state,
+    collapse = { usageCollapsed: false, titleCollapsed: false },
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    collapse?: { usageCollapsed: boolean; titleCollapsed: boolean };
+}): React.ReactElement {
     const selected = client.selectedConversation();
-    const siblings = childrenOf(state.conversations, selected?.parent_convo_id);
-    const [siblingsOpen, setSiblingsOpen] = useState(false);
     const status = state.sessionStatus;
     const hasModelContext = Boolean(status?.model || status?.context);
     const limits = status?.limits?.filter((limit) => limit.label.trim());
@@ -1733,77 +1704,34 @@ function SubChatHeader({ client, state }: { client: MatronJournalClient; state: 
     };
 
     return (
-        <header className="mx_RoomHeader light-panel mj_ChatHeader mj_SubChatHeader">
-            <button type="button" className="mj_BackButton" onClick={goBack} aria-label="Back to parent">
-                <ChevronLeftIcon />
-            </button>
-            <div
-                className={`mj_HeaderCluster mj_ModelContextCluster${hasModelContext ? "" : " mj_HeaderCluster_empty"}`}
-                aria-hidden={!hasModelContext}
-            >
-                {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
-                {status?.context && (
-                    <span
-                        className="mj_HeaderContext"
-                        title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
-                    >
-                        Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
-                    </span>
-                )}
-            </div>
-            <div className="mj_HeaderCluster mj_HeaderTitleCluster">
-                <div dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
-                    <span className="mx_RoomHeader_truncated mx_lineClamp">
-                        {selected ? conversationTitle(selected) : "Subagent"}
-                    </span>
-                </div>
+        <HeaderShell
+            mode="child"
+            onBack={goBack}
+            backLabel="Back to parent"
+            left={
+                <>
+                    {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
+                    {status?.context && (
+                        <span
+                            className="mj_HeaderContext"
+                            title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
+                        >
+                            Context: {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
+                        </span>
+                    )}
+                </>
+            }
+            hasLeft={hasModelContext}
+            title={selected ? conversationTitle(selected) : "Subagent"}
+            titleMeta={
                 <span className="mj_SubChatState">
                     {selected?.session_state === "running" && <span className="mj_Spinner" aria-hidden="true" />}
                     {selected?.session_state === "running" ? "Running" : "Finished"}
                 </span>
-                {siblings.length > 1 && (
-                    <div className="mj_SubagentSwitcher">
-                        <button
-                            type="button"
-                            className="mj_SubagentSwitcherButton"
-                            aria-haspopup="menu"
-                            aria-expanded={siblingsOpen}
-                            onClick={() => setSiblingsOpen((open) => !open)}
-                        >
-                            {siblings.length} subagents ▾
-                        </button>
-                        {siblingsOpen && (
-                            <div className="mj_HeaderMenu mj_SubagentSwitcherMenu" role="menu">
-                                {siblings.map((sibling) => {
-                                    const isCurrent = sibling.id === selected?.id;
-                                    const glyph = isCurrent ? "✓" : sibling.session_state === "running" ? "●" : "○";
-                                    return (
-                                        <button
-                                            key={sibling.id}
-                                            type="button"
-                                            role="menuitem"
-                                            disabled={isCurrent}
-                                            onClick={() => {
-                                                setSiblingsOpen(false);
-                                                void client.selectConversation(sibling.id);
-                                            }}
-                                        >
-                                            <span aria-hidden="true">{glyph}</span> {conversationTitle(sibling)}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
-                )}
-            </div>
-            <div
-                className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
-                aria-hidden={!limits?.length}
-            >
-                {limits?.length ? <UsageCluster limits={limits} /> : null}
-            </div>
-        </header>
+            }
+            limits={limits}
+            collapse={collapse}
+        />
     );
 }
 

@@ -157,7 +157,7 @@ describe("read-only subchat viewer", () => {
         expect(rendered.container.querySelector(".mj_SubagentSwitcher")).toBeNull();
     });
 
-    it("switches between siblings and marks their current and session states", async () => {
+    it("does not render the removed child header switcher", async () => {
         const client = signedInClient(
             [
                 conversation("parent", "running"),
@@ -167,25 +167,9 @@ describe("read-only subchat viewer", () => {
             ],
             "child",
         );
-        const selectConversation = jest.spyOn(client, "selectConversation").mockResolvedValue();
         rendered = await renderClient(client);
 
-        const switcher = rendered.container.querySelector(".mj_SubagentSwitcher");
-        expect(switcher).not.toBeNull();
-        await act(async () => switcher?.querySelector<HTMLButtonElement>(".mj_SubagentSwitcherButton")?.click());
-
-        const entries = [...(switcher?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])];
-        expect(entries).toHaveLength(3);
-        expect(entries[0].disabled).toBe(true);
-        expect(entries[0].textContent).toContain("✓");
-        expect(entries[0].textContent).toContain("Research child");
-        expect(entries[1].textContent).toContain("●");
-        expect(entries[1].textContent).toContain("sibling-a-running");
-        expect(entries[2].textContent).toContain("○");
-        expect(entries[2].textContent).toContain("sibling-b-finished");
-
-        await act(async () => entries[2].click());
-        expect(selectConversation).toHaveBeenCalledWith("sibling-b-finished");
+        expect(rendered.container.querySelector(".mj_SubagentSwitcher")).toBeNull();
     });
 
     it("suppresses prompt replies and attachment retry while retaining dismiss", async () => {
