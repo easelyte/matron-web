@@ -2653,6 +2653,7 @@ function Composer({
     const composerRef = useRef<HTMLDivElement>(null);
     const micButtonRef = useRef<HTMLButtonElement>(null);
     const stopButtonRef = useRef<HTMLButtonElement>(null);
+    const restoreVoiceFocusRef = useRef(false);
     const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
     const folders = folderSuggestions(body, store);
     const commands = filterCommands(CLAUDE_BRIDGE_COMMANDS, body);
@@ -2731,6 +2732,7 @@ function Composer({
             }
 
             if (mountedRef.current && voiceStateRef.current !== "error") {
+                restoreVoiceFocusRef.current = Boolean(composerRef.current?.contains(document.activeElement));
                 setVoiceState("idle");
                 setElapsedMs(0);
             }
@@ -2770,22 +2772,16 @@ function Composer({
             const localChunks = chunksRef.current;
             watchdogTimer.current = setTimeout(() => {
                 if (rid !== recordingIdRef.current || finalizedRef.current) return;
-                finalizedRef.current = true;
-                console.warn("voice: onstop absent — recording failed", {
+                console.warn("voice: onstop absent — watchdog finalizing", {
                     rid,
-                    disposition: dispositionRef.current,
                     chunks: localChunks.length,
                     elapsedMs: Date.now() - recordingStartMs.current,
                 });
-                releaseResources();
-                errorMsg.current = "Recording didn't finish — please try again.";
-                if (mountedRef.current) setVoiceState("error");
-                sendInFlightRef.current = false;
-                stopInFlightRef.current = false;
+                finalizeVoice(rid, localChunks);
             }, 3000);
             recorder.stop();
         },
-        [releaseResources, setVoiceState],
+        [finalizeVoice],
     );
 
     const startWaveform = useCallback((): void => {
@@ -2995,15 +2991,15 @@ function Composer({
         }
     }, [convoId, teardownVoice]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (voiceState === "recording") {
             stopButtonRef.current?.focus();
-        } else if (
-            voiceState === "idle" &&
-            capConvoRef.current === convoIdRef.current &&
-            composerRef.current?.contains(document.activeElement)
-        ) {
-            micButtonRef.current?.focus();
+        } else if (voiceState === "idle") {
+            const shouldRestoreFocus = restoreVoiceFocusRef.current;
+            restoreVoiceFocusRef.current = false;
+            if (shouldRestoreFocus && capConvoRef.current === convoIdRef.current) {
+                micButtonRef.current?.focus();
+            }
         }
     }, [voiceState]);
 
