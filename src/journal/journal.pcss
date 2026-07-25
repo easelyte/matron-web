@@ -118,13 +118,18 @@ textarea {
     display: block;
     max-width: 100%;
     overflow: hidden;
-    font: var(--cpd-font-heading-sm-semibold);
+    /* v3 mock header title: 13px / 500 / 17px (measured from the design, #518). */
+    color: var(--cpd-color-text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 17px;
     text-align: left;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-/* model · context (· subagent-state) inline subtitle with middot separators. */
+/* model · context (· subagent-state) inline subtitle with middot separators.
+   v3 mock subtitle: 11px / 400 / 14px, text-secondary (#518). */
 .mj_HeaderMeta {
     display: flex;
     min-width: 0;
@@ -132,7 +137,9 @@ textarea {
     align-items: center;
     overflow: hidden;
     color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-micro);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 14px;
 }
 
 .mj_HeaderMeta > * {
@@ -194,6 +201,81 @@ textarea {
 .mj_CompactButton:hover {
     background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-primary);
+}
+
+/* Session run-state in the subtitle — teal while running (v3 mock), muted otherwise. */
+.mj_HeaderState {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_HeaderState_running {
+    color: var(--cpd-color-text-action-accent);
+}
+
+/* Persistent sidebar connection footer: avatar · operator id · connection status.
+   v3 mock bottom-left of the sidebar (#519). */
+.mx_LeftPanel_wrapper--user {
+    flex-direction: column;
+}
+
+.mj_SidebarFooter {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-default);
+}
+
+.mj_SidebarFooterAvatar {
+    display: inline-flex;
+    flex: none;
+    width: 24px;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    text-transform: uppercase;
+}
+
+.mj_SidebarFooterId {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--cpd-color-text-secondary);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SidebarFooterStatus {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    color: var(--cpd-color-text-tertiary);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 14px;
+}
+
+.mj_SidebarFooterDot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--cpd-color-text-tertiary);
+}
+
+.mj_SidebarFooterStatus_online .mj_SidebarFooterDot {
+    background: var(--cpd-color-text-action-accent);
 }
 
 .mj_SubChatState {
@@ -285,12 +367,17 @@ textarea {
        title at any width, the 700-720 band, mobile — never horizontally
        overflows; it's 2 columns only when there's genuine room. Limits can
        exceed 4 → bounded scrolling for vertical overflow (#518). */
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    /* v3 mock groups usage COLUMN-first: ctx/fbl stacked in the left column,
+       5h/wk stacked in the right (not row-first). Two fixed rows, column flow.
+       The inline cluster only renders >=700px room (usageCollapsed swaps to the
+       mini pill below that), so two columns always have room here (#518). */
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
+    grid-auto-flow: column;
     column-gap: var(--cpd-space-4x);
     row-gap: var(--cpd-space-1x);
     max-height: 100%;
-    overflow-y: auto;
-    overscroll-behavior: contain;
+    overflow: hidden;
 }
 
 .mj_UsageRow {
@@ -298,12 +385,16 @@ textarea {
     grid-template-columns: min-content minmax(var(--cpd-space-10x), 1fr) min-content;
     align-items: center;
     column-gap: var(--cpd-space-2x);
-    font: var(--cpd-font-micro);
+    /* v3 mock renders usage labels/percents in Fira Code, 10.5px / 500 (#518). */
+    font-family: "Fira Code", monospace;
+    font-size: 10.5px;
+    font-weight: 500;
+    line-height: 13px;
 }
 
 .mj_UsageLabel {
     overflow: hidden;
-    color: var(--cpd-color-text-secondary);
+    color: var(--cpd-color-text-primary);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -343,7 +434,7 @@ textarea {
 
 .mj_UsagePercent {
     min-width: var(--cpd-space-8x);
-    color: var(--cpd-color-text-secondary);
+    color: var(--cpd-color-text-primary);
     text-align: right;
 }
 

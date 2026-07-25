@@ -1092,6 +1092,22 @@ function ConversationList({
                             </nav>
                         </div>
                     </div>
+                    <div className="mj_SidebarFooter">
+                        <span className="mj_SidebarFooterAvatar" aria-hidden="true">
+                            {(state.session?.username ?? "?").slice(0, 1)}
+                        </span>
+                        <span className="mj_SidebarFooterId" title={state.session?.username}>
+                            {state.session?.username ?? "Signed out"}
+                        </span>
+                        <span className={`mj_SidebarFooterStatus mj_SidebarFooterStatus_${state.connection}`}>
+                            <span className="mj_SidebarFooterDot" aria-hidden="true" />
+                            {state.connection === "online"
+                                ? "connected"
+                                : state.connection === "connecting"
+                                  ? "connecting…"
+                                  : "offline"}
+                        </span>
+                    </div>
                 </div>
                 {accountOpen && (
                     <div className="mj_HeaderMenu mj_AccountMenu">
@@ -1588,9 +1604,14 @@ function ChatHeader({
                             Context {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
                         </span>
                     )}
+                    {conversation?.session_state && (
+                        <span className={`mj_HeaderState mj_HeaderState_${conversation.session_state}`}>
+                            {conversation.session_state}
+                        </span>
+                    )}
                 </>
             }
-            hasLeft={hasModelContext}
+            hasLeft={hasModelContext || Boolean(conversation?.session_state)}
             title={title}
             titleMeta={null}
             rightControls={

@@ -29,10 +29,12 @@ function Icon({ children, ...props }: IconProps): React.ReactElement {
 }
 
 export function SettingsIcon(props: IconProps): React.ReactElement {
+    // v3 mock uses a sliders/faders glyph (not the cog) for settings (#519).
     return (
         <Icon {...props}>
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.42 1.42-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V20h-2v-.09A1.7 1.7 0 0 0 12.4 18.4a1.7 1.7 0 0 0-1.88.34l-.06.06-1.42-1.42.06-.06A1.7 1.7 0 0 0 9.44 15a1.7 1.7 0 0 0-1.55-1H8v-2h.09A1.7 1.7 0 0 0 9.6 10.96a1.7 1.7 0 0 0-.34-1.88l-.06-.06L10.62 7.6l.06.06A1.7 1.7 0 0 0 12.56 8a1.7 1.7 0 0 0 1-1.55V6h2v.09a1.7 1.7 0 0 0 1.04 1.51 1.7 1.7 0 0 0 1.88-.34l.06-.06 1.42 1.42-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1H21v2h-.09A1.7 1.7 0 0 0 19.4 15Z" />
+            <path d="M4 8h9M17 8h3M4 16h3M11 16h9" />
+            <circle cx="15" cy="8" r="2" />
+            <circle cx="9" cy="16" r="2" />
         </Icon>
     );
 }
