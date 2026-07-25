@@ -443,6 +443,14 @@ textarea {
         max-width: 40cqi;
         padding-inline: var(--cpd-space-2x);
     }
+
+    /* The 2×2 usage grid needs desktop width; at/below 720px (incl. the 700-720
+       still-expanded band) each column is too narrow (~83px) for the 40px track +
+       32px % + label → horizontal overflow. Fall back to single-column here; the
+       full 2×2 is a >720px desktop treatment (review r3). */
+    .mj_UsageCluster .mj_UsageBars {
+        grid-template-columns: 1fr;
+    }
 }
 
 .mj_UsageFill_high {
