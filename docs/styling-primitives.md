@@ -1,14 +1,17 @@
 # matron-web styling primitives
 
-> **v2 system layer (2026-07-23).** The token set was extended into a research-grounded design
-> system — see **[docs/design/primitives-v2.md](design/primitives-v2.md)** for the warm-neutral
-> elevation ladder, role type ramp (`--cpd-font-micro/meta/body/label/title/heading`), shared
-> interaction state layer (`--cpd-state-hover/active/selected`), radii (`--cpd-radius-*`), shadows
-> (`--cpd-shadow-*`), focus ring, motion (`--cpd-dur-*`/`--cpd-ease`), and icon sizes. The rules
-> below still hold; the accent is now teal `#0d9488`/`#2dd4bf` and surfaces are one warm-neutral
-> family. New interactive surfaces should compose the state layer, not hand-roll hover colors.
+> **Canonical values now come from the redesign-v4 artifact (2026-07-25).** This doc remains the
+> repo's **token-map + stack-constraint gate** — which `--cpd-*` token an element should use, the
+> no-CSS-in-JS rule, sanctioned literals, do-not-touch geometry. But the *type scale, spacing,
+> colour roles, states, motion and breakpoints* are now derived from the runnable design artifact
+> and its parsed tokens — `docs/design/redesign-v4/design-tokens.json` / `.css` — under the
+> artifact-first process (`son-of-anton/docs/design-handoff-playbook.md`). Probe the artifact for
+> exact values; don't transcribe them here. The warm-neutral ladder + teal accent
+> (`#0d9488`/`#2dd4bf`) landed via v2 and are unchanged. (`docs/design/primitives-v2.md` was the v2
+> working doc — now superseded; see its header.) New interactive surfaces compose the
+> `--cpd-state-*` layer, not hand-rolled hover colours.
 
-**The canonical reference for all styling work in this repo.** Reach for this before writing any CSS. It exists so we use the shared primitives (design tokens) instead of hardcoded literals — which is what keeps the stylesheet themeable and consistent **without** a CI lint gate. If you're adding a raw `color:`, `font-size:`, or off-grid `padding:`, stop and check whether a token below already covers it.
+**The token-map + stack-constraint gate for styling work in this repo.** Reach for this before writing any CSS. It exists so we use the shared primitives (design tokens) instead of hardcoded literals — which is what keeps the stylesheet themeable and consistent **without** a CI lint gate. If you're adding a raw `color:`, `font-size:`, or off-grid `padding:`, stop and check whether a token below already covers it.
 
 ## Foundation (do not change)
 

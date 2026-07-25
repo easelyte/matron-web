@@ -1,5 +1,11 @@
 # matron-web design primitives v2 (research-grounded)
 
+> **⚠️ SUPERSEDED 2026-07-25 — historical.** The v2 warm-neutral ladder + teal accent shipped and
+> are now baseline in `src/journal/shell.pcss :root`. Canonical design values moved to the
+> redesign-v4 artifact (`docs/design/redesign-v4/`, `design-tokens.json`) under the artifact-first
+> process (`son-of-anton/docs/design-handoff-playbook.md`). Kept for the rationale + history; the
+> resume/deploy notes below are stale (v2 is long merged). For current values, probe the v4 artifact.
+
 > **OPERATOR-APPROVED 2026-07-23 — "go for it".** Direction: **WARM-neutral** (confirmed). Accent: **brighter teal `#0d9488` light / `#2dd4bf` dark** (confirmed, replaces `#087f6d`/`#0dbd8b`). Preview validated light+dark in the headless harness (`webapp/v2-preview.html`). Now applying the primitives to the real components.
 >
 > **IMPLEMENTATION STATE (for resume after compaction):**
