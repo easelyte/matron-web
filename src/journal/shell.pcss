@@ -786,8 +786,10 @@ button {
        single line and never clips when tall. (#517 → v4) */
     border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-canvas-default);
-    font-size: inherit;
-    line-height: 1.5;
+    /* v4 body.md: composer input is a fixed 14px/22px — not inherited (root is 15px). */
+    font:
+        400 14px/22px Inter,
+        sans-serif;
     transition: border-color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
