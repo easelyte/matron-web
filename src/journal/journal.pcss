@@ -1450,10 +1450,17 @@ textarea {
     color: var(--cpd-color-text-tertiary);
 }
 
-/* v4: text input focus = border-color accent only (no ring — see composer note). */
+/* v4: pointer focus = border-color accent only (no ring). */
 .mj_UploadConfirm_caption:focus {
     border-color: var(--cpd-color-text-action-accent);
     outline: none;
+}
+
+/* v4: keyboard focus adds the 2px accent outline at 2px offset — required for a11y,
+   especially since the upload dialog auto-focuses this field on open. */
+.mj_UploadConfirm_caption:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
 }
 
 .mj_UploadConfirm_actions {

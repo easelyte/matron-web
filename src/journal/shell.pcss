@@ -708,7 +708,10 @@ button {
     right: var(--cpd-space-4x);
     bottom: calc(100% + var(--cpd-space-2x));
     left: var(--cpd-space-4x);
-    max-height: 262px;
+    /* v4 caps the palette at 262px, but never taller than half the dynamic viewport —
+       on short visual viewports (mobile landscape, on-screen keyboard) a fixed 262px
+       would push the top rows off-screen above the absolutely-anchored composer. */
+    max-height: min(262px, 50dvh);
     overflow-y: auto;
     box-sizing: border-box;
     border: 1px solid var(--cpd-color-border-subtle);
@@ -793,13 +796,18 @@ button {
     transition: border-color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
-/* v4: text inputs focus by border-color → accent ONLY. No glow, no ring.
-   (Text inputs receive :focus-visible on every focus, so a keyboard-ring here would
-   always show and contradict the border-only intent; the 2px keyboard outline is
-   reserved for buttons, where click focus does not trigger :focus-visible.) */
+/* v4: pointer focus = border-color → accent only (no glow, no ring). */
 .mx_BasicMessageComposer_input:focus {
     border-color: var(--cpd-color-text-action-accent);
     outline: none;
+}
+
+/* v4 (DESIGN-SPEC §States): keyboard focus adds a 2px accent outline at 2px offset,
+   on top of the border recolor. Required for a11y — a 1px border shift alone is not a
+   sufficient keyboard-focus indicator. */
+.mx_BasicMessageComposer_input:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
 }
 
 .mx_BasicMessageComposer_input::placeholder {
