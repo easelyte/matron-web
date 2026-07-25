@@ -416,6 +416,37 @@ describe("useAdaptiveHeader", () => {
 });
 
 describe("HeaderShell", () => {
+    it("keeps one level-one title heading and labels the collapsed disclosure from it", async () => {
+        const mounted = await mountHeader({
+            title: "Stable conversation title",
+            collapse: { usageCollapsed: false, titleCollapsed: true },
+        });
+        const headings = mounted.container.querySelectorAll('[role="heading"][aria-level="1"]');
+        const disclosure = mounted.container.querySelector(".mj_HeaderMiniTitle");
+
+        expect(headings).toHaveLength(1);
+        expect(headings[0].textContent).toBe("Stable conversation title");
+        expect(headings[0].closest(".mj_HeaderTitleCluster_hidden")).not.toBeNull();
+        expect(disclosure?.getAttribute("aria-labelledby")).toBe(headings[0].id);
+
+        await act(async () =>
+            mounted.root.render(
+                React.createElement(
+                    HeaderShell,
+                    headerProps({
+                        title: "Stable conversation title",
+                        collapse: { usageCollapsed: false, titleCollapsed: false },
+                    }),
+                ),
+            ),
+        );
+
+        const expandedHeadings = mounted.container.querySelectorAll('[role="heading"][aria-level="1"]');
+        expect(expandedHeadings).toHaveLength(1);
+        expect(expandedHeadings[0]).toBe(headings[0]);
+        expect(expandedHeadings[0].closest(".mj_HeaderTitleCluster_hidden")).toBeNull();
+    });
+
     it("refreshes the collapsed usage reset label on the minute clock", async () => {
         jest.useFakeTimers();
         jest.setSystemTime(new Date("2026-07-24T12:00:00Z"));
@@ -483,8 +514,9 @@ describe("HeaderShell", () => {
             ),
         );
 
-        const backButton = mounted.container.querySelector<HTMLElement>(".mj_BackButton");
-        expect(document.activeElement).toBe(backButton);
+        const header = mounted.container.querySelector<HTMLElement>(".mj_ChatHeader");
+        expect(header?.tabIndex).toBe(-1);
+        expect(document.activeElement).toBe(header);
         expect(document.activeElement).not.toBe(document.body);
     });
 
@@ -509,8 +541,9 @@ describe("HeaderShell", () => {
             ),
         );
 
-        const backButton = mounted.container.querySelector<HTMLElement>(".mj_BackButton");
-        expect(document.activeElement).toBe(backButton);
+        const header = mounted.container.querySelector<HTMLElement>(".mj_ChatHeader");
+        expect(header?.tabIndex).toBe(-1);
+        expect(document.activeElement).toBe(header);
         expect(document.activeElement).not.toBe(document.body);
     });
 });

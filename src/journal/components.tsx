@@ -1417,13 +1417,14 @@ export function HeaderShell({
     const { usageCollapsed, titleCollapsed } = collapse;
     const [usagePopoverOpen, setUsagePopoverOpen] = useState(false);
     const [titlePopoverOpen, setTitlePopoverOpen] = useState(false);
-    const backButtonRef = useRef<HTMLButtonElement>(null);
+    const headerRef = useRef<HTMLElement>(null);
     const usageOpenerRef = useRef<HTMLButtonElement>(null);
     const usagePanelRef = useRef<HTMLDivElement>(null);
     const titleOpenerRef = useRef<HTMLButtonElement>(null);
     const titlePanelRef = useRef<HTMLDivElement>(null);
     const focusHeldRef = useRef(false);
     const now = useMinuteClock();
+    const titleHeadingId = useId();
     const usagePopoverId = useId();
     const titlePopoverId = useId();
     const closeUsagePopover = useCallback(() => setUsagePopoverOpen(false), []);
@@ -1460,7 +1461,7 @@ export function HeaderShell({
             restoreFocus ||= focusHeldRef.current && (titlePopoverOpen || !usageHasFocus);
             if (titlePopoverOpen) setTitlePopoverOpen(false);
         }
-        if (restoreFocus) backButtonRef.current?.focus();
+        if (restoreFocus) headerRef.current?.focus();
     }, [usageCollapsed, titleCollapsed, limits?.length]);
 
     const onTriggerFocus = (): void => {
@@ -1488,8 +1489,12 @@ export function HeaderShell({
               }`;
 
     return (
-        <header className={`mx_RoomHeader light-panel mj_ChatHeader${mode === "child" ? " mj_SubChatHeader" : ""}`}>
-            <button ref={backButtonRef} type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
+        <header
+            ref={headerRef}
+            className={`mx_RoomHeader light-panel mj_ChatHeader${mode === "child" ? " mj_SubChatHeader" : ""}`}
+            tabIndex={-1}
+        >
+            <button type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
                 <ChevronLeftIcon />
             </button>
             {!titleCollapsed && (
@@ -1500,11 +1505,22 @@ export function HeaderShell({
                     {left}
                 </div>
             )}
+            <div
+                className={`mj_HeaderCluster mj_HeaderTitleCluster${
+                    titleCollapsed ? " mj_HeaderTitleCluster_hidden" : ""
+                }`}
+            >
+                <div id={titleHeadingId} dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
+                    <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
+                </div>
+                {!titleCollapsed && titleMeta}
+            </div>
             {titleCollapsed ? (
                 <button
                     ref={titleOpenerRef}
                     type="button"
                     className="mj_HeaderMiniTitle"
+                    aria-labelledby={titleHeadingId}
                     aria-expanded={titlePopoverOpen}
                     aria-controls={titlePopoverId}
                     onFocus={onTriggerFocus}
@@ -1517,14 +1533,7 @@ export function HeaderShell({
                     <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
                     <span aria-hidden="true">▾</span>
                 </button>
-            ) : (
-                <div className="mj_HeaderCluster mj_HeaderTitleCluster">
-                    <div dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
-                        <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
-                    </div>
-                    {titleMeta}
-                </div>
-            )}
+            ) : null}
             {usageCollapsed && limits?.length ? (
                 <button
                     ref={usageOpenerRef}
@@ -1579,7 +1588,7 @@ export function HeaderShell({
                     onBlur={onPanelBlur}
                 >
                     <div className="mj_HeaderCluster mj_HeaderTitleCluster">
-                        <div dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
+                        <div dir="auto" className="mx_RoomHeader_heading">
                             <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
                         </div>
                         {titleMeta}

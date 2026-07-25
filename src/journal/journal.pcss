@@ -128,6 +128,19 @@ textarea {
     text-align: center;
 }
 
+.mj_HeaderTitleCluster_hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    margin: -1px;
+    clip: rect(0 0 0 0);
+    overflow: hidden;
+    white-space: nowrap;
+}
+
 .mj_HeaderModel,
 .mj_HeaderContext,
 .mj_HeaderEmail {
@@ -257,8 +270,11 @@ textarea {
 
 .mj_UsageBars {
     display: grid;
-    max-height: 58px;
     gap: var(--cpd-space-0-5x);
+}
+
+.mj_UsageCluster .mj_UsageBars {
+    max-height: 58px;
     overflow-y: auto;
     overscroll-behavior: contain;
 }
