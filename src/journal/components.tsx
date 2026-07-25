@@ -1472,7 +1472,10 @@ export function HeaderShell({
             restoreFocus ||= focusHeldRef.current && (titlePopoverOpen || !usageHasFocus);
             if (titlePopoverOpen) setTitlePopoverOpen(false);
         }
-        if (restoreFocus) headerRef.current?.focus();
+        if (restoreFocus) {
+            headerRef.current?.focus();
+            focusHeldRef.current = false;
+        }
     }, [usageCollapsed, titleCollapsed, limits?.length]);
 
     const onTriggerFocus = (): void => {

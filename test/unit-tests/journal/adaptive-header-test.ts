@@ -548,6 +548,52 @@ describe("HeaderShell", () => {
         expect(document.activeElement).not.toBe(document.body);
     });
 
+    it("does not restore stale focus after Escape and expansion consume ownership", async () => {
+        const mounted = await mountHeader({
+            limits: [{ label: "Session", percent: 72 }],
+            collapse: { usageCollapsed: true, titleCollapsed: false },
+        });
+        const trigger = mounted.container.querySelector<HTMLButtonElement>(".mj_HeaderMiniUsage")!;
+
+        await act(async () => trigger.click());
+        await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })));
+        expect(document.activeElement).toBe(trigger);
+
+        await act(async () =>
+            mounted.root.render(
+                React.createElement(
+                    HeaderShell,
+                    headerProps({
+                        limits: [{ label: "Session", percent: 72 }],
+                        collapse: { usageCollapsed: false, titleCollapsed: false },
+                    }),
+                ),
+            ),
+        );
+
+        const header = mounted.container.querySelector<HTMLElement>(".mj_ChatHeader")!;
+        const userFocusTarget = mounted.container.querySelector<HTMLButtonElement>(".mj_BackButton")!;
+        expect(document.activeElement).toBe(header);
+        userFocusTarget.focus();
+
+        await act(async () =>
+            mounted.root.render(
+                React.createElement(
+                    HeaderShell,
+                    headerProps({
+                        limits: [
+                            { label: "Session", percent: 72 },
+                            { label: "Weekly", percent: 35 },
+                        ],
+                        collapse: { usageCollapsed: false, titleCollapsed: false },
+                    }),
+                ),
+            ),
+        );
+
+        expect(document.activeElement).toBe(userFocusTarget);
+    });
+
     it("restores focus when an open usage popover loses all limits", async () => {
         const mounted = await mountHeader({
             limits: [{ label: "Session", percent: 72 }],
