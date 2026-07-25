@@ -269,19 +269,20 @@ textarea {
 }
 
 .mj_UsageBars {
-    /* v3 mock: 2×2 grid (ctx/5h top, fbl/wk bottom) — not a vertical stack.
-       This also fits all 4 metrics in ~2 rows so none is clipped (#518). */
+    /* Default single-column (used by the collapsed mobile popover, which is only
+       ~280px wide — a 2-col grid there truncates labels like "Session"/"Weekly"). */
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    column-gap: var(--cpd-space-4x);
-    row-gap: var(--cpd-space-1x);
+    gap: var(--cpd-space-0-5x);
 }
 
 .mj_UsageCluster .mj_UsageBars {
-    /* The common 4-metric case fits the 2×2 grid in ~2 rows inside the 58px
-       header (no scroll, no clip). But limits can exceed 4 (12-limit contract
-       test + the adaptive-header height-bound spec), so keep bounded scrolling
-       for the overflow case — restored after review (#518). */
+    /* v3 mock 2×2 grid (ctx/5h top, fbl/wk bottom) — ONLY in the inline header
+       cluster, not the popover (review r2). The common 4-metric case fits ~2 rows
+       in the 58px header (no scroll, no clip). Limits can exceed 4 (12-limit
+       contract + height-bound spec) → keep bounded scrolling for overflow (#518). */
+    grid-template-columns: 1fr 1fr;
+    column-gap: var(--cpd-space-4x);
+    row-gap: var(--cpd-space-1x);
     max-height: 100%;
     overflow-y: auto;
     overscroll-behavior: contain;
