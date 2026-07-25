@@ -3427,14 +3427,13 @@ export function SubagentStrip({
     const selected = state.conversations.find((conversation) => conversation.id === state.selectedConversationId);
     const siblingOrChildParentId = mode === "parent" ? state.selectedConversationId : selected?.parent_convo_id;
     const siblingOrChildren = childrenOf(state.conversations, siblingOrChildParentId);
-    const nestedChildren = mode === "child" && selected ? childrenOf(state.conversations, selected.id) : [];
-    if (siblingOrChildren.length === 0 && nestedChildren.length === 0) return null;
+    if (siblingOrChildren.length === 0) return null;
 
     const runningFirst = (conversations: Conversation[]): Conversation[] => [
         ...conversations.filter((conversation) => conversation.session_state === "running"),
         ...conversations.filter((conversation) => conversation.session_state !== "running"),
     ];
-    const ordered = [...runningFirst(siblingOrChildren), ...runningFirst(nestedChildren)];
+    const ordered = runningFirst(siblingOrChildren);
     return (
         <div className="mj_SubagentStrip" role="list">
             {ordered.map((child) => {

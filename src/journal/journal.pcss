@@ -263,7 +263,7 @@ textarea {
 
 .mj_UsageCluster {
     min-width: var(--mj-header-side-min-width);
-    min-height: 58px;
+    height: 58px;
     justify-self: end;
     padding-block: var(--cpd-space-1x);
 }
@@ -274,7 +274,7 @@ textarea {
 }
 
 .mj_UsageCluster .mj_UsageBars {
-    max-height: 58px;
+    max-height: 100%;
     overflow-y: auto;
     overscroll-behavior: contain;
 }
@@ -380,15 +380,23 @@ textarea {
 }
 
 .mj_HeaderMiniUsageDot_low {
-    color: var(--cpd-color-usage-low);
+    color: #18883e;
 }
 
 .mj_HeaderMiniUsageDot_medium {
-    color: var(--cpd-color-usage-medium);
+    color: #ad6200;
 }
 
 .mj_HeaderMiniUsageDot_high {
     color: var(--cpd-color-usage-high);
+}
+
+[data-theme="dark"] .mj_HeaderMiniUsageDot_low {
+    color: var(--cpd-color-usage-low);
+}
+
+[data-theme="dark"] .mj_HeaderMiniUsageDot_medium {
+    color: var(--cpd-color-usage-medium);
 }
 
 .mj_HeaderMiniUsageUnknown {

@@ -228,7 +228,7 @@ describe("subagent strip integration", () => {
         ).toBe(false);
     });
 
-    it("keeps siblings and running and finished grandchildren reachable when viewing a child", async () => {
+    it("shows only siblings when viewing a child", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),
             conversation("child", "Child", "running", "parent"),
@@ -239,12 +239,7 @@ describe("subagent strip integration", () => {
         rendered = await renderClient(signedInClient(conversations, "child"));
 
         const pills = rendered.container.querySelectorAll(".mj_SubagentPill");
-        expect(pills).toHaveLength(4);
-        expect([...pills].map((pill) => pill.textContent)).toEqual([
-            "✓Child",
-            "○Sibling",
-            "Running grandchild",
-            "○Finished grandchild",
-        ]);
+        expect(pills).toHaveLength(2);
+        expect([...pills].map((pill) => pill.textContent)).toEqual(["✓Child", "○Sibling"]);
     });
 });
