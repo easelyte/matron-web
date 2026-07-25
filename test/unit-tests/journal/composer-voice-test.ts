@@ -361,7 +361,7 @@ describe("Composer voice recording", () => {
         expect(recorder.startTimeslice).toBe(1000);
     });
 
-    it("continues recording without a waveform when AudioContext initialization fails", async () => {
+    it("continues recording with a static indicator when AudioContext initialization fails", async () => {
         Object.defineProperty(window, "AudioContext", {
             configurable: true,
             value: class {
@@ -377,6 +377,8 @@ describe("Composer voice recording", () => {
         expect(recorder.state).toBe("recording");
         expect(harness.streams[0].track.stop).not.toHaveBeenCalled();
         expect(voiceError(container)).toBeNull();
+        expect(container.querySelector(".mj_VoiceRecording_waveformFallback")).not.toBeNull();
+        expect(container.querySelector(".mj_VoiceRecording_waveform")).toBeNull();
     });
 
     it("maps microphone permission denial to an inline error", async () => {
@@ -478,6 +480,7 @@ describe("Composer voice recording", () => {
         harness.queue({ autoStopEvents: false, finalChunk: "FINAL-A" });
         const client = makeClient();
         const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
         const { container } = await renderComposer(false, client);
         const recorder = await startRecording(container);
 
@@ -486,6 +489,7 @@ describe("Composer voice recording", () => {
         await act(async () => recorder.dispatchFinalEvents());
 
         expect(sendVoiceNote).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith("voice: session changed before finalize — recording not sent", { rid: 1 });
         expect(harness.streams[0].track.stop).toHaveBeenCalledTimes(1);
     });
 

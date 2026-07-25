@@ -1623,12 +1623,23 @@ button.mj_File {
     animation: mj-pulse 1.2s ease-in-out infinite;
 }
 
-.mj_VoiceRecording_waveform {
+.mj_VoiceRecording_waveform,
+.mj_VoiceRecording_waveformFallback {
     width: min(240px, 40vw);
     height: 32px;
     min-width: 48px;
     flex: 1 1 auto;
+}
+
+.mj_VoiceRecording_waveform {
     color: var(--cpd-color-icon-accent-primary);
+}
+
+.mj_VoiceRecording_waveformFallback {
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-icon-accent-primary);
+    opacity: 0.35;
+    animation: mj-pulse 1.2s ease-in-out infinite;
 }
 
 .mj_VoiceRecording_time {
@@ -1807,7 +1818,8 @@ button.mj_File {
 @media (prefers-reduced-motion: reduce) {
     .mj_AttachmentChip_spinner,
     .mj_Spinner,
-    .mj_VoiceRecording_dot {
+    .mj_VoiceRecording_dot,
+    .mj_VoiceRecording_waveformFallback {
         animation: none;
     }
 }

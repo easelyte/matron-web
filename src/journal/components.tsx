@@ -2625,6 +2625,7 @@ function Composer({
     const draftTimerConvoRef = useRef<string | undefined>(undefined);
     const [voiceState, reactSetVoiceState] = useState<"idle" | "requesting" | "recording" | "error">("idle");
     const [elapsedMs, setElapsedMs] = useState(0);
+    const [waveformActive, setWaveformActive] = useState(false);
     const genRef = useRef(0);
     const mediaRecorder = useRef<MediaRecorder | null>(null);
     const mediaStream = useRef<MediaStream | null>(null);
@@ -2737,6 +2738,10 @@ function Composer({
                 setElapsedMs(0);
             }
 
+            if (wantSend && blob && capturedConvo && client.sessionGeneration !== capturedSessionGen) {
+                console.warn("voice: session changed before finalize — recording not sent", { rid });
+            }
+
             if (wantSend && blob && capturedConvo && client.sessionGeneration === capturedSessionGen) {
                 const onFail = (): void => {
                     if (mountedRef.current && voiceStateRef.current === "idle") {
@@ -2827,6 +2832,7 @@ function Composer({
             recMimeRef.current = undefined;
             mediaStream.current = stream;
             recordingSessionGenRef.current = client.sessionGeneration;
+            setWaveformActive(false);
             try {
                 const mimeType = ["audio/webm;codecs=opus", "audio/webm"].find((candidate) =>
                     window.MediaRecorder.isTypeSupported(candidate),
@@ -2864,6 +2870,7 @@ function Composer({
                     analyser.current = currentAnalyser;
                     context.createMediaStreamSource(stream).connect(currentAnalyser);
                     startWaveform();
+                    setWaveformActive(true);
                 } catch {
                     if (rafId.current !== null) {
                         cancelAnimationFrame(rafId.current);
@@ -3183,7 +3190,11 @@ function Composer({
                 {voiceState === "recording" ? (
                     <div className="mj_VoiceRecording">
                         <span className="mj_VoiceRecording_dot" aria-hidden="true" />
-                        <canvas className="mj_VoiceRecording_waveform" ref={waveformCanvasRef} aria-hidden="true" />
+                        {waveformActive ? (
+                            <canvas className="mj_VoiceRecording_waveform" ref={waveformCanvasRef} aria-hidden="true" />
+                        ) : (
+                            <span className="mj_VoiceRecording_waveformFallback" aria-hidden="true" />
+                        )}
                         <span className="mj_VoiceRecording_time" aria-hidden="true">
                             {elapsedLabel}
                         </span>
