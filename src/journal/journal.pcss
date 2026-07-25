@@ -1329,7 +1329,8 @@ textarea {
 
 .mj_UploadConfirm_scrim {
     position: fixed;
-    z-index: 100;
+    /* v4 layering: modal scrim + card sit at 50 (above header popovers at 30). */
+    z-index: 50;
     display: flex;
     inset: 0;
     align-items: center;
@@ -1355,17 +1356,53 @@ textarea {
     padding: var(--cpd-space-5x);
 }
 
+/* v4 upload-queue modal: min(440,94vw) · max-h 88vh · radius 14 · shadow-lg,
+   three-part flex — fixed header / scrolling body / fixed footer.
+   Scoped to the queue variant so the shared new-session + error cards keep their padding. */
+.mj_UploadConfirm_queue {
+    width: min(440px, 94vw);
+    max-height: 88vh;
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: 14px;
+    box-shadow: var(--cpd-shadow-lg);
+    padding: 0;
+}
+
+.mj_UploadConfirm_header {
+    flex: 0 0 auto;
+    padding: 13px 14px 13px 16px;
+}
+
+.mj_UploadConfirm_body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: var(--cpd-space-3x);
+    overflow-y: auto;
+    padding: 14px 16px;
+}
+
+.mj_UploadConfirm_footer {
+    flex: 0 0 auto;
+    padding: 11px 14px;
+}
+
 .mj_UploadConfirm_title {
     margin: 0;
     overflow-wrap: anywhere;
-    font-size: var(--cpd-font-size-xl);
-    font-weight: 600;
-    line-height: 26px;
+    /* v4 modal title: 600 14px/19px Inter. */
+    font:
+        600 14px/19px Inter,
+        sans-serif;
 }
 
 .mj_UploadConfirm_count {
     color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
+    font:
+        400 13.5px/20px Inter,
+        sans-serif;
 }
 
 .mj_UploadConfirm_preview {
@@ -1396,18 +1433,27 @@ textarea {
 }
 
 .mj_UploadConfirm_caption {
-    min-height: 44px;
+    min-height: 60px;
     box-sizing: border-box;
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: 8px;
+    border: 1px solid var(--cpd-color-border-strong);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
     padding: var(--cpd-space-3x);
+    /* v4 modal caption input: body.sm 400 13.5/20. */
+    font:
+        400 13.5px/20px Inter,
+        sans-serif;
     resize: vertical;
 }
 
+.mj_UploadConfirm_caption::placeholder {
+    color: var(--cpd-color-text-tertiary);
+}
+
+/* v4: text input focus = border-color accent only (no ring — see composer note). */
 .mj_UploadConfirm_caption:focus {
-    border-color: var(--cpd-color-border-interactive-primary);
-    outline: 2px solid var(--cpd-color-border-interactive-primary);
-    outline-offset: 1px;
+    border-color: var(--cpd-color-text-action-accent);
+    outline: none;
 }
 
 .mj_UploadConfirm_actions {
@@ -1418,12 +1464,14 @@ textarea {
 
 .mj_UploadConfirm_actions button {
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: transparent;
+    /* v4 secondary/ghost button: 500 12.5/16. */
     color: var(--cpd-color-text-secondary);
     padding: var(--cpd-space-2x) var(--cpd-space-4x);
-    font: var(--cpd-font-body-md-regular);
-    font-weight: 600;
+    font:
+        500 12.5px/16px Inter,
+        sans-serif;
 }
 
 .mj_UploadConfirm_actions button:hover:not(:disabled) {
@@ -1432,8 +1480,8 @@ textarea {
 }
 
 .mj_UploadConfirm_actions button:focus-visible {
-    outline: 2px solid var(--cpd-color-border-interactive-primary);
-    outline-offset: 1px;
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
 }
 
 .mj_UploadConfirm_actions button:disabled {
@@ -1441,18 +1489,16 @@ textarea {
     opacity: 0.5;
 }
 
+/* v4 primary button: filled --m-accent-deep, weight 600, hover brightens (no colour swap). */
 .mj_UploadConfirm_actions button.mj_UploadConfirm_send {
-    background: var(--cpd-color-bg-accent-emphasis);
+    background: var(--cpd-color-bg-accent);
     color: var(--cpd-color-text-on-accent);
+    font-weight: 600;
 }
 
 .mj_UploadConfirm_actions button.mj_UploadConfirm_send:hover:not(:disabled) {
-    background: var(--cpd-color-bg-accent);
+    filter: brightness(1.08);
     color: var(--cpd-color-text-on-accent);
-}
-
-[data-theme="dark"] .mj_UploadConfirm_actions button.mj_UploadConfirm_send:hover:not(:disabled) {
-    background: var(--cpd-color-bg-accent-emphasis);
 }
 
 .mj_UploadConfirm_error {
@@ -1937,24 +1983,26 @@ button.mj_File {
 .mj_VoiceRecording {
     display: flex;
     width: 100%;
-    min-height: 55px;
+    min-height: 44px;
     align-items: center;
     gap: var(--cpd-space-3x);
     box-sizing: border-box;
-    border: 1px solid var(--cpd-color-border-strong);
-    border-radius: var(--cpd-radius-pill);
+    /* v4: recording bar replaces the input row — 1px teal-tint border, composer radius. */
+    border: 1px solid rgb(13 148 136 / 0.3);
+    border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-primary);
     padding: var(--cpd-space-2x) var(--cpd-space-3x);
 }
 
 .mj_VoiceRecording_dot {
-    width: 8px;
-    height: 8px;
+    width: 9px;
+    height: 9px;
     flex: 0 0 auto;
     border-radius: var(--cpd-radius-pill);
     background: var(--cpd-color-text-critical-primary);
-    animation: mj-pulse 1.2s ease-in-out infinite;
+    /* v4: recording dot pulses at 1.1s (distinct from the 1.2s typing/live-session dot). */
+    animation: mj-pulse 1.1s ease-in-out infinite;
 }
 
 .mj_VoiceRecording_waveform,
@@ -1979,7 +2027,10 @@ button.mj_File {
 .mj_VoiceRecording_time {
     min-width: 3rem;
     color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
+    /* v4: mono m:ss timer. */
+    font:
+        500 12.5px/18px "Fira Code",
+        monospace;
     font-variant-numeric: tabular-nums;
     text-align: center;
 }
@@ -2003,6 +2054,11 @@ button.mj_File {
     background: var(--cpd-color-bg-subtle-primary);
 }
 
+/* v4: discard is a ghost-danger control — hover reddens (the stop button overrides below). */
+.mj_VoiceRecording_action:not(.mj_VoiceRecording_stop):hover:not(:disabled) {
+    color: var(--cpd-color-text-critical-primary);
+}
+
 .mj_VoiceRecording_action:focus-visible {
     outline: 2px solid var(--cpd-color-icon-accent-primary);
     outline-offset: 2px;
@@ -2020,12 +2076,13 @@ button.mj_File {
 }
 
 .mj_VoiceRecording_stop {
-    background: var(--cpd-color-bg-accent-emphasis);
+    /* v4 primary button: filled --m-accent-deep, hover brightens (no colour swap). */
+    background: var(--cpd-color-bg-accent);
     color: var(--cpd-color-text-on-accent);
 }
 
 .mj_VoiceRecording_stop:hover:not(:disabled) {
-    background: var(--cpd-color-bg-accent);
+    filter: brightness(1.08);
     color: var(--cpd-color-text-on-accent);
 }
 

@@ -47,7 +47,6 @@ import {
     MarkUnreadIcon,
     MicOnIcon,
     PinIcon,
-    ReactionIcon,
     SearchIcon,
     SendIcon,
     SettingsIcon,
@@ -3416,6 +3415,9 @@ function Composer({
             sendingConvos.current.delete(cid);
         }
     };
+    // v4 composer hint carries a live "ctx N%" readout on the right when context usage is known.
+    const ctxHintRaw = normalizePercent(state.sessionStatus?.context?.pct ?? NaN);
+    const ctxHintPct = ctxHintRaw === null ? null : Math.round(ctxHintRaw);
     return (
         <div className="mx_MessageComposer" role="region" aria-label="Message composer" ref={composerRef}>
             <div className="mx_MessageComposer_wrapper">
@@ -3586,13 +3588,6 @@ function Composer({
                         </div>
                         <div className="mx_MessageComposer_actions">
                             <button
-                                className="mx_MessageComposer_button mx_EmojiButton"
-                                title="Emoji"
-                                aria-label="Emoji"
-                            >
-                                <ReactionIcon />
-                            </button>
-                            <button
                                 className="mx_MessageComposer_button"
                                 title="Attach a file"
                                 aria-label="Attach a file"
@@ -3636,21 +3631,26 @@ function Composer({
                                     <MicOnIcon />
                                 )}
                             </button>
-                            {body.trim() && (
-                                <button
-                                    className="mx_MessageComposer_sendMessage"
-                                    onClick={() => void send()}
-                                    aria-label="Send message"
-                                >
-                                    <SendIcon />
-                                </button>
-                            )}
+                            <button
+                                className="mx_MessageComposer_sendMessage"
+                                type="button"
+                                onClick={() => void send()}
+                                disabled={!body.trim()}
+                                aria-label="Send message"
+                            >
+                                <SendIcon />
+                            </button>
                         </div>
                     </div>
                 )}
-                <span id="mj-composer-hint" className="mj_ComposerHint">
-                    / commands · shift+enter for newline
-                </span>
+                <div id="mj-composer-hint" className="mj_ComposerHint">
+                    <span className="mj_ComposerHint_keys">/ commands · shift+enter for newline</span>
+                    {ctxHintPct !== null && (
+                        <span className="mj_ComposerHint_live" aria-hidden="true">
+                            ctx {ctxHintPct}%
+                        </span>
+                    )}
+                </div>
             </div>
         </div>
     );
@@ -3823,49 +3823,53 @@ function UploadConfirmPage({
     };
 
     return (
-        <div className="mj_UploadConfirm">
-            <h2 className="mj_UploadConfirm_title">
-                {head.file.name}
-                {staged.total > 1 && (
-                    <span className="mj_UploadConfirm_count">
-                        {" "}
-                        — File {position} of {staged.total}
-                    </span>
+        <div className="mj_UploadConfirm mj_UploadConfirm_queue">
+            <header className="mj_UploadConfirm_header">
+                <h2 className="mj_UploadConfirm_title">
+                    {head.file.name}
+                    {staged.total > 1 && (
+                        <span className="mj_UploadConfirm_count">
+                            {" "}
+                            — File {position} of {staged.total}
+                        </span>
+                    )}
+                </h2>
+            </header>
+            <div className="mj_UploadConfirm_body">
+                {isImage && previewUrl ? (
+                    <img className="mj_UploadConfirm_preview" src={previewUrl} alt={head.file.name} />
+                ) : (
+                    <div className="mj_UploadConfirm_fileMeta">
+                        <AttachmentIcon />
+                        <span>{head.file.name}</span>
+                        <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
+                    </div>
                 )}
-            </h2>
-            {isImage && previewUrl ? (
-                <img className="mj_UploadConfirm_preview" src={previewUrl} alt={head.file.name} />
-            ) : (
-                <div className="mj_UploadConfirm_fileMeta">
-                    <AttachmentIcon />
-                    <span>{head.file.name}</span>
-                    <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
-                </div>
-            )}
-            {preflight && <p className="mj_UploadConfirm_error">{preflight}</p>}
-            {staged.persistError && (
-                <p className="mj_UploadConfirm_error">Couldn&apos;t save this attachment — try Send again.</p>
-            )}
-            <textarea
-                ref={textarea}
-                className="mj_UploadConfirm_caption"
-                placeholder="Add a caption…"
-                maxLength={4096}
-                value={caption}
-                onChange={(event) => setCaption(event.target.value)}
-                onKeyDown={(event) => {
-                    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                    if (event.key === "Enter" && !event.shiftKey) {
-                        event.preventDefault();
-                        send();
-                    } else if (event.key === "Escape" && !staged.confirming) {
-                        event.preventDefault();
-                        client.skipStagedFile(head.id);
-                    }
-                }}
-                aria-label="Caption"
-            />
-            <div className="mj_UploadConfirm_actions">
+                {preflight && <p className="mj_UploadConfirm_error">{preflight}</p>}
+                {staged.persistError && (
+                    <p className="mj_UploadConfirm_error">Couldn&apos;t save this attachment — try Send again.</p>
+                )}
+                <textarea
+                    ref={textarea}
+                    className="mj_UploadConfirm_caption"
+                    placeholder="Add a caption…"
+                    maxLength={4096}
+                    value={caption}
+                    onChange={(event) => setCaption(event.target.value)}
+                    onKeyDown={(event) => {
+                        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                        if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            send();
+                        } else if (event.key === "Escape" && !staged.confirming) {
+                            event.preventDefault();
+                            client.skipStagedFile(head.id);
+                        }
+                    }}
+                    aria-label="Caption"
+                />
+            </div>
+            <footer className="mj_UploadConfirm_footer mj_UploadConfirm_actions">
                 {staged.total > 1 && (
                     <button
                         className="mj_TextButton"
@@ -3882,7 +3886,7 @@ function UploadConfirmPage({
                 <button className="mj_UploadConfirm_send" aria-label="Send" disabled={!canSend} onClick={send}>
                     Send
                 </button>
-            </div>
+            </footer>
         </div>
     );
 }

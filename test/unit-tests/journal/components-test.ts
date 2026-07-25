@@ -950,6 +950,27 @@ describe("composer sends", () => {
         jest.restoreAllMocks();
     });
 
+    test("send button is always present, disabled when empty, and sends when clicked (v4)", async () => {
+        const client = signedInClient();
+        const send = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        const result = await renderComposerApp(["c1"], client);
+        rendered = result;
+
+        const sendButton = () => result.container.querySelector<HTMLButtonElement>(".mx_MessageComposer_sendMessage");
+        // Always rendered (keeps its footprint), disabled while the composer is empty.
+        expect(sendButton()).not.toBeNull();
+        expect(sendButton()!.disabled).toBe(true);
+        // The dead emoji button was removed in v4 (attach · mic · send only).
+        expect(result.container.querySelector(".mx_EmojiButton")).toBeNull();
+
+        await typeInComposer(result.container, "hi");
+        expect(sendButton()!.disabled).toBe(false);
+
+        await act(async () => sendButton()!.click());
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(send).toHaveBeenCalledWith("hi", "c1");
+    });
+
     test("two rapid Enters send once", async () => {
         let resolve!: (value: boolean) => void;
         const client = signedInClient();
@@ -1758,6 +1779,12 @@ describe("UploadConfirmDialog", () => {
         expect(dialog).not.toBeNull();
         expect(dialog!.getAttribute("aria-modal")).toBe("true");
         expect(dialog!.querySelector("img")).not.toBeNull();
+        // v4 three-part flex card: fixed header / scrolling body / fixed footer.
+        const card = dialog!.querySelector(".mj_UploadConfirm_queue")!;
+        expect(card).not.toBeNull();
+        expect(card.querySelector(".mj_UploadConfirm_header")).not.toBeNull();
+        expect(card.querySelector(".mj_UploadConfirm_body")).not.toBeNull();
+        expect(card.querySelector(".mj_UploadConfirm_footer")).not.toBeNull();
 
         const textarea = dialog!.querySelector<HTMLTextAreaElement>("textarea");
         expect(document.activeElement).toBe(textarea);

@@ -697,22 +697,24 @@ button {
 
 .mx_MessageComposer_wrapper {
     position: relative;
-    padding: 0 16px;
+    /* v4 composer footer padding: 8px top / 16px sides / 12px bottom. */
+    padding: 8px 16px 12px;
 }
 
 .mx_SlashPalette {
     position: absolute;
-    z-index: 2;
+    /* v4 layering: slash palette sits above the composer, below modals. */
+    z-index: 20;
     right: var(--cpd-space-4x);
     bottom: calc(100% + var(--cpd-space-2x));
     left: var(--cpd-space-4x);
-    max-height: min(15rem, 50dvh);
+    max-height: 262px;
     overflow-y: auto;
     box-sizing: border-box;
-    border: 1px solid var(--cpd-color-border-disabled);
-    border-radius: var(--cpd-space-2x);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-canvas-default);
-    box-shadow: 0 8px 24px rgb(18 16 14 / 14%);
+    box-shadow: var(--cpd-shadow-md);
     color: var(--cpd-color-text-primary);
 }
 
@@ -720,35 +722,45 @@ button {
     display: grid;
     grid-template-columns: auto auto minmax(0, 1fr);
     align-items: baseline;
-    gap: var(--cpd-space-2x);
-    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    gap: 9px;
+    padding: 7px 12px;
     cursor: pointer;
-    font: var(--cpd-font-body-sm-regular);
 }
 
+/* v4: mouse hover and keyboard highlight are one state (--m-hover). */
 .mx_SlashPalette_row_highlighted {
     background: var(--cpd-color-bg-subtle-primary);
 }
 
 .mx_SlashPalette_trigger {
-    font-family: "Fira Code", monospace;
+    font:
+        500 12.5px/18px "Fira Code",
+        monospace;
     white-space: nowrap;
 }
 
-.mx_SlashPalette_argHint,
-.mx_SlashPalette_summary {
+.mx_SlashPalette_argHint {
+    font:
+        400 11px/16px "Fira Code",
+        monospace;
     color: var(--cpd-color-text-secondary);
+    white-space: nowrap;
 }
 
 .mx_SlashPalette_summary {
     min-width: 0;
     overflow-wrap: anywhere;
+    font:
+        400 12px/16px Inter,
+        sans-serif;
+    color: var(--cpd-color-text-secondary);
 }
 
 .mx_MessageComposer_row {
     display: flex;
-    min-height: 55px;
-    align-items: center;
+    align-items: flex-end;
+    /* v4 input row padding: 6px 8px 6px 6px (textarea carries no vertical margin). */
+    padding: 6px 8px 6px 6px;
 }
 
 .mx_SendMessageComposer {
@@ -765,30 +777,31 @@ button {
 .mx_BasicMessageComposer_input {
     min-height: 40px;
     box-sizing: border-box;
-    margin: var(--cpd-space-2x) 0;
+    margin: 0;
     padding: var(--cpd-space-2x) var(--cpd-space-3x);
     border: 1px solid var(--cpd-color-border-strong);
     /* Bounded radius, not pill: the textarea grows multi-line (max-height 160px);
-       a 999px pill curves into the text and clips the first/last line. The v3 mock
-       is a rounded rectangle. --cpd-radius-xl (16px) reads soft/rounded at single
-       line and never clips when tall. (#517) */
-    border-radius: var(--cpd-radius-xl);
+       a 999px pill curves into the text and clips the first/last line. v4 spec pins
+       the composer radius at 12px (--cpd-radius-lg); reads as a rounded rectangle at
+       single line and never clips when tall. (#517 → v4) */
+    border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-canvas-default);
     font-size: inherit;
     line-height: 1.5;
-    transition:
-        border-color var(--cpd-dur-fast) var(--cpd-ease),
-        box-shadow var(--cpd-dur-fast) var(--cpd-ease);
+    transition: border-color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
+/* v4: text inputs focus by border-color → accent ONLY. No glow, no ring.
+   (Text inputs receive :focus-visible on every focus, so a keyboard-ring here would
+   always show and contradict the border-only intent; the 2px keyboard outline is
+   reserved for buttons, where click focus does not trigger :focus-visible.) */
 .mx_BasicMessageComposer_input:focus {
     border-color: var(--cpd-color-text-action-accent);
     outline: none;
-    box-shadow: var(--cpd-focus-ring);
 }
 
 .mx_BasicMessageComposer_input::placeholder {
-    color: var(--cpd-color-text-placeholder);
+    color: var(--cpd-color-text-tertiary);
 }
 
 .mx_MessageComposer_actions {
@@ -801,14 +814,18 @@ button {
 .mx_MessageComposer_button,
 .mx_MessageComposer_sendMessage {
     display: inline-flex;
-    width: 22px;
+    width: 32px;
     height: 32px;
     align-items: center;
     justify-content: center;
     padding: 0;
     border: 0;
+    border-radius: var(--cpd-radius-md);
     background: transparent;
     color: var(--cpd-color-icon-tertiary);
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
 .mx_MessageComposer_button svg,
@@ -817,12 +834,36 @@ button {
     height: 19px;
 }
 
+/* v4 icon buttons (attach, mic): rest --m-ink3, hover --m-hover + --m-ink, active --m-active. */
+.mx_MessageComposer_button:hover:not([aria-disabled="true"]):not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-primary);
+}
+
+.mx_MessageComposer_button:active:not([aria-disabled="true"]):not(:disabled) {
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+/* v4 send button: 32×32, radius 9px, filled --m-accent-deep, always present.
+   Disabled (empty composer) keeps its footprint at opacity .45; pointer-events kept. */
 .mx_MessageComposer_sendMessage {
-    width: 32px;
-    height: 32px;
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-accent-emphasis);
+    border-radius: 9px;
+    background: var(--cpd-color-bg-accent);
     color: var(--cpd-color-text-on-accent);
+}
+
+.mx_MessageComposer_sendMessage:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+
+.mx_MessageComposer_sendMessage:disabled {
+    opacity: 0.45;
+}
+
+.mx_MessageComposer_button:focus-visible,
+.mx_MessageComposer_sendMessage:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
 }
 
 .mx_MessageComposer_button[aria-disabled="true"] {
@@ -831,10 +872,27 @@ button {
 }
 
 .mj_ComposerHint {
-    display: block;
-    padding: 0 var(--cpd-space-1x) var(--cpd-space-2x);
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--cpd-space-2x);
+    padding: 4px var(--cpd-space-1x) 0 var(--cpd-space-2x);
     color: var(--cpd-color-text-secondary);
     font: var(--cpd-font-micro);
+}
+
+.mj_ComposerHint_keys {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_ComposerHint_live {
+    flex: 0 0 auto;
+    font-family: "Fira Code", monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--cpd-color-text-tertiary);
 }
 
 .mx_HomePage {
