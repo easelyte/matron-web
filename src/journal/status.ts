@@ -47,8 +47,9 @@ export function usageBarLabel(label: string): string {
 }
 
 export function usageLevel(percent: number): "low" | "medium" | "high" {
+    // Redesign-v4 thresholds: <50 green, 50–84 amber, ≥85 red.
     if (percent < 50) return "low";
-    if (percent < 80) return "medium";
+    if (percent < 85) return "medium";
     return "high";
 }
 

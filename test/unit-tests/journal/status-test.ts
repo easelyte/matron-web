@@ -37,7 +37,7 @@ describe("journal session status presentation", () => {
     });
 
     it("uses the same green, amber, and red usage thresholds", () => {
-        expect([usageLevel(49), usageLevel(50), usageLevel(79), usageLevel(80)]).toEqual([
+        expect([usageLevel(49), usageLevel(50), usageLevel(84), usageLevel(85)]).toEqual([
             "low",
             "medium",
             "medium",

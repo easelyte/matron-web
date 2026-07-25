@@ -101,7 +101,8 @@ describe("read-only subchat viewer", () => {
         expect(header?.textContent).toContain("Research child");
         expect(header?.textContent).toContain(stateLabel);
         expect(header?.textContent).toContain("claude-sonnet");
-        expect(header?.textContent).toContain("Context 12k/200k");
+        // Context is now the leading "ctx" usage meter, not a subtitle text field.
+        expect(header?.querySelector(".mj_UsageLabel")?.textContent).toBe("ctx");
         expect(rendered.container.querySelector(".mx_MessageComposer")).toBeNull();
         expect(rendered.container.querySelector(".mj_ReadOnlyHint")?.textContent).toContain(
             "Read-only — subagent transcript",

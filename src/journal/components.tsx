@@ -72,7 +72,7 @@ import {
     makeRecentFoldersStore,
     recentFolderArgument,
 } from "./slash-palette";
-import { compactTokens, normalizePercent, resetDisplay, usageBarLabel, usageLevel, worstLimit } from "./status";
+import { normalizePercent, resetDisplay, usageBarLabel, usageLevel, worstLimit } from "./status";
 import {
     asNumber,
     asString,
@@ -1307,8 +1307,11 @@ export function useDismissablePopover(
     }, [open, close, openerRef, panelRef]);
 }
 
-const USAGE_COLLAPSE_PX = 700;
-const TITLE_COLLAPSE_PX = 460;
+// Redesign-v4 pane-width bands (ResizeObserver on the chat pane, not viewport):
+// >=760 full 2×2 usage grid; <760 ctx bar only + popover. >=560 full subtitle +
+// Compact; <560 subtitle → status dot + short model, title popover, Compact hidden.
+const USAGE_COLLAPSE_PX = 760;
+const TITLE_COLLAPSE_PX = 560;
 
 export function useAdaptiveHeader(bodyEl: HTMLElement | null): {
     usageCollapsed: boolean;
@@ -1368,6 +1371,23 @@ function useMinuteClock(now?: number): number {
     return now ?? clockNow;
 }
 
+// The usage meter leads with a synthetic "ctx" bar (context-window %), matching
+// the v3/v4 mock where ctx is the first, emphasised meter; the rate limits follow.
+function buildUsageMeters(
+    status: SessionStatus | undefined,
+    limits: SessionStatus["limits"] | undefined,
+): NonNullable<SessionStatus["limits"]> {
+    const meters: NonNullable<SessionStatus["limits"]> = [];
+    if (status?.context) meters.push({ label: "ctx", percent: status.context.pct });
+    if (limits?.length) meters.push(...limits);
+    return meters;
+}
+
+// "claude-sonnet-4-5" → "sonnet-4-5" for the <560 compact subtitle.
+function shortModelName(model: string): string {
+    return model.replace(/^(claude|gpt|openai|anthropic)[-/]/i, "").trim() || model;
+}
+
 export function UsageCluster({
     limits,
     now,
@@ -1413,93 +1433,137 @@ export function UsageCluster({
     );
 }
 
+// A header disclosure that opens on hover, focus, or click, and dismisses on
+// mouse-leave (unless focus is held inside), Escape, or outside-click. Wrapping
+// trigger + panel in one relatively-positioned group lets the mouse travel from
+// the trigger into the panel without the popover closing. `onControlGone`
+// restores focus to the stable header when the trigger unmounts (band change).
+function HeaderDisclosure({
+    className,
+    triggerClassName,
+    panelClassName,
+    label,
+    trigger,
+    children,
+    headerRef,
+}: {
+    className: string;
+    triggerClassName: string;
+    panelClassName: string;
+    label: string;
+    trigger: React.ReactNode;
+    children: React.ReactNode;
+    headerRef: React.RefObject<HTMLElement | null>;
+}): React.ReactElement {
+    const [open, setOpen] = useState(false);
+    const openerRef = useRef<HTMLButtonElement>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+    const focusHeld = useRef(false);
+    const popoverId = useId();
+    const close = useCallback(() => setOpen(false), []);
+    useDismissablePopover(open, close, { openerRef, panelRef });
+    useLayoutEffect(() => {
+        if (open) panelRef.current?.focus();
+    }, [open]);
+    // Trigger unmounts (its band exited) while focus was held → restore to header.
+    useEffect(
+        () => () => {
+            if (focusHeld.current) {
+                headerRef.current?.focus();
+                focusHeld.current = false;
+            }
+        },
+        [headerRef],
+    );
+    return (
+        <div
+            className={className}
+            onMouseEnter={() => setOpen(true)}
+            onMouseLeave={() => {
+                if (!focusHeld.current) setOpen(false);
+            }}
+        >
+            <button
+                ref={openerRef}
+                type="button"
+                className={triggerClassName}
+                aria-label={label}
+                aria-expanded={open}
+                aria-controls={popoverId}
+                onFocus={() => {
+                    focusHeld.current = true;
+                }}
+                onBlur={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) focusHeld.current = false;
+                }}
+                onClick={() => setOpen((value) => !value)}
+            >
+                {trigger}
+            </button>
+            {open && (
+                <div
+                    ref={panelRef}
+                    id={popoverId}
+                    className={panelClassName}
+                    role="group"
+                    aria-label={label}
+                    tabIndex={-1}
+                    onFocusCapture={() => {
+                        focusHeld.current = true;
+                    }}
+                    onBlur={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+                            focusHeld.current = false;
+                    }}
+                >
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+}
+
 export function HeaderShell({
     mode,
     onBack,
     backLabel,
-    left,
-    hasLeft,
     title,
-    titleMeta,
+    subtitle,
+    subtitleCompact,
+    hasSubtitle,
     limits,
     rightControls,
+    hideControlsWhenCompact = false,
     collapse,
 }: {
     mode: "parent" | "child";
     onBack: () => void;
     backLabel: string;
-    left: React.ReactNode;
-    hasLeft: boolean;
     title: string;
-    titleMeta: React.ReactNode;
+    subtitle: React.ReactNode;
+    subtitleCompact?: React.ReactNode;
+    hasSubtitle: boolean;
     limits?: NonNullable<SessionStatus["limits"]>;
     rightControls?: React.ReactNode;
+    hideControlsWhenCompact?: boolean;
     collapse: { usageCollapsed: boolean; titleCollapsed: boolean };
 }): React.ReactElement {
-    const { usageCollapsed } = collapse;
-    const [usagePopoverOpen, setUsagePopoverOpen] = useState(false);
+    const { usageCollapsed, titleCollapsed } = collapse;
     const headerRef = useRef<HTMLElement>(null);
-    const usageOpenerRef = useRef<HTMLButtonElement>(null);
-    const usagePanelRef = useRef<HTMLDivElement>(null);
-    const focusHeldRef = useRef(false);
     const now = useMinuteClock();
     const titleHeadingId = useId();
-    const usagePopoverId = useId();
-    const closeUsagePopover = useCallback(() => setUsagePopoverOpen(false), []);
 
-    useDismissablePopover(usagePopoverOpen, closeUsagePopover, {
-        openerRef: usageOpenerRef,
-        panelRef: usagePanelRef,
-    });
-
-    useLayoutEffect(() => {
-        if (usagePopoverOpen) usagePanelRef.current?.focus();
-    }, [usagePopoverOpen]);
-
-    // When the usage control goes away — un-collapsed (mini trigger + panel
-    // unmount) or its limits drop to [] — close any open popover and, if focus was
-    // inside that control, move it to the stable header before the browser drops it
-    // to <body>. Rely on focusHeldRef (ownership captured by the opener/panel
-    // focus/blur handlers), NOT post-teardown DOM containment: React unmounts the
-    // opener + panel before this passive effect runs, so their refs are already
-    // null and a `.contains()` check would miss.
-    useEffect(() => {
-        const usageControlGone = !usageCollapsed || !limits?.length;
-        if (!usageControlGone) return;
-        if (usagePopoverOpen) setUsagePopoverOpen(false);
-        if (focusHeldRef.current) {
-            headerRef.current?.focus();
-            focusHeldRef.current = false;
-        }
-    }, [usageCollapsed, limits?.length, usagePopoverOpen]);
-
-    const onTriggerFocus = (): void => {
-        focusHeldRef.current = true;
-    };
-    const onTriggerBlur = (event: React.FocusEvent<HTMLButtonElement>): void => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) focusHeldRef.current = false;
-    };
-    const onPanelFocus = (): void => {
-        focusHeldRef.current = true;
-    };
-    const onPanelBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) focusHeldRef.current = false;
-    };
-
+    // ctx is the first meter (context %); it stays visible when usage collapses.
+    const ctxMeter = limits?.length ? limits[0] : undefined;
     const worst = limits ? worstLimit(limits) : undefined;
-    const unknownCount = limits?.filter((limit) => normalizePercent(limit.percent) === null).length ?? 0;
     const worstNormalized = worst ? (normalizePercent(worst.percent) ?? 0) : undefined;
     const worstReset = worst ? resetDisplay(worst.resets_at, worst.resets, now) : "";
     const usageLabel =
         worstNormalized === undefined
-            ? `Usage — ${unknownCount} ${unknownCount === 1 ? "metric" : "metrics"} unknown`
-            : `Usage — worst limit ${Math.round(worstNormalized)}%${worstReset ? `, resets ${worstReset}` : ""}${
-                  unknownCount ? `, ${unknownCount} ${unknownCount === 1 ? "metric" : "metrics"} unknown` : ""
-              }`;
-    // Meta stays rendered at every width (it truncates when narrow) so model /
-    // context / run-state remain reachable — the removed title popover used to be
-    // the only narrow-width disclosure for them.
-    const showMeta = hasLeft || Boolean(titleMeta);
+            ? "Usage — all metrics"
+            : `Usage — worst limit ${Math.round(worstNormalized)}%${worstReset ? `, resets ${worstReset}` : ""}`;
+
+    const controls = titleCollapsed && hideControlsWhenCompact ? null : rightControls;
 
     return (
         <header
@@ -1510,72 +1574,42 @@ export function HeaderShell({
             <button type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
                 <ChevronLeftIcon />
             </button>
-            <div className="mj_HeaderCluster mj_HeaderTitleCluster">
-                <div id={titleHeadingId} dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
+            <div
+                className={`mj_HeaderCluster mj_HeaderTitleCluster${
+                    titleCollapsed ? " mj_HeaderTitleCluster_compact" : ""
+                }`}
+            >
+                <div
+                    id={titleHeadingId}
+                    dir="auto"
+                    role="heading"
+                    aria-level={1}
+                    className="mx_RoomHeader_heading"
+                    title={titleCollapsed ? title : undefined}
+                >
                     <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
                 </div>
-                {showMeta && (
-                    <div className="mj_HeaderMeta">
-                        {left}
-                        {titleMeta}
-                    </div>
-                )}
+                {hasSubtitle && (titleCollapsed ? subtitleCompact : <div className="mj_HeaderMeta">{subtitle}</div>)}
             </div>
             <div className="mj_HeaderControls">
-                {usageCollapsed && limits?.length ? (
-                    <button
-                        ref={usageOpenerRef}
-                        type="button"
-                        className="mj_HeaderMiniUsage"
-                        aria-label={usageLabel}
-                        aria-expanded={usagePopoverOpen}
-                        aria-controls={usagePopoverId}
-                        onFocus={onTriggerFocus}
-                        onBlur={onTriggerBlur}
-                        onClick={() => setUsagePopoverOpen((open) => !open)}
+                {usageCollapsed && ctxMeter ? (
+                    <HeaderDisclosure
+                        className="mj_HeaderUsageDisclosure"
+                        triggerClassName="mj_HeaderCluster mj_UsageCluster mj_UsageCluster_collapsed"
+                        panelClassName="mj_HeaderMenu mj_UsagePopover"
+                        label={usageLabel}
+                        headerRef={headerRef}
+                        trigger={<UsageCluster limits={[ctxMeter]} now={now} />}
                     >
-                        {worstNormalized === undefined ? (
-                            <span className="mj_HeaderMiniUsageUnknown">—</span>
-                        ) : (
-                            <>
-                                <span
-                                    className={`mj_HeaderMiniUsageDot mj_HeaderMiniUsageDot_${usageLevel(
-                                        worstNormalized,
-                                    )}`}
-                                    aria-hidden="true"
-                                >
-                                    ⬤
-                                </span>
-                                <span>{Math.round(worstNormalized)}%</span>
-                                {unknownCount > 0 && (
-                                    <span className="mj_HeaderMiniUsageUnknown" aria-hidden="true">
-                                        ·—
-                                    </span>
-                                )}
-                            </>
-                        )}
-                    </button>
+                        <UsageCluster limits={limits ?? []} now={now} />
+                    </HeaderDisclosure>
                 ) : limits?.length ? (
                     <div className="mj_HeaderCluster mj_UsageCluster">
                         <UsageCluster limits={limits} now={now} />
                     </div>
                 ) : null}
-                {rightControls}
+                {controls}
             </div>
-            {usagePopoverOpen && limits?.length && (
-                <div
-                    ref={usagePanelRef}
-                    id={usagePopoverId}
-                    className="mj_HeaderMenu mj_UsagePopover"
-                    role="group"
-                    aria-label="Usage details"
-                    tabIndex={-1}
-                    onFocusCapture={onPanelFocus}
-                    onBlur={onPanelBlur}
-                >
-                    <UsageCluster limits={limits} now={now} />
-                </div>
-            )}
         </header>
     );
 }
@@ -1592,34 +1626,34 @@ function ChatHeader({
     const conversation = client.selectedConversation();
     const title = conversation ? conversationTitle(conversation) : "Conversation";
     const status = state.sessionStatus;
-    const hasModelContext = Boolean(status?.model || status?.context);
+    const runState = conversation?.session_state;
     const limits = status?.limits?.filter((limit) => limit.label.trim());
+    const meters = buildUsageMeters(status, limits);
+    const shortModel = status?.model ? shortModelName(status.model) : undefined;
+    const hasSubtitle = Boolean(status?.model || runState);
     return (
         <HeaderShell
             mode="parent"
             onBack={() => client.clearSelection()}
             backLabel="Back to conversations"
-            left={
+            title={title}
+            subtitle={
                 <>
                     {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
-                    {status?.context && (
-                        <span
-                            className="mj_HeaderContext"
-                            title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
-                        >
-                            Context {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
-                        </span>
-                    )}
-                    {conversation?.session_state && (
-                        <span className={`mj_HeaderState mj_HeaderState_${conversation.session_state}`}>
-                            {conversation.session_state}
-                        </span>
-                    )}
+                    {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runState}</span>}
                 </>
             }
-            hasLeft={hasModelContext || Boolean(conversation?.session_state)}
-            title={title}
-            titleMeta={null}
+            subtitleCompact={
+                (shortModel || runState) && (
+                    <span className="mj_HeaderMetaCompact">
+                        {runState && (
+                            <span className={`mj_HeaderStatusDot mj_HeaderStatusDot_${runState}`} aria-hidden="true" />
+                        )}
+                        {shortModel && <span className="mj_HeaderModelShort">{shortModel}</span>}
+                    </span>
+                )
+            }
+            hasSubtitle={hasSubtitle}
             rightControls={
                 status?.context && (
                     <button
@@ -1638,7 +1672,8 @@ function ChatHeader({
                     </button>
                 )
             }
-            limits={limits}
+            hideControlsWhenCompact
+            limits={meters}
             collapse={collapse}
         />
     );
@@ -1655,8 +1690,11 @@ function SubChatHeader({
 }): React.ReactElement {
     const selected = client.selectedConversation();
     const status = state.sessionStatus;
-    const hasModelContext = Boolean(status?.model || status?.context);
     const limits = status?.limits?.filter((limit) => limit.label.trim());
+    const meters = buildUsageMeters(status, limits);
+    const runState = selected?.session_state;
+    const running = runState === "running";
+    const shortModel = status?.model ? shortModelName(status.model) : undefined;
     const goBack = (): void => {
         if (!selected) {
             client.clearSelection();
@@ -1679,28 +1717,27 @@ function SubChatHeader({
             mode="child"
             onBack={goBack}
             backLabel="Back to parent"
-            left={
+            title={selected ? conversationTitle(selected) : "Subagent"}
+            subtitle={
                 <>
                     {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
-                    {status?.context && (
-                        <span
-                            className="mj_HeaderContext"
-                            title={`${status.context.tokens.toLocaleString()} / ${status.context.window.toLocaleString()} tokens`}
-                        >
-                            Context {compactTokens(status.context.tokens)}/{compactTokens(status.context.window)}
-                        </span>
-                    )}
+                    <span className="mj_SubChatState">
+                        {running && <span className="mj_Spinner" aria-hidden="true" />}
+                        {running ? "Running" : "Finished"}
+                    </span>
                 </>
             }
-            hasLeft={hasModelContext}
-            title={selected ? conversationTitle(selected) : "Subagent"}
-            titleMeta={
-                <span className="mj_SubChatState">
-                    {selected?.session_state === "running" && <span className="mj_Spinner" aria-hidden="true" />}
-                    {selected?.session_state === "running" ? "Running" : "Finished"}
+            subtitleCompact={
+                <span className="mj_HeaderMetaCompact">
+                    <span
+                        className={`mj_HeaderStatusDot mj_HeaderStatusDot_${running ? "running" : "idle"}`}
+                        aria-hidden="true"
+                    />
+                    {shortModel && <span className="mj_HeaderModelShort">{shortModel}</span>}
                 </span>
             }
-            limits={limits}
+            hasSubtitle
+            limits={meters}
             collapse={collapse}
         />
     );
