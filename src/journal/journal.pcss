@@ -257,21 +257,23 @@ textarea {
 
 .mj_UsageBars {
     display: grid;
-    /* Intentional micro-gap: keeps all three usage rows inside the header pill. */
-    gap: 2px;
+    max-height: 58px;
+    gap: var(--cpd-space-0-5x);
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .mj_UsageRow {
     display: grid;
-    grid-template-columns: minmax(34px, auto) 1fr;
+    grid-template-columns: min-content minmax(var(--cpd-space-10x), 1fr) min-content;
     align-items: center;
-    gap: var(--cpd-space-1x);
+    column-gap: var(--cpd-space-2x);
     font: var(--cpd-font-micro);
 }
 
 .mj_UsageLabel {
     overflow: hidden;
-    text-align: right;
+    color: var(--cpd-color-text-secondary);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -299,6 +301,97 @@ textarea {
     background-color: var(--cpd-color-usage-medium);
 }
 
+.mj_UsageFill_unknown {
+    background: repeating-linear-gradient(
+        135deg,
+        var(--cpd-color-bg-usage-track) 0,
+        var(--cpd-color-bg-usage-track) var(--cpd-space-1x),
+        var(--cpd-color-border-interactive-primary) var(--cpd-space-1x),
+        var(--cpd-color-border-interactive-primary) var(--cpd-space-2x)
+    );
+}
+
+.mj_UsagePercent {
+    min-width: var(--cpd-space-8x);
+    color: var(--cpd-color-text-secondary);
+    text-align: right;
+}
+
+.mj_UsagePercent_unknown {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_HeaderMiniTitle,
+.mj_HeaderMiniUsage {
+    display: inline-flex;
+    min-width: 0;
+    min-height: var(--cpd-space-8x);
+    align-items: center;
+    justify-content: center;
+    gap: var(--cpd-space-1x);
+    overflow: hidden;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-cluster);
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    font: var(--cpd-font-micro);
+    white-space: nowrap;
+}
+
+.mj_HeaderMiniTitle {
+    grid-column: 2;
+    max-width: min(100%, 40vw);
+    justify-self: center;
+}
+
+.mj_HeaderMiniUsage {
+    grid-column: 3;
+    justify-self: end;
+}
+
+.mj_HeaderMiniTitle:hover,
+.mj_HeaderMiniUsage:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_HeaderMiniTitle:focus-visible,
+.mj_HeaderMiniUsage:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: var(--cpd-space-0-5x);
+}
+
+.mj_HeaderMiniUsageDot_low {
+    color: var(--cpd-color-usage-low);
+}
+
+.mj_HeaderMiniUsageDot_medium {
+    color: var(--cpd-color-usage-medium);
+}
+
+.mj_HeaderMiniUsageDot_high {
+    color: var(--cpd-color-usage-high);
+}
+
+.mj_HeaderMiniUsageUnknown {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_TitlePopover {
+    top: calc(100% + var(--cpd-space-2x));
+    right: var(--cpd-space-2x);
+    left: var(--cpd-space-2x);
+    width: auto;
+    max-width: none;
+}
+
+.mj_UsagePopover {
+    top: calc(100% + var(--cpd-space-2x));
+    right: var(--cpd-space-2x);
+}
+
 /*
  * The resizable sidebar can make the room much narrower than the viewport.
  * At 720px the desktop header's two 152px side tracks, title, gaps, and room
@@ -318,12 +411,12 @@ textarea {
         padding-inline: var(--cpd-space-2x);
     }
 
-    .mj_UsageRow {
+    .mj_UsageCluster .mj_UsageRow {
         grid-template-columns: 1fr;
         gap: var(--cpd-space-1x);
     }
 
-    .mj_UsageTrack {
+    .mj_UsageCluster .mj_UsageTrack {
         width: 58px;
     }
 }
@@ -398,6 +491,10 @@ textarea {
     scrollbar-width: thin;
 }
 
+.mj_SubagentPill_wrapper {
+    display: inline-flex;
+}
+
 .mj_SubagentPill {
     display: inline-flex;
     min-height: 28px;
@@ -425,6 +522,17 @@ textarea {
 .mj_SubagentPill:focus-visible {
     outline: 2px solid var(--cpd-color-icon-accent-primary);
     outline-offset: 2px;
+}
+
+.mj_SubagentPill_finished {
+    border-color: var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_SubagentPill_current {
+    box-shadow: 0 0 0 var(--cpd-space-0-5x) var(--cpd-color-icon-accent-primary);
+    cursor: default;
 }
 
 .mj_Spinner {
@@ -1742,12 +1850,12 @@ button.mj_File {
         max-width: 30vw;
     }
 
-    .mj_UsageRow {
+    .mj_UsageCluster .mj_UsageRow {
         grid-template-columns: 1fr;
         gap: var(--cpd-space-1x);
     }
 
-    .mj_UsageTrack {
+    .mj_UsageCluster .mj_UsageTrack {
         width: 58px;
     }
 
