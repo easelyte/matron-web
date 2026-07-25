@@ -201,7 +201,7 @@ test("copies the exact raw fenced source and gates the success label on copyText
     await act(async () => button!.click());
 
     expect(copyTextMock).toHaveBeenCalledWith("const first = 1;\n  const indented = 2;\n");
-    expect(button?.textContent).toBe("Copied");
+    expect(button?.textContent).toBe("copied");
 });
 
 test("copies CRLF line endings from a fenced block verbatim", async () => {
@@ -231,7 +231,7 @@ test("shows copy failure when copyText returns false", async () => {
 
     await act(async () => button!.click());
 
-    expect(button?.textContent).toBe("Copy failed");
+    expect(button?.textContent).toBe("copy failed");
 });
 
 test("a second copy clears the first label timeout", async () => {
@@ -245,10 +245,10 @@ test("a second copy clears the first label timeout", async () => {
     await act(async () => button.click());
     await act(async () => jest.advanceTimersByTime(600));
 
-    expect(button.textContent).toBe("Copied");
+    expect(button.textContent).toBe("copied");
 
     await act(async () => jest.advanceTimersByTime(900));
-    expect(button.textContent).toBe("Copy");
+    expect(button.textContent).toBe("copy");
 });
 
 test("ignores a stale copy result when overlapping copies finish out of order", async () => {
@@ -267,10 +267,10 @@ test("ignores a stale copy result when overlapping copies finish out of order", 
     act(() => button.click());
     act(() => button.click());
     await act(async () => resolveSecond(true));
-    expect(button.textContent).toBe("Copied");
+    expect(button.textContent).toBe("copied");
 
     await act(async () => resolveFirst(false));
-    expect(button.textContent).toBe("Copied");
+    expect(button.textContent).toBe("copied");
 });
 
 test("clears the copy label timeout when its code block unmounts", async () => {

@@ -976,7 +976,12 @@ function ConversationList({
                                     aria-label="Room options"
                                     data-testid="room-list-header"
                                 >
-                                    <h1 title="Home">Home</h1>
+                                    <div className="mj_Wordmark">
+                                        <img className="mj_WordmarkLogo" src={matronLogo} alt="" aria-hidden="true" />
+                                        <h1 title={state.config?.brand || "Matron"}>
+                                            {state.config?.brand || "Matron"}
+                                        </h1>
+                                    </div>
                                     <div className="mj_RoomListHeaderActions">
                                         <ThemeToggle />
                                         {tab !== "archived" && hasActiveUnread && (
@@ -1651,6 +1656,9 @@ export function HeaderShell({
                         <UsageCluster limits={limits} now={now} />
                     </div>
                 ) : null}
+                {controls && (Boolean(limits?.length) || Boolean(usageCollapsed && ctxMeter)) && (
+                    <span className="mj_HeaderDivider" aria-hidden="true" />
+                )}
                 {controls}
             </div>
         </header>
@@ -1904,10 +1912,12 @@ function ToolOutput({ client, event }: { client: MatronJournalClient; event: Jou
     return (
         <details className={`mj_ToolCard ${failed ? "mj_ToolCard_failed" : ""}`}>
             <summary>
-                <span aria-hidden="true">{failed ? "!" : "›_"}</span>
-                <code>{command.split(/\s+/)[0] || "tool"}</code>
-                <span>{failed ? "Failed" : "Completed"}</span>
-                {exitCode !== undefined && <span>exit {exitCode}</span>}
+                <ChevronDownIcon className="mj_ToolCard_chevron" aria-hidden="true" />
+                <code>$ {command}</code>
+                <span className="mj_ToolCard_spacer" />
+                <span className={`mj_ToolBadge ${failed ? "mj_ToolBadge_failed" : ""}`}>
+                    {exitCode !== undefined ? `exit ${exitCode}` : failed ? "failed" : "done"}
+                </span>
             </summary>
             <div className="mj_ToolCommand">
                 <code>{command}</code>

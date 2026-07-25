@@ -149,7 +149,7 @@ function fencedCodeSource(node: ExtraProps["node"], source: string): string | un
 function CodeBlock({ node, source, children, ...props }: CodeBlockProps): React.ReactElement {
     const raw = fencedCodeSource(node, source) ?? (node ? toString(node) : "");
     const language = fenceLanguage(node, source);
-    const [copyLabel, setCopyLabel] = useState("Copy");
+    const [copyLabel, setCopyLabel] = useState("copy");
     const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const mountedRef = useRef(true);
     const copyOperationRef = useRef(0);
@@ -173,10 +173,10 @@ function CodeBlock({ node, source, children, ...props }: CodeBlockProps): React.
         clearCopyTimer();
         const copied = await copyText(raw);
         if (!mountedRef.current || operation !== copyOperationRef.current) return;
-        setCopyLabel(copied ? "Copied" : "Copy failed");
+        setCopyLabel(copied ? "copied" : "copy failed");
         clearCopyTimer();
         timerRef.current = setTimeout(() => {
-            setCopyLabel("Copy");
+            setCopyLabel("copy");
             timerRef.current = undefined;
         }, 1_500);
     }

@@ -188,31 +188,41 @@ textarea {
     gap: var(--cpd-space-3x);
 }
 
+/* v5 mock Compact pill: 28px, 1px --m-line2, transparent, secondary ink, 500 12/16. */
 .mj_CompactButton {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: var(--cpd-space-1x);
-    min-height: 32px;
-    padding: 0 var(--cpd-space-3x);
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px;
+    border: 1px solid var(--cpd-color-border-strong);
     border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
-    font: var(--cpd-font-body-sm-regular);
-    line-height: 1;
+    background: transparent;
+    color: var(--cpd-color-text-secondary);
+    font:
+        500 12px/16px Inter,
+        sans-serif;
     white-space: nowrap;
     cursor: pointer;
 }
 
 .mj_CompactButton svg {
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
 }
 
 .mj_CompactButton:hover {
-    background: var(--cpd-color-bg-subtle-secondary);
+    background: var(--cpd-state-hover);
     color: var(--cpd-color-text-primary);
+}
+
+/* 1px divider separating the usage grid from the Compact pill (mock). */
+.mj_HeaderDivider {
+    width: 1px;
+    height: 26px;
+    flex: 0 0 auto;
+    background: var(--cpd-color-border-subtle);
 }
 
 /* Session run-state in the subtitle — teal while running (v3 mock), muted otherwise. */
@@ -791,7 +801,8 @@ textarea {
 .mj_RoomListTabs {
     display: flex;
     gap: var(--cpd-space-1x);
-    margin: var(--cpd-space-1x) var(--cpd-space-3x);
+    /* v5 mock: no top margin (the New session row above provides the gap); 8px below. */
+    margin: 0 var(--cpd-space-3x) var(--cpd-space-2x);
     /* v4: segmented control on a subtle track; the active tab is a raised chip. */
     border-radius: var(--cpd-radius-pill);
     background: var(--cpd-color-bg-subtle-secondary);
@@ -807,7 +818,8 @@ textarea {
     color: var(--cpd-color-text-secondary);
     cursor: pointer;
     overflow: hidden;
-    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    /* v5 mock: 5px/8px so the pill row reads at the mock's height. */
+    padding: 5px var(--cpd-space-2x);
     /* v4 label.xs (tabs): 12px / 500 / 16px. */
     font-size: 12px;
     font-weight: 500;
@@ -998,7 +1010,8 @@ textarea {
 
 .mj_Markdown {
     min-width: 0;
-    max-width: 640px;
+    /* v5: prose shares the uniform agent content width. */
+    max-width: var(--mj-content-width);
     white-space: normal;
     overflow-wrap: anywhere;
 }
@@ -1128,7 +1141,8 @@ textarea {
 
 .mj_CodeBlock {
     position: relative;
-    max-width: min(720px, 62vw);
+    /* v5: fills the shared content width; long lines scroll inside. */
+    max-width: 100%;
     max-height: 360px;
     overflow: auto;
     box-sizing: border-box;
@@ -1153,7 +1167,8 @@ textarea {
     box-sizing: border-box;
     border-bottom: 1px solid var(--cpd-color-border-subtle);
     background: var(--cpd-color-bg-canvas-raised);
-    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    /* v5 mock code header: 6px/12px. */
+    padding: 6px var(--cpd-space-3x);
     opacity: 1;
 }
 
@@ -1161,14 +1176,23 @@ textarea {
 .mj_CodeBlock_lang {
     border: 0;
     background: transparent;
-    color: var(--cpd-color-text-secondary);
-    padding: var(--cpd-space-1x);
-    font: var(--cpd-font-body-xs-regular);
+    color: var(--cpd-color-text-tertiary);
+    padding: 0;
     opacity: 1;
 }
 
+/* v5: filename/lang label in mono; copy control in Inter. */
 .mj_CodeBlock_lang {
     pointer-events: none;
+    font:
+        400 11px/16px "Fira Code",
+        monospace;
+}
+
+.mj_CodeBlock_copy {
+    font:
+        400 11px/14px Inter,
+        sans-serif;
 }
 
 .mj_CodeBlock_copy {
@@ -1731,20 +1755,22 @@ li.mj_AttachmentChip_error {
 }
 
 .mj_ToolCard {
-    min-width: min(480px, 60vw);
+    /* v5: fills the shared agent content width (no bespoke min). */
+    min-width: 0;
     overflow: hidden;
     border: 1px solid var(--cpd-color-border-subtle);
     border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-canvas-default);
 }
 
+/* v5 tool card summary (mock): chevron + `$ command` + spacer + exit pill. */
 .mj_ToolCard summary {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: 10px;
     background: var(--cpd-color-bg-canvas-raised);
     cursor: pointer;
-    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    padding: 9px 12px;
     list-style: none;
 }
 
@@ -1756,26 +1782,59 @@ li.mj_AttachmentChip_error {
     display: none;
 }
 
-.mj_ToolCard summary code {
-    border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: 4px;
-    background: var(--cpd-color-bg-subtle-secondary);
-    padding: 3px 4px;
-    font-family: "Fira Code", monospace;
-    font-size: 100%;
-    line-height: 22px;
+.mj_ToolCard_chevron {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-tertiary);
+    transform: rotate(-90deg);
+    transition: transform var(--cpd-dur-fast) var(--cpd-ease);
 }
 
-.mj_ToolCard summary span:last-child,
-.mj_ToolCard summary span:nth-last-child(2) {
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
+.mj_ToolCard[open] summary .mj_ToolCard_chevron {
+    transform: rotate(0deg);
+}
+
+/* `$ command` — bare mono, single line with ellipsis (no chip box). */
+.mj_ToolCard summary code {
+    min-width: 0;
+    overflow: hidden;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font:
+        500 12.5px/18px "Fira Code",
+        monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_ToolCard_spacer {
+    flex: 1;
+}
+
+/* exit badge: pill, green on success, critical on failure. */
+.mj_ToolBadge {
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--cpd-color-bg-diff-add);
+    color: var(--cpd-color-usage-low);
+    padding: 1px 8px;
+    font:
+        600 11px/16px Inter,
+        sans-serif;
+}
+
+.mj_ToolBadge_failed {
+    background: var(--cpd-color-bg-diff-del);
+    color: var(--cpd-color-text-critical-primary);
 }
 
 /* v5 event.unknown: dashed --m-line2 border on --m-raised so an unrecognised event
    reads as diagnostic (collapsed, JSON on expand), never as content. */
 .mj_Unknown {
-    max-width: 680px;
+    /* v5: fills the shared agent content width. */
+    max-width: 100%;
     border: 1px dashed var(--cpd-color-border-strong);
     border-radius: 10px;
     background: var(--cpd-color-bg-canvas-raised);
@@ -1786,7 +1845,8 @@ li.mj_AttachmentChip_error {
 .mj_ToolCard pre,
 .mj_LiveTool pre,
 .mj_Unknown pre {
-    max-width: min(720px, 62vw);
+    /* v5: fill the card (which is capped at the shared content width); scroll inside. */
+    max-width: 100%;
     max-height: 360px;
     overflow: auto;
     box-sizing: border-box;
@@ -1908,7 +1968,8 @@ li.mj_AttachmentChip_error {
 }
 
 .mj_DiffCard_body {
-    max-width: min(720px, 62vw);
+    /* v5: fills the diff card (shared content width); wide rows scroll inside. */
+    max-width: 100%;
     overflow-x: auto;
     box-sizing: border-box;
     /* No horizontal padding — the rows carry it so their bg tint reaches the edges. */
@@ -1938,10 +1999,10 @@ li.mj_AttachmentChip_error {
     margin-top: var(--cpd-space-2x);
 }
 
-.mj_ToolCard_failed summary,
-.mj_ToolCard_failed summary span:last-child,
-.mj_ToolCard_failed summary span:nth-last-child(2) {
-    color: var(--cpd-color-text-critical-primary);
+/* v5 failed tool card: critical-tinted border; the exit badge (mj_ToolBadge_failed)
+   carries the colour, the command text stays neutral. */
+.mj_ToolCard_failed {
+    border-color: rgb(189 32 32 / 35%);
 }
 
 .mj_File {
@@ -2045,14 +2106,10 @@ button.mj_File {
     overflow-y: auto;
 }
 
-/* The rule above sets outline:none at high specificity, which would swallow the
-   composer's keyboard-focus ring. Restore it here at matching specificity + the
-   pseudo-class so a keyboard user gets a 2px accent ring on the (borderless) input
-   inside the shell; pointer focus is still carried by the shell border recolor. */
-.mx_RoomView_body[data-layout="bubble"] .mx_BasicMessageComposer textarea.mx_BasicMessageComposer_input:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 1px;
-}
+/* No composer focus ring by design — the shell border recolor
+   (.mx_MessageComposer_row:focus-within) is the focus indicator. A :focus-visible ring on
+   this textarea would show on click-to-type (text inputs always match :focus-visible),
+   which the mock rejects. See reference_focus_visible_fires_on_every_text_input_focus. */
 
 .mx_MessageComposer_actions button {
     border: 0;

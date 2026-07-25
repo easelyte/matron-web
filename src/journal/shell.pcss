@@ -6,6 +6,9 @@ Please see LICENSE files in the repository root for full details.
 */
 
 :root {
+    /* v5: one shared max-width for every agent content block (prose, tool card, diff
+       card, code block, prompt card) so the column reads uniform instead of jagged. */
+    --mj-content-width: 680px;
     /* --- v2 warm-neutral surfaces + brighter teal accent (docs/design/primitives-v2.md) --- */
     --cpd-color-bg-accent: #0f766e;
     --cpd-color-bg-accent-emphasis: #0d9488;
@@ -240,10 +243,24 @@ button {
     padding: 0 16px 0 12px;
 }
 
+/* v5 sidebar wordmark: logo + brand name (was a bare "Home" text). */
+.mj_Wordmark {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 10px;
+}
+
+.mj_WordmarkLogo {
+    width: 22px;
+    height: 22px;
+    flex: 0 0 auto;
+}
+
 .mj_RoomListHeader h1 {
     overflow: hidden;
     margin: 0;
-    /* v4 title.lg (sidebar brand): 15px / 600 / 20px. */
+    /* v5 title.lg (sidebar brand): 15px / 600 / 20px. */
     font-size: 15px;
     font-weight: 600;
     line-height: 20px;
@@ -577,9 +594,14 @@ button {
 
 .mx_RoomView_messageListWrapper {
     display: flex;
+    /* v5: centre the reading column at 860px with 20px side gutters (mock canvas). */
+    width: 100%;
+    max-width: 860px;
+    margin-inline: auto;
+    box-sizing: border-box;
     flex-direction: column;
     justify-content: flex-end;
-    padding: 0 6px;
+    padding: 0 20px;
 }
 
 .mx_RoomView_MessageList {
@@ -666,6 +688,12 @@ button {
 }
 
 .mx_EventTile[data-self="false"] .mx_EventTile_line {
+    /* v5: agent content is a block column capped at the shared content width, so every
+       block (prose, tool/diff/code cards) fills the SAME width instead of each sizing to
+       its own content. Wide code/diff scrolls inside its card, not by widening the card. */
+    display: block;
+    width: 100%;
+    max-width: var(--mj-content-width);
     margin-left: 0;
     padding: var(--cpd-space-1x) var(--cpd-space-0-5x);
     border-color: transparent;
@@ -847,16 +875,14 @@ button {
         sans-serif;
 }
 
-/* v5 (DESIGN-SPEC §States): keyboard focus rings the inner textarea (a small inline
-   control → 1px offset) so it stays inside the shell; pointer focus is carried by the
-   shell border recolor (.mx_MessageComposer_row:focus-within). */
-.mx_BasicMessageComposer_input:focus {
-    outline: none;
-}
-
+/* v5: focus is carried ENTIRELY by the shell border recolor
+   (.mx_MessageComposer_row:focus-within → accent). No ring on the textarea — text
+   inputs match :focus-visible on every focus (click included), so a ring there shows
+   a "rectangle" the moment you type. The neutral→accent border change is the visible,
+   design-matching focus indicator. See reference_focus_visible_fires_on_every_text_input_focus. */
+.mx_BasicMessageComposer_input:focus,
 .mx_BasicMessageComposer_input:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 1px;
+    outline: none;
 }
 
 .mx_BasicMessageComposer_input::placeholder {
