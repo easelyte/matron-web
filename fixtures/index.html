@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Matron — visual fixtures</title>
+        <style>
+            html,
+            body {
+                margin: 0;
+                height: 100%;
+            }
+            /* The app expects a full-viewport flex host; the fixture sizes it per-run
+               via the Playwright driver (viewport + the pane wrappers inside the app). */
+            #matron {
+                height: 100vh;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="matron"></div>
+    </body>
+</html>
