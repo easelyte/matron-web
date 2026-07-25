@@ -491,6 +491,34 @@ describe("HeaderShell", () => {
         expect(popoverLeft?.getAttribute("aria-hidden")).toBe("true");
     });
 
+    it("moves focus from the Compact button to the mini-title when the title collapses", async () => {
+        const mounted = await mountHeader({
+            hasLeft: true,
+            left: React.createElement("button", { "aria-label": "Compact conversation" }, "Compact"),
+        });
+        const compact = mounted.container.querySelector<HTMLButtonElement>('[aria-label="Compact conversation"]')!;
+
+        compact.focus();
+        expect(document.activeElement).toBe(compact);
+
+        await act(async () =>
+            mounted.root.render(
+                React.createElement(
+                    HeaderShell,
+                    headerProps({
+                        hasLeft: true,
+                        left: React.createElement("button", { "aria-label": "Compact conversation" }, "Compact"),
+                        collapse: { usageCollapsed: false, titleCollapsed: true },
+                    }),
+                ),
+            ),
+        );
+
+        const miniTitle = mounted.container.querySelector<HTMLButtonElement>(".mj_HeaderMiniTitle");
+        expect(document.activeElement).toBe(miniTitle);
+        expect(document.activeElement).not.toBe(document.body);
+    });
+
     it("moves focus into a populated usage panel and restores it on expansion", async () => {
         const mounted = await mountHeader({
             limits: [{ label: "Session", percent: 72 }],

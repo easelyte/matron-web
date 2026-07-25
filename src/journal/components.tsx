@@ -75,6 +75,7 @@ import {
     asString,
     childrenOf,
     type ClientState,
+    type Conversation,
     conversationTitle,
     type DeviceDTO,
     displaySender,
@@ -1423,6 +1424,8 @@ export function HeaderShell({
     const titleOpenerRef = useRef<HTMLButtonElement>(null);
     const titlePanelRef = useRef<HTMLDivElement>(null);
     const focusHeldRef = useRef(false);
+    const expandedTitleFocusHeldRef = useRef(false);
+    const previousTitleCollapsedRef = useRef(titleCollapsed);
     const now = useMinuteClock();
     const titleHeadingId = useId();
     const usagePopoverId = useId();
@@ -1445,6 +1448,14 @@ export function HeaderShell({
     useLayoutEffect(() => {
         if (titlePopoverOpen) titlePanelRef.current?.focus();
     }, [titlePopoverOpen]);
+    useLayoutEffect(() => {
+        const titleJustCollapsed = titleCollapsed && !previousTitleCollapsedRef.current;
+        previousTitleCollapsedRef.current = titleCollapsed;
+        if (titleJustCollapsed && expandedTitleFocusHeldRef.current) {
+            expandedTitleFocusHeldRef.current = false;
+            titleOpenerRef.current?.focus();
+        }
+    }, [titleCollapsed]);
 
     useEffect(() => {
         let restoreFocus = false;
@@ -1476,6 +1487,14 @@ export function HeaderShell({
     const onPanelBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) focusHeldRef.current = false;
     };
+    const onExpandedTitleFocus = (): void => {
+        expandedTitleFocusHeldRef.current = true;
+    };
+    const onExpandedTitleBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            expandedTitleFocusHeldRef.current = false;
+        }
+    };
 
     const worst = limits ? worstLimit(limits) : undefined;
     const unknownCount = limits?.filter((limit) => normalizePercent(limit.percent) === null).length ?? 0;
@@ -1501,6 +1520,8 @@ export function HeaderShell({
                 <div
                     className={`mj_HeaderCluster mj_ModelContextCluster${hasLeft ? "" : " mj_HeaderCluster_empty"}`}
                     aria-hidden={!hasLeft}
+                    onFocusCapture={onExpandedTitleFocus}
+                    onBlur={onExpandedTitleBlur}
                 >
                     {left}
                 </div>
@@ -1509,6 +1530,8 @@ export function HeaderShell({
                 className={`mj_HeaderCluster mj_HeaderTitleCluster${
                     titleCollapsed ? " mj_HeaderTitleCluster_hidden" : ""
                 }`}
+                onFocusCapture={onExpandedTitleFocus}
+                onBlur={onExpandedTitleBlur}
             >
                 <div id={titleHeadingId} dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
                     <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
@@ -3402,14 +3425,16 @@ export function SubagentStrip({
     mode: "parent" | "child";
 }): React.ReactElement | null {
     const selected = state.conversations.find((conversation) => conversation.id === state.selectedConversationId);
-    const parentId = mode === "parent" ? state.selectedConversationId : selected?.parent_convo_id;
-    const children = childrenOf(state.conversations, parentId);
-    if (children.length === 0) return null;
+    const siblingOrChildParentId = mode === "parent" ? state.selectedConversationId : selected?.parent_convo_id;
+    const siblingOrChildren = childrenOf(state.conversations, siblingOrChildParentId);
+    const nestedChildren = mode === "child" && selected ? childrenOf(state.conversations, selected.id) : [];
+    if (siblingOrChildren.length === 0 && nestedChildren.length === 0) return null;
 
-    const ordered = [
-        ...children.filter((child) => child.session_state === "running"),
-        ...children.filter((child) => child.session_state !== "running"),
+    const runningFirst = (conversations: Conversation[]): Conversation[] => [
+        ...conversations.filter((conversation) => conversation.session_state === "running"),
+        ...conversations.filter((conversation) => conversation.session_state !== "running"),
     ];
+    const ordered = [...runningFirst(siblingOrChildren), ...runningFirst(nestedChildren)];
     return (
         <div className="mj_SubagentStrip" role="list">
             {ordered.map((child) => {
