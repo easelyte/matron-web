@@ -1176,7 +1176,8 @@ textarea {
 .mj_CodeBlock_lang {
     border: 0;
     background: transparent;
-    color: var(--cpd-color-text-tertiary);
+    /* Secondary (not tertiary) so the 11px label clears WCAG AA on the raised header. */
+    color: var(--cpd-color-text-secondary);
     padding: 0;
     opacity: 1;
 }
@@ -1813,12 +1814,13 @@ li.mj_AttachmentChip_error {
     flex: 1;
 }
 
-/* exit badge: pill, green on success, critical on failure. */
+/* exit badge: pill, green bg on success, critical on failure. Text is primary ink so
+   the 11px label clears WCAG AA on the translucent tint (green text on green tint fails). */
 .mj_ToolBadge {
     flex: 0 0 auto;
     border-radius: 999px;
     background: var(--cpd-color-bg-diff-add);
-    color: var(--cpd-color-usage-low);
+    color: var(--cpd-color-text-primary);
     padding: 1px 8px;
     font:
         600 11px/16px Inter,

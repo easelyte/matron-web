@@ -1916,7 +1916,13 @@ function ToolOutput({ client, event }: { client: MatronJournalClient; event: Jou
                 <code>$ {command}</code>
                 <span className="mj_ToolCard_spacer" />
                 <span className={`mj_ToolBadge ${failed ? "mj_ToolBadge_failed" : ""}`}>
-                    {exitCode !== undefined ? `exit ${exitCode}` : failed ? "failed" : "done"}
+                    {payload.denied === true
+                        ? "denied"
+                        : exitCode !== undefined
+                          ? `exit ${exitCode}`
+                          : failed
+                            ? "failed"
+                            : "done"}
                 </span>
             </summary>
             <div className="mj_ToolCommand">

@@ -211,6 +211,27 @@ describe("usage limit accessibility", () => {
         expect(filled?.length).toBe(1);
         expect(filled?.[0]?.textContent).toBe("Allow");
     });
+
+    it("labels a denied tool as denied even when the exit code is 0", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 0,
+                    sender: "agent:claude",
+                    type: "tool_output",
+                    payload: { command: "rm -rf /", exit_code: 0, denied: true, snippet: "" },
+                },
+            ],
+        });
+
+        rendered = await renderClient(client);
+
+        const badge = rendered.container.querySelector(".mj_ToolBadge");
+        expect(badge?.textContent).toBe("denied");
+        expect(badge?.classList.contains("mj_ToolBadge_failed")).toBe(true);
+    });
 });
 
 describe("markdown render-site integration", () => {
