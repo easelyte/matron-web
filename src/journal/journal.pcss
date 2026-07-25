@@ -262,6 +262,11 @@ textarea {
 }
 
 .mj_UsageCluster {
+    /* Definite width (not fit-content) so the inner auto-fit grid has an
+       unambiguous available width even though the cluster is justify-self:end
+       (review r5). min(300px, 100%-of-track): 2 columns at desktop, shrinks to
+       1 when the header track is narrow — no horizontal overflow either way. */
+    width: min(300px, 100%);
     min-width: var(--mj-header-side-min-width);
     height: 58px;
     justify-self: end;
@@ -283,13 +288,6 @@ textarea {
        title at any width, the 700-720 band, mobile — never horizontally
        overflows; it's 2 columns only when there's genuine room. Limits can
        exceed 4 → bounded scrolling for vertical overflow (#518). */
-    /* Definite width so auto-fit has an unambiguous basis (the cluster itself is
-       justify-self:end / fit-content, which otherwise makes auto-repeat's
-       available width indeterminate — review r5). min(320px, 100%): 2 columns
-       when the header track gives ≥~276px, capped at 100% so it never overflows
-       a narrow cluster (then auto-fit drops to 1 column). Deterministic in Chrome
-       — visually verified 2×2 wide + single-column at 200px. */
-    width: min(320px, 100%);
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     column-gap: var(--cpd-space-4x);
     row-gap: var(--cpd-space-1x);
