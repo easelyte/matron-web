@@ -278,8 +278,12 @@ textarea {
 }
 
 .mj_UsageCluster .mj_UsageBars {
-    /* 4 metrics fit the 2×2 grid inside the header height — no overflow-scroll
-       (was clipping the 4th metric off-screen, #518). */
+    /* The common 4-metric case fits the 2×2 grid in ~2 rows inside the 58px
+       header (no scroll, no clip). But limits can exceed 4 (12-limit contract
+       test + the adaptive-header height-bound spec), so keep bounded scrolling
+       for the overflow case — restored after review (#518). */
+    max-height: 100%;
+    overflow-y: auto;
     overscroll-behavior: contain;
 }
 
