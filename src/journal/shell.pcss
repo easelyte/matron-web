@@ -47,7 +47,7 @@ Please see LICENSE files in the repository root for full details.
     /* --- v2 interaction state layer (Radix 3/4/5 + M3 opacities) --- */
     --cpd-state-hover: rgb(28 24 20 / 0.05);
     --cpd-state-active: rgb(28 24 20 / 0.09);
-    --cpd-state-selected: rgb(13 148 136 / 0.1);
+    --cpd-state-selected: rgb(13 148 136 / 0.10);
 
     /* --- v2 motion + focus --- */
     --cpd-focus-ring: 0 0 0 2px var(--cpd-color-bg-canvas-default), 0 0 0 4px var(--cpd-color-text-action-accent);
@@ -65,7 +65,7 @@ Please see LICENSE files in the repository root for full details.
 
     /* --- v2 elevation shadows --- */
     --cpd-shadow-sm: 0 1px 2px rgb(28 24 20 / 0.06);
-    --cpd-shadow-md: 0 4px 12px rgb(28 24 20 / 0.1);
+    --cpd-shadow-md: 0 4px 12px rgb(28 24 20 / 0.10);
     --cpd-shadow-lg: 0 16px 48px rgb(28 24 20 / 0.16);
 
     /* --- v2 icon sizes --- */
@@ -117,14 +117,14 @@ Please see LICENSE files in the repository root for full details.
     --cpd-color-bg-accent-emphasis: #14b8a6;
     --cpd-color-bg-badge: #3a3f46;
     --cpd-color-bg-diff-add: rgb(52 199 89 / 0.12);
-    --cpd-color-bg-diff-del: rgb(255 107 107 / 0.1);
+    --cpd-color-bg-diff-del: rgb(255 107 107 / 0.10);
     --cpd-color-bg-app: #121316;
     --cpd-color-bg-canvas-default: #1a1c20;
     --cpd-color-bg-canvas-raised: #212429;
     --cpd-color-bg-cluster: rgb(33, 36, 41, 0.72);
     --cpd-color-bg-room-canvas: #151619;
     --cpd-color-bg-scrim-auth: rgb(18, 19, 22, 0.86);
-    --cpd-color-bg-scrim-drag: rgb(18, 19, 22, 0.9);
+    --cpd-color-bg-scrim-drag: rgb(18, 19, 22, 0.90);
     --cpd-color-bg-self-bubble: #123530;
     --cpd-color-bg-subtle-primary: #212429;
     --cpd-color-bg-subtle-secondary: #282c32;
@@ -152,7 +152,7 @@ Please see LICENSE files in the repository root for full details.
 
     /* v2 interaction state layer (light-ink overlays on dark) */
     --cpd-state-hover: rgb(255 255 255 / 0.06);
-    --cpd-state-active: rgb(255 255 255 / 0.1);
+    --cpd-state-active: rgb(255 255 255 / 0.10);
     --cpd-state-selected: rgb(45 212 191 / 0.14);
 
     /* In dark, shadows are near-invisible — surface lightness carries elevation; shadows keep shape only. */
@@ -265,9 +265,7 @@ button {
     border-radius: var(--cpd-radius-md);
     background: transparent;
     color: var(--cpd-color-icon-secondary);
-    transition:
-        background var(--cpd-dur-fast) var(--cpd-ease),
-        color var(--cpd-dur-fast) var(--cpd-ease);
+    transition: background var(--cpd-dur-fast) var(--cpd-ease), color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
 .mj_IconButton:hover {
