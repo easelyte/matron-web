@@ -416,18 +416,20 @@ describe("useAdaptiveHeader", () => {
 });
 
 describe("HeaderShell", () => {
-    it("keeps one level-one title heading and labels the collapsed disclosure from it", async () => {
+    it("keeps one stable, flush-left level-one title heading at every width (no mini-title disclosure)", async () => {
+        // v3 mock: the title stays visible + flush-left at all widths and truncates;
+        // the old collapse-to-mini-title-popover path was removed (#518).
         const mounted = await mountHeader({
             title: "Stable conversation title",
             collapse: { usageCollapsed: false, titleCollapsed: true },
         });
         const headings = mounted.container.querySelectorAll('[role="heading"][aria-level="1"]');
-        const disclosure = mounted.container.querySelector(".mj_HeaderMiniTitle");
 
         expect(headings).toHaveLength(1);
         expect(headings[0].textContent).toBe("Stable conversation title");
-        expect(headings[0].closest(".mj_HeaderTitleCluster_hidden")).not.toBeNull();
-        expect(disclosure?.getAttribute("aria-labelledby")).toBe(headings[0].id);
+        expect(headings[0].closest(".mj_HeaderTitleCluster")).not.toBeNull();
+        expect(mounted.container.querySelector(".mj_HeaderMiniTitle")).toBeNull();
+        expect(mounted.container.querySelector(".mj_HeaderTitleCluster_hidden")).toBeNull();
 
         await act(async () =>
             mounted.root.render(
@@ -444,7 +446,7 @@ describe("HeaderShell", () => {
         const expandedHeadings = mounted.container.querySelectorAll('[role="heading"][aria-level="1"]');
         expect(expandedHeadings).toHaveLength(1);
         expect(expandedHeadings[0]).toBe(headings[0]);
-        expect(expandedHeadings[0].closest(".mj_HeaderTitleCluster_hidden")).toBeNull();
+        expect(mounted.container.querySelector(".mj_HeaderMiniTitle")).toBeNull();
     });
 
     it("refreshes the collapsed usage reset label on the minute clock", async () => {
@@ -465,58 +467,34 @@ describe("HeaderShell", () => {
         expect(miniUsage?.getAttribute("aria-label")).toBe("Usage — worst limit 72%, resets 2m");
     });
 
-    it("marks an empty left cluster hidden when expanded and in the collapsed title popover", async () => {
-        const mounted = await mountHeader();
-        const expandedLeft = mounted.container.querySelector(".mj_ModelContextCluster");
+    it("renders the model/context meta only when there is content, and keeps it at narrow widths", async () => {
+        // No left content and no titleMeta → no meta row at all.
+        const empty = await mountHeader();
+        expect(empty.container.querySelector(".mj_HeaderMeta")).toBeNull();
 
-        expect(expandedLeft?.classList.contains("mj_HeaderCluster_empty")).toBe(true);
-        expect(expandedLeft?.getAttribute("aria-hidden")).toBe("true");
-
-        await act(async () =>
-            mounted.root.render(
-                React.createElement(
-                    HeaderShell,
-                    headerProps({ collapse: { usageCollapsed: false, titleCollapsed: true } }),
-                ),
-            ),
-        );
-        await act(async () =>
-            mounted.container
-                .querySelector<HTMLButtonElement>(".mj_HeaderMiniTitle")!
-                .dispatchEvent(new MouseEvent("click", { bubbles: true })),
-        );
-
-        const popoverLeft = mounted.container.querySelector(".mj_TitlePopover .mj_ModelContextCluster");
-        expect(popoverLeft?.classList.contains("mj_HeaderCluster_empty")).toBe(true);
-        expect(popoverLeft?.getAttribute("aria-hidden")).toBe("true");
-    });
-
-    it("moves focus from the Compact button to the mini-title when the title collapses", async () => {
+        // With left content the meta renders — and STAYS rendered when the title
+        // "collapses" (narrow) so model/context/run-state remain reachable without a
+        // popover (the removed mini-title was the old narrow-width disclosure, #518).
         const mounted = await mountHeader({
             hasLeft: true,
-            left: React.createElement("button", { "aria-label": "Compact conversation" }, "Compact"),
+            left: React.createElement("span", { className: "mj_HeaderModel" }, "sonnet"),
+            collapse: { usageCollapsed: false, titleCollapsed: true },
         });
-        const compact = mounted.container.querySelector<HTMLButtonElement>('[aria-label="Compact conversation"]')!;
+        const meta = mounted.container.querySelector(".mj_HeaderMeta");
+        expect(meta).not.toBeNull();
+        expect(meta?.textContent).toContain("sonnet");
+        expect(mounted.container.querySelector(".mj_TitlePopover")).toBeNull();
+        expect(mounted.container.querySelector(".mj_ModelContextCluster")).toBeNull();
+    });
 
-        compact.focus();
-        expect(document.activeElement).toBe(compact);
-
-        await act(async () =>
-            mounted.root.render(
-                React.createElement(
-                    HeaderShell,
-                    headerProps({
-                        hasLeft: true,
-                        left: React.createElement("button", { "aria-label": "Compact conversation" }, "Compact"),
-                        collapse: { usageCollapsed: false, titleCollapsed: true },
-                    }),
-                ),
-            ),
-        );
-
-        const miniTitle = mounted.container.querySelector<HTMLButtonElement>(".mj_HeaderMiniTitle");
-        expect(document.activeElement).toBe(miniTitle);
-        expect(document.activeElement).not.toBe(document.body);
+    it("places rightControls (e.g. the Compact pill) in the header controls cluster", async () => {
+        const mounted = await mountHeader({
+            rightControls: React.createElement("button", { "aria-label": "Compact conversation" }, "Compact"),
+        });
+        const controls = mounted.container.querySelector(".mj_HeaderControls");
+        expect(controls).not.toBeNull();
+        expect(controls?.querySelector('[aria-label="Compact conversation"]')).not.toBeNull();
+        expect(mounted.container.querySelector(".mj_HeaderMiniTitle")).toBeNull();
     });
 
     it("moves focus into a populated usage panel and restores it on expansion", async () => {

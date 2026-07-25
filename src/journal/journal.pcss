@@ -376,8 +376,13 @@ textarea {
     grid-auto-flow: column;
     column-gap: var(--cpd-space-4x);
     row-gap: var(--cpd-space-1x);
+    /* >4 limits flow into further columns; keep them reachable via horizontal
+       scroll rather than clipping (the all-limits contract). The common ≤4 case
+       fits the 300px cluster with no scrollbar. */
     max-height: 100%;
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior: contain;
 }
 
 .mj_UsageRow {

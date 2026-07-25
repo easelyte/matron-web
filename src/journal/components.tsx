@@ -1436,7 +1436,7 @@ export function HeaderShell({
     rightControls?: React.ReactNode;
     collapse: { usageCollapsed: boolean; titleCollapsed: boolean };
 }): React.ReactElement {
-    const { usageCollapsed, titleCollapsed } = collapse;
+    const { usageCollapsed } = collapse;
     const [usagePopoverOpen, setUsagePopoverOpen] = useState(false);
     const headerRef = useRef<HTMLElement>(null);
     const usageOpenerRef = useRef<HTMLButtonElement>(null);
@@ -1456,15 +1456,18 @@ export function HeaderShell({
         if (usagePopoverOpen) usagePanelRef.current?.focus();
     }, [usagePopoverOpen]);
 
-    // Usage un-collapsed (or lost its limits) while its popover was open — close it
-    // and restore header focus if the just-removed opener/panel held it.
+    // When the usage control goes away — un-collapsed (mini trigger + panel
+    // unmount) or its limits drop to [] — close any open popover and, if focus was
+    // inside that control, move it to the stable header before the browser drops it
+    // to <body>. Rely on focusHeldRef (ownership captured by the opener/panel
+    // focus/blur handlers), NOT post-teardown DOM containment: React unmounts the
+    // opener + panel before this passive effect runs, so their refs are already
+    // null and a `.contains()` check would miss.
     useEffect(() => {
-        if ((usageCollapsed && limits?.length) || !usagePopoverOpen) return;
-        const activeElement = document.activeElement;
-        const usageHadFocus =
-            usageOpenerRef.current?.contains(activeElement) || usagePanelRef.current?.contains(activeElement);
-        setUsagePopoverOpen(false);
-        if (focusHeldRef.current && usageHadFocus) {
+        const usageControlGone = !usageCollapsed || !limits?.length;
+        if (!usageControlGone) return;
+        if (usagePopoverOpen) setUsagePopoverOpen(false);
+        if (focusHeldRef.current) {
             headerRef.current?.focus();
             focusHeldRef.current = false;
         }
@@ -1493,7 +1496,10 @@ export function HeaderShell({
             : `Usage — worst limit ${Math.round(worstNormalized)}%${worstReset ? `, resets ${worstReset}` : ""}${
                   unknownCount ? `, ${unknownCount} ${unknownCount === 1 ? "metric" : "metrics"} unknown` : ""
               }`;
-    const showMeta = !titleCollapsed && (hasLeft || Boolean(titleMeta));
+    // Meta stays rendered at every width (it truncates when narrow) so model /
+    // context / run-state remain reachable — the removed title popover used to be
+    // the only narrow-width disclosure for them.
+    const showMeta = hasLeft || Boolean(titleMeta);
 
     return (
         <header
