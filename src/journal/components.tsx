@@ -903,10 +903,17 @@ function ConversationList({
                         if (event.pointerType === "touch") cancelLongPress();
                     }}
                 >
-                    {state.pinnedIds.has(conversation.id) && (
+                    {state.pinnedIds.has(conversation.id) ? (
                         <span className="mj_RoomListPinGlyph">
                             <PinIcon aria-hidden />
                         </span>
+                    ) : (
+                        <span
+                            className={`mj_RoomListStatus mj_RoomListStatus_${
+                                conversation.session_state === "running" ? "running" : "idle"
+                            }`}
+                            aria-hidden="true"
+                        />
                     )}
                     <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
                         <span className="mj_RoomListName" title={name} data-testid="room-name">

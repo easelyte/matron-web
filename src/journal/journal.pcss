@@ -686,7 +686,11 @@ textarea {
 .mj_RoomListTabs {
     display: flex;
     gap: var(--cpd-space-1x);
-    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+    margin: var(--cpd-space-1x) var(--cpd-space-3x);
+    /* v4: segmented control on a subtle track; the active tab is a raised chip. */
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-secondary);
+    padding: 2px;
 }
 
 .mj_RoomListTab {
@@ -699,7 +703,10 @@ textarea {
     cursor: pointer;
     overflow: hidden;
     padding: var(--cpd-space-1x) var(--cpd-space-2x);
-    font: var(--cpd-font-label);
+    /* v4 label.xs (tabs): 12px / 500 / 16px. */
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 16px;
     text-overflow: ellipsis;
     white-space: nowrap;
     transition:
@@ -713,13 +720,15 @@ textarea {
 }
 
 .mj_RoomListTab:hover {
-    background: var(--cpd-state-hover);
+    color: var(--cpd-color-text-primary);
 }
 
+/* v4 selected tab: raised panel chip with a subtle shadow + primary ink. */
 .mj_RoomListTab_active,
 .mj_RoomListTab_active:hover {
-    background: var(--cpd-state-selected);
-    color: var(--cpd-color-text-action-accent);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: 0 1px 2px rgb(28 24 20 / 0.06);
+    color: var(--cpd-color-text-primary);
 }
 
 .mj_RoomListTab:focus-visible {

@@ -47,7 +47,7 @@ Please see LICENSE files in the repository root for full details.
     /* --- v2 interaction state layer (Radix 3/4/5 + M3 opacities) --- */
     --cpd-state-hover: rgb(28 24 20 / 0.05);
     --cpd-state-active: rgb(28 24 20 / 0.09);
-    --cpd-state-selected: rgb(13 148 136 / 0.10);
+    --cpd-state-selected: rgb(13 148 136 / 0.1);
 
     /* --- v2 motion + focus --- */
     --cpd-focus-ring: 0 0 0 2px var(--cpd-color-bg-canvas-default), 0 0 0 4px var(--cpd-color-text-action-accent);
@@ -65,7 +65,7 @@ Please see LICENSE files in the repository root for full details.
 
     /* --- v2 elevation shadows --- */
     --cpd-shadow-sm: 0 1px 2px rgb(28 24 20 / 0.06);
-    --cpd-shadow-md: 0 4px 12px rgb(28 24 20 / 0.10);
+    --cpd-shadow-md: 0 4px 12px rgb(28 24 20 / 0.1);
     --cpd-shadow-lg: 0 16px 48px rgb(28 24 20 / 0.16);
 
     /* --- v2 icon sizes --- */
@@ -117,14 +117,14 @@ Please see LICENSE files in the repository root for full details.
     --cpd-color-bg-accent-emphasis: #14b8a6;
     --cpd-color-bg-badge: #3a3f46;
     --cpd-color-bg-diff-add: rgb(52 199 89 / 0.12);
-    --cpd-color-bg-diff-del: rgb(255 107 107 / 0.10);
+    --cpd-color-bg-diff-del: rgb(255 107 107 / 0.1);
     --cpd-color-bg-app: #121316;
     --cpd-color-bg-canvas-default: #1a1c20;
     --cpd-color-bg-canvas-raised: #212429;
     --cpd-color-bg-cluster: rgb(33, 36, 41, 0.72);
     --cpd-color-bg-room-canvas: #151619;
     --cpd-color-bg-scrim-auth: rgb(18, 19, 22, 0.86);
-    --cpd-color-bg-scrim-drag: rgb(18, 19, 22, 0.90);
+    --cpd-color-bg-scrim-drag: rgb(18, 19, 22, 0.9);
     --cpd-color-bg-self-bubble: #123530;
     --cpd-color-bg-subtle-primary: #212429;
     --cpd-color-bg-subtle-secondary: #282c32;
@@ -152,7 +152,7 @@ Please see LICENSE files in the repository root for full details.
 
     /* v2 interaction state layer (light-ink overlays on dark) */
     --cpd-state-hover: rgb(255 255 255 / 0.06);
-    --cpd-state-active: rgb(255 255 255 / 0.10);
+    --cpd-state-active: rgb(255 255 255 / 0.1);
     --cpd-state-selected: rgb(45 212 191 / 0.14);
 
     /* In dark, shadows are near-invisible — surface lightness carries elevation; shadows keep shape only. */
@@ -243,7 +243,10 @@ button {
 .mj_RoomListHeader h1 {
     overflow: hidden;
     margin: 0;
-    font: var(--cpd-font-title);
+    /* v4 title.lg (sidebar brand): 15px / 600 / 20px. */
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 20px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -265,7 +268,9 @@ button {
     border-radius: var(--cpd-radius-md);
     background: transparent;
     color: var(--cpd-color-icon-secondary);
-    transition: background var(--cpd-dur-fast) var(--cpd-ease), color var(--cpd-dur-fast) var(--cpd-ease);
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
 .mj_IconButton:hover {
@@ -310,7 +315,10 @@ button {
     outline: 0;
     background: transparent;
     color: var(--cpd-color-text-primary);
-    font: var(--cpd-font-body-sm-regular);
+    /* v4 body.xs (search): 13px / 400 / 16px. */
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 16px;
 }
 
 .mx_RoomListSearch_input::placeholder {
@@ -336,9 +344,10 @@ button {
     min-height: 56px;
     align-items: center;
     justify-content: space-between;
-    gap: var(--cpd-space-2x);
-    margin: 0 var(--cpd-space-1x) var(--cpd-space-1x);
-    padding: var(--cpd-space-2x) var(--cpd-space-3x) var(--cpd-space-2x) var(--cpd-space-3x);
+    /* v4 row: glyph/status gap 10, padding 9×10, 1px row rhythm. */
+    gap: 10px;
+    margin: 0 var(--cpd-space-2x) 1px;
+    padding: 9px 10px;
     border: 0;
     border-radius: var(--cpd-radius-md);
     background: transparent;
@@ -358,12 +367,26 @@ button {
 .mj_RoomListItem_selected::before {
     content: "";
     position: absolute;
-    top: var(--cpd-space-1x);
-    bottom: var(--cpd-space-1x);
+    top: 8px;
+    bottom: 8px;
     left: 0;
     width: 3px;
     border-radius: var(--cpd-radius-pill);
     background: var(--cpd-color-text-action-accent);
+}
+
+/* Leading 8px status column: running = pulsing teal dot, idle = strong-line dot. */
+.mj_RoomListStatus {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--cpd-color-border-strong);
+}
+
+.mj_RoomListStatus_running {
+    background: var(--cpd-color-text-action-accent);
+    animation: mj-pulse 1.6s ease-in-out infinite;
 }
 
 .mj_RoomListText {
@@ -371,7 +394,7 @@ button {
     min-width: 0;
     flex: 1 1 0;
     flex-direction: column;
-    gap: var(--cpd-space-0-5x);
+    gap: 2px;
 }
 
 .mj_RoomListName,
@@ -382,31 +405,40 @@ button {
 }
 
 .mj_RoomListName {
+    /* v4 label.strong (read): 13px / 500 / 17px. */
     color: var(--cpd-color-text-primary);
-    font: var(--cpd-font-label);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 17px;
 }
 
 .mj_RoomListPreview {
+    /* v4 meta.md: 12px / 400 / 16px. */
     color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-meta);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 16px;
 }
 
+/* v4 title.sm (unread session name): 13px / 600. */
 .mj_RoomListText_unread .mj_RoomListName {
     font-weight: 600;
 }
 
 .mj_UnreadBadge {
     display: inline-flex;
-    min-width: var(--cpd-space-5x);
-    height: var(--cpd-space-5x);
+    min-width: 18px;
+    height: 18px;
     align-items: center;
     justify-content: center;
     border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-badge);
-    color: var(--cpd-color-text-on-badge);
+    /* v4: teal count badge, badge.count 600 10px/18px. */
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
     padding: 0 6px;
-    font: var(--cpd-font-body-2xs-regular);
+    font-size: 10px;
     font-weight: 600;
+    line-height: 18px;
 }
 
 .mj_RoomListMeta {
@@ -418,8 +450,11 @@ button {
 }
 
 .mj_RoomListTime {
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-2xs-regular);
+    /* v4 meta.xs (timestamp): 11px / 400 / 14px, tertiary ink. */
+    color: var(--cpd-color-text-tertiary);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 14px;
     white-space: nowrap;
     transition: opacity var(--cpd-dur-fast) var(--cpd-ease);
 }
