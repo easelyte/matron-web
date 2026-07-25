@@ -2172,6 +2172,32 @@ describe("conversation timestamp midnight invalidation", () => {
         jest.advanceTimersByTime(1_000);
         expect(jest.getTimerCount()).toBe(baselineTimerCount);
     });
+
+    it("reclassifies when midnight passes between render and effect execution", async () => {
+        const lastTimestamp = Date.now();
+        const client = signedInWithRooms([{ ...CONVERSATION, created_at: lastTimestamp, last_ts: lastTimestamp }]);
+        internals(client).state = { ...client.getSnapshot(), selectedConversationId: undefined };
+        const afterMidnight = new Date(2026, 2, 21, 0, 0, 0, 500);
+        function CrossMidnightBeforeEffects(): React.ReactElement {
+            React.useLayoutEffect(() => {
+                jest.setSystemTime(afterMidnight);
+            }, []);
+            return React.createElement(MatronApp, { client });
+        }
+
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        rendered = { container, root };
+        await act(async () => {
+            root.render(React.createElement(CrossMidnightBeforeEffects));
+        });
+
+        const expectedWeekday = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(
+            new Date(lastTimestamp),
+        );
+        expect(container.querySelector(".mj_RoomListTime")?.textContent).toBe(expectedWeekday);
+    });
 });
 
 describe("conversation list tabs", () => {
@@ -2246,7 +2272,7 @@ describe("conversation list tabs", () => {
         expect(rendered.container.textContent).toContain("Your agent conversations will appear here.");
     });
 
-    it("shows the no-active state when every conversation is archived", async () => {
+    it("uses the archived population to show the no-active state when every conversation is archived", async () => {
         archiveStore.write(SESSION, new Set([CONVERSATION.id]));
         rendered = await renderClient(signedInClient());
         expect(rendered.container.textContent).toContain("No active conversations.");

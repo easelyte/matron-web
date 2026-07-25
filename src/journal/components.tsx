@@ -663,6 +663,14 @@ function ConversationList({
 
     useEffect(() => {
         const now = new Date();
+        const renderedAt = new Date(renderNow);
+        if (
+            renderedAt.getFullYear() !== now.getFullYear() ||
+            renderedAt.getMonth() !== now.getMonth() ||
+            renderedAt.getDate() !== now.getDate()
+        ) {
+            forceDayTick();
+        }
         const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
         const timer = setTimeout(forceDayTick, nextMidnight - now.getTime() + 1000);
         return () => clearTimeout(timer);
@@ -1054,10 +1062,10 @@ function ConversationList({
                                     aria-label="Conversations"
                                 >
                                     {visibleRows.map((conversation) => renderConversation(conversation))}
-                                    {tab === "active" && state.conversations.length === 0 && (
+                                    {tab === "active" && !hasAnyActive && archivedTotal === 0 && (
                                         <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
                                     )}
-                                    {tab === "active" && state.conversations.length > 0 && !hasAnyActive && (
+                                    {tab === "active" && !hasAnyActive && archivedTotal > 0 && (
                                         <p className="mj_RoomListEmpty">No active conversations.</p>
                                     )}
                                     {tab === "active" && hasAnyActive && !visibleRows.length && (
