@@ -84,7 +84,6 @@ import {
     type PendingMessage,
     parentPresent,
     type RecentFolder,
-    runningChildrenOf,
     isSubChat,
     type SessionStatus,
     type StagedUploadItem,
@@ -3384,33 +3383,6 @@ function UploadConfirmPage({
     );
 }
 
-function RunningSubagentStrip({
-    client,
-    state,
-}: {
-    client: MatronJournalClient;
-    state: ClientState;
-}): React.ReactElement | null {
-    const running = runningChildrenOf(state.conversations, state.selectedConversationId);
-    if (running.length === 0) return null;
-    return (
-        <div className="mj_SubagentStrip" role="list">
-            {running.map((child) => (
-                <button
-                    key={child.id}
-                    className="mj_SubagentPill"
-                    role="listitem"
-                    aria-label={`Open subagent ${conversationTitle(child)}`}
-                    onClick={() => void client.selectConversation(child.id)}
-                >
-                    <span className="mj_Spinner" aria-hidden="true" />
-                    {conversationTitle(child)}
-                </button>
-            ))}
-        </div>
-    );
-}
-
 export function SubagentStrip({
     client,
     state,
@@ -3470,6 +3442,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     const leftPanel = useLeftPanelResize();
     const [dragActive, setDragActive] = useState(state.dragActive);
     const [draftReloadTicks, setDraftReloadTicks] = useState<Record<string, number>>({});
+    const [bodyEl, setBodyEl] = useState<HTMLElement | null>(null);
+    const collapse = useAdaptiveHeader(bodyEl);
     const appContent = useRef<HTMLDivElement>(null);
     const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
@@ -3528,13 +3502,17 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                     Drop files to attach
                                 </div>
                             )}
-                            <div className="mx_RoomView_body mx_MainSplit_timeline" data-layout="bubble">
+                            <div
+                                ref={setBodyEl}
+                                className="mx_RoomView_body mx_MainSplit_timeline"
+                                data-layout="bubble"
+                            >
                                 {childMode ? (
-                                    <SubChatHeader client={client} state={state} />
+                                    <SubChatHeader client={client} state={state} collapse={collapse} />
                                 ) : (
-                                    <ChatHeader client={client} state={state} />
+                                    <ChatHeader client={client} state={state} collapse={collapse} />
                                 )}
-                                <RunningSubagentStrip client={client} state={state} />
+                                <SubagentStrip client={client} state={state} mode={childMode ? "child" : "parent"} />
                                 <Timeline client={client} state={state} isReadOnly={childMode} />
                                 {childMode ? (
                                     <ReadOnlyHint />

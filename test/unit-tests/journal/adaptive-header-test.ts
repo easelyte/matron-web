@@ -8,7 +8,9 @@ Please see LICENSE files in the repository root for full details.
 import React, { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { HeaderShell, useAdaptiveHeader, useDismissablePopover } from "../../../src/journal/components";
+import { MatronJournalClient } from "../../../src/journal/client";
+import { HeaderShell, MatronApp, useAdaptiveHeader, useDismissablePopover } from "../../../src/journal/components";
+import type { ClientState, Conversation, Session } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -18,6 +20,81 @@ type MountedProbe = {
 };
 
 const mountedProbes: MountedProbe[] = [];
+
+const SESSION: Session = {
+    serverUrl: "https://journal.example",
+    token: "test-token",
+    deviceId: 1,
+    userId: 2,
+    username: "tester",
+};
+
+const PARENT: Conversation = {
+    id: "parent",
+    title: "Parent conversation",
+    session_state: "running",
+    last_seq: 1,
+    unread_count: 0,
+    snippet: "",
+    created_at: 1,
+    read_up_to_seq: 0,
+};
+
+const CHILDREN: Conversation[] = [
+    {
+        ...PARENT,
+        id: "running-child",
+        title: "Running child",
+        parent_convo_id: PARENT.id,
+        created_at: 2,
+    },
+    {
+        ...PARENT,
+        id: "finished-child",
+        title: "Finished child",
+        parent_convo_id: PARENT.id,
+        session_state: "finished",
+        created_at: 3,
+    },
+];
+
+type ClientInternals = {
+    state: ClientState;
+    listeners: Set<() => void>;
+};
+
+function clientInternals(client: MatronJournalClient): ClientInternals {
+    return client as unknown as ClientInternals;
+}
+
+function signedInClient(): MatronJournalClient {
+    const client = new MatronJournalClient();
+    const internals = clientInternals(client);
+    internals.state = {
+        ...client.getSnapshot(),
+        phase: "signed-in",
+        session: SESSION,
+        conversations: [PARENT, ...CHILDREN],
+        selectedConversationId: undefined,
+        events: [],
+        pendingMessages: [],
+        connection: "online",
+        sessionStatus: {
+            limits: [{ label: "Session", percent: 72, resets: "in 2 hours" }],
+        },
+    };
+    jest.spyOn(client, "selectConversation").mockImplementation(async (conversationId) => {
+        internals.state = {
+            ...internals.state,
+            selectedConversationId: conversationId,
+            sessionStatus: {
+                limits: [{ label: "Session", percent: 72, resets: "in 2 hours" }],
+            },
+        };
+        internals.listeners.forEach((listener) => listener());
+    });
+    return client;
+}
 
 function Probe({ close, open = true }: { close: () => void; open?: boolean }): React.ReactElement {
     const openerRef = useRef<HTMLButtonElement>(null);
@@ -299,6 +376,43 @@ describe("useAdaptiveHeader", () => {
         await flushFrames();
         expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
     });
+
+    it("reattaches after the full app returns home and remounts a conversation", async () => {
+        const client = signedInClient();
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        mountedProbes.push({ container, root });
+
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+        expect(container.querySelector(".mx_RoomView_body")).toBeNull();
+        expect(observers).toHaveLength(0);
+
+        await act(async () => client.selectConversation(PARENT.id));
+        const firstBody = container.querySelector<HTMLElement>(".mx_RoomView_body")!;
+        expect(firstBody).not.toBeNull();
+        expect(observers).toHaveLength(1);
+        expect(observers[0].observe).toHaveBeenCalledWith(firstBody);
+        expect(container.textContent).toContain("Finished child");
+
+        resize(observers[0], firstBody, 560);
+        await flushFrames();
+        expect(container.querySelector(".mj_HeaderMiniUsage")).not.toBeNull();
+
+        await act(async () => client.clearSelection());
+        expect(container.querySelector(".mx_RoomView_body")).toBeNull();
+        expect(observers[0].disconnect).toHaveBeenCalledTimes(1);
+
+        await act(async () => client.selectConversation(PARENT.id));
+        const secondBody = container.querySelector<HTMLElement>(".mx_RoomView_body")!;
+        expect(secondBody).not.toBe(firstBody);
+        expect(observers).toHaveLength(2);
+        expect(observers[1].observe).toHaveBeenCalledWith(secondBody);
+
+        resize(observers[1], secondBody, 560);
+        await flushFrames();
+        expect(container.querySelector(".mj_HeaderMiniUsage")).not.toBeNull();
+    });
 });
 
 describe("HeaderShell", () => {
@@ -344,5 +458,59 @@ describe("HeaderShell", () => {
         const popoverLeft = mounted.container.querySelector(".mj_TitlePopover .mj_ModelContextCluster");
         expect(popoverLeft?.classList.contains("mj_HeaderCluster_empty")).toBe(true);
         expect(popoverLeft?.getAttribute("aria-hidden")).toBe("true");
+    });
+
+    it("moves focus into a populated usage panel and restores it on expansion", async () => {
+        const mounted = await mountHeader({
+            limits: [{ label: "Session", percent: 72 }],
+            collapse: { usageCollapsed: true, titleCollapsed: false },
+        });
+        const trigger = mounted.container.querySelector<HTMLButtonElement>(".mj_HeaderMiniUsage")!;
+
+        await act(async () => trigger.click());
+        const panel = mounted.container.querySelector<HTMLElement>(".mj_UsagePopover")!;
+        expect(document.activeElement).toBe(panel);
+
+        await act(async () =>
+            mounted.root.render(
+                React.createElement(
+                    HeaderShell,
+                    headerProps({
+                        limits: [{ label: "Session", percent: 72 }],
+                        collapse: { usageCollapsed: false, titleCollapsed: false },
+                    }),
+                ),
+            ),
+        );
+
+        const backButton = mounted.container.querySelector<HTMLElement>(".mj_BackButton");
+        expect(document.activeElement).toBe(backButton);
+        expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it("restores focus when an open usage popover loses all limits", async () => {
+        const mounted = await mountHeader({
+            limits: [{ label: "Session", percent: 72 }],
+            collapse: { usageCollapsed: true, titleCollapsed: false },
+        });
+
+        await act(async () => mounted.container.querySelector<HTMLButtonElement>(".mj_HeaderMiniUsage")!.click());
+        expect(document.activeElement).toBe(mounted.container.querySelector(".mj_UsagePopover"));
+
+        await act(async () =>
+            mounted.root.render(
+                React.createElement(
+                    HeaderShell,
+                    headerProps({
+                        limits: [],
+                        collapse: { usageCollapsed: true, titleCollapsed: false },
+                    }),
+                ),
+            ),
+        );
+
+        const backButton = mounted.container.querySelector<HTMLElement>(".mj_BackButton");
+        expect(document.activeElement).toBe(backButton);
+        expect(document.activeElement).not.toBe(document.body);
     });
 });
