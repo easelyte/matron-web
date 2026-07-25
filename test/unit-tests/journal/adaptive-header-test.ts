@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { useAdaptiveHeader, useDismissablePopover } from "../../../src/journal/components";
+import { HeaderShell, useAdaptiveHeader, useDismissablePopover } from "../../../src/journal/components";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -38,6 +38,32 @@ async function mountProbe(close = jest.fn()): Promise<MountedProbe> {
     const mounted = { container, root };
     mountedProbes.push(mounted);
     await act(async () => root.render(React.createElement(Probe, { close })));
+    return mounted;
+}
+
+function headerProps(
+    overrides: Partial<React.ComponentProps<typeof HeaderShell>> = {},
+): React.ComponentProps<typeof HeaderShell> {
+    return {
+        mode: "parent",
+        onBack: jest.fn(),
+        backLabel: "Back",
+        left: null,
+        hasLeft: false,
+        title: "Conversation",
+        titleMeta: null,
+        collapse: { usageCollapsed: false, titleCollapsed: false },
+        ...overrides,
+    };
+}
+
+async function mountHeader(overrides: Partial<React.ComponentProps<typeof HeaderShell>> = {}): Promise<MountedProbe> {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const mounted = { container, root };
+    mountedProbes.push(mounted);
+    await act(async () => root.render(React.createElement(HeaderShell, headerProps(overrides))));
     return mounted;
 }
 
@@ -74,6 +100,7 @@ afterEach(async () => {
         }
     });
     jest.restoreAllMocks();
+    jest.useRealTimers();
 });
 
 describe("useDismissablePopover", () => {
@@ -271,5 +298,51 @@ describe("useAdaptiveHeader", () => {
         resize(observers[1], secondEl, 560);
         await flushFrames();
         expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
+    });
+});
+
+describe("HeaderShell", () => {
+    it("refreshes the collapsed usage reset label on the minute clock", async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date("2026-07-24T12:00:00Z"));
+        const { container } = await mountHeader({
+            hasLeft: true,
+            left: React.createElement("span", null, "Model"),
+            limits: [{ label: "Session", percent: 72, resets_at: "2026-07-24T12:03:00Z" }],
+            collapse: { usageCollapsed: true, titleCollapsed: false },
+        });
+        const miniUsage = container.querySelector(".mj_HeaderMiniUsage");
+
+        expect(miniUsage?.getAttribute("aria-label")).toBe("Usage — worst limit 72%, resets 3m");
+
+        await act(async () => jest.advanceTimersByTime(60_000));
+
+        expect(miniUsage?.getAttribute("aria-label")).toBe("Usage — worst limit 72%, resets 2m");
+    });
+
+    it("marks an empty left cluster hidden when expanded and in the collapsed title popover", async () => {
+        const mounted = await mountHeader();
+        const expandedLeft = mounted.container.querySelector(".mj_ModelContextCluster");
+
+        expect(expandedLeft?.classList.contains("mj_HeaderCluster_empty")).toBe(true);
+        expect(expandedLeft?.getAttribute("aria-hidden")).toBe("true");
+
+        await act(async () =>
+            mounted.root.render(
+                React.createElement(
+                    HeaderShell,
+                    headerProps({ collapse: { usageCollapsed: false, titleCollapsed: true } }),
+                ),
+            ),
+        );
+        await act(async () =>
+            mounted.container
+                .querySelector<HTMLButtonElement>(".mj_HeaderMiniTitle")!
+                .dispatchEvent(new MouseEvent("click", { bubbles: true })),
+        );
+
+        const popoverLeft = mounted.container.querySelector(".mj_TitlePopover .mj_ModelContextCluster");
+        expect(popoverLeft?.classList.contains("mj_HeaderCluster_empty")).toBe(true);
+        expect(popoverLeft?.getAttribute("aria-hidden")).toBe("true");
     });
 });

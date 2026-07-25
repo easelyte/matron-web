@@ -1339,24 +1339,31 @@ export function useAdaptiveHeader(bodyEl: HTMLElement | null): {
     return collapse;
 }
 
-function useMinuteClock(): number {
-    const [now, setNow] = useState(Date.now);
+function useMinuteClock(now?: number): number {
+    const [clockNow, setClockNow] = useState(Date.now);
     useEffect(() => {
-        const interval = window.setInterval(() => setNow(Date.now()), 60_000);
+        if (now !== undefined) return;
+        const interval = window.setInterval(() => setClockNow(Date.now()), 60_000);
         return () => window.clearInterval(interval);
-    }, []);
-    return now;
+    }, [now]);
+    return now ?? clockNow;
 }
 
-export function UsageCluster({ limits }: { limits: NonNullable<SessionStatus["limits"]> }): React.ReactElement {
-    const now = useMinuteClock();
+export function UsageCluster({
+    limits,
+    now,
+}: {
+    limits: NonNullable<SessionStatus["limits"]>;
+    now?: number;
+}): React.ReactElement {
+    const displayNow = useMinuteClock(now);
     return (
         <div className="mj_UsageBars" role="group" aria-label="Usage limits">
             {limits
                 .filter((limit) => limit.label.trim())
                 .map((limit, index) => {
                     const norm = normalizePercent(limit.percent);
-                    const reset = resetDisplay(limit.resets_at, limit.resets, now);
+                    const reset = resetDisplay(limit.resets_at, limit.resets, displayNow);
                     const level = norm === null ? "unknown" : usageLevel(norm);
                     return (
                         <div className="mj_UsageRow" key={index} title={reset ? `resets ${reset}` : undefined}>
@@ -1392,6 +1399,7 @@ export function HeaderShell({
     onBack,
     backLabel,
     left,
+    hasLeft,
     title,
     titleMeta,
     limits,
@@ -1401,6 +1409,7 @@ export function HeaderShell({
     onBack: () => void;
     backLabel: string;
     left: React.ReactNode;
+    hasLeft: boolean;
     title: string;
     titleMeta: React.ReactNode;
     limits?: NonNullable<SessionStatus["limits"]>;
@@ -1415,6 +1424,7 @@ export function HeaderShell({
     const titleOpenerRef = useRef<HTMLButtonElement>(null);
     const titlePanelRef = useRef<HTMLDivElement>(null);
     const focusHeldRef = useRef(false);
+    const now = useMinuteClock();
     const usagePopoverId = useId();
     const titlePopoverId = useId();
     const closeUsagePopover = useCallback(() => setUsagePopoverOpen(false), []);
@@ -1470,7 +1480,7 @@ export function HeaderShell({
     const worst = limits ? worstLimit(limits) : undefined;
     const unknownCount = limits?.filter((limit) => normalizePercent(limit.percent) === null).length ?? 0;
     const worstNormalized = worst ? (normalizePercent(worst.percent) ?? 0) : undefined;
-    const worstReset = worst ? resetDisplay(worst.resets_at, worst.resets) : "";
+    const worstReset = worst ? resetDisplay(worst.resets_at, worst.resets, now) : "";
     const usageLabel =
         worstNormalized === undefined
             ? `Usage — ${unknownCount} ${unknownCount === 1 ? "metric" : "metrics"} unknown`
@@ -1483,7 +1493,14 @@ export function HeaderShell({
             <button ref={backButtonRef} type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
                 <ChevronLeftIcon />
             </button>
-            {!titleCollapsed && <div className="mj_HeaderCluster mj_ModelContextCluster">{left}</div>}
+            {!titleCollapsed && (
+                <div
+                    className={`mj_HeaderCluster mj_ModelContextCluster${hasLeft ? "" : " mj_HeaderCluster_empty"}`}
+                    aria-hidden={!hasLeft}
+                >
+                    {left}
+                </div>
+            )}
             {titleCollapsed ? (
                 <button
                     ref={titleOpenerRef}
@@ -1548,7 +1565,7 @@ export function HeaderShell({
                     className={`mj_HeaderCluster mj_UsageCluster${limits?.length ? "" : " mj_HeaderCluster_empty"}`}
                     aria-hidden={!limits?.length}
                 >
-                    {!usageCollapsed && limits?.length ? <UsageCluster limits={limits} /> : null}
+                    {!usageCollapsed && limits?.length ? <UsageCluster limits={limits} now={now} /> : null}
                 </div>
             )}
             {titlePopoverOpen && (
@@ -1568,7 +1585,12 @@ export function HeaderShell({
                         </div>
                         {titleMeta}
                     </div>
-                    <div className="mj_HeaderCluster mj_ModelContextCluster">{left}</div>
+                    <div
+                        className={`mj_HeaderCluster mj_ModelContextCluster${hasLeft ? "" : " mj_HeaderCluster_empty"}`}
+                        aria-hidden={!hasLeft}
+                    >
+                        {left}
+                    </div>
                 </div>
             )}
             {usagePopoverOpen && limits?.length && (
@@ -1582,7 +1604,7 @@ export function HeaderShell({
                     onFocusCapture={onPanelFocus}
                     onBlur={onPanelBlur}
                 >
-                    <UsageCluster limits={limits} />
+                    <UsageCluster limits={limits} now={now} />
                 </div>
             )}
         </header>
