@@ -276,11 +276,14 @@ textarea {
 }
 
 .mj_UsageCluster .mj_UsageBars {
-    /* v3 mock 2×2 grid (ctx/5h top, fbl/wk bottom) — ONLY in the inline header
-       cluster, not the popover (review r2). The common 4-metric case fits ~2 rows
-       in the 58px header (no scroll, no clip). Limits can exceed 4 (12-limit
-       contract + height-bound spec) → keep bounded scrolling for overflow (#518). */
-    grid-template-columns: 1fr 1fr;
+    /* v3 mock 2×2 grid (ctx/5h top, fbl/wk bottom), ONLY in the inline header
+       cluster (not the popover, r2). INTRINSIC-width-driven columns (r3/r4):
+       auto-fit drops to 1 column whenever 2 don't fit (~130px min per column
+       covers the label + 40px track + % + gaps), so a narrow cluster — long
+       title at any width, the 700-720 band, mobile — never horizontally
+       overflows; it's 2 columns only when there's genuine room. Limits can
+       exceed 4 → bounded scrolling for vertical overflow (#518). */
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     column-gap: var(--cpd-space-4x);
     row-gap: var(--cpd-space-1x);
     max-height: 100%;
@@ -442,14 +445,6 @@ textarea {
     .mj_HeaderTitleCluster {
         max-width: 40cqi;
         padding-inline: var(--cpd-space-2x);
-    }
-
-    /* The 2×2 usage grid needs desktop width; at/below 720px (incl. the 700-720
-       still-expanded band) each column is too narrow (~83px) for the 40px track +
-       32px % + label → horizontal overflow. Fall back to single-column here; the
-       full 2×2 is a >720px desktop treatment (review r3). */
-    .mj_UsageCluster .mj_UsageBars {
-        grid-template-columns: 1fr;
     }
 }
 
