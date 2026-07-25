@@ -3,7 +3,7 @@
 **Status:** reviewed — spec-review converged at round 5 (Claude LGTM; Codex residuals = accepted deploy-hardening limitations owned by a follow-up loop)
 **Repo:** easelyte/matron-web (`/opt/matron/web-journal`, journal web client)
 **Loop:** son-of-anton #497 (`matron-web-redesign-v3-reskin-port`, operator priority 2)
-**Origin:** Operator-approved claude-design v3 redesign. Anchor: `docs/design/matron-redesign-v3.dc.html` (React + proprietary DCLogic runtime — REFERENCE ONLY, not mergeable). Token system: `docs/design/primitives-v2.md` (operator-approved 2026-07-23).
+**Origin:** Operator-approved claude-design v3 redesign. Anchor: `docs/design/archive/matron-redesign-v3.dc.html` (React + proprietary DCLogic runtime — REFERENCE ONLY, not mergeable). Token system: `docs/design/primitives-v2.md` (operator-approved 2026-07-23).
 **Branch:** `vps-redesign-v3-reskin` off `origin/main`.
 **Approach:** B — faithful v3 reskin including the asymmetric bubble model. Chosen over A (card/token refit that keeps symmetric bubbles) and C (reskin + style deferred-feature shells). See Rejected Alternatives.
 
@@ -168,7 +168,7 @@ CHROME=/root/.cache/puppeteer/chrome/linux-146.0.7680.153/chrome-linux64/chrome
 "$CHROME" --headless=new --no-sandbox --disable-gpu --hide-scrollbars \
   --window-size=1440,900 --virtual-time-budget=8000 \
   --screenshot=/tmp/anchor-v3.png \
-  file:///opt/matron/web-journal/docs/design/matron-redesign-v3.dc.html
+  file:///opt/matron/web-journal/docs/design/archive/matron-redesign-v3.dc.html
 # harness surface (per viewport):
 "$CHROME" --headless=new --no-sandbox --disable-gpu --hide-scrollbars \
   --window-size=<W,H> --virtual-time-budget=6000 --screenshot=/tmp/x.png <harness-url>

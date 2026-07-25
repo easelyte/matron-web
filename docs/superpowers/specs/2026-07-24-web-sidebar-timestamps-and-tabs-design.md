@@ -4,7 +4,7 @@
 **Repo:** easelyte/matron-web (`/opt/matron/web-journal`, journal web client)
 **Loops:** son-of-anton #507 (`matron-web-sidebar-timestamps`) + #498 (`matron-web-sidebar-tabs`) — bundled into one sidebar-region PR
 **Branch:** `vps-sidebar` off `origin/main`
-**Anchor:** `docs/design/matron-redesign-v3.dc.html` (v3 mock — REFERENCE ONLY: shows per-row time top-right + a 3-segment Active / Favorites / Archived control)
+**Anchor:** `docs/design/archive/matron-redesign-v3.dc.html` (v3 mock — REFERENCE ONLY: shows per-row time top-right + a 3-segment Active / Favorites / Archived control)
 **Approach:** B — full scope as operator-described (bucketed-absolute timestamp formatter + 3-segment tab restructure reusing existing client-local flag Sets). See Rejected Alternatives.
 
 **Parallel-window boundary.** This is 1 of 3 concurrent windows on matron-web. This window OWNS the **sidebar region only**:
