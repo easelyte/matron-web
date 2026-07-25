@@ -163,8 +163,10 @@ const visibleRows =
     active;
 // ...
 {visibleRows.map((c) => renderConversation(c))}
-{/* Active: distinguish "no active convos exist" from "search hides them" (Codex-B1) */}
-{tab === "active"    && !hasAnyActive && <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>}
+{/* Active: 3-way — globally-empty (first-run) vs all-archived vs search-hidden.
+   Uses ONLY canonical populations (hasAnyActive + archivedTotal), NOT raw state.conversations.length (P2). (ship-review) */}
+{tab === "active"    && !hasAnyActive && archivedTotal === 0 && <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>}
+{tab === "active"    && !hasAnyActive && archivedTotal > 0 && <p className="mj_RoomListEmpty">No active conversations.</p>}
 {tab === "active"    && hasAnyActive && !visibleRows.length && <p className="mj_RoomListEmpty">No conversations match your search.</p>}
 {tab === "favorites" && !hasAnyFavorite && <p className="mj_RoomListEmpty">No favorite conversations yet.</p>}
 {tab === "favorites" &&  hasAnyFavorite && !visibleRows.length && <p className="mj_RoomListEmpty">No favorites match your search.</p>}
