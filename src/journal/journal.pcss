@@ -1142,6 +1142,16 @@ textarea {
         sans-serif;
 }
 
+/* #527: item buttons ride the panel surface directly. The generic
+   `.mj_HeaderMenu button` rule (specificity 0,1,1) paints a subtle-secondary
+   pill; suppress it here so the menu reads as ONE surface (panel) instead of a
+   tinted pill layered on white/dark. Hover/focus below supply the only tint.
+   This 0,2,0 override beats `.mj_HeaderMenu button` at rest, and is placed
+   BEFORE :hover/:focus-visible (also 0,2,0) so those still win on interaction. */
+.mj_HeaderMenu .mj_RoomItemMenu_item {
+    background: transparent;
+}
+
 .mj_RoomItemMenu_item:hover {
     background: var(--cpd-color-bg-subtle-primary);
 }
