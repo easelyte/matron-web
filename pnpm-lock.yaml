@@ -35,6 +35,12 @@ importers:
       remark-gfm:
         specifier: ^4
         version: 4.0.1
+      remark-parse:
+        specifier: ^11
+        version: 11.0.0
+      unified:
+        specifier: ^11
+        version: 11.0.5
     devDependencies:
       '@babel/core':
         specifier: ^7.28.0

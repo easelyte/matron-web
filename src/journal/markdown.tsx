@@ -31,6 +31,8 @@ import React, {
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import { copyText } from "./clipboard";
 
@@ -65,37 +67,85 @@ const ALIASES = {
 
 const HIGHLIGHT_OPTIONS = { languages: CURATED, aliases: ALIASES };
 
+// Parse markdown SOURCE to an mdast tree with the SAME GFM extensions MarkdownBody renders
+// from, so the plain-text extraction agrees with what the operator sees. A regex stripper is
+// wrong here: it deletes paired intraword underscores (AWS_ACCESS_KEY_ID, foo_bar_baz) that
+// CommonMark never treats as emphasis, silently corrupting identifiers/paths/config on paste.
+const plainTextProcessor = unified().use(remarkParse).use(remarkGfm);
+
+interface MdastNode {
+    type: string;
+    value?: string;
+    alt?: string | null;
+    children?: MdastNode[];
+}
+
+// Node types whose children are joined WITHOUT a separator (inline runs + block wrappers
+// whose own line break is provided by their block parent).
+const INLINE_MDAST_TYPES = new Set([
+    "paragraph",
+    "heading",
+    "emphasis",
+    "strong",
+    "delete",
+    "link",
+    "linkReference",
+    "tableCell",
+    "footnote",
+    "footnoteReference",
+]);
+
+function mdastToText(node: MdastNode): string {
+    switch (node.type) {
+        // Literal nodes carry verbatim text — including intraword underscores, escaped
+        // punctuation (already unescaped by the parser: `\*` → "*"), inline code, and the full
+        // body of a fenced/indented code block.
+        case "text":
+        case "inlineCode":
+        case "code":
+        case "html":
+            return node.value ?? "";
+        case "image":
+        case "imageReference":
+            return node.alt ?? "";
+        case "break":
+            return "\n";
+        case "thematicBreak":
+            return "";
+        default:
+            break;
+    }
+    const children = node.children ?? [];
+    if (node.type === "table") {
+        // Rows on their own lines; cells tab-separated.
+        return children.map(mdastToText).join("\n");
+    }
+    if (node.type === "tableRow") {
+        return children.map(mdastToText).join("\t");
+    }
+    if (INLINE_MDAST_TYPES.has(node.type)) {
+        return children.map(mdastToText).join("");
+    }
+    // Block container (root, list, listItem, blockquote, footnoteDefinition, …): its block
+    // children are separated by a blank line.
+    return children
+        .map(mdastToText)
+        .filter((part) => part.length > 0)
+        .join("\n\n");
+}
+
 /**
  * Reduce markdown SOURCE to readable plain text for the "Copy" menu action ("Copy as
- * Markdown" keeps the raw body). Strips the common inline/block syntax so a paste into a
- * non-markdown target reads cleanly, without pulling in a full renderer. Best-effort — it
- * targets the syntax the journal actually emits (headings, emphasis, links, inline code,
- * fenced/indented code fences, list bullets, blockquotes), not every CommonMark edge.
+ * Markdown" keeps the raw body). Walks the parsed mdast and concatenates its text, so
+ * technical identifiers with intraword underscores, escaped punctuation, inline code, and
+ * fenced-code content survive exactly as rendered.
  */
-export function stripMarkdown(source: string): string {
-    return (
-        source
-            // Fenced code fences → drop the ``` lines, keep the code text.
-            .replace(/^```[^\n]*\n?/gm, "")
-            .replace(/^~~~[^\n]*\n?/gm, "")
-            // Images ![alt](url) → alt.
-            .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-            // Links [text](url) → text.
-            .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-            // Inline code `x` → x.
-            .replace(/`([^`]+)`/g, "$1")
-            // Bold/italic (**x**, __x__, *x*, _x_) → x.
-            .replace(/(\*\*|__)(.*?)\1/g, "$2")
-            .replace(/(\*|_)(.*?)\1/g, "$2")
-            // Strikethrough ~~x~~ → x.
-            .replace(/~~(.*?)~~/g, "$1")
-            // Leading heading hashes, blockquote markers, list bullets.
-            .replace(/^#{1,6}\s+/gm, "")
-            .replace(/^\s{0,3}>\s?/gm, "")
-            .replace(/^\s*([-*+])\s+/gm, "")
-            .replace(/^\s*\d+\.\s+/gm, "")
-            .trim()
-    );
+export function markdownToPlainText(source: string): string {
+    const tree = plainTextProcessor.parse(source) as unknown as MdastNode;
+    return mdastToText(tree)
+        .replace(/[^\S\n]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
 }
 
 interface HighlightNode {

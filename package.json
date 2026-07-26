@@ -28,7 +28,9 @@
         "react-dom": "^19.2.4",
         "react-markdown": "^9",
         "rehype-highlight": "^7",
-        "remark-gfm": "^4"
+        "remark-gfm": "^4",
+        "remark-parse": "^11",
+        "unified": "^11"
     },
     "devDependencies": {
         "@babel/core": "^7.28.0",

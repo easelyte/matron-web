@@ -63,7 +63,7 @@ import {
     UnarchiveIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
-import { MarkdownBody, stripMarkdown } from "./markdown";
+import { MarkdownBody, markdownToPlainText } from "./markdown";
 import { getSnapshot, nextThemePref, setTheme, subscribe } from "./theme";
 import {
     applyCommand,
@@ -853,7 +853,23 @@ function ConversationList({
         ...activeAll.filter((conversation) => state.pinnedIds.has(conversation.id)),
         ...activeAll.filter((conversation) => !state.pinnedIds.has(conversation.id)),
     ];
-    const archived = conversations.filter((conversation) => state.archivedIds.has(conversation.id));
+    // #532: the Archived tab lists EVERY archived conversation flat — including an archived
+    // CHILD of an active parent, which `conversations` drops via parentPresent (so it can be
+    // nested under its live parent in Active). Deriving the archived set from the full list
+    // (not the parentPresent-filtered `conversations`) keeps that child discoverable + it
+    // renders flat, matching how archived parents already render. Search still applies.
+    const archived = useMemo(() => {
+        const normalized = query.trim().toLocaleLowerCase();
+        return state.conversations
+            .filter((conversation) => state.archivedIds.has(conversation.id))
+            .filter(
+                (conversation) =>
+                    !normalized ||
+                    `${conversation.title} ${conversation.id} ${conversation.snippet}`
+                        .toLocaleLowerCase()
+                        .includes(normalized),
+            );
+    }, [query, state.archivedIds, state.conversations]);
     const visibleRows =
         tab === "favorites"
             ? active.filter((conversation) => state.favoriteIds.has(conversation.id))
@@ -869,10 +885,9 @@ function ConversationList({
             !state.archivedIds.has(conversation.id) &&
             !parentPresent(conversation, ids),
     );
-    const archivedAll = state.conversations.filter(
-        (conversation) => state.archivedIds.has(conversation.id) && !parentPresent(conversation, ids),
-    );
-    const archivedTotal = archivedAll.length;
+    // Count every archived conversation (parents AND archived children of active parents) so
+    // the tab badge matches the flat Archived list they render into (#532).
+    const archivedTotal = state.conversations.filter((conversation) => state.archivedIds.has(conversation.id)).length;
     // Visibility is computed from the UNFILTERED conversation set (minus archived), NOT the
     // search-filtered `active` — mark-all operates on the full active partition regardless of
     // the search box, so the button must not vanish just because the search hides the unread rows.
@@ -1158,16 +1173,20 @@ function ConversationList({
                                     role="list"
                                     aria-label="Conversations"
                                 >
-                                    {/* #532: render each parent row, then splice its subagent
-                                        children in immediately beneath (indented). Children inherit
-                                        the parent's group — parent filtering/search/tab already
-                                        decided which parents show. */}
-                                    {visibleRows.flatMap((conversation) => [
-                                        renderConversation(conversation, false),
-                                        ...childrenOf(state.conversations, conversation.id).map((child) =>
-                                            renderConversation(child, true),
-                                        ),
-                                    ])}
+                                    {/* #532: Active/Favorites render each parent row, then splice
+                                        its NON-ARCHIVED subagent children in beneath (indented) —
+                                        archiving a child removes it from these tabs. The Archived
+                                        tab renders flat (archived parents + archived children as
+                                        top-level rows), so an archived child stays discoverable +
+                                        unarchivable regardless of its parent's state. */}
+                                    {tab === "archived"
+                                        ? visibleRows.map((conversation) => renderConversation(conversation, false))
+                                        : visibleRows.flatMap((conversation) => [
+                                              renderConversation(conversation, false),
+                                              ...childrenOf(state.conversations, conversation.id)
+                                                  .filter((child) => !state.archivedIds.has(child.id))
+                                                  .map((child) => renderConversation(child, true)),
+                                          ])}
                                     {tab === "active" && !hasAnyActive && archivedTotal === 0 && (
                                         <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
                                     )}
@@ -3195,7 +3214,7 @@ function Timeline({
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
-                                    void copyText(stripMarkdown(asString(menu.state!.target.payload.body)));
+                                    void copyText(markdownToPlainText(asString(menu.state!.target.payload.body)));
                                     menu.close();
                                 }}
                             >

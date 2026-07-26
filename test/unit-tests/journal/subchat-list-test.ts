@@ -163,4 +163,45 @@ describe("subchat conversation list", () => {
         expect(container.textContent).toContain("No favorite conversations yet.");
         expect(container.textContent).not.toContain("No favorites match your search.");
     });
+
+    it("keeps an archived child out of Active/Favorites and discoverable in Archived (#532)", async () => {
+        const client = new MatronJournalClient();
+        const state = client.getSnapshot();
+        (client as unknown as ClientInternals).state = {
+            ...state,
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [conversation("root", "Root"), conversation("root:sub:linked", "Linked child", "root")],
+            // The child is archived while its parent stays active.
+            archivedIds: new Set(["root:sub:linked"]),
+            favoriteIds: new Set(["root"]),
+            selectedConversationId: undefined,
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+
+        const childName = (): string[] =>
+            [...container.querySelectorAll('[data-testid="room-name"]')].map((element) => element.textContent ?? "");
+        const clickTab = async (label: string): Promise<void> => {
+            const tab = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListTab")].find((button) =>
+                (button.textContent ?? "").includes(label),
+            );
+            await act(async () => tab?.click());
+        };
+
+        // Active (default): the archived child must NOT leak in under its active parent.
+        expect(childName()).toEqual(["Root"]);
+        expect(childName().some((name) => name.includes("Linked child"))).toBe(false);
+
+        // Favorites (parent favorited): the archived child must NOT leak in either.
+        await clickTab("Favs");
+        expect(childName().some((name) => name.includes("Linked child"))).toBe(false);
+
+        // Archived: the archived child IS discoverable (flat top-level row) + unarchivable.
+        await clickTab("Archived");
+        expect(childName()).toEqual(["Linked child"]);
+    });
 });
