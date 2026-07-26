@@ -100,6 +100,63 @@ const SHOTS_SPEC = [
             await p.waitForSelector(".mj_UploadConfirm_queue");
         },
     },
+    // Track-1 r2 surfaces.
+    {
+        comp: "sidebar",
+        state: "with-subagents",
+        clip: ".mx_RoomListPanel",
+        setup: async (p) => p.waitForSelector(".mj_RoomListItem_sub"),
+    },
+    {
+        comp: "header",
+        state: "usage-align",
+        clip: ".mj_ChatHeader",
+        setup: async (p) => p.waitForSelector(".mj_UsageCluster"),
+    },
+    {
+        comp: "timeline",
+        state: "date-divider",
+        clip: ".mx_RoomView_MessageList",
+        setup: async (p) => p.waitForSelector(".mj_DateDivider"),
+    },
+    {
+        comp: "message-menu",
+        state: "open",
+        clip: ".mj_EventRowMenu",
+        setup: async (p) => {
+            await p.locator('[data-event-id="2"]').click({ button: "right" });
+            await p.waitForSelector(".mj_EventRowMenu");
+        },
+    },
+    {
+        comp: "event-source",
+        state: "open",
+        clip: ".mj_EventSource",
+        setup: async (p) => {
+            await p.locator('[data-event-id="2"]').click({ button: "right" });
+            await p.waitForSelector(".mj_EventRowMenu");
+            await p.locator('.mj_EventRowMenu [role="menuitem"]', { hasText: "View source" }).click();
+            await p.waitForSelector(".mj_EventSource");
+        },
+    },
+    {
+        comp: "subagent",
+        state: "child-view",
+        clip: ".mx_RoomView_body",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.selectChild());
+            await p.waitForSelector(".mj_SubagentBack");
+        },
+    },
+    {
+        comp: "subagent-strip",
+        state: "child",
+        clip: ".mj_SubagentStrip",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.selectChild());
+            await p.waitForSelector(".mj_SubagentBack");
+        },
+    },
 ];
 
 const THEMES = ["light", "dark"];

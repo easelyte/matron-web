@@ -96,7 +96,18 @@ const conversations: Conversation[] = [
 // real shapes/fonts/bubbles: fenced code, plain markdown, exec tool_output card, doc-edit
 // diff card, permission card, and own (user) bubbles. ts is epoch-seconds.
 const T = 1_782_000_000;
+const DAY_MS = 86_400_000;
 const events: JournalEvent[] = [
+    {
+        // A prior-calendar-day event so the timeline renders TWO date dividers (one before this
+        // opening turn, one when the day rolls over to the main T-day thread below).
+        seq: 0,
+        convo_id: "c1",
+        ts: T - DAY_MS - 3600,
+        sender: "user:operator",
+        type: "text",
+        payload: { body: "kicking this off — reskin the journal client end to end" },
+    },
     {
         seq: 1,
         convo_id: "c1",
@@ -243,6 +254,16 @@ document.documentElement.setAttribute("data-theme", params.get("theme") === "dar
             new File([new Uint8Array(512)], "error-log.txt", { type: "text/plain" }),
         ]),
     setTheme: (t: string) => document.documentElement.setAttribute("data-theme", t),
+    // Drive the child (subagent) view: select the running child s1 of parent c1 → back chip +
+    // ↳ header + ringed current pill. The fixture client has no database, so selectConversation
+    // no-ops; patch the state directly (mirrors the client's own patch()).
+    selectChild: () =>
+        (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch({
+            selectedConversationId: "s1",
+            events: [],
+            pendingMessages: [],
+            sessionStatus: state.sessionStatus,
+        }),
 };
 
 const container = document.getElementById("matron");
