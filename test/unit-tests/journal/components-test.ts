@@ -117,7 +117,12 @@ function tabButton(container: HTMLElement, key: "active" | "favorites" | "archiv
 }
 
 async function openMenu(container: HTMLElement): Promise<void> {
-    await act(async () => button(container, "Conversation options").click());
+    // The kebab was removed; the row menu opens via right-click (onContextMenu).
+    const row = container.querySelector<HTMLElement>(".mj_RoomListItem");
+    if (!row) throw new Error("Missing conversation row");
+    await act(async () => {
+        row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+    });
 }
 
 beforeEach(() => localStorage.clear());
@@ -231,6 +236,23 @@ describe("usage limit accessibility", () => {
         const badge = rendered.container.querySelector(".mj_ToolBadge");
         expect(badge?.textContent).toBe("denied");
         expect(badge?.classList.contains("mj_ToolBadge_failed")).toBe(true);
+    });
+
+    it("opens the header overflow menu with the selected conversation's actions", async () => {
+        const client = signedInClient();
+        rendered = await renderClient(client);
+
+        const trigger = button(rendered.container, "Conversation actions");
+        expect(rendered.container.querySelector('.mj_HeaderOverflow [role="menu"]')).toBeNull();
+
+        await act(async () => trigger.click());
+
+        const menu = rendered.container.querySelector('.mj_HeaderOverflow [role="menu"]');
+        expect(menu).not.toBeNull();
+        const labels = Array.from(menu?.querySelectorAll('[role="menuitem"]') ?? []).map((item) =>
+            item.textContent?.trim(),
+        );
+        expect(labels).toEqual(["Pin", "Add to Favorites", "Mark as unread", "Archive"]);
     });
 });
 
@@ -2015,6 +2037,16 @@ describe("conversation menu controls", () => {
         }
         jest.restoreAllMocks();
         jest.useRealTimers();
+    });
+
+    it("keeps an accessible, keyboard-activatable menu trigger (kebab) on each row", async () => {
+        rendered = await renderClient(signedInClient());
+        const trigger = button(rendered.container, "Conversation options");
+        expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
+        // Activating the trigger (as keyboard Enter/Space does) opens the row menu.
+        await act(async () => trigger.click());
+        expect(menuItem(rendered!.container, "Pin")).toBeTruthy();
+        expect(menuItem(rendered!.container, "Archive")).toBeTruthy();
     });
 
     it("menu shows Pin when unpinned and Unpin when pinned", async () => {

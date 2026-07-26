@@ -231,6 +231,24 @@ textarea {
     background: var(--cpd-color-border-subtle);
 }
 
+/* Header "⋯": the selected conversation's actions, reachable from the chat (next to
+   Compact) — 3-dot trigger + click-menu. */
+.mj_HeaderOverflow {
+    position: relative;
+    display: inline-flex;
+    flex: 0 0 auto;
+}
+
+.mj_HeaderOverflowTrigger svg {
+    width: 18px;
+    height: 18px;
+}
+
+.mj_HeaderOverflow .mj_HeaderMenu {
+    top: calc(100% + var(--cpd-space-1x));
+    right: 0;
+}
+
 /* Session run-state in the subtitle — teal while running (v3 mock), muted otherwise. */
 .mj_HeaderState {
     color: var(--cpd-color-text-secondary);
@@ -800,15 +818,46 @@ textarea {
     position: relative;
 }
 
-.mj_RoomListItem_wrapper .mj_RoomListItem {
-    padding-right: calc(var(--cpd-space-5x) + var(--cpd-space-4x));
+/* Row-menu trigger: invisible + non-interactive for pointer users (who open the menu via
+   right-click / long-press), so the sidebar stays clean; it appears and becomes operable
+   only on keyboard focus, preserving a discoverable route for keyboard/AT users. */
+.mj_RoomItemMenu_trigger {
+    position: absolute;
+    top: 50%;
+    right: var(--cpd-space-3x);
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transform: translateY(-50%);
+    border: 0;
+    border-radius: 8px;
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-icon-secondary);
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.mj_RoomItemMenu_trigger:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: -2px;
+}
+
+.mj_RoomItemMenu_trigger svg {
+    width: 20px;
+    height: 20px;
 }
 
 .mj_RoomListTabs {
     display: flex;
     gap: var(--cpd-space-1x);
-    /* v5 mock: no top margin (the New session row above provides the gap); 8px below. */
-    margin: 0 var(--cpd-space-3x) var(--cpd-space-2x);
+    /* No top margin (the New session row provides the gap); 12px below = uniform gap. */
+    margin: 0 var(--cpd-space-3x) 12px;
     /* v4: segmented control on a subtle track; the active tab is a raised chip. */
     border-radius: var(--cpd-radius-pill);
     background: var(--cpd-color-bg-subtle-secondary);
@@ -880,42 +929,6 @@ textarea {
 .mj_RoomListStarGlyph svg {
     width: 14px;
     height: 14px;
-}
-
-.mj_RoomItemMenu_trigger {
-    position: absolute;
-    top: 50%;
-    right: var(--cpd-space-3x);
-    display: inline-flex;
-    width: 28px;
-    height: 28px;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    transform: translateY(-50%);
-    border: 0;
-    border-radius: 8px;
-    background: transparent;
-    color: var(--cpd-color-icon-secondary);
-    cursor: pointer;
-    opacity: 0;
-    pointer-events: none;
-}
-
-.mj_RoomListItem_wrapper:hover .mj_RoomItemMenu_trigger,
-.mj_RoomListItem_wrapper:focus-within .mj_RoomItemMenu_trigger {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-.mj_RoomItemMenu_trigger:hover,
-.mj_RoomItemMenu_trigger:focus-visible {
-    background: var(--cpd-color-bg-subtle-secondary);
-}
-
-.mj_RoomItemMenu_trigger svg {
-    width: 20px;
-    height: 20px;
 }
 
 .mj_RoomItemMenu {
@@ -1161,8 +1174,10 @@ textarea {
     border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-canvas-default);
     padding: 0;
-    font-family: "Fira Code", monospace;
-    font-size: var(--cpd-font-size-xs);
+    /* v5: 13px/20px — the 12px code read too small in the wide code window. */
+    font:
+        400 13px/20px "Fira Code",
+        monospace;
 }
 
 .mj_CodeBlock_header {
@@ -1842,6 +1857,15 @@ li.mj_AttachmentChip_error {
     color: var(--cpd-color-text-critical-primary);
 }
 
+/* Event time after the exit badge (mock puts the duration/time here). */
+.mj_ToolTime {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-tertiary);
+    font:
+        400 11px/14px Inter,
+        sans-serif;
+}
+
 /* v5 event.unknown: dashed --m-line2 border on --m-raised so an unrecognised event
    reads as diagnostic (collapsed, JSON on expand), never as content. */
 .mj_Unknown {
@@ -1899,10 +1923,39 @@ li.mj_AttachmentChip_error {
     padding: var(--cpd-space-2x) var(--cpd-space-3x);
 }
 
+/* v5: the expand toggle is a bare chevron, not a native button box. */
+.mj_DiffCard_header > button {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-tertiary);
+    cursor: pointer;
+}
+
+.mj_DiffCard_header > button svg {
+    width: 13px;
+    height: 13px;
+}
+
+.mj_DiffCard_header > button:focus-visible {
+    border-radius: 4px;
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 1px;
+}
+
 .mj_DiffCard_filename {
-    font-weight: 600;
     min-width: 0;
     overflow-wrap: anywhere;
+    /* v5 mock: mono.filename 600 12.5/18. */
+    font:
+        600 12.5px/18px "Fira Code",
+        monospace;
 }
 
 .mj_DiffCard_link {

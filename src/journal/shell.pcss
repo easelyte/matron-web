@@ -241,9 +241,9 @@ button {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    /* v5 mock wordmark row: 14px top / 10px bottom so the logo isn't cramped against
-       the New session button below it. */
-    padding: 14px 16px 10px 14px;
+    /* 14px top; 12px bottom = the uniform sidebar gap so the logo has clear space above
+       the New session button and every section is evenly spaced. */
+    padding: 14px 16px 12px 14px;
 }
 
 /* v5 sidebar wordmark: logo + brand name (was a bare "Home" text). */
@@ -288,7 +288,8 @@ button {
    label.md 500 13/16; hover deepens the tint to --m-active. */
 .mj_NewSessionRow {
     flex: none;
-    padding: 0 12px 10px;
+    /* 12px = the uniform sidebar gap (matches wordmark→button, button→tabs, etc.). */
+    padding: 0 12px 12px;
 }
 
 .mj_NewSessionButton {
@@ -350,9 +351,9 @@ button {
 
 .mx_RoomListSearch {
     display: flex;
-    min-height: 56px;
     align-items: center;
-    padding: 0 12px;
+    /* 12px uniform gap below (was a 56px min-height row that over-spaced this section). */
+    padding: 0 12px 12px;
 }
 
 .mx_RoomListSearch_inputWrapper {
@@ -703,7 +704,9 @@ button {
     width: 100%;
     max-width: var(--mj-content-width);
     margin-left: 0;
-    padding: var(--cpd-space-1x) var(--cpd-space-0-5x);
+    /* No horizontal padding so the agent content's right edge lines up exactly with the
+       own-bubble right edge (both at the tile edge). */
+    padding: var(--cpd-space-1x) 0;
     border-color: transparent;
     background: transparent;
     box-shadow: none;
@@ -720,7 +723,9 @@ button {
 }
 
 .mx_EventTile[data-self="true"] .mx_EventTile_line {
-    margin-right: -9px;
+    /* v5: right edge aligns with the agent content column (no -9px overhang), so own
+       bubbles and agent messages share one clean right margin. */
+    margin-right: 0;
     margin-left: auto;
     border-color: transparent;
     background: var(--cpd-color-bg-self-bubble);
