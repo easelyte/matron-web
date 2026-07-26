@@ -583,7 +583,10 @@ button {
 
 .mx_RoomHeader {
     width: 100%;
-    min-height: 84px;
+    /* v5 mock header band = 58px, zero vertical padding (padding:0 14px). The
+       usage cluster and title cluster are both already 58px, so the old 84px
+       min-height was pure excess top/bottom padding the operator flagged. */
+    min-height: 58px;
     box-sizing: border-box;
     padding: 0 12px 0 18px;
     background: var(--cpd-color-bg-canvas-default);
@@ -712,15 +715,9 @@ button {
     box-shadow: none;
 }
 
-.mx_EventTile_continuation[data-self="false"] .mx_EventTile_line {
-    padding-right: 56px;
-}
-
-.mx_EventTile_continuation[data-self="false"] .mx_EventTile_line > a {
-    color: var(--cpd-color-text-secondary);
-    font-size: var(--cpd-font-size-2xs);
-    opacity: 1;
-}
+/* Agent continuation blocks no longer render a per-block timestamp (the section's single
+   timestamp lives on the profile row), so they fill to the same right edge as the first
+   block — no 56px reserve, no first-block spill. */
 
 .mx_EventTile[data-self="true"] .mx_EventTile_line {
     /* v5: right edge aligns with the agent content column (no -9px overhang), so own

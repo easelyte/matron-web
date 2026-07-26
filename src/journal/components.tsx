@@ -1334,9 +1334,11 @@ export function useDismissablePopover(
 }
 
 // Redesign-v4 pane-width bands (ResizeObserver on the chat pane, not viewport):
-// >=760 full 2×2 usage grid; <760 ctx bar only + popover. >=560 full subtitle +
-// Compact; <560 subtitle → status dot + short model, title popover, Compact hidden.
-const USAGE_COLLAPSE_PX = 760;
+// >=640 full 2×2 usage grid (keep all four bars as long as they genuinely fit — the
+// 2×2 is ~300px and clears a minimal title down to ~640); <640 collapse to a ctx+5h
+// two-row stack + popover with all four. >=560 full subtitle + Compact; <560 subtitle →
+// status dot + short model, title popover, Compact hidden.
+const USAGE_COLLAPSE_PX = 640;
 const TITLE_COLLAPSE_PX = 560;
 
 export function useAdaptiveHeader(bodyEl: HTMLElement | null): {
@@ -1593,7 +1595,11 @@ export function HeaderShell({
     const titleHeadingId = useId();
 
     // ctx is the first meter (context %); it stays visible when usage collapses.
+    // Collapsed usage keeps two rows — ctx + the 5h (Session) limit — since the header
+    // band has the height for two and one bar reads as too little (operator's call).
     const ctxMeter = limits?.length ? limits[0] : undefined;
+    const sessionMeter = limits?.find((meter) => usageShortLabel(meter.label) === "5h");
+    const collapsedMeters = ctxMeter ? (sessionMeter ? [ctxMeter, sessionMeter] : [ctxMeter]) : [];
     const worst = limits ? worstLimit(limits) : undefined;
     const worstNormalized = worst ? (normalizePercent(worst.percent) ?? 0) : undefined;
     const worstReset = worst ? resetDisplay(worst.resets_at, worst.resets, now) : "";
@@ -1658,7 +1664,7 @@ export function HeaderShell({
                         panelClassName="mj_HeaderMenu mj_UsagePopover"
                         label={usageLabel}
                         headerRef={headerRef}
-                        trigger={<UsageCluster limits={[ctxMeter]} now={now} />}
+                        trigger={<UsageCluster limits={collapsedMeters} now={now} />}
                     >
                         <UsageCluster limits={limits ?? []} now={now} />
                     </HeaderDisclosure>
@@ -2546,9 +2552,11 @@ function EventRow({
                 </span>
             )}
             <div className="mx_EventTile_line">
-                {/* tool_output carries its own inline time (after the exit badge), so skip the
-                    line-level timestamp here to avoid showing it twice on continuation rows. */}
-                {(own || continuation) && event.type !== "tool_output" && (
+                {/* Own bubbles carry an inline timestamp (design: "…text <09:58>"). Agent
+                    continuation blocks do NOT — the section shows one timestamp on the profile
+                    row (§10.2 one-per-section), so continuation blocks fill to the shared right
+                    edge with no reserved timestamp gutter (kills the first-block spill). */}
+                {own && event.type !== "tool_output" && (
                     <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
                         <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
                             {formatTime(event.ts)}

@@ -337,12 +337,12 @@ describe("useAdaptiveHeader", () => {
         await flushFrames();
         expect(onRender).toHaveBeenCalledTimes(1);
 
-        resize(observer, el, 700);
+        resize(observer, el, 600);
         await flushFrames();
         expect(onRender).toHaveBeenCalledTimes(2);
 
-        // Same band as 700 (usage collapsed, title full) → no flag flip, no re-render.
-        resize(observer, el, 650);
+        // Same band as 600 (usage collapsed, title full) → no flag flip, no re-render.
+        resize(observer, el, 580);
         await flushFrames();
         expect(onRender).toHaveBeenCalledTimes(2);
     });

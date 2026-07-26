@@ -476,16 +476,19 @@ describe("message model DOM contracts", () => {
         expect(row?.querySelectorAll(".mx_EventTile_line time")).toHaveLength(0);
     });
 
-    it("renders a continuation timestamp exactly once in the line", async () => {
+    it("puts the section timestamp on the first block and none on agent continuations", async () => {
         rendered = await renderClient(
             signedInClient({ events: [textEvent(1, "first"), textEvent(2, "continuation")] }),
         );
 
+        const first = rendered.container.querySelector('[data-event-id="1"]');
         const row = rendered.container.querySelector('[data-event-id="2"]');
         expect(row?.classList.contains("mx_EventTile_continuation")).toBe(true);
-        expect(row?.querySelectorAll("time")).toHaveLength(1);
-        expect(row?.querySelectorAll(".mx_DisambiguatedProfile time")).toHaveLength(0);
-        expect(row?.querySelectorAll(".mx_EventTile_line time")).toHaveLength(1);
+        // The section's single timestamp lives on the first block's profile row.
+        expect(first?.querySelectorAll(".mx_DisambiguatedProfile time")).toHaveLength(1);
+        // Continuation blocks carry no per-block timestamp, so they fill to the shared
+        // right edge with no reserved 56px gutter (kills the first-block spill).
+        expect(row?.querySelectorAll("time")).toHaveLength(0);
     });
 
     it("renders a self timestamp exactly once and no avatar", async () => {

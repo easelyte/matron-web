@@ -495,7 +495,9 @@ textarea {
     align-items: center;
 }
 
-/* Collapsed usage = a single ctx row, as a bare hover/click trigger. */
+/* Collapsed usage = a two-row ctx+5h stack, as a bare hover/click trigger. Single
+   content-width column (not the 2×2's reserved 300px) so it sits tight against the
+   divider + Compact — only padding between the two bars and the separator. */
 .mj_UsageCluster_collapsed {
     width: auto;
     height: auto;
@@ -505,6 +507,10 @@ textarea {
     background: transparent;
     color: inherit;
     cursor: pointer;
+}
+
+.mj_UsageCluster_collapsed .mj_UsageBars {
+    grid-template-columns: auto;
 }
 
 .mj_UsageCluster_collapsed .mj_UsageRow {
@@ -1994,7 +2000,15 @@ li.mj_AttachmentChip_error {
     font: var(--cpd-font-body-xs-semibold);
 }
 
-/* +n / −n header counts keep their coloured glyphs. */
+/* +n / −n header counts: Fira Code 600 11/16 (design event.diff filename-row counts),
+   coloured glyphs. Scoped to the header counts — NOT .mj_DiffLine_del (body line). */
+.mj_DiffCard_added,
+.mj_DiffCard_removed {
+    font:
+        600 11px/16px "Fira Code",
+        monospace;
+}
+
 .mj_DiffCard_added {
     color: var(--cpd-color-icon-accent-primary);
 }
