@@ -114,10 +114,13 @@ textarea {
     min-width: 0;
     min-height: 58px;
     flex-direction: column;
-    justify-content: center;
+    /* Top-align the title so its top lands on the 2×2 bars' top (the centred 2×2 starts
+       ~14px into the 58px band): operator's "title-top == bars-top". */
+    justify-content: flex-start;
     align-items: flex-start;
     justify-self: start;
     gap: 2px;
+    padding-top: 14px;
 }
 
 .mj_HeaderTitleCluster .mx_RoomHeader_heading {
@@ -387,10 +390,14 @@ textarea {
 }
 
 .mj_UsageCluster {
+    display: flex;
     width: 300px;
     max-width: 100%;
     min-width: 0;
     height: 58px;
+    /* Centre the 2×2 grid vertically so its centre lands on the band centre — which is
+       where the Compact pill centres too (operator: bars-centre == Compact-middle). */
+    align-items: center;
     padding-block: var(--cpd-space-1x);
 }
 
