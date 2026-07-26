@@ -2108,6 +2108,85 @@ function ReadOnlyHint(): React.ReactElement {
     return <div className="mj_ReadOnlyHint">Read-only — subagent transcript</div>;
 }
 
+export function QueuedReleaseCard({
+    event,
+    isReadOnly = false,
+}: {
+    event: JournalEvent;
+    isReadOnly?: boolean;
+}): React.ReactElement {
+    const items = (Array.isArray(event.payload.items) ? event.payload.items : []).flatMap((item) => {
+        if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
+        const record = item as EventPayload;
+        const text = asString(record.text);
+        return text ? [{ id: asString(record.id), text }] : [];
+    });
+    const actions = (Array.isArray(event.payload.actions) ? event.payload.actions : []).flatMap((action) => {
+        if (typeof action !== "object" || action === null || Array.isArray(action)) return [];
+        const record = action as EventPayload;
+        const id = asString(record.id);
+        if (!id) return [];
+        return [{ id, label: asString(record.label, id), intent: asString(record.intent, "neutral") }];
+    });
+    const declaredPrimaryIndex = actions.findIndex((action) => action.intent === "primary");
+    const primaryIndex = declaredPrimaryIndex >= 0 ? declaredPrimaryIndex : actions.length > 0 ? 0 : -1;
+
+    return (
+        <div className="mj_PromptCard mj_QueuedReleaseCard">
+            <div className="mj_PromptHeader">
+                <span className="mj_PromptLabel">Queued message</span>
+                <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
+                    {formatTime(event.ts)}
+                </time>
+            </div>
+            <div className="mj_PromptBody">
+                <span className="mj_PromptGlyph" aria-hidden="true">
+                    <PromptMailGlyph />
+                </span>
+                {items.length > 0 ? (
+                    <div>
+                        {items.map((item, index) => (
+                            <span
+                                key={`${item.id}:${index}`}
+                                className="mj_PromptQuestion"
+                                style={{
+                                    display: "-webkit-box",
+                                    WebkitBoxOrient: "vertical",
+                                    WebkitLineClamp: 3,
+                                    overflow: "hidden",
+                                }}
+                            >
+                                {item.text}
+                            </span>
+                        ))}
+                    </div>
+                ) : (
+                    <span className="mj_PromptQuestion">{asString(event.payload.body)}</span>
+                )}
+            </div>
+            {!isReadOnly && actions.length > 0 && (
+                <div className="mj_PromptOptions">
+                    {actions.map((action, index) => {
+                        const variant = index === primaryIndex ? "primary" : "neutral";
+                        return (
+                            <button
+                                key={`${action.id}:${index}`}
+                                type="button"
+                                className={variant === "primary" ? "mj_PromptOption_affirmative" : undefined}
+                                data-intent={action.intent}
+                                data-variant={variant}
+                                value={action.id}
+                            >
+                                {action.label}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}
+
 function PromptCard({
     client,
     event,
@@ -2647,6 +2726,9 @@ export function EventContent({
                 </div>
             );
         case "prompt":
+            if (asString(event.payload.kind) === "queued_release") {
+                return <QueuedReleaseCard event={event} isReadOnly={isReadOnly} />;
+            }
             return (
                 <PromptCard
                     client={client}
