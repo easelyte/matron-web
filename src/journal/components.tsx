@@ -2756,16 +2756,22 @@ function isLegacyQueuePrompt(event: JournalEvent): boolean {
     });
 }
 
-// Queue-control tap echoes are identified by the queued prompt they target,
-// not by their choice value: normal prompts may legitimately use the same
-// choices. Bridge-authored release events are control records too, so neither
-// shape renders as a chat bubble.
-export function isQueuedReleaseReply(event: JournalEvent, queuePromptSeqs: ReadonlySet<number>): boolean {
+// New queue-card tap echoes are identified by the queued prompt they target.
+// Legacy tiles also need a legacy control choice: an ordinary prompt may
+// coincidentally contain one legacy-shaped option while receiving a real
+// answer through another option. Bridge-authored release events are control
+// records too, so none of these control shapes renders as a chat bubble.
+export function isQueuedReleaseReply(
+    event: JournalEvent,
+    queuedReleasePromptSeqs: ReadonlySet<number>,
+    legacyQueuePromptSeqs: ReadonlySet<number>,
+): boolean {
     if (event.type !== "prompt_reply") return false;
-    return (
-        asString(event.payload.kind) === "queued_release" ||
-        queuePromptSeqs.has(asNumber(event.payload.target_seq, Number.NaN))
-    );
+    if (asString(event.payload.kind) === "queued_release") return true;
+    const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
+    if (queuedReleasePromptSeqs.has(targetSeq)) return true;
+    const choice = asString(event.payload.choice);
+    return legacyQueuePromptSeqs.has(targetSeq) && (choice === "interrupt" || /^cancel:\d+$/.test(choice));
 }
 
 export function EventContent({
@@ -3121,7 +3127,7 @@ function Timeline({
         | undefined
     >(undefined);
     const historyScrollRestored = useRef(false);
-    const queuePromptSeqs = useMemo(() => {
+    const { queuedReleasePromptSeqs, legacyQueuePromptSeqs } = useMemo(() => {
         const queuedReleasePromptSeqs = new Set<number>();
         const legacyQueuePromptSeqs = new Set<number>();
         for (const event of state.events) {
@@ -3129,16 +3135,16 @@ function Timeline({
             if (asString(event.payload.kind) === "queued_release") queuedReleasePromptSeqs.add(event.seq);
             else if (isLegacyQueuePrompt(event)) legacyQueuePromptSeqs.add(event.seq);
         }
-        return new Set([...queuedReleasePromptSeqs, ...legacyQueuePromptSeqs]);
+        return { queuedReleasePromptSeqs, legacyQueuePromptSeqs };
     }, [state.events]);
     const visibleEvents = useMemo(
         () =>
             state.events.filter(
                 (event) =>
                     !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
-                    !isQueuedReleaseReply(event, queuePromptSeqs),
+                    !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs),
             ),
-        [state.events, queuePromptSeqs],
+        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs],
     );
     const timeline = useMemo(
         () =>

@@ -409,6 +409,37 @@ describe("markdown render-site integration", () => {
         expect(rendered.container.querySelector(`[data-event-id="${legacyCancelReply.seq}"]`)).toBeNull();
     });
 
+    it("keeps an ordinary answer to a prompt that also contains a legacy-shaped option", async () => {
+        const prompt: JournalEvent = {
+            ...textEvent(108, "unused"),
+            type: "prompt",
+            payload: {
+                question: "How should this continue?",
+                options: [
+                    { id: "continue", label: "Continue", value: "continue" },
+                    { id: "interrupt", label: "Interrupt", value: "interrupt" },
+                ],
+            },
+        };
+        const ordinaryReply: JournalEvent = {
+            ...textEvent(109, "unused"),
+            type: "prompt_reply",
+            payload: { choice: "continue", target_seq: prompt.seq },
+        };
+        const legacyControlReply: JournalEvent = {
+            ...textEvent(110, "unused"),
+            type: "prompt_reply",
+            payload: { choice: "interrupt", target_seq: prompt.seq },
+        };
+
+        rendered = await renderClient(signedInClient({ events: [prompt, ordinaryReply, legacyControlReply] }));
+
+        expect(rendered.container.querySelector(`[data-event-id="${ordinaryReply.seq}"]`)?.textContent).toContain(
+            "continue",
+        );
+        expect(rendered.container.querySelector(`[data-event-id="${legacyControlReply.seq}"]`)).toBeNull();
+    });
+
     it("derives queued-card resolution only from kind-marked release records", async () => {
         const genuinePrompt: JournalEvent = {
             ...textEvent(110, "unused"),
@@ -451,7 +482,7 @@ describe("markdown render-site integration", () => {
     });
 });
 
-describe("isQueuedReleaseReply (queue-prompt seq-membership suppression)", () => {
+describe("isQueuedReleaseReply (queue-prompt provenance suppression)", () => {
     const reply = (payload: JournalEvent["payload"]): JournalEvent => ({
         seq: 1,
         convo_id: "c1",
@@ -460,10 +491,17 @@ describe("isQueuedReleaseReply (queue-prompt seq-membership suppression)", () =>
         type: "prompt_reply",
         payload,
     });
-    const queuePromptSeqs = new Set([10, 12]);
+    const queuedReleasePromptSeqs = new Set([10]);
+    const legacyQueuePromptSeqs = new Set([12]);
 
     it("hides a tap echo targeting a queued-release prompt seq", () => {
-        expect(isQueuedReleaseReply(reply({ choice: "send", target_seq: 10 }), queuePromptSeqs)).toBe(true);
+        expect(
+            isQueuedReleaseReply(
+                reply({ choice: "send", target_seq: 10 }),
+                queuedReleasePromptSeqs,
+                legacyQueuePromptSeqs,
+            ),
+        ).toBe(true);
     });
 
     it("hides a bridge-authored queued-release event", () => {
@@ -471,17 +509,50 @@ describe("isQueuedReleaseReply (queue-prompt seq-membership suppression)", () =>
             isQueuedReleaseReply(
                 reply({ kind: "queued_release", prompt_id: "pr_1", action: "cancel", released: ["pr_1::0"] }),
                 new Set(),
+                new Set(),
             ),
         ).toBe(true);
     });
 
     it("keeps an ordinary prompt reply even when its choice resembles a queue action", () => {
-        expect(isQueuedReleaseReply(reply({ choice: "interrupt", target_seq: 11 }), queuePromptSeqs)).toBe(false);
-        expect(isQueuedReleaseReply(reply({ choice: "cancel:5", target_seq: 11 }), queuePromptSeqs)).toBe(false);
+        expect(
+            isQueuedReleaseReply(
+                reply({ choice: "interrupt", target_seq: 11 }),
+                queuedReleasePromptSeqs,
+                legacyQueuePromptSeqs,
+            ),
+        ).toBe(false);
+        expect(
+            isQueuedReleaseReply(
+                reply({ choice: "cancel:5", target_seq: 11 }),
+                queuedReleasePromptSeqs,
+                legacyQueuePromptSeqs,
+            ),
+        ).toBe(false);
     });
 
-    it("hides a reply targeting a provenance-identified legacy queue prompt", () => {
-        expect(isQueuedReleaseReply(reply({ choice: "interrupt", target_seq: 12 }), queuePromptSeqs)).toBe(true);
+    it("hides only legacy control choices targeting a provenance-identified legacy queue prompt", () => {
+        expect(
+            isQueuedReleaseReply(
+                reply({ choice: "interrupt", target_seq: 12 }),
+                queuedReleasePromptSeqs,
+                legacyQueuePromptSeqs,
+            ),
+        ).toBe(true);
+        expect(
+            isQueuedReleaseReply(
+                reply({ choice: "cancel:5", target_seq: 12 }),
+                queuedReleasePromptSeqs,
+                legacyQueuePromptSeqs,
+            ),
+        ).toBe(true);
+        expect(
+            isQueuedReleaseReply(
+                reply({ choice: "continue", target_seq: 12 }),
+                queuedReleasePromptSeqs,
+                legacyQueuePromptSeqs,
+            ),
+        ).toBe(false);
     });
 
     it("keeps non-replies and replies without a numeric target seq", () => {
@@ -490,8 +561,10 @@ describe("isQueuedReleaseReply (queue-prompt seq-membership suppression)", () =>
             type: "text",
             payload: { kind: "queued_release" },
         };
-        expect(isQueuedReleaseReply(text, queuePromptSeqs)).toBe(false);
-        expect(isQueuedReleaseReply(reply({ choice: "send" }), queuePromptSeqs)).toBe(false);
+        expect(isQueuedReleaseReply(text, queuedReleasePromptSeqs, legacyQueuePromptSeqs)).toBe(false);
+        expect(isQueuedReleaseReply(reply({ choice: "send" }), queuedReleasePromptSeqs, legacyQueuePromptSeqs)).toBe(
+            false,
+        );
     });
 });
 
