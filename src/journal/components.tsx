@@ -2109,10 +2109,12 @@ function ReadOnlyHint(): React.ReactElement {
 }
 
 export function QueuedReleaseCard({
+    client,
     event,
     isReadOnly = false,
     resolvedAction,
 }: {
+    client: MatronJournalClient;
     event: JournalEvent;
     isReadOnly?: boolean;
     resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
@@ -2133,6 +2135,44 @@ export function QueuedReleaseCard({
     const declaredPrimaryIndex = actions.findIndex((action) => action.intent === "primary");
     const primaryIndex = declaredPrimaryIndex >= 0 ? declaredPrimaryIndex : actions.length > 0 ? 0 : -1;
     const resolution = items.map((item) => resolvedAction?.(item.id)).find((action) => action !== undefined);
+    const [phase, setPhase] = useState<"idle" | "sending" | "resolved">(resolution === undefined ? "idle" : "resolved");
+    const phaseRef = useRef(phase);
+    const watchdogRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const clearWatchdog = useCallback((): void => {
+        if (watchdogRef.current === undefined) return;
+        clearTimeout(watchdogRef.current);
+        watchdogRef.current = undefined;
+    }, []);
+    const sendAction = (action: string): void => {
+        if ((action !== "send" && action !== "cancel") || phaseRef.current !== "idle") return;
+
+        phaseRef.current = "sending";
+        if (!client.sendPromptReply(event.seq, action)) {
+            phaseRef.current = "idle";
+            return;
+        }
+
+        setPhase("sending");
+        watchdogRef.current = setTimeout(() => {
+            watchdogRef.current = undefined;
+            if (phaseRef.current !== "sending") return;
+            phaseRef.current = "idle";
+            setPhase("idle");
+            console.warn("matron: queued-release reply timed out", {
+                event: "queued_release_reply_timeout",
+                target_seq: event.seq,
+            });
+        }, 10_000);
+    };
+
+    useEffect(() => {
+        if (resolution === undefined) return;
+        clearWatchdog();
+        phaseRef.current = "resolved";
+        setPhase("resolved");
+    }, [clearWatchdog, resolution]);
+
+    useEffect(() => clearWatchdog, [clearWatchdog]);
 
     return (
         <div className="mj_PromptCard mj_QueuedReleaseCard">
@@ -2179,6 +2219,8 @@ export function QueuedReleaseCard({
                                 data-intent={action.intent}
                                 data-variant={variant}
                                 value={action.id}
+                                disabled={phase !== "idle"}
+                                onClick={() => sendAction(action.id)}
                             >
                                 {action.label}
                             </button>
@@ -2740,7 +2782,14 @@ export function EventContent({
             );
         case "prompt":
             if (asString(event.payload.kind) === "queued_release") {
-                return <QueuedReleaseCard event={event} isReadOnly={isReadOnly} resolvedAction={resolvedAction} />;
+                return (
+                    <QueuedReleaseCard
+                        client={client}
+                        event={event}
+                        isReadOnly={isReadOnly}
+                        resolvedAction={resolvedAction}
+                    />
+                );
             }
             return (
                 <PromptCard
