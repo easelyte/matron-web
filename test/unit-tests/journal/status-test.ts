@@ -136,6 +136,18 @@ describe("journal session status presentation", () => {
         expect(resetDisplay(undefined, "soon", now, Number.NaN)).toBe("soon");
     });
 
+    it("skips a finite-but-out-of-range resets_at_ms instead of throwing on Invalid Date", () => {
+        const now = Date.parse("2026-07-15T08:00:00Z");
+        // Number.MAX_VALUE is finite but builds an Invalid Date → Intl.format would throw.
+        // The guard skips it and falls through to the valid resets_at ISO string.
+        expect(() => resetDisplay("2026-07-15T08:45:00Z", "soon", now, Number.MAX_VALUE)).not.toThrow();
+        expect(resetDisplay("2026-07-15T08:45:00Z", "soon", now, Number.MAX_VALUE)).toBe("45m");
+        // No lower-priority date candidate → textual `resets` fallback, still no throw.
+        expect(resetDisplay(undefined, "soon", now, Number.MAX_VALUE)).toBe("soon");
+        // An out-of-range resets_at number is likewise skipped for the fallback.
+        expect(resetDisplay(Number.MAX_VALUE, "soon", now)).toBe("soon");
+    });
+
     it("uses the same green, amber, and red usage thresholds", () => {
         expect([usageLevel(49), usageLevel(50), usageLevel(84), usageLevel(85)]).toEqual([
             "low",

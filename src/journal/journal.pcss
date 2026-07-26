@@ -519,7 +519,13 @@ textarea {
     column-gap: 16px;
     row-gap: 10px;
     max-height: 100%;
-    overflow: hidden;
+    /* Scroll (not clip) any set that outgrows the pane — the >4-meter collapse threshold
+       widens for host cpu/ram but the SAME threshold expands larger sets too, so a 12-limit
+       frame must stay reachable via x-scroll rather than being clipped off-pane. The common
+       6-bar case (~507px) fits the pane, so `auto` shows no scrollbar. y stays hidden so a
+       horizontal bar never steals a vertical one. */
+    overflow-x: auto;
+    overflow-y: hidden;
     overscroll-behavior: contain;
 }
 

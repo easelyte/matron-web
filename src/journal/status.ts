@@ -163,19 +163,23 @@ export function resetDisplay(
     now = Date.now(),
     resetsAtMs?: number,
 ): string {
-    // Prefer the bridge's epoch-ms field (`resets_at_ms`, NEW) when finite; else fall back
-    // to `resets_at`, accepting either an ISO string (bridge default) or a number (belt-and-
-    // suspenders). This removes deploy-order coupling between bridge and client.
-    const resetTime =
-        typeof resetsAtMs === "number" && Number.isFinite(resetsAtMs)
-            ? resetsAtMs
-            : resetsAt === undefined || resetsAt === null || resetsAt === ""
-              ? NaN
-              : typeof resetsAt === "number"
-                ? resetsAt
-                : Date.parse(resetsAt);
-    if (!Number.isFinite(resetTime)) return fallback ?? "";
+    // Try reset candidates in priority order: the NEW epoch-ms field (`resets_at_ms`), then
+    // `resets_at` (ISO string, or a number belt-and-suspenders). A candidate that yields an
+    // out-of-range Date (e.g. Number.MAX_VALUE → Invalid Date, which Intl.format throws a
+    // RangeError on) is SKIPPED so a usable lower-priority candidate — or the textual
+    // `resets` fallback — still wins instead of crashing the UsageCluster render.
+    for (const candidate of [resetsAtMs, resetsAt] as Array<string | number | undefined>) {
+        if (candidate === undefined || candidate === null || candidate === "") continue;
+        const ms = typeof candidate === "number" ? candidate : Date.parse(candidate);
+        // Number.isFinite rejects NaN; the Date round-trip rejects finite-but-out-of-range
+        // epochs (|ms| > 8.64e15 → getTime() is NaN) before they reach Intl formatting.
+        if (!Number.isFinite(ms) || !Number.isFinite(new Date(ms).getTime())) continue;
+        return renderReset(ms, now);
+    }
+    return fallback ?? "";
+}
 
+function renderReset(resetTime: number, now: number): string {
     const interval = resetTime - now;
     if (interval < 60_000) return "now";
 
