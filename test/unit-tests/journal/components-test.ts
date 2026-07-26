@@ -19,7 +19,7 @@ import {
     unreadStore,
 } from "../../../src/journal/client";
 import { makeDraftStore } from "../../../src/journal/composer-drafts";
-import { EventContent, isQueueActionReply, MatronApp } from "../../../src/journal/components";
+import { EventContent, isQueuedReleaseReply, MatronApp } from "../../../src/journal/components";
 import { makeRecentFoldersStore } from "../../../src/journal/slash-palette";
 import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
 
@@ -329,72 +329,113 @@ describe("markdown render-site integration", () => {
         expect(terminalParagraph?.contains(cursor ?? null)).toBe(false);
     });
 
-    it("hides a queue-action prompt_reply row while keeping ordinary reply bubbles (#490)", async () => {
+    it("hides queued-release replies while keeping ordinary and legacy reply bubbles", async () => {
+        const queuedReleasePrompt: JournalEvent = {
+            ...textEvent(100, "unused"),
+            type: "prompt",
+            payload: { kind: "queued_release", body: "Queued item" },
+        };
         const queueAction: JournalEvent = {
-            ...textEvent(1, "unused"),
+            ...textEvent(101, "unused"),
             type: "prompt_reply",
-            payload: { choice: "interrupt", target_seq: 100 },
+            payload: { choice: "send", target_seq: queuedReleasePrompt.seq },
+        };
+        const bridgeRelease: JournalEvent = {
+            ...textEvent(102, "unused"),
+            type: "prompt_reply",
+            payload: { kind: "queued_release", prompt_id: "pr_1", action: "send", released: ["pr_1::0"] },
+        };
+        const ordinaryPrompt: JournalEvent = {
+            ...textEvent(103, "unused"),
+            type: "prompt",
+            payload: { question: "Continue?", options: ["send", "cancel"] },
         };
         const ordinaryReply: JournalEvent = {
-            ...textEvent(2, "unused"),
+            ...textEvent(104, "unused"),
             type: "prompt_reply",
-            payload: { choice: "Yes please", target_seq: 101 },
+            payload: { choice: "send", target_seq: ordinaryPrompt.seq },
         };
-        const client = signedInClient({ events: [queueAction, ordinaryReply] });
+        const legacyPrompt: JournalEvent = {
+            ...textEvent(105, "unused"),
+            type: "prompt",
+            payload: { question: "Queued item", options: ["interrupt", "cancel:0"] },
+        };
+        const legacyReply: JournalEvent = {
+            ...textEvent(106, "unused"),
+            type: "prompt_reply",
+            payload: { choice: "interrupt", target_seq: legacyPrompt.seq },
+        };
+        const client = signedInClient({
+            events: [
+                queuedReleasePrompt,
+                queueAction,
+                bridgeRelease,
+                ordinaryPrompt,
+                ordinaryReply,
+                legacyPrompt,
+                legacyReply,
+            ],
+        });
 
         rendered = await renderClient(client);
 
-        const bubbles = Array.from(rendered.container.querySelectorAll(".mj_MessageText")).map(
-            (node) => node.textContent,
+        expect(rendered.container.querySelector(`[data-event-id="${queueAction.seq}"]`)).toBeNull();
+        expect(rendered.container.querySelector(`[data-event-id="${bridgeRelease.seq}"]`)).toBeNull();
+        expect(rendered.container.querySelector(`[data-event-id="${ordinaryReply.seq}"]`)?.textContent).toContain(
+            "send",
         );
-        expect(bubbles).toContain("Yes please");
-        expect(bubbles).not.toContain("interrupt");
+        const legacyCard = rendered.container.querySelector(`[data-event-id="${legacyPrompt.seq}"] .mj_PromptCard`);
+        expect(legacyCard).not.toBeNull();
+        expect(legacyCard?.classList.contains("mj_QueuedReleaseCard")).toBe(false);
+        expect(rendered.container.querySelector(`[data-event-id="${legacyReply.seq}"]`)?.textContent).toContain(
+            "interrupt",
+        );
     });
 });
 
-describe("isQueueActionReply (queue-action control-token suppression, #490)", () => {
-    const reply = (choice: unknown): JournalEvent => ({
+describe("isQueuedReleaseReply (seq-membership suppression)", () => {
+    const reply = (payload: JournalEvent["payload"]): JournalEvent => ({
         seq: 1,
         convo_id: "c1",
         ts: 1,
         sender: "user:fantin",
         type: "prompt_reply",
-        payload: { choice, target_seq: 10 },
+        payload,
+    });
+    const queuedReleasePromptSeqs = new Set([10]);
+
+    it("hides a tap echo targeting a queued-release prompt seq", () => {
+        expect(isQueuedReleaseReply(reply({ choice: "send", target_seq: 10 }), queuedReleasePromptSeqs)).toBe(true);
     });
 
-    it("is true for the ⚡ Send now token (interrupt)", () => {
-        expect(isQueueActionReply(reply("interrupt"))).toBe(true);
+    it("hides a bridge-authored queued-release event", () => {
+        expect(
+            isQueuedReleaseReply(
+                reply({ kind: "queued_release", prompt_id: "pr_1", action: "cancel", released: ["pr_1::0"] }),
+                new Set(),
+            ),
+        ).toBe(true);
     });
 
-    it("is true for an indexed ✕ Cancel token (cancel:<n>)", () => {
-        expect(isQueueActionReply(reply("cancel:0"))).toBe(true);
-        expect(isQueueActionReply(reply("cancel:12"))).toBe(true);
+    it("keeps an ordinary prompt reply even when its choice resembles a queue action", () => {
+        expect(isQueuedReleaseReply(reply({ choice: "send", target_seq: 11 }), queuedReleasePromptSeqs)).toBe(false);
+        expect(isQueuedReleaseReply(reply({ choice: "cancel", target_seq: 11 }), queuedReleasePromptSeqs)).toBe(false);
     });
 
-    it("is false for an ordinary answer choice", () => {
-        expect(isQueueActionReply(reply("Yes please"))).toBe(false);
-        expect(isQueueActionReply(reply("opt_a"))).toBe(false);
+    it("keeps a legacy-card reply because the old prompt has no queued-release kind", () => {
+        expect(isQueuedReleaseReply(reply({ choice: "interrupt", target_seq: 12 }), queuedReleasePromptSeqs)).toBe(
+            false,
+        );
     });
 
-    it("is false for a picker value (out of scope — not a queue action)", () => {
-        expect(isQueueActionReply(reply("model:opus"))).toBe(false);
-    });
-
-    it("is false for a lookalike that is not the exact wire shape", () => {
-        expect(isQueueActionReply(reply("cancel"))).toBe(false);
-        expect(isQueueActionReply(reply("cancel:x"))).toBe(false);
-        expect(isQueueActionReply(reply("interrupted"))).toBe(false);
-    });
-
-    it("is false for a non-prompt_reply event even if some field looks like a token", () => {
-        const text: JournalEvent = { ...reply("interrupt"), type: "text", payload: { body: "interrupt" } };
-        expect(isQueueActionReply(text)).toBe(false);
-    });
-
-    it("never throws on a missing/non-string choice", () => {
-        expect(isQueueActionReply(reply(undefined))).toBe(false);
-        expect(isQueueActionReply(reply(null))).toBe(false);
-        expect(isQueueActionReply(reply(42))).toBe(false);
+    it("keeps non-replies and replies without a numeric target seq", () => {
+        const text: JournalEvent = {
+            ...reply({ kind: "queued_release" }),
+            type: "text",
+            payload: { kind: "queued_release" },
+        };
+        expect(isQueuedReleaseReply(text, queuedReleasePromptSeqs)).toBe(false);
+        expect(isQueuedReleaseReply(reply({ choice: "send" }), queuedReleasePromptSeqs)).toBe(false);
     });
 });
 

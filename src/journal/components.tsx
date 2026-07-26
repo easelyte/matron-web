@@ -2744,20 +2744,16 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
     );
 }
 
-// Queue-tile control tokens (⚡ Send now / ✕ Cancel) arrive as prompt_reply
-// events whose `choice` is a bridge wire value (`interrupt` / `cancel:<n>`,
-// lib/busy-queue.js isQueueActionValue). They are control signals, not chat
-// messages: the bridge acts on them and suppresses its own "answered:" echo, so
-// the client must not render the raw token as a visible bubble either — the
-// timeline filters these out (loop #490). The values are bridge-controlled
-// constants, which is what makes shape-matching safe here (the same argument
-// the bridge uses). Scoped to queue actions only — a normal answer's bubble and
-// the answered-prompt state (answeredPrompts, which still counts these so the
-// queue tile shows answered/disabled) are untouched.
-export function isQueueActionReply(event: JournalEvent): boolean {
+// Queue-release tap echoes are identified by the queued prompt they target,
+// not by their choice value: normal prompts may legitimately use the same
+// choices. Bridge-authored release events are control records too, so neither
+// shape renders as a chat bubble.
+export function isQueuedReleaseReply(event: JournalEvent, queuedReleasePromptSeqs: ReadonlySet<number>): boolean {
     if (event.type !== "prompt_reply") return false;
-    const choice = asString(event.payload.choice);
-    return choice === "interrupt" || /^cancel:\d+$/.test(choice);
+    return (
+        asString(event.payload.kind) === "queued_release" ||
+        queuedReleasePromptSeqs.has(asNumber(event.payload.target_seq, Number.NaN))
+    );
 }
 
 export function EventContent({
@@ -3113,14 +3109,23 @@ function Timeline({
         | undefined
     >(undefined);
     const historyScrollRestored = useRef(false);
+    const queuedReleasePromptSeqs = useMemo(
+        () =>
+            new Set(
+                state.events
+                    .filter((event) => event.type === "prompt" && asString(event.payload.kind) === "queued_release")
+                    .map((event) => event.seq),
+            ),
+        [state.events],
+    );
     const visibleEvents = useMemo(
         () =>
             state.events.filter(
                 (event) =>
                     !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
-                    !isQueueActionReply(event),
+                    !isQueuedReleaseReply(event, queuedReleasePromptSeqs),
             ),
-        [state.events],
+        [state.events, queuedReleasePromptSeqs],
     );
     const timeline = useMemo(
         () =>
