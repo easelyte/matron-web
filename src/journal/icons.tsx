@@ -264,3 +264,33 @@ export function CloseIcon(props: IconProps): React.ReactElement {
         </Icon>
     );
 }
+
+// Message-context-menu gutter icons (§10.7: every row carries an icon).
+export function ClipboardIcon(props: IconProps): React.ReactElement {
+    // Plain "Copy" — a clipboard/overlapping-sheets glyph (design light-message-menu).
+    return (
+        <Icon {...props}>
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4" />
+        </Icon>
+    );
+}
+
+export function MarkdownIcon(props: IconProps): React.ReactElement {
+    // "Copy as Markdown" — a document with the M/V markdown glyph.
+    return (
+        <Icon {...props}>
+            <rect x="3" y="6" width="18" height="12" rx="2" />
+            <path d="M7 15V9l2.5 3L12 9v6M16 9v6M16 15h2.5" />
+        </Icon>
+    );
+}
+
+export function CodeBracketsIcon(props: IconProps): React.ReactElement {
+    // "View source" — code angle-brackets (also the event-source header glyph).
+    return (
+        <Icon {...props}>
+            <path d="m9 8-5 4 5 4M15 8l5 4-5 4" />
+        </Icon>
+    );
+}

@@ -65,6 +65,39 @@ const ALIASES = {
 
 const HIGHLIGHT_OPTIONS = { languages: CURATED, aliases: ALIASES };
 
+/**
+ * Reduce markdown SOURCE to readable plain text for the "Copy" menu action ("Copy as
+ * Markdown" keeps the raw body). Strips the common inline/block syntax so a paste into a
+ * non-markdown target reads cleanly, without pulling in a full renderer. Best-effort — it
+ * targets the syntax the journal actually emits (headings, emphasis, links, inline code,
+ * fenced/indented code fences, list bullets, blockquotes), not every CommonMark edge.
+ */
+export function stripMarkdown(source: string): string {
+    return (
+        source
+            // Fenced code fences → drop the ``` lines, keep the code text.
+            .replace(/^```[^\n]*\n?/gm, "")
+            .replace(/^~~~[^\n]*\n?/gm, "")
+            // Images ![alt](url) → alt.
+            .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+            // Links [text](url) → text.
+            .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+            // Inline code `x` → x.
+            .replace(/`([^`]+)`/g, "$1")
+            // Bold/italic (**x**, __x__, *x*, _x_) → x.
+            .replace(/(\*\*|__)(.*?)\1/g, "$2")
+            .replace(/(\*|_)(.*?)\1/g, "$2")
+            // Strikethrough ~~x~~ → x.
+            .replace(/~~(.*?)~~/g, "$1")
+            // Leading heading hashes, blockquote markers, list bullets.
+            .replace(/^#{1,6}\s+/gm, "")
+            .replace(/^\s{0,3}>\s?/gm, "")
+            .replace(/^\s*([-*+])\s+/gm, "")
+            .replace(/^\s*\d+\.\s+/gm, "")
+            .trim()
+    );
+}
+
 interface HighlightNode {
     type: string;
     tagName?: string;

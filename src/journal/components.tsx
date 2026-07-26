@@ -37,11 +37,14 @@ import {
     CheckIcon,
     ChevronDownIcon,
     ChevronLeftIcon,
+    ClipboardIcon,
     CloseIcon,
+    CodeBracketsIcon,
     CompactIcon,
     ComposeIcon,
     FileEditIcon,
     KebabIcon,
+    MarkdownIcon,
     MarkAllReadIcon,
     MarkReadIcon,
     MarkUnreadIcon,
@@ -60,7 +63,7 @@ import {
     UnarchiveIcon,
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
-import { MarkdownBody } from "./markdown";
+import { MarkdownBody, stripMarkdown } from "./markdown";
 import { getSnapshot, nextThemePref, setTheme, subscribe } from "./theme";
 import {
     applyCommand,
@@ -220,6 +223,39 @@ export function formatRelativeDay(timestamp: number, now: number = Date.now()): 
         undefined,
         sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" },
     ).format(then);
+}
+
+// True when two epoch-ms timestamps fall on the same local calendar day.
+export function sameCalendarDay(a: number, b: number): boolean {
+    const left = new Date(a);
+    const right = new Date(b);
+    return (
+        left.getFullYear() === right.getFullYear() &&
+        left.getMonth() === right.getMonth() &&
+        left.getDate() === right.getDate()
+    );
+}
+
+// Timeline day-divider label: a relative word (Today / Yesterday / weekday within the week)
+// joined to an absolute date ("Today · 24 July"), so a scrolled-back reader always has both
+// the human anchor and the exact date. EXPORTED for unit tests (inject `now`).
+export function formatDayDivider(timestamp: number, now: number = Date.now()): string {
+    if (!Number.isFinite(timestamp)) return "";
+    const then = new Date(timestamp);
+    if (Number.isNaN(then.getTime())) return "";
+    const today = new Date(now);
+    const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const daysAgo = Math.round((startOf(today) - startOf(then)) / 86_400_000);
+    const sameYear = then.getFullYear() === today.getFullYear();
+    const dateStr = new Intl.DateTimeFormat(
+        undefined,
+        sameYear ? { day: "numeric", month: "long" } : { day: "numeric", month: "long", year: "numeric" },
+    ).format(then);
+    let word: string | undefined;
+    if (daysAgo === 0) word = "Today";
+    else if (daysAgo === 1) word = "Yesterday";
+    else if (daysAgo >= 2 && daysAgo <= 6) word = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(then);
+    return word ? `${word} · ${dateStr}` : dateStr;
 }
 
 function formatBytes(value: unknown): string | undefined {
@@ -495,7 +531,17 @@ export function NewSessionSheet({
                         New session
                     </h2>
                     <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={dismiss}>
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <svg
+                            viewBox="0 0 24 24"
+                            width="16"
+                            height="16"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                        >
                             <path d="M18 6 6 18M6 6l12 12" />
                         </svg>
                     </button>
@@ -850,19 +896,23 @@ function ConversationList({
     };
 
     const renderNow = Date.now();
-    const renderConversation = (conversation: ClientState["conversations"][number]): React.ReactElement => {
+    const renderConversation = (
+        conversation: ClientState["conversations"][number],
+        isSubagent = false,
+    ): React.ReactElement => {
         const selected = state.selectedConversationId === conversation.id;
         const overrideUnread = state.unreadOverrideIds.has(conversation.id) && conversation.unread_count === 0;
         const unread = effectiveUnread(conversation, state.unreadOverrideIds);
         const name = conversationTitle(conversation);
+        const running = conversation.session_state === "running";
         const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
         return (
             <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
                 <button
-                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}`}
+                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${isSubagent ? " mj_RoomListItem_sub" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open room ${name}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}`}
+                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}`}
                     onClick={(event) => {
                         if (longPressFiredRef.current) {
                             longPressFiredRef.current = false;
@@ -906,7 +956,16 @@ function ConversationList({
                         if (event.pointerType === "touch") cancelLongPress();
                     }}
                 >
-                    {state.pinnedIds.has(conversation.id) ? (
+                    {/* §118 leading-glyph precedence. Subagent rows: spinner while running,
+                        else an idle dot (they aren't pinned/favourited). Parent rows keep the
+                        shipped pin-or-status behaviour (star renders separately before the meta). */}
+                    {isSubagent ? (
+                        running ? (
+                            <span className="mj_Spinner mj_RoomListSubSpinner" aria-hidden="true" />
+                        ) : (
+                            <span className="mj_RoomListStatus mj_RoomListStatus_idle" aria-hidden="true" />
+                        )
+                    ) : state.pinnedIds.has(conversation.id) ? (
                         <span className="mj_RoomListPinGlyph">
                             <PinIcon aria-hidden />
                         </span>
@@ -920,6 +979,11 @@ function ConversationList({
                     )}
                     <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
                         <span className="mj_RoomListName" title={name} data-testid="room-name">
+                            {isSubagent && (
+                                <span className="mj_RoomListSubArrow" aria-hidden="true">
+                                    ↳{" "}
+                                </span>
+                            )}
                             {name}
                         </span>
                         <span className="mj_RoomListPreview" title={conversation.snippet}>
@@ -1094,7 +1158,16 @@ function ConversationList({
                                     role="list"
                                     aria-label="Conversations"
                                 >
-                                    {visibleRows.map((conversation) => renderConversation(conversation))}
+                                    {/* #532: render each parent row, then splice its subagent
+                                        children in immediately beneath (indented). Children inherit
+                                        the parent's group — parent filtering/search/tab already
+                                        decided which parents show. */}
+                                    {visibleRows.flatMap((conversation) => [
+                                        renderConversation(conversation, false),
+                                        ...childrenOf(state.conversations, conversation.id).map((child) =>
+                                            renderConversation(child, true),
+                                        ),
+                                    ])}
                                     {tab === "active" && !hasAnyActive && archivedTotal === 0 && (
                                         <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
                                     )}
@@ -1567,6 +1640,8 @@ export function HeaderShell({
     onBack,
     backLabel,
     title,
+    titleGlyph,
+    titleBadge,
     subtitle,
     subtitleCompact,
     hasSubtitle,
@@ -1580,6 +1655,10 @@ export function HeaderShell({
     onBack: () => void;
     backLabel: string;
     title: string;
+    // Optional glyph before the title (child view: ↳) and a badge after it (SUBAGENT). §10.11
+    // requires the header to name the SUBAGENT when inside one — never the parent.
+    titleGlyph?: React.ReactNode;
+    titleBadge?: React.ReactNode;
     subtitle: React.ReactNode;
     subtitleCompact?: React.ReactNode;
     hasSubtitle: boolean;
@@ -1637,7 +1716,13 @@ export function HeaderShell({
                             className="mx_RoomHeader_heading"
                             title={title}
                         >
+                            {titleGlyph && (
+                                <span className="mj_HeaderTitleGlyph" aria-hidden="true">
+                                    {titleGlyph}
+                                </span>
+                            )}
                             <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
+                            {titleBadge}
                         </div>
                     }
                     trigger={
@@ -1653,7 +1738,13 @@ export function HeaderShell({
             ) : (
                 <div className="mj_HeaderCluster mj_HeaderTitleCluster">
                     <div id={titleHeadingId} dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
+                        {titleGlyph && (
+                            <span className="mj_HeaderTitleGlyph" aria-hidden="true">
+                                {titleGlyph}
+                            </span>
+                        )}
                         <span className="mx_RoomHeader_truncated mx_lineClamp">{title}</span>
+                        {titleBadge}
                     </div>
                     {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
                 </div>
@@ -1921,6 +2012,15 @@ function SubChatHeader({
     const runState = selected?.session_state;
     const running = runState === "running";
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
+    // §10.11: the header names the CHILD (title), the parent is named in the subtitle
+    // (hierarchy, read-only) and again on the back chip (actionable escape) — never in the
+    // title while the chip offers to return there.
+    const parent =
+        selected?.parent_convo_id != null
+            ? state.conversations.find((conversation) => conversation.id === selected.parent_convo_id)
+            : undefined;
+    const progress = selected?.snippet?.trim();
+    const runLabel = running ? "working" : runState || "idle";
     const goBack = (): void => {
         if (!selected) {
             client.clearSelection();
@@ -1944,13 +2044,17 @@ function SubChatHeader({
             onBack={goBack}
             backLabel="Back to parent"
             title={selected ? conversationTitle(selected) : "Subagent"}
+            titleGlyph="↳"
+            titleBadge={<span className="mj_HeaderSubagentBadge">subagent</span>}
             subtitle={
                 <>
-                    {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
-                    <span className="mj_SubChatState">
-                        {running && <span className="mj_Spinner" aria-hidden="true" />}
-                        {running ? "Running" : "Finished"}
-                    </span>
+                    {parent && (
+                        <span className="mj_HeaderParentRef">
+                            of <span className="mj_HeaderParentName">{conversationTitle(parent)}</span>
+                        </span>
+                    )}
+                    {progress && <span className="mj_HeaderProgress">{progress}</span>}
+                    {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runLabel}</span>}
                 </>
             }
             subtitleCompact={
@@ -2015,9 +2119,7 @@ function PromptCard({
     // (send/yes/continue/confirm/ok/approve). Chosen by SEMANTICS, not position, so a
     // reordered payload never fills "Always allow" / "Deny" / "Cancel".
     const affirmativeIndex = options.findIndex((option) =>
-        permission
-            ? option.label.trim().toLocaleLowerCase() === "allow"
-            : PROMPT_AFFIRMATIVE.test(option.label.trim()),
+        permission ? option.label.trim().toLocaleLowerCase() === "allow" : PROMPT_AFFIRMATIVE.test(option.label.trim()),
     );
 
     return (
@@ -2083,7 +2185,16 @@ const PROMPT_AFFIRMATIVE = /^(send|yes|continue|confirm|ok|okay|approve|proceed|
 
 function PromptMailGlyph(): React.ReactElement {
     return (
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
             <path d="M4 6h16v12H4z" />
             <path d="m4 7 8 6 8-6" />
         </svg>
@@ -2092,7 +2203,16 @@ function PromptMailGlyph(): React.ReactElement {
 
 function PromptTerminalGlyph(): React.ReactElement {
     return (
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
             <path d="m5 7 5 5-5 5" />
             <path d="M13 17h6" />
         </svg>
@@ -2101,7 +2221,16 @@ function PromptTerminalGlyph(): React.ReactElement {
 
 function PromptCheckGlyph(): React.ReactElement {
     return (
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
             <path d="m5 12 4 4 10-10" />
         </svg>
     );
@@ -2598,15 +2727,13 @@ function EventRow({
                         permission cards own theirs in the card header (§10.2). Suppress the
                         profile-row time for all three so a first-in-section event never shows
                         two identical timestamps. */}
-                    {event.type !== "tool_output" &&
-                        event.type !== "prompt" &&
-                        event.type !== "permission_request" && (
-                            <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                                <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
-                                    {formatTime(event.ts)}
-                                </time>
-                            </a>
-                        )}
+                    {event.type !== "tool_output" && event.type !== "prompt" && event.type !== "permission_request" && (
+                        <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
+                            <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                                {formatTime(event.ts)}
+                            </time>
+                        </a>
+                    )}
                 </span>
             )}
             <div className="mx_EventTile_line">
@@ -2943,50 +3070,63 @@ function Timeline({
                             </li>
                         )}
                         {timeline.map((item, index) => {
+                            const previous = timeline[index - 1];
+                            // A day divider precedes the first row of each new calendar day (§ upload-first
+                            // ref): a centred dated label flanked by hairline rules.
+                            const divider =
+                                !previous || !sameCalendarDay(item.timestamp, previous.timestamp) ? (
+                                    <li className="mj_DateDivider" role="separator">
+                                        <span className="mj_DateDivider_rule" aria-hidden="true" />
+                                        <span className="mj_DateDivider_label">{formatDayDivider(item.timestamp)}</span>
+                                        <span className="mj_DateDivider_rule" aria-hidden="true" />
+                                    </li>
+                                ) : null;
                             if (item.kind === "event") {
-                                const previous = timeline[index - 1];
                                 const next = timeline[index + 1];
                                 return (
-                                    <EventRow
-                                        key={item.event.seq}
-                                        client={client}
-                                        event={item.event}
-                                        answeredPrompts={answeredPrompts}
-                                        isReadOnly={isReadOnly}
-                                        continuation={
-                                            previous?.kind === "event" && previous.event.sender === item.event.sender
-                                        }
-                                        lastInSection={
-                                            next?.kind !== "event" || next.event.sender !== item.event.sender
-                                        }
-                                        rowHandlers={menu.rowHandlers}
-                                    />
+                                    <React.Fragment key={`e-${item.event.seq}`}>
+                                        {divider}
+                                        <EventRow
+                                            client={client}
+                                            event={item.event}
+                                            answeredPrompts={answeredPrompts}
+                                            isReadOnly={isReadOnly}
+                                            continuation={
+                                                previous?.kind === "event" &&
+                                                previous.event.sender === item.event.sender &&
+                                                !divider
+                                            }
+                                            lastInSection={
+                                                next?.kind !== "event" || next.event.sender !== item.event.sender
+                                            }
+                                            rowHandlers={menu.rowHandlers}
+                                        />
+                                    </React.Fragment>
                                 );
                             }
                             const message = item.message;
-                            return message.kind === "image" || message.kind === "file" ? (
-                                <PendingAttachment
-                                    key={message.localId}
-                                    client={client}
-                                    message={message}
-                                    isReadOnly={isReadOnly}
-                                />
-                            ) : (
-                                <li
-                                    className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
-                                    key={message.localId}
-                                    data-layout="bubble"
-                                    data-self="true"
-                                >
-                                    <div className="mx_EventTile_line">
-                                        <div className="mx_MTextBody mx_EventTile_content">
-                                            <div className="mj_Markdown">
-                                                <MarkdownBody text={message.body} label={message.localId} />
+                            return (
+                                <React.Fragment key={`m-${message.localId}`}>
+                                    {divider}
+                                    {message.kind === "image" || message.kind === "file" ? (
+                                        <PendingAttachment client={client} message={message} isReadOnly={isReadOnly} />
+                                    ) : (
+                                        <li
+                                            className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
+                                            data-layout="bubble"
+                                            data-self="true"
+                                        >
+                                            <div className="mx_EventTile_line">
+                                                <div className="mx_MTextBody mx_EventTile_content">
+                                                    <div className="mj_Markdown">
+                                                        <MarkdownBody text={message.body} label={message.localId} />
+                                                    </div>
+                                                </div>
                                             </div>
-                                        </div>
-                                    </div>
-                                    <span className="mj_SendingLabel">Sending…</span>
-                                </li>
+                                            <span className="mj_SendingLabel">Sending…</span>
+                                        </li>
+                                    )}
+                                </React.Fragment>
                             );
                         })}
                         {Object.values(state.textStreams).map((text, index) => (
@@ -3047,17 +3187,35 @@ function Timeline({
                     onKeyDown={menu.menuKeyDown}
                 >
                     {menu.state.target.type === "text" && (
-                        <button
-                            className="mj_RoomItemMenu_item"
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                                void copyText(asString(menu.state!.target.payload.body));
-                                menu.close();
-                            }}
-                        >
-                            Copy
-                        </button>
+                        <>
+                            {/* Copy = readable plain text (markdown stripped); the raw markdown
+                                SOURCE is offered separately below (§10.7 icon per row). */}
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    void copyText(stripMarkdown(asString(menu.state!.target.payload.body)));
+                                    menu.close();
+                                }}
+                            >
+                                <ClipboardIcon aria-hidden />
+                                <span>Copy</span>
+                            </button>
+                            <button
+                                className="mj_RoomItemMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    // The journal stores the markdown source in payload.body.
+                                    void copyText(asString(menu.state!.target.payload.body));
+                                    menu.close();
+                                }}
+                            >
+                                <MarkdownIcon aria-hidden />
+                                <span>Copy as Markdown</span>
+                            </button>
+                        </>
                     )}
                     <button
                         className="mj_RoomItemMenu_item"
@@ -3069,7 +3227,8 @@ function Timeline({
                             menu.close();
                         }}
                     >
-                        View source
+                        <CodeBracketsIcon aria-hidden />
+                        <span>View source</span>
                     </button>
                 </div>
             )}
@@ -3989,6 +4148,9 @@ function EventSourceSheet({
     }, [onClose]);
 
     const json = JSON.stringify(event, null, 2);
+    // §10.8: the footer states the payload size so a clipped body is detectable. Byte size
+    // (not code-unit length) — matches what the operator would see on the wire.
+    const byteSize = typeof Blob === "function" ? new Blob([json]).size : json.length;
     return (
         <div
             className="mj_EventSource_scrim"
@@ -3999,20 +4161,76 @@ function EventSourceSheet({
         >
             <div ref={sheetRef} className="mj_EventSource" onClick={(clickEvent) => clickEvent.stopPropagation()}>
                 <header className="mj_EventSource_header">
+                    <CodeBracketsIcon className="mj_EventSource_headerIcon" aria-hidden />
                     <h2>Event source</h2>
-                </header>
-                <pre className="mj_EventSource_json">{json}</pre>
-                <div className="mj_EventSource_actions">
-                    <button type="button" onClick={() => void copyText(json)}>
-                        Copy
+                    <span className="mj_EventSource_typeChip">{event.type}</span>
+                    <span className="mj_EventSource_headerSpacer" />
+                    <button
+                        type="button"
+                        className="mj_EventSource_close"
+                        aria-label="Close"
+                        title="Close"
+                        onClick={onClose}
+                    >
+                        <CloseIcon aria-hidden />
                     </button>
-                    <button type="button" ref={doneRef} onClick={onClose}>
-                        Done
+                </header>
+                <div className="mj_EventSource_body">
+                    {/* §10.8: lift the scalar fields the operator scans for OUT of the blob into a
+                        labelled meta grid, so reading JSON to find a timestamp isn't the task. */}
+                    <div className="mj_EventSource_meta">
+                        <span className="mj_EventSource_metaCell">
+                            <span className="mj_EventSource_metaLabel">seq</span>
+                            <span className="mj_EventSource_metaValue">{event.seq}</span>
+                        </span>
+                        <span className="mj_EventSource_metaCell">
+                            <span className="mj_EventSource_metaLabel">sender</span>
+                            <span className="mj_EventSource_metaValue">{event.sender}</span>
+                        </span>
+                        <span className="mj_EventSource_metaCell">
+                            <span className="mj_EventSource_metaLabel">timestamp</span>
+                            <span className="mj_EventSource_metaValue">{formatEventTimestamp(event.ts)}</span>
+                        </span>
+                        <span className="mj_EventSource_metaCell">
+                            <span className="mj_EventSource_metaLabel">convo</span>
+                            <span
+                                className="mj_EventSource_metaValue mj_EventSource_metaValue_trunc"
+                                title={event.convo_id}
+                            >
+                                {event.convo_id}
+                            </span>
+                        </span>
+                    </div>
+                    <pre className="mj_EventSource_json">{json}</pre>
+                </div>
+                <div className="mj_EventSource_footer">
+                    <span className="mj_EventSource_note">Read-only · {byteSize} bytes</span>
+                    <button type="button" className="mj_EventSource_secondary" onClick={onClose}>
+                        Close
+                    </button>
+                    <button
+                        type="button"
+                        className="mj_EventSource_copy"
+                        ref={doneRef}
+                        onClick={() => void copyText(json)}
+                    >
+                        <ClipboardIcon aria-hidden />
+                        Copy JSON
                     </button>
                 </div>
             </div>
         </div>
     );
+}
+
+// Event-source timestamp cell — a clock time with milliseconds (HH:MM:SS.mmm), lifted out
+// of the JSON blob per §10.8. Local time; the raw epoch stays visible in the blob below.
+function formatEventTimestamp(ts: number): string {
+    if (!Number.isFinite(ts)) return String(ts);
+    const date = new Date(ts);
+    if (Number.isNaN(date.getTime())) return String(ts);
+    const pad = (value: number, width = 2): string => String(value).padStart(width, "0");
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
 }
 
 function UploadConfirmDialog({
@@ -4141,7 +4359,11 @@ function UploadConfirmPage({
                                     className={active ? "mj_UploadThumb mj_UploadThumb_active" : "mj_UploadThumb"}
                                     title={item.file.name}
                                 >
-                                    {active && isImage && previewUrl ? <img src={previewUrl} alt="" /> : <AttachmentIcon aria-hidden />}
+                                    {active && isImage && previewUrl ? (
+                                        <img src={previewUrl} alt="" />
+                                    ) : (
+                                        <AttachmentIcon aria-hidden />
+                                    )}
                                 </span>
                             );
                         })}
@@ -4185,8 +4407,13 @@ function UploadConfirmPage({
                         Cancel all
                     </button>
                 )}
-                <button aria-label="Cancel" disabled={staged.confirming} onClick={() => client.skipStagedFile(head.id)}>
-                    Cancel
+                <button
+                    className="mj_UploadConfirm_skip"
+                    aria-label="Skip"
+                    disabled={staged.confirming}
+                    onClick={() => client.skipStagedFile(head.id)}
+                >
+                    Skip
                 </button>
                 <button className="mj_UploadConfirm_send" aria-label="Send" disabled={!canSend} onClick={send}>
                     Send
@@ -4208,7 +4435,12 @@ export function SubagentStrip({
     const selected = state.conversations.find((conversation) => conversation.id === state.selectedConversationId);
     const siblingOrChildParentId = mode === "parent" ? state.selectedConversationId : selected?.parent_convo_id;
     const siblingOrChildren = childrenOf(state.conversations, siblingOrChildParentId);
-    if (siblingOrChildren.length === 0) return null;
+    // #531: in child view the escape names its destination — look up the parent conversation.
+    const parent =
+        mode === "child" && selected?.parent_convo_id
+            ? state.conversations.find((conversation) => conversation.id === selected.parent_convo_id)
+            : undefined;
+    if (siblingOrChildren.length === 0 && !parent) return null;
 
     const runningFirst = (conversations: Conversation[]): Conversation[] => [
         ...conversations.filter((conversation) => conversation.session_state === "running"),
@@ -4216,39 +4448,60 @@ export function SubagentStrip({
     ];
     const ordered = runningFirst(siblingOrChildren);
     return (
-        <div className="mj_SubagentStrip" role="list">
-            <span className="mj_SubagentStripLabel" aria-hidden="true">
-                Subagents
-            </span>
-            {ordered.map((child) => {
-                const isCurrent = mode === "child" && child.id === state.selectedConversationId;
-                const isRunning = child.session_state === "running";
-                const className = [
-                    "mj_SubagentPill",
-                    !isRunning && "mj_SubagentPill_finished",
-                    isCurrent && "mj_SubagentPill_current",
-                ]
-                    .filter(Boolean)
-                    .join(" ");
-                return (
-                    <div key={child.id} role="listitem" className="mj_SubagentPill_wrapper">
-                        <button
-                            className={className}
-                            aria-label={`Open subagent ${conversationTitle(child)}`}
-                            aria-current={isCurrent ? "true" : undefined}
-                            disabled={isCurrent}
-                            onClick={() => void client.selectConversation(child.id)}
-                        >
-                            {isRunning ? (
-                                <span className="mj_Spinner" aria-hidden="true" />
-                            ) : (
-                                <CheckIcon className="mj_SubagentPill_icon" aria-hidden="true" />
-                            )}
-                            <span className="mj_SubagentPill_name">{conversationTitle(child)}</span>
-                        </button>
-                    </div>
-                );
-            })}
+        // §10.11: a non-scrolling row — the back chip + hairline stay PINNED while only the
+        // pill run scrolls, so the escape never scrolls off among many siblings.
+        <div className="mj_SubagentStrip" role="group" aria-label="Subagents">
+            {parent && (
+                <>
+                    <button
+                        className="mj_SubagentBack"
+                        type="button"
+                        title="Back to the parent conversation (Esc)"
+                        aria-label={`Back to ${conversationTitle(parent)}`}
+                        onClick={() => void client.selectConversation(parent.id)}
+                    >
+                        <ChevronLeftIcon className="mj_SubagentBack_icon" aria-hidden="true" />
+                        <span className="mj_SubagentBack_name">{conversationTitle(parent)}</span>
+                    </button>
+                    <span className="mj_SubagentStrip_hairline" aria-hidden="true" />
+                </>
+            )}
+            {ordered.length > 0 && (
+                <div className="mj_SubagentStrip_run" role="list">
+                    <span className="mj_SubagentStripLabel" aria-hidden="true">
+                        Subagents
+                    </span>
+                    {ordered.map((child) => {
+                        const isCurrent = mode === "child" && child.id === state.selectedConversationId;
+                        const isRunning = child.session_state === "running";
+                        const className = [
+                            "mj_SubagentPill",
+                            !isRunning && "mj_SubagentPill_finished",
+                            isCurrent && "mj_SubagentPill_current",
+                        ]
+                            .filter(Boolean)
+                            .join(" ");
+                        return (
+                            <div key={child.id} role="listitem" className="mj_SubagentPill_wrapper">
+                                <button
+                                    className={className}
+                                    aria-label={`Open subagent ${conversationTitle(child)}`}
+                                    aria-current={isCurrent ? "true" : undefined}
+                                    disabled={isCurrent}
+                                    onClick={() => void client.selectConversation(child.id)}
+                                >
+                                    {isRunning ? (
+                                        <span className="mj_Spinner" aria-hidden="true" />
+                                    ) : (
+                                        <CheckIcon className="mj_SubagentPill_icon" aria-hidden="true" />
+                                    )}
+                                    <span className="mj_SubagentPill_name">{conversationTitle(child)}</span>
+                                </button>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 }
@@ -4275,6 +4528,36 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     const isFileDrag = (event: React.DragEvent): boolean => Array.from(event.dataTransfer.types).includes("Files");
     const selected = client.selectedConversation();
     const childMode = selected != null && isSubChat(selected);
+
+    // §10.11.E: Escape unwinds ONE layer at a time, outermost-last. Inner layers (source
+    // viewer, upload/new-session modals, open menus) own their own Escape and close first;
+    // this handler is the INNERMOST rung — when nothing else is open and you are inside a
+    // subagent, Escape returns to the parent (the same action as the back chip). The
+    // DOM-presence guard enforces "one layer per press": while any overlay is still mounted
+    // (it hasn't unmounted yet during this same keydown), this rung defers to it.
+    const parentId = childMode ? selected?.parent_convo_id : undefined;
+    const hasParent = Boolean(
+        parentId && parentId !== selected?.id && state.conversations.some((c) => c.id === parentId),
+    );
+    useEffect(() => {
+        if (!hasParent || !parentId) return undefined;
+        const onKey = (event: KeyboardEvent): void => {
+            if (event.key !== "Escape" || event.defaultPrevented) return;
+            if (state.stagedUploads) return; // upload / new-session modal owns Escape
+            // Any inner overlay still mounted → it owns this press; defer.
+            if (
+                document.querySelector(
+                    ".mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_AccountMenu, .mj_EventRowMenu, .mj_RoomItemMenu, .mj_HeaderMenu, [role='menu']",
+                )
+            ) {
+                return;
+            }
+            event.preventDefault();
+            void client.selectConversation(parentId);
+        };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, [hasParent, parentId, state.stagedUploads, client]);
 
     return (
         <div className="mx_MatrixChat_wrapper">

@@ -54,6 +54,13 @@ Please see LICENSE files in the repository root for full details.
     --cpd-state-active: rgb(28 24 20 / 0.09);
     --cpd-state-selected: rgb(13 148 136 / 0.1);
 
+    /* §10.4 native chrome: no --cpd tokens exist for selection or scrollbar thumbs, so
+       author them here as accent-tint / neutral-ink values (mirrors the design's
+       --m-selection / --m-scrollbar). Overridden per theme in [data-theme="dark"]. */
+    --mj-selection: rgb(13 148 136 / 0.2);
+    --mj-scrollbar: rgb(28 24 20 / 0.22);
+    --mj-scrollbar-hover: rgb(28 24 20 / 0.34);
+
     /* --- v2 motion + focus --- */
     --cpd-focus-ring: 0 0 0 2px var(--cpd-color-bg-canvas-default), 0 0 0 4px var(--cpd-color-text-action-accent);
     --cpd-dur-fast: 120ms;
@@ -159,6 +166,11 @@ Please see LICENSE files in the repository root for full details.
     --cpd-state-hover: rgb(255 255 255 / 0.06);
     --cpd-state-active: rgb(255 255 255 / 0.1);
     --cpd-state-selected: rgb(45 212 191 / 0.14);
+
+    /* §10.4 native chrome (dark): accent-tint selection + light-ink scrollbar thumbs. */
+    --mj-selection: rgb(45 212 191 / 0.26);
+    --mj-scrollbar: rgb(255 255 255 / 0.2);
+    --mj-scrollbar-hover: rgb(255 255 255 / 0.32);
 
     /* In dark, shadows are near-invisible — surface lightness carries elevation; shadows keep shape only. */
     --cpd-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
@@ -428,6 +440,25 @@ button {
 
 .mj_RoomListItem_selected {
     background: var(--cpd-state-selected);
+}
+
+/* #532 subagent child row: indented under its parent, muted name, ↳ connector. The leading
+   glyph (spinner while running / idle dot) sits in the normal status column. */
+.mj_RoomListItem_sub {
+    padding-left: 26px;
+}
+
+.mj_RoomListItem_sub .mj_RoomListName {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_RoomListSubArrow {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_RoomListSubSpinner {
+    width: 12px;
+    height: 12px;
 }
 
 .mj_RoomListItem_selected::before {
