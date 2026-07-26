@@ -1,18 +1,12 @@
 # Fonts in the static states
 
-Each state file links Inter + Fira Code from the Google CDN and carries a commented
-`@font-face` block at the top of its `<style>`.
+**Self-hosted.** `static/fonts/` carries:
 
-**For probing, do nothing.** Computed values resolve regardless of which face loads —
-every size, weight, and line-height in this design is authored as an absolute value,
-not derived from font metrics.
+- `InterVariable.woff2` — from `rsms/inter` `docs/font-files/` (SIL OFL 1.1)
+- `FiraCode[wght].ttf` — from `google/fonts` `ofl/firacode/` (SIL OFL 1.1, licence in `FiraCode-OFL.txt`)
 
-**For screenshot-faithful offline renders**, self-hosting is a two-step:
+Both are variable fonts covering the weights this design uses (400/500/600). The `@font-face` rules sit at the top of each state file's `<style>` and load with `font-display: block`, so an offline render is screenshot-faithful — no CDN, no fallback substitution.
 
-1. Put `Inter.woff2` and `FiraCode.woff2` in `static/fonts/`.
-2. Uncomment the `@font-face` block in the state files you render:
-   `sed -i 's|^/\*$||; s|^\*/$||' static/*.html` — or just delete the `/*` and `*/` around it.
+Metrics were never at risk either way: every size, weight, and line-height in this design is authored as an absolute value rather than derived from font metrics, so computed values were correct even when the CDN face was missing.
 
-matron-web ships no font files at `main` (checked: zero `woff2?`/`ttf` in the tree),
-which is why they could not be embedded here. If the app later self-hosts, point the
-`src` at the repo path instead and this becomes a one-line change.
+If matron-web later self-hosts its own copies, point the `src` at the repo path and delete this folder.

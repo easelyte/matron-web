@@ -23,6 +23,7 @@
   --m-green:#34c759; --m-amber:#ff9500; --m-red:#ff3b30; --m-crit:#bd2020;
   --m-diff-add:rgb(52 199 89 / 0.13); --m-diff-del:rgb(255 59 48 / 0.09);
   --m-sh-sm:0 1px 2px rgb(28 24 20 / 0.06); --m-sh-md:0 4px 12px rgb(28 24 20 / 0.10); --m-sh-lg:0 16px 48px rgb(28 24 20 / 0.16);
+  --m-scrollbar:rgb(28 24 20 / 0.22); --m-scrollbar-hover:rgb(28 24 20 / 0.34); --m-selection:rgb(13 148 136 / 0.20);
 }
 [data-theme="dark"] {
   --m-app:#121316; --m-panel:#1a1c20; --m-paper:#151619; --m-raised:#212429; --m-overlay:#282c32;
@@ -35,13 +36,22 @@
   --m-crit:#ff6a6a;
   --m-diff-add:rgb(52 199 89 / 0.12); --m-diff-del:rgb(255 107 107 / 0.10);
   --m-sh-sm:0 1px 2px rgb(0 0 0 / 0.3); --m-sh-md:0 4px 12px rgb(0 0 0 / 0.4); --m-sh-lg:0 16px 48px rgb(0 0 0 / 0.5);
+  --m-scrollbar:rgb(255 255 255 / 0.20); --m-scrollbar-hover:rgb(255 255 255 / 0.32); --m-selection:rgb(45 212 191 / 0.26);
 }
 html, body { width:100%; height:100%; margin:0; overflow:hidden; }
 body { background:var(--m-app); }
 a { color:var(--m-accent); text-decoration:none; }
 a:hover { text-decoration:underline; }
 textarea::placeholder, input::placeholder { color:var(--m-ink3); }
-* { scrollbar-width:thin; scrollbar-color:rgb(120 114 105 / 40%) transparent; }
+/* Native chrome is part of the theme, not an exception to it. */
+* { scrollbar-width:thin; scrollbar-color:var(--m-scrollbar) transparent; }
+*::-webkit-scrollbar { width:10px; height:10px; }
+*::-webkit-scrollbar-track { background:transparent; }
+*::-webkit-scrollbar-thumb { background:var(--m-scrollbar); border:3px solid transparent; background-clip:content-box; border-radius:99px; }
+*::-webkit-scrollbar-thumb:hover { background:var(--m-scrollbar-hover); border:3px solid transparent; background-clip:content-box; }
+*::-webkit-scrollbar-corner { background:transparent; }
+::selection { background:var(--m-selection); }
+:focus-visible { outline:2px solid var(--m-accent); outline-offset:2px; }
 @keyframes m-pulse { 0%,100% { opacity:.35; } 50% { opacity:1; } }
 @keyframes m-spin { to { transform:rotate(360deg); } }
 @keyframes m-wave { 0%,100% { transform:scaleY(0.3); } 50% { transform:scaleY(1); } }
@@ -52,7 +62,7 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
   "meta": {
     "name": "Matron UI redesign",
     "source": "Matron Redesign.dc.html",
-    "generated": "2026-07-25T18:38Z",
+    "generated": "2026-07-26T09:22Z",
     "derivation": "Colour tokens and font shorthands are PARSED from the rendering artifact, not hand-written. Regenerate after any change rather than editing this file. States, breakpoints, layering and intent (below) are hand-authored — they cannot be probed from a static render.",
     "fontStacks": {
       "ui": "Inter, 'Helvetica Neue', sans-serif",
@@ -67,67 +77,118 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
     "probing": {
       "attribute": "data-spec",
       "names": [
-        "sidebar",
-        "sidebar.list",
-        "sidebar.footer.connection",
-        "devtool.stateMatrix",
-        "header",
-        "subagentStrip",
-        "canvas",
-        "card.permission",
-        "gallery",
-        "event.text",
-        "event.prompt",
-        "event.permission_request",
-        "event.prompt_reply",
-        "event.image",
-        "event.file",
-        "event.file.loading",
-        "event.toolOutput.failed",
-        "event.toolOutput.expired",
-        "event.unknown",
-        "attachmentChip.sending",
+        "activity",
         "attachmentChip.error",
-        "button.primary.rest",
-        "button.primary.hover",
-        "button.primary.focus",
-        "button.primary.disabled",
-        "button.secondary.rest",
-        "button.secondary.hover",
-        "button.secondary.focus",
-        "button.secondary.disabled",
-        "button.ghostDanger.rest",
-        "button.ghostDanger.hover",
+        "attachmentChip.sending",
         "button.ghostDanger.focus",
-        "button.icon.rest",
-        "button.icon.hover",
+        "button.ghostDanger.hover",
+        "button.ghostDanger.rest",
         "button.icon.active",
         "button.icon.focus",
-        "input.rest",
-        "input.focus",
-        "input.error",
-        "input.disabled",
-        "sidebar.row.rest",
-        "sidebar.row.hover",
-        "sidebar.row.selected",
-        "sidebar.row.unread",
-        "sidebar.row.focus",
-        "sidebar.empty.noneEver",
-        "sidebar.empty.noActive",
-        "sidebar.empty.noSearchMatch",
-        "sidebar.empty.noFavorites",
-        "sidebar.empty.noArchived",
+        "button.icon.hover",
+        "button.icon.rest",
+        "button.primary.disabled",
+        "button.primary.focus",
+        "button.primary.hover",
+        "button.primary.rest",
+        "button.secondary.disabled",
+        "button.secondary.focus",
+        "button.secondary.hover",
+        "button.secondary.rest",
+        "canvas",
         "canvas.empty",
+        "canvas.ownBubble",
+        "composer.attach",
+        "composer.footer",
+        "composer.hints",
+        "composer.input",
+        "composer.mic",
         "composer.offline",
-        "composer",
-        "composer.slashPalette",
         "composer.recording",
-        "modal.upload"
+        "composer.send",
+        "composer.shell",
+        "composer.slashPalette",
+        "devtool.stateMatrix",
+        "event.diff.addRow",
+        "event.diff.filename",
+        "event.file",
+        "event.file.loading",
+        "event.image",
+        "event.permission_request",
+        "event.prompt",
+        "event.prompt.answered",
+        "event.prompt.timestamp",
+        "event.prompt.unanswered",
+        "event.prompt_reply",
+        "event.text",
+        "event.toolOutput.expired",
+        "event.toolOutput.failed",
+        "event.tool_output.summary",
+        "event.unknown",
+        "gallery",
+        "header",
+        "header.compact",
+        "header.more",
+        "header.subtitle",
+        "header.title",
+        "header.titlePopover",
+        "header.usage",
+        "header.usage.label",
+        "header.usage.row",
+        "header.usagePopover",
+        "input.disabled",
+        "input.error",
+        "input.focus",
+        "input.rest",
+        "menu.conversationActions",
+        "menu.item",
+        "menu.item.archive",
+        "menu.item.archive.hover",
+        "menu.item.favorite",
+        "menu.item.focus",
+        "menu.item.hover",
+        "menu.item.unread",
+        "menu.specimen",
+        "modal.newSession",
+        "modal.newSession.checkbox",
+        "modal.newSession.disabledField",
+        "modal.newSession.pathField",
+        "modal.newSession.scrim",
+        "modal.upload",
+        "modal.upload.caption",
+        "modal.upload.queue",
+        "modal.upload.scrim",
+        "modal.upload.single",
+        "modal.upload.thumb.active",
+        "round2",
+        "sidebar",
+        "sidebar.empty.noActive",
+        "sidebar.empty.noArchived",
+        "sidebar.empty.noFavorites",
+        "sidebar.empty.noSearchMatch",
+        "sidebar.empty.noneEver",
+        "sidebar.footer.connection",
+        "sidebar.list",
+        "sidebar.newSession",
+        "sidebar.resizeHandle",
+        "sidebar.row",
+        "sidebar.row.focus",
+        "sidebar.row.hover",
+        "sidebar.row.rest",
+        "sidebar.row.selected",
+        "sidebar.row.status",
+        "sidebar.row.unread",
+        "sidebar.row.unreadRow",
+        "sidebar.tab.active",
+        "sidebar.tabs",
+        "subagentStrip",
+        "subagentStrip.pill"
       ],
       "selectorMap": "component-map.json",
-      "staticStates": "static/index.json — 20 runtime-free files, one per state; getComputedStyle works directly",
+      "staticStates": "static/index.json — 28 runtime-free files with self-hosted fonts (8 cover the round-2 surfaces)",
       "snippet": "[...document.querySelectorAll('[data-spec]')].map(el => ({ name: el.dataset.spec, target: el.dataset.target, cs: getComputedStyle(el) }))",
-      "devtool": "data-spec values starting 'devtool.' and 'gallery' are handoff affordances — do not implement"
+      "devtool": "data-spec values starting 'devtool.' and 'gallery' are handoff affordances — do not implement",
+      "granularity": "Tagged at the same granularity as component-map.json's selectors; multi-rung components are split so a diff never compares a container against a child."
     },
     "deliverables": {
       "Matron Redesign.dc.html": "editable source of truth (interactive; carries the tokens inline)",
@@ -168,7 +229,10 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       "--m-diff-del": "rgb(255 59 48 / 0.09)",
       "--m-sh-sm": "0 1px 2px rgb(28 24 20 / 0.06)",
       "--m-sh-md": "0 4px 12px rgb(28 24 20 / 0.10)",
-      "--m-sh-lg": "0 16px 48px rgb(28 24 20 / 0.16)"
+      "--m-sh-lg": "0 16px 48px rgb(28 24 20 / 0.16)",
+      "--m-scrollbar": "rgb(28 24 20 / 0.22)",
+      "--m-scrollbar-hover": "rgb(28 24 20 / 0.34)",
+      "--m-selection": "rgb(13 148 136 / 0.20)"
     },
     "dark": {
       "--m-app": "#121316",
@@ -196,7 +260,10 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       "--m-diff-del": "rgb(255 107 107 / 0.10)",
       "--m-sh-sm": "0 1px 2px rgb(0 0 0 / 0.3)",
       "--m-sh-md": "0 4px 12px rgb(0 0 0 / 0.4)",
-      "--m-sh-lg": "0 16px 48px rgb(0 0 0 / 0.5)"
+      "--m-sh-lg": "0 16px 48px rgb(0 0 0 / 0.5)",
+      "--m-scrollbar": "rgb(255 255 255 / 0.20)",
+      "--m-scrollbar-hover": "rgb(255 255 255 / 0.32)",
+      "--m-selection": "rgb(45 212 191 / 0.26)"
     },
     "surfaceLadder": {
       "intent": "Dark is a lightness ladder, not an inverted light theme.",
@@ -356,37 +423,43 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       }
     },
     "usageCensus": {
-      "600 15px/20px Inter": 3,
+      "600 15px/20px Inter": 4,
       "500 13px/16px Inter": 1,
       "500 12px/16px Inter": 6,
-      "400 13px/16px Inter": 6,
-      "500 13px/17px Inter": 15,
-      "400 11px/14px Inter": 29,
-      "400 12px/16px Inter": 20,
+      "400 13px/16px Inter": 7,
+      "500 13px/17px Inter": 17,
+      "400 11px/14px Inter": 34,
+      "400 12px/16px Inter": 21,
       "600 13px/17px Inter": 8,
       "600 10px/18px Inter": 2,
       "400 12px/17px Inter": 7,
       "600 12px/16px Inter": 3,
-      "500 10px/14px Inter": 5,
+      "500 10px/14px Inter": 12,
       "400 11.5px/15px Inter": 7,
       "500 10.5px/13px 'Fira Code'": 3,
       "400 10.5px/13px 'Fira Code'": 14,
       "500 11.5px/15px Inter": 1,
       "400 10px/14px Inter": 4,
-      "500 11px/14px Inter": 1,
+      "400 13px/17px Inter": 8,
+      "500 11px/14px Inter": 2,
       "400 14px/22px Inter": 12,
-      "400 12.5px/18px 'Fira Code'": 7,
+      "400 12.5px/18px 'Fira Code'": 8,
       "500 12.5px/18px 'Fira Code'": 5,
       "600 11px/16px Inter": 2,
       "400 12px/19px 'Fira Code'": 4,
       "600 12.5px/18px 'Fira Code'": 1,
       "600 11px/16px 'Fira Code'": 2,
-      "400 11px/16px 'Fira Code'": 4,
-      "600 10px/14px Inter": 3,
-      "400 13.5px/20px Inter": 4,
-      "600 12.5px/16px Inter": 8,
-      "500 12.5px/16px Inter": 17,
-      "600 14px/19px Inter": 1,
+      "400 11px/16px 'Fira Code'": 5,
+      "600 10px/14px Inter": 5,
+      "400 13.5px/20px Inter": 6,
+      "600 12.5px/16px Inter": 12,
+      "500 12.5px/16px Inter": 23,
+      "400 12.5px/18px Inter": 1,
+      "400 11px/16px Inter": 3,
+      "600 14px/19px Inter": 3,
+      "500 12.5px/18px Inter": 1,
+      "400 11px/15px Inter": 1,
+      "400 11px/14px 'Fira Code'": 1,
       "500 11px/16px 'Fira Code'": 1
     },
     "minimumSize": "10px, used only for the bubble timestamp and unread numeral; body copy never below 12px"
@@ -730,6 +803,92 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       "contextFigure": "144k/200k via compactTokens()",
       "reset": "resetDisplay(): 'now' <1m, '18m' <1h, '2h05' <6h, 'Mon 3pm' beyond"
     }
+  },
+  "decisionsResolved": {
+    "date": "2026-07-25",
+    "usageThresholds": "flat, percentage-based, identical for every meter (<50 green / 50–84 amber / ≥85 red). NOT per-meter, NOT timeframe-aware.",
+    "usageLayout": "2×2 grid, keep",
+    "sessionOrdering": "pinned first, then running-first within each group",
+    "subagentSurfaces": "keep both the sidebar rows and the header pills",
+    "micPosition": "right of the textarea, left of send"
+  },
+  "nativeChrome": {
+    "why": "A theme is not done when only the custom elements are themed. Each of these was an observed parity failure in the live app.",
+    "scrollbars": "scrollbar-width:thin + scrollbar-color:var(--m-scrollbar) transparent, plus ::-webkit-scrollbar (10px), -thumb (var(--m-scrollbar), 3px transparent border, background-clip:content-box, radius 99px), -thumb:hover (--m-scrollbar-hover), -track and -corner transparent.",
+    "focusVisible": "A GLOBAL `:focus-visible { outline:2px solid var(--m-accent); outline-offset:2px }` is the floor. Inside menus the offset is -2px so the ring insets. Never browser-blue.",
+    "selection": "::selection { background: var(--m-selection) }",
+    "nativeInputs": "Every input/textarea/select sets background, color AND border explicitly — an unstyled input inherits UA white, which is the white-on-dark 'Agent default' field. Placeholder colour set to --m-ink3.",
+    "disabledFields": "--m-subtle fill + --m-ink3 text. Never opacity alone: opacity on a UA-white field is still white.",
+    "newTokens": [
+      "--m-scrollbar",
+      "--m-scrollbar-hover",
+      "--m-selection"
+    ]
+  },
+  "invariants": {
+    "reference": "GENERATIVE-SYSTEM.md §10 — full prose. Summarised here for machine consumption.",
+    "contentWidth": {
+      "thread": "680px",
+      "modal": "min(440px, 94vw)",
+      "menu": "212–300px, content-sized",
+      "ownBubble": "min(78%, 560px)",
+      "rule": "one measure per region; overflow scrolls inside the element, the measure never bends"
+    },
+    "alignmentGrid": {
+      "outerEdge": "card padding-left — every direct child starts here",
+      "innerEdge": "outer + 24px — the text column of a fixed 24px icon gutter; icon-prefixed lines and their lists share it",
+      "maxEdges": 2,
+      "rightEdge": "card padding-right — timestamps/counts/sizes across ALL message types share one vertical line",
+      "prohibited": "inline emoji as icons: glyph width makes the left edge variable, so no two rows align. Icons are SVG in the gutter."
+    },
+    "spacingRhythm": {
+      "cardInternals": 10,
+      "modalSections": 14,
+      "agentTurnElements": 8,
+      "sidebarRows": 1,
+      "fieldAndItsLabel": 6,
+      "buttonGroups": 8,
+      "rule": "one gap value per container, set on flex/grid gap — never per-child margins. A label is bound to the field BELOW it. A card must not change rhythm between states."
+    },
+    "onePrimary": "Exactly one filled accent button per surface, on the affirmative (Send now / Start session / Send / Allow). Everything else is secondary or ghost. Destructive is ghost, critical on hover only.",
+    "menus": {
+      "component": "one component, many anchors",
+      "anchors": {
+        "sidebarRow": "right-click context menu ONLY — no persistent ⋯ affordance (operator decision)",
+        "header": "the ⋯ button"
+      },
+      "internals": "rows grid 16px 1fr, gap 10, padding 7/9, radius 7 inside a 4px-padded shell so hover insets from the shell edge; groups separated by a hairline, not a gap"
+    },
+    "hardStates": {
+      "promptCard": [
+        "un-answered",
+        "answered + queued list",
+        "expired",
+        "read-only",
+        "both themes"
+      ],
+      "newSessionSheet": [
+        "default",
+        "path typed",
+        "checkbox on",
+        "disabled workspace field",
+        "both themes"
+      ],
+      "actionsMenu": [
+        "rest",
+        "hover",
+        "keyboard-focused",
+        "destructive hover",
+        "both themes"
+      ],
+      "uploadModal": [
+        "single file",
+        "multi-file n of N + strip",
+        "last file",
+        "caption filled",
+        "both themes"
+      ]
+    }
   }
 }
 </script>
@@ -751,13 +910,13 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       </button>
     </div>
     <div style="padding:0 12px 10px;">
-      <button onClick="{{ newSession }}" title="Runs /start" style="display:flex; width:100%; align-items:center; justify-content:center; gap:8px; height:34px; border:1px solid rgb(13 148 136 / 25%); border-radius:8px; background:var(--m-selected); color:var(--m-accent); font:500 13px/16px Inter, sans-serif; cursor:pointer;" style-hover="background:var(--m-active);">
+      <button data-spec="sidebar.newSession" onClick="{{ openNewSession }}" title="Opens the new-session sheet (/start)" style="display:flex; width:100%; align-items:center; justify-content:center; gap:8px; height:34px; border:1px solid rgb(13 148 136 / 25%); border-radius:8px; background:var(--m-selected); color:var(--m-accent); font:500 13px/16px Inter, sans-serif; cursor:pointer;" style-hover="background:var(--m-active);">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h8"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path></svg>
         New session
       </button>
     </div>
-    <div style="display:flex; gap:2px; margin:0 12px 8px; padding:2px; border-radius:999px; background:var(--m-subtle2);">
-      <button onClick="{{ tabActive }}" style="flex:1; border:0; border-radius:999px; padding:5px 8px; background:{{ tabBg0 }}; color:{{ tabInk0 }}; box-shadow:{{ tabSh0 }}; font:500 12px/16px Inter, sans-serif; cursor:pointer;" style-hover="color:var(--m-ink);">Active</button>
+    <div data-spec="sidebar.tabs" style="display:flex; gap:2px; margin:0 12px 8px; padding:2px; border-radius:999px; background:var(--m-subtle2);">
+      <button data-spec="sidebar.tab.active" onClick="{{ tabActive }}" style="flex:1; border:0; border-radius:999px; padding:5px 8px; background:{{ tabBg0 }}; color:{{ tabInk0 }}; box-shadow:{{ tabSh0 }}; font:500 12px/16px Inter, sans-serif; cursor:pointer;" style-hover="color:var(--m-ink);">Active</button>
       <button onClick="{{ tabFavorites }}" title="Favorites" style="flex:1; display:inline-flex; align-items:center; justify-content:center; gap:5px; border:0; border-radius:999px; padding:5px 8px; background:{{ tabBg1 }}; color:{{ tabInk1 }}; box-shadow:{{ tabSh1 }}; font:500 12px/16px Inter, sans-serif; cursor:pointer;" style-hover="color:var(--m-ink);"><svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" stroke="none"><path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.9 7.2 19l.9-5.4L4.2 9.7l5.4-.8L12 4Z"></path></svg>Favs</button>
       <button onClick="{{ tabArchived }}" style="flex:1; border:0; border-radius:999px; padding:5px 8px; background:{{ tabBg2 }}; color:{{ tabInk2 }}; box-shadow:{{ tabSh2 }}; font:500 12px/16px Inter, sans-serif; cursor:pointer;" style-hover="color:var(--m-ink);">Archived <span style="color:var(--m-ink3);">4</span></button>
     </div>
@@ -769,20 +928,20 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
     </div>
     <nav data-spec="sidebar.list" style="flex:1; min-height:0; overflow-y:auto; padding:2px 8px 8px; display:flex; flex-direction:column; gap:1px;">
       <sc-if value="{{ tabShowsAll }}" hint-placeholder-val="{{ true }}">
-      <button onClick="{{ select0 }}" style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:{{ rowBg0 }}; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+      <button data-spec="sidebar.row.selected" onClick="{{ select0 }}" style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:{{ rowBg0 }}; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
         <span style="position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:99px; background:{{ rowBar0 }};"></span>
-        <span title="running" style="width:8px; height:8px; flex:0 0 auto; border-radius:50%; background:var(--m-accent); animation:m-pulse 1.6s ease-in-out infinite;"></span>
+        <span data-spec="sidebar.row.status" title="running" style="width:8px; height:8px; flex:0 0 auto; border-radius:50%; background:var(--m-accent); animation:m-pulse 1.6s ease-in-out infinite;"></span>
         <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
           <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 13px/17px Inter, sans-serif;">matron-web · deploy</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:06</span></span>
           <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">Restarted nginx; error rate steady at 0.02%</span>
         </span>
       </button>
-      <button onClick="{{ select1 }}" style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:{{ rowBg1 }}; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+      <button data-spec="sidebar.row" onClick="{{ select1 }}" style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:{{ rowBg1 }}; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
         <span style="position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:99px; background:{{ rowBar1 }};"></span>
         <span style="width:8px; display:inline-flex; justify-content:center; flex:0 0 auto; color:var(--m-ink3);"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1 6 3 3H7l3-3-1-6Z"></path><path d="M12 16v4"></path></svg></span>
         <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
           <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 13px/17px Inter, sans-serif;">infra: backup rotation</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">09:41</span></span>
-          <span style="display:flex; align-items:center; gap:6px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">Cron entry added for 03:15 UTC daily</span><span style="flex:0 0 auto; display:inline-flex; min-width:18px; height:18px; align-items:center; justify-content:center; padding:0 5px; border-radius:9px; background:var(--m-accent); color:var(--m-on-accent); font:600 10px/18px Inter, sans-serif;">3</span></span>
+          <span style="display:flex; align-items:center; gap:6px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">Cron entry added for 03:15 UTC daily</span><span style="flex:0 0 auto; display:inline-flex; min-width:18px; height:18px; align-items:center; justify-content:center; padding:0 5px; border-radius:9px; background:var(--m-accent); color:var(--m-on-accent); font:600 10px/18px Inter, sans-serif;" data-spec="sidebar.row.unread">3</span></span>
         </span>
       </button>
       <button onClick="{{ select2 }}" style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:{{ rowBg2 }}; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
@@ -866,7 +1025,7 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
   </sc-if>
 
   <sc-if value="{{ showHandle }}" hint-placeholder-val="{{ false }}">
-  <div onPointerDown="{{ startResize }}" title="Drag to resize" style="width:5px; margin:0 -2px; flex:0 0 auto; cursor:col-resize; z-index:5;" style-hover="background:rgb(13 148 136 / 18%);"></div>
+  <div data-spec="sidebar.resizeHandle" onPointerDown="{{ startResize }}" title="Drag to resize" style="width:5px; margin:0 -2px; flex:0 0 auto; cursor:col-resize; z-index:5;" style-hover="background:rgb(13 148 136 / 18%);"></div>
   </sc-if>
 
   <sc-if value="{{ showChat }}" hint-placeholder-val="{{ true }}">
@@ -879,15 +1038,15 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       </button>
       </sc-if>
       <div onMouseEnter="{{ titleEnter }}" onMouseLeave="{{ titleLeave }}" style="position:relative; min-width:0; display:flex; flex-direction:column; gap:1px;">
-        <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 15px/20px Inter, sans-serif;">matron-web · deploy</div>
+        <div data-spec="header.title" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 15px/20px Inter, sans-serif;">matron-web · deploy</div>
         <sc-if value="{{ titleFull }}" hint-placeholder-val="{{ true }}">
-        <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 11px/14px Inter, sans-serif; color:var(--m-ink2);">claude-sonnet-4-5 · /opt/matron/web-journal · <span style="color:var(--m-accent);">running</span></div>
+        <div data-spec="header.subtitle" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 11px/14px Inter, sans-serif; color:var(--m-ink2);">claude-sonnet-4-5 · /opt/matron/web-journal · <span style="color:var(--m-accent);">running</span></div>
         </sc-if>
         <sc-if value="{{ titleMini }}" hint-placeholder-val="{{ false }}">
         <div style="display:flex; align-items:center; gap:5px; font:400 11px/14px Inter, sans-serif; color:var(--m-ink2);"><span style="width:6px; height:6px; border-radius:50%; background:var(--m-accent); flex:0 0 auto;"></span><span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">sonnet-4-5</span></div>
         </sc-if>
         <sc-if value="{{ titlePopover }}" hint-placeholder-val="{{ false }}">
-        <div style="position:absolute; top:calc(100% + 10px); left:0; z-index:30; display:grid; gap:7px; width:min(280px, 84vw); padding:12px 14px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-overlay); box-shadow:var(--m-sh-md);">
+        <div data-spec="header.titlePopover" style="position:absolute; top:calc(100% + 10px); left:0; z-index:30; display:grid; gap:7px; width:min(280px, 84vw); padding:12px 14px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-overlay); box-shadow:var(--m-sh-md);">
           <span style="font:600 13px/17px Inter, sans-serif; overflow-wrap:anywhere;">matron-web · deploy</span>
           <span style="display:grid; grid-template-columns:56px 1fr; gap:8px; font:400 11.5px/15px Inter, sans-serif; color:var(--m-ink2);"><span style="color:var(--m-ink3);">model</span><span style="font-family:'Fira Code', monospace; overflow-wrap:anywhere;">claude-sonnet-4-5</span></span>
           <span style="display:grid; grid-template-columns:56px 1fr; gap:8px; font:400 11.5px/15px Inter, sans-serif; color:var(--m-ink2);"><span style="color:var(--m-ink3);">workdir</span><span style="font-family:'Fira Code', monospace; overflow-wrap:anywhere;">/opt/matron/web-journal</span></span>
@@ -898,9 +1057,9 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       <span style="flex:1;"></span>
       <div onMouseEnter="{{ usageEnter }}" onMouseLeave="{{ usageLeave }}" style="position:relative; flex:0 0 auto; display:flex; align-items:center;">
       <sc-if value="{{ usageFull }}" hint-placeholder-val="{{ true }}">
-      <div style="display:grid; grid-template-columns:1fr 1fr; column-gap:16px; row-gap:4px; width:300px; flex:0 0 auto;">
-        <div style="display:grid; grid-template-columns:24px 1fr 32px; align-items:center; gap:7px; font:500 10.5px/13px 'Fira Code', monospace; color:var(--m-ink);">
-          <span style="text-align:right;">ctx</span>
+      <div data-spec="header.usage" style="display:grid; grid-template-columns:1fr 1fr; column-gap:16px; row-gap:4px; width:300px; flex:0 0 auto;">
+        <div data-spec="header.usage.row" style="display:grid; grid-template-columns:24px 1fr 32px; align-items:center; gap:7px; font:500 10.5px/13px 'Fira Code', monospace; color:var(--m-ink);">
+          <span data-spec="header.usage.label" style="text-align:right;">ctx</span>
           <span style="display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:72%; border-radius:inherit; background:var(--m-amber);"></span></span>
           <span>72%</span>
         </div>
@@ -929,7 +1088,7 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       </button>
       </sc-if>
       <sc-if value="{{ usagePopover }}" hint-placeholder-val="{{ false }}">
-      <div style="position:absolute; top:calc(100% + 10px); right:0; z-index:30; display:grid; gap:8px; width:250px; padding:12px 14px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-overlay); box-shadow:var(--m-sh-md);">
+      <div data-spec="header.usagePopover" style="position:absolute; top:calc(100% + 10px); right:0; z-index:30; display:grid; gap:8px; width:250px; padding:12px 14px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-overlay); box-shadow:var(--m-sh-md);">
         <div style="display:grid; grid-template-columns:76px 1fr; align-items:center; gap:10px; font:500 11.5px/15px Inter, sans-serif;">
           <span>context</span>
           <span style="display:flex; align-items:center; gap:8px;"><span style="flex:1; display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:72%; border-radius:inherit; background:var(--m-amber);"></span></span><span style="font:500 10.5px/13px 'Fira Code', monospace;">144k/200k</span></span>
@@ -952,20 +1111,43 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       </div>
       <sc-if value="{{ showCompactBtn }}" hint-placeholder-val="{{ true }}">
       <span style="width:1px; height:26px; background:var(--m-line); flex:0 0 auto;"></span>
-      <button title="Compact context" style="display:inline-flex; height:28px; align-items:center; gap:6px; padding:0 10px; border:1px solid var(--m-line2); border-radius:999px; background:transparent; color:var(--m-ink2); font:500 12px/16px Inter, sans-serif; cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover); color:var(--m-ink);">
+      <button data-spec="header.compact" title="Compact context" style="display:inline-flex; height:28px; align-items:center; gap:6px; padding:0 10px; border:1px solid var(--m-line2); border-radius:999px; background:transparent; color:var(--m-ink2); font:500 12px/16px Inter, sans-serif; cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover); color:var(--m-ink);">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9 4 4M4 8V4h4"></path><path d="m15 15 5 5M20 16v4h-4"></path></svg>
         Compact
       </button>
       </sc-if>
-      <button title="More" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover);">
+      <span style="position:relative; flex:0 0 auto;">
+      <button data-spec="header.more" onClick="{{ toggleActions }}" title="Conversation actions" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:{{ actionsTriggerBg }}; color:var(--m-ink2); cursor:pointer;" style-hover="background:var(--m-hover);">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.5"></circle><circle cx="12" cy="12" r="1.5"></circle><circle cx="19" cy="12" r="1.5"></circle></svg>
       </button>
+      <sc-if value="{{ actionsOpen }}" hint-placeholder-val="{{ false }}">
+      <span data-spec="menu.conversationActions" data-target=".mj_ContextMenu" style="position:absolute; top:calc(100% + 8px); right:0; z-index:30; display:flex; flex-direction:column; width:212px; padding:4px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-overlay); box-shadow:var(--m-sh-md);">
+        <button data-spec="menu.item" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border:0; border-radius:7px; background:transparent; color:var(--m-ink); font:400 13px/17px Inter, sans-serif; text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);" style-focus="outline:2px solid var(--m-accent); outline-offset:-2px;">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2);"><path d="M9 4h6l-1 6 3 3H7l3-3-1-6Z"></path><path d="M12 16v4"></path></svg>
+          <span>Pin</span>
+        </button>
+        <button data-spec="menu.item.favorite" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border:0; border-radius:7px; background:transparent; color:var(--m-ink); font:400 13px/17px Inter, sans-serif; text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);" style-focus="outline:2px solid var(--m-accent); outline-offset:-2px;">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2);"><path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.9 7.2 19l.9-5.4L4.2 9.7l5.4-.8L12 4Z"></path></svg>
+          <span>Add to Favorites</span>
+        </button>
+        <button data-spec="menu.item.unread" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border:0; border-radius:7px; background:transparent; color:var(--m-ink); font:400 13px/17px Inter, sans-serif; text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);" style-focus="outline:2px solid var(--m-accent); outline-offset:-2px;">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2);"><circle cx="12" cy="12" r="4.5"></circle></svg>
+          <span>Mark as unread</span>
+        </button>
+        <span style="height:1px; margin:4px 5px; background:var(--m-line);"></span>
+        <button data-spec="menu.item.archive" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border:0; border-radius:7px; background:transparent; color:var(--m-ink2); font:400 13px/17px Inter, sans-serif; text-align:left; cursor:pointer;" style-hover="background:var(--m-hover); color:var(--m-crit);" style-focus="outline:2px solid var(--m-accent); outline-offset:-2px;">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h16v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z"></path><path d="M3 4h18v4H3zM10 13h4"></path></svg>
+          <span>Archive</span>
+        </button>
+      </span>
+      </sc-if>
+      </span>
     </header>
 
     <sc-if value="{{ showSubagentStrip }}" hint-placeholder-val="{{ true }}">
     <div data-screen-label="Subagent strip" data-spec="subagentStrip" style="display:flex; align-items:center; gap:8px; flex:0 0 auto; overflow-x:auto; padding:7px 14px; background:var(--m-panel); border-bottom:1px solid var(--m-line);">
       <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3); flex:0 0 auto;">Subagents</span>
-      <button style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; border:1px solid var(--m-line2); border-radius:999px; background:transparent; color:var(--m-ink); font:400 12px/16px Inter, sans-serif; cursor:pointer; white-space:nowrap; flex:0 0 auto;" style-hover="background:var(--m-hover);">
+      <button data-spec="subagentStrip.pill" style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; border:1px solid var(--m-line2); border-radius:999px; background:transparent; color:var(--m-ink); font:400 12px/16px Inter, sans-serif; cursor:pointer; white-space:nowrap; flex:0 0 auto;" style-hover="background:var(--m-hover);">
         <span style="width:10px; height:10px; box-sizing:border-box; border:2px solid rgb(13 148 136 / 25%); border-top-color:var(--m-accent); border-radius:50%; animation:m-spin 0.8s linear infinite;"></span>
         test triage
       </button>
@@ -987,7 +1169,7 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
         </div>
 
         <div style="display:flex; justify-content:flex-end; margin:2px 0;">
-          <div style="max-width:min(78%, 560px); padding:9px 13px; border-radius:14px 14px 4px 14px; background:var(--m-self); box-shadow:var(--m-sh-sm); font:400 14px/22px Inter, sans-serif;">morning — deploy the usage-bar fix to prod, then rotate the backups<span style="margin-left:9px; font:400 10px/14px Inter, sans-serif; color:var(--m-ink3); white-space:nowrap;">09:58</span></div>
+          <div data-spec="canvas.ownBubble" style="max-width:min(78%, 560px); padding:9px 13px; border-radius:14px 14px 4px 14px; background:var(--m-self); box-shadow:var(--m-sh-sm); font:400 14px/22px Inter, sans-serif;">morning — deploy the usage-bar fix to prod, then rotate the backups<span style="margin-left:9px; font:400 10px/14px Inter, sans-serif; color:var(--m-ink3); white-space:nowrap;">09:58</span></div>
         </div>
 
         <div style="display:flex; align-items:center; gap:8px; margin:16px 0 4px;">
@@ -996,10 +1178,10 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
           <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:02</span>
         </div>
         <div style="padding-left:32px; display:flex; flex-direction:column; gap:8px;">
-          <div style="max-width:680px; font:400 14px/22px Inter, sans-serif;">On it. Plan: build → atomic swap of <code style="padding:1px 5px; border-radius:4px; background:var(--m-subtle2); font:400 12.5px/18px 'Fira Code', monospace;">webapp/</code> → verify → rotate backups.</div>
+          <div data-spec="event.text" style="max-width:680px; font:400 14px/22px Inter, sans-serif;">On it. Plan: build → atomic swap of <code style="padding:1px 5px; border-radius:4px; background:var(--m-subtle2); font:400 12.5px/18px 'Fira Code', monospace;">webapp/</code> → verify → rotate backups.</div>
 
           <div style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); overflow:hidden;">
-            <button onClick="{{ toggleTool }}" style="display:flex; width:100%; align-items:center; gap:10px; padding:9px 12px; border:0; background:transparent; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
+            <button data-spec="event.tool_output.summary" onClick="{{ toggleTool }}" style="display:flex; width:100%; align-items:center; gap:10px; padding:9px 12px; border:0; background:transparent; color:var(--m-ink); text-align:left; cursor:pointer;" style-hover="background:var(--m-hover);">
               <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto; transform:{{ toolChevron }}; transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
               <code style="font:500 12.5px/18px 'Fira Code', monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">$ pnpm build</code>
               <span style="flex:1;"></span>
@@ -1019,7 +1201,7 @@ backup: webapp.bak.20260724T100212Z</pre>
                 <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="transform:{{ diffChevron }}; transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
               </button>
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path><path d="M15.5 12.5a2.1 2.1 0 0 1 3 3L12 22l-4 1 1-4Z"></path></svg>
-              <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 12.5px/18px 'Fira Code', monospace;">src/journal/journal.pcss</span>
+              <span data-spec="event.diff.filename" style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 12.5px/18px 'Fira Code', monospace;">src/journal/journal.pcss</span>
               <span style="font:600 11px/16px 'Fira Code', monospace; color:var(--m-green); flex:0 0 auto;">+6</span>
               <span style="font:600 11px/16px 'Fira Code', monospace; color:var(--m-crit); flex:0 0 auto;">−2</span>
               <span style="flex:1;"></span>
@@ -1031,7 +1213,7 @@ backup: webapp.bak.20260724T100212Z</pre>
               <div style="padding:2px 12px; white-space:pre;">  .mj_UsageBars {</div>
               <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-del); color:var(--m-crit);">-     gap: 4px;</div>
               <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     /* micro-gap keeps three rows inside the pill */</div>
-              <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     gap: 2px;</div>
+              <div data-spec="event.diff.addRow" style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     gap: 2px;</div>
               <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     align-content: center;</div>
               <div style="padding:2px 12px 6px; white-space:pre;">  }</div>
             </div>
@@ -1058,7 +1240,7 @@ backup: webapp.bak.20260724T100212Z</pre>
           </div>
           <div style="max-width:680px; font:400 14px/22px Inter, sans-serif;">To swap prod I need to restart nginx.</div>
 
-          <div data-screen-label="Permission request" data-spec="card.permission" style="max-width:680px; border:1px solid rgb(13 148 136 / 25%); border-radius:10px; background:var(--m-panel); padding:12px 14px; display:flex; flex-direction:column; gap:9px;">
+          <div data-screen-label="Permission request" data-spec="event.permission_request" data-target=".mj_PromptCard" style="max-width:680px; border:1px solid rgb(13 148 136 / 25%); border-radius:10px; background:var(--m-panel); padding:12px 14px; display:flex; flex-direction:column; gap:9px;">
             <span style="font:600 10px/14px Inter, sans-serif; letter-spacing:0.07em; text-transform:uppercase; color:var(--m-accent);">Permission request</span>
             <span style="font:400 13.5px/20px Inter, sans-serif;">Run <code style="padding:1px 5px; border-radius:4px; background:var(--m-subtle2); font:400 12.5px/18px 'Fira Code', monospace;">systemctl restart nginx</code> on prod?</span>
             <sc-if value="{{ promptPending }}" hint-placeholder-val="{{ true }}">
@@ -1102,7 +1284,7 @@ backup: webapp.bak.20260724T100212Z</pre>
         </sc-for>
 
         <sc-if value="{{ showActivity }}" hint-placeholder-val="{{ true }}">
-        <div style="display:flex; align-items:center; gap:5px; margin:12px 0 4px 32px; color:var(--m-ink2); font:400 12px/16px Inter, sans-serif;">
+        <div data-spec="activity" style="display:flex; align-items:center; gap:5px; margin:12px 0 4px 32px; color:var(--m-ink2); font:400 12px/16px Inter, sans-serif;">
           <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:m-pulse 1.2s ease-in-out infinite;"></span>
           <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:m-pulse 1.2s ease-in-out 0.15s infinite;"></span>
           <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:m-pulse 1.2s ease-in-out 0.3s infinite; margin-right:4px;"></span>
@@ -1270,7 +1452,7 @@ backup: webapp.bak.20260724T100212Z</pre>
               <span data-spec="sidebar.row.rest" style="display:block; border-radius:8px; padding:9px 10px; font:500 13px/17px Inter, sans-serif;">rest</span>
               <span data-spec="sidebar.row.hover" style="display:block; border-radius:8px; padding:9px 10px; background:var(--m-hover); font:500 13px/17px Inter, sans-serif;">hover</span>
               <span data-spec="sidebar.row.selected" style="position:relative; display:block; border-radius:8px; padding:9px 10px; background:var(--m-selected); font:500 13px/17px Inter, sans-serif;"><span style="position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:99px; background:var(--m-accent);"></span>selected</span>
-              <span data-spec="sidebar.row.unread" style="display:flex; align-items:center; gap:8px; border-radius:8px; padding:9px 10px; font:600 13px/17px Inter, sans-serif;">unread<span style="display:inline-flex; min-width:18px; height:18px; align-items:center; justify-content:center; padding:0 5px; border-radius:9px; background:var(--m-accent); color:var(--m-on-accent); font:600 10px/18px Inter, sans-serif;">3</span></span>
+              <span data-spec="sidebar.row.unreadRow" style="display:flex; align-items:center; gap:8px; border-radius:8px; padding:9px 10px; font:600 13px/17px Inter, sans-serif;">unread<span data-spec="sidebar.row.unread" style="display:inline-flex; min-width:18px; height:18px; align-items:center; justify-content:center; padding:0 5px; border-radius:9px; background:var(--m-accent); color:var(--m-on-accent); font:600 10px/18px Inter, sans-serif;" data-spec="sidebar.row.unread">3</span></span>
               <span data-spec="sidebar.row.focus" style="display:block; border-radius:8px; padding:9px 10px; font:500 13px/17px Inter, sans-serif; outline:2px solid var(--m-accent); outline-offset:2px;">focus-visible</span>
             </div>
           </div>
@@ -1295,9 +1477,125 @@ backup: webapp.bak.20260724T100212Z</pre>
         </div>
       </div>
       </sc-if>
+
+      <sc-if value="{{ round2Mode }}" hint-placeholder-val="{{ false }}">
+      <div data-spec="round2" style="max-width:860px; margin:0 auto; padding:18px 20px 28px; display:flex; flex-direction:column; gap:26px;">
+
+        <div style="display:flex; flex-direction:column; gap:5px;">
+          <span style="font:600 15px/20px Inter, sans-serif;">Round 2 — four surfaces</span>
+          <span style="font:400 12px/16px Inter, sans-serif; color:var(--m-ink2); max-width:620px;">All four on one alignment grid: every direct child of a card shares the <strong style="font-weight:600;">outer left edge</strong> (card padding-left); icon-prefixed lines share an <strong style="font-weight:600;">inner edge</strong> at outer + 24px, and nothing else introduces a third edge. Timestamps share one right edge with the card's padding-right.</span>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">1 · Prompt / Question card — event.prompt</span>
+
+          <div data-spec="event.prompt.unanswered" data-target=".mj_PromptCard" style="max-width:680px; border:1px solid var(--m-line2); border-radius:10px; background:var(--m-panel); padding:12px 14px; display:flex; flex-direction:column; gap:10px;">
+            <div style="display:flex; align-items:baseline; gap:10px;">
+              <span style="flex:1; font:600 10px/14px Inter, sans-serif; letter-spacing:0.07em; text-transform:uppercase; color:var(--m-ink2);">Question</span>
+              <span data-spec="event.prompt.timestamp" style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:04</span>
+            </div>
+            <div style="display:grid; grid-template-columns:24px minmax(0,1fr); align-items:start; row-gap:6px;">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); margin-top:3px;"><path d="M4 6h16v12H4z"></path><path d="m4 7 8 6 8-6"></path></svg>
+              <span style="font:400 13.5px/20px Inter, sans-serif;">Queued (1) — send these now, or cancel and keep editing?</span>
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button style="display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 14px; border:0; border-radius:8px; background:var(--m-accent-deep); color:var(--m-on-accent); font:600 12.5px/16px Inter, sans-serif; cursor:pointer;" style-hover="filter:brightness(1.08);" style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"></path></svg>
+                Send now
+              </button>
+              <button style="display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 14px; border:1px solid var(--m-line2); border-radius:8px; background:transparent; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" style-hover="background:var(--m-hover);" style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+                Cancel
+              </button>
+            </div>
+          </div>
+
+          <div data-spec="event.prompt.answered" data-target=".mj_PromptCard .mj_Answered" style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); padding:12px 14px; display:flex; flex-direction:column; gap:10px;">
+            <div style="display:flex; align-items:baseline; gap:10px;">
+              <span style="flex:1; font:600 10px/14px Inter, sans-serif; letter-spacing:0.07em; text-transform:uppercase; color:var(--m-ink3);">Question</span>
+              <span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:04</span>
+            </div>
+            <div style="display:grid; grid-template-columns:24px minmax(0,1fr); align-items:start; row-gap:8px;">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="var(--m-green)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="margin-top:2px;"><path d="m5 12 4 4 10-10"></path></svg>
+              <span style="font:500 13px/17px Inter, sans-serif; color:var(--m-ink2);">Answered · sent 2 queued messages</span>
+              <span></span>
+              <ol style="margin:0; padding-left:18px; display:flex; flex-direction:column; gap:4px; font:400 12.5px/18px Inter, sans-serif; color:var(--m-ink2);">
+                <li>watch the error rate for another 10 minutes</li>
+                <li>then rotate the backups</li>
+              </ol>
+            </div>
+          </div>
+          <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3); max-width:620px;">Both states keep the same three rows in the same order (label+time / body / resolution) so the card doesn't reflow when answered. The numbered list hangs off the inner edge — never a third indent.</span>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">2 · New session sheet — click <span style="text-transform:none; letter-spacing:0; font:500 11px/14px Inter, sans-serif; color:var(--m-accent);">New session</span> in the sidebar for the live modal</span>
+          <button onClick="{{ openNewSession }}" style="align-self:flex-start; height:32px; padding:0 14px; border:1px solid var(--m-line2); border-radius:8px; background:transparent; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" style-hover="background:var(--m-hover);" style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">Open new-session sheet</button>
+          <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3); max-width:620px;">Same shell as the upload dialog: 1px --m-line border, radius 14, --m-overlay fill, header 13/14/13/16 + close, body 14/16 with a 14px section rhythm, footer 11/14 on --m-panel. The disabled Workspace field is <span style="font-family:'Fira Code', monospace;">--m-subtle</span> fill with <span style="font-family:'Fira Code', monospace;">--m-ink3</span> text in both themes — the white-on-dark bug was an unthemed native input.</span>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">3 · Conversation actions menu — one component, two triggers</span>
+          <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
+            <span data-spec="menu.specimen" style="display:flex; flex-direction:column; width:212px; padding:4px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-overlay); box-shadow:var(--m-sh-md);">
+              <span style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border-radius:7px; font:400 13px/17px Inter, sans-serif;">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2);"><path d="M9 4h6l-1 6 3 3H7l3-3-1-6Z"></path><path d="M12 16v4"></path></svg><span>Pin</span>
+              </span>
+              <span data-spec="menu.item.hover" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border-radius:7px; background:var(--m-hover); font:400 13px/17px Inter, sans-serif;">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2);"><path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.9 7.2 19l.9-5.4L4.2 9.7l5.4-.8L12 4Z"></path></svg><span>Add to Favorites</span>
+              </span>
+              <span data-spec="menu.item.focus" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border-radius:7px; font:400 13px/17px Inter, sans-serif; outline:2px solid var(--m-accent); outline-offset:-2px;">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2);"><circle cx="12" cy="12" r="4.5"></circle></svg><span>Mark as unread</span>
+              </span>
+              <span style="height:1px; margin:4px 5px; background:var(--m-line);"></span>
+              <span data-spec="menu.item.archive.hover" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border-radius:7px; background:var(--m-hover); color:var(--m-crit); font:400 13px/17px Inter, sans-serif;">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h16v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z"></path><path d="M3 4h18v4H3zM10 13h4"></path></svg><span>Archive</span>
+              </span>
+            </span>
+            <span style="flex:1; min-width:220px; font:400 11px/16px Inter, sans-serif; color:var(--m-ink3);">Rows are <span style="font-family:'Fira Code', monospace;">grid 16px 1fr</span>, gap 10, padding 7/9, radius 7 inside a 4px-padded shell — so the hover fill insets from the menu edge instead of touching it. Focus is a <strong style="font-weight:600; color:var(--m-accent);">teal 2px inset outline</strong>, never browser-blue. Archive is separated by a hairline and turns critical on hover only. Same component for the sidebar right-click and the header ⋯ — only the anchor differs. Click the ⋯ in the header above to see it live.</span>
+          </div>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">4 · Upload modal — single vs multi</span>
+          <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
+            <span data-spec="modal.upload.single" style="display:flex; width:min(340px, 100%); flex-direction:column; border:1px solid var(--m-line); border-radius:14px; background:var(--m-overlay); box-shadow:var(--m-sh-md); overflow:hidden;">
+              <span style="display:flex; align-items:center; gap:10px; padding:13px 14px 13px 16px; border-bottom:1px solid var(--m-line);">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2); flex:0 0 auto;"><path d="M12 16V4M12 4 7 9M12 4l5 5"></path><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"></path></svg>
+                <span style="font:600 14px/19px Inter, sans-serif;">Send file</span>
+              </span>
+              <span style="display:flex; flex-direction:column; gap:12px; padding:14px 16px;">
+                <span style="display:block; border:1px solid var(--m-line); border-radius:10px; background:var(--m-raised); overflow:hidden;">
+                  <svg width="100%" height="110" style="display:block;" role="img" aria-label="preview"><rect width="100%" height="100%" fill="var(--m-subtle2)"></rect><text x="50%" y="53%" text-anchor="middle" fill="var(--m-ink3)" style="font:400 11px 'Fira Code', monospace;">image preview</text></svg>
+                  <span style="display:flex; align-items:center; gap:9px; padding:9px 11px; border-top:1px solid var(--m-line); background:var(--m-panel);">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--m-accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path></svg>
+                    <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 12.5px/18px Inter, sans-serif;">deploy-notes.png</span>
+                    <span style="font:400 11px/16px 'Fira Code', monospace; color:var(--m-ink3); flex:0 0 auto;">1.2 MB</span>
+                  </span>
+                </span>
+                <span style="display:block; min-height:56px; border:1px solid var(--m-line2); border-radius:10px; background:var(--m-panel); color:var(--m-ink3); font:400 13.5px/20px Inter, sans-serif; padding:10px 12px;">Add a caption…</span>
+              </span>
+              <span style="display:flex; align-items:center; gap:8px; padding:11px 14px; border-top:1px solid var(--m-line); background:var(--m-panel);">
+                <span style="flex:1;"></span>
+                <span style="height:32px; display:inline-flex; align-items:center; padding:0 14px; border:1px solid var(--m-line2); border-radius:8px; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif;">Cancel</span>
+                <span style="height:32px; display:inline-flex; align-items:center; gap:7px; padding:0 15px; border-radius:8px; background:var(--m-accent-deep); color:var(--m-on-accent); font:600 12.5px/16px Inter, sans-serif;">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" stroke="none"><path d="M3.4 3.2 21 11.3a.8.8 0 0 1 0 1.4L3.4 20.8a.8.8 0 0 1-1.1-.9L4 13l9-1-9-1-1.7-6.9a.8.8 0 0 1 1.1-.9Z"></path></svg>
+                  Send
+                </span>
+              </span>
+            </span>
+            <span style="flex:1; min-width:220px; display:flex; flex-direction:column; gap:10px;">
+              <span style="font:400 11px/16px Inter, sans-serif; color:var(--m-ink3);">Single file: no counter chip, no thumbnail strip, no “Cancel all” — those appear only when N&gt;1, so a one-file send has nothing to read past. The filename lives in the file-info row under the preview; the modal title is always <span style="font-family:'Fira Code', monospace;">Send file</span>, never the filename.</span>
+              <button onClick="{{ openUpload }}" style="align-self:flex-start; height:32px; padding:0 14px; border:1px solid var(--m-line2); border-radius:8px; background:transparent; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" style-hover="background:var(--m-hover);" style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">Open multi-file dialog (1 of 2)</button>
+              <span style="font:400 11px/16px Inter, sans-serif; color:var(--m-ink3);">Multi: header gains the <span style="font-family:'Fira Code', monospace;">n of N</span> chip, the body gains a 34px thumbnail strip (active = 2px teal ring, inactive = 1px --m-line2 on --m-raised) plus “N more file queued”, and the footer gains Cancel&nbsp;all + Skip. Send advances in place — the dialog never closes and reopens between files.</span>
+            </span>
+          </div>
+        </div>
+      </div>
+      </sc-if>
     </div>
 
-    <footer data-screen-label="Composer" data-spec="composer" style="flex:0 0 auto; padding:8px 16px 12px;">
+    <footer data-screen-label="Composer" data-spec="composer.footer" style="flex:0 0 auto; padding:8px 16px 12px;">
       <div style="position:relative; max-width:860px; margin:0 auto;">
         <sc-if value="{{ paletteOpen }}" hint-placeholder-val="{{ false }}">
         <div data-screen-label="Slash palette" data-spec="composer.slashPalette" style="position:absolute; left:0; right:0; bottom:calc(100% + 8px); max-height:262px; overflow-y:auto; border:1px solid var(--m-line); border-radius:10px; background:var(--m-overlay); box-shadow:var(--m-sh-md); z-index:20;">
@@ -1338,20 +1636,20 @@ backup: webapp.bak.20260724T100212Z</pre>
         </div>
         </sc-if>
         <sc-if value="{{ notRecording }}" hint-placeholder-val="{{ true }}">
-        <div style="display:flex; align-items:flex-end; gap:6px; border:1px solid var(--m-line2); border-radius:12px; background:var(--m-panel); box-shadow:var(--m-sh-sm); padding:6px 8px 6px 6px;">
-          <button onClick="{{ openUpload }}" title="Attach file" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover); color:var(--m-ink);">
+        <div data-spec="composer.shell" style="display:flex; align-items:flex-end; gap:6px; border:1px solid var(--m-line2); border-radius:12px; background:var(--m-panel); box-shadow:var(--m-sh-sm); padding:6px 8px 6px 6px;">
+          <button data-spec="composer.attach" onClick="{{ openUpload }}" title="Attach file" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover); color:var(--m-ink);">
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m20.5 11.5-8.7 8.7a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7L9 17.4a2 2 0 0 1-2.8-2.8l8.5-8.5"></path></svg>
           </button>
-          <textarea value="{{ composerText }}" onChange="{{ onComposerChange }}" onKeyDown="{{ onComposerKeyDown }}" rows="{{ composerRows }}" placeholder="Message claude — type / for commands" style="flex:1; min-width:0; border:0; outline:none; resize:none; background:transparent; color:var(--m-ink); font:400 14px/22px Inter, sans-serif; padding:6px 4px; max-height:160px; overflow-y:auto;"></textarea>
-          <button onClick="{{ startRec }}" title="Voice message" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover); color:var(--m-ink);">
+          <textarea data-spec="composer.input" value="{{ composerText }}" onChange="{{ onComposerChange }}" onKeyDown="{{ onComposerKeyDown }}" rows="{{ composerRows }}" placeholder="Message claude — type / for commands" style="flex:1; min-width:0; border:0; outline:none; resize:none; background:transparent; color:var(--m-ink); font:400 14px/22px Inter, sans-serif; padding:6px 4px; max-height:160px; overflow-y:auto;"></textarea>
+          <button data-spec="composer.mic" onClick="{{ startRec }}" title="Voice message" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover); color:var(--m-ink);">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8"></path></svg>
           </button>
-          <button onClick="{{ sendMessage }}" title="Send" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:9px; background:var(--m-accent-deep); color:var(--m-on-accent); cursor:pointer; flex:0 0 auto; opacity:{{ sendOpacity }};" style-hover="filter:brightness(1.08);">
+          <button data-spec="composer.send" onClick="{{ sendMessage }}" title="Send" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:9px; background:var(--m-accent-deep); color:var(--m-on-accent); cursor:pointer; flex:0 0 auto; opacity:{{ sendOpacity }};" style-hover="filter:brightness(1.08);">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" stroke="none"><path d="M3.4 3.2 21 11.3a.8.8 0 0 1 0 1.4L3.4 20.8a.8.8 0 0 1-1.1-.9L4 13l9-1-9-1-1.7-6.9a.8.8 0 0 1 1.1-.9Z"></path></svg>
           </button>
         </div>
         </sc-if>
-        <div style="display:flex; gap:14px; padding:6px 8px 0; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">
+        <div data-spec="composer.hints" style="display:flex; gap:14px; padding:6px 8px 0; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">
           <span><span style="font-family:'Fira Code', monospace;">/</span> commands</span>
           <span>shift+enter for newline</span>
           <span style="margin-left:auto;">ctx 72% · auto-idle in 18m</span>
@@ -1361,9 +1659,58 @@ backup: webapp.bak.20260724T100212Z</pre>
   </section>
   </sc-if>
 
+  <sc-if value="{{ newSessionOpen }}" hint-placeholder-val="{{ false }}">
+  <div data-screen-label="New session modal" data-spec="modal.newSession.scrim" data-target=".mj_UploadConfirm_scrim" onClick="{{ closeNewSession }}" style="position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; background:rgb(18 16 14 / 55%); padding:16px;">
+    <div data-spec="modal.newSession" data-target=".mj_NewSessionSheet" onClick="{{ stopProp }}" style="display:flex; width:min(440px, 94vw); max-height:88vh; flex-direction:column; border:1px solid var(--m-line); border-radius:14px; background:var(--m-overlay); box-shadow:var(--m-sh-lg); box-sizing:border-box; overflow:hidden;">
+      <div style="display:flex; align-items:center; gap:10px; padding:13px 14px 13px 16px; border-bottom:1px solid var(--m-line);">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2); flex:0 0 auto;"><path d="M12 20h8"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path></svg>
+        <span style="font:600 14px/19px Inter, sans-serif;">New session</span>
+        <span style="flex:1;"></span>
+        <button onClick="{{ closeNewSession }}" title="Close" style="display:inline-flex; width:28px; height:28px; align-items:center; justify-content:center; border:0; border-radius:7px; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;" style-hover="background:var(--m-hover); color:var(--m-ink);" style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div style="flex:1; min-height:0; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:14px;">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">Start on</span>
+          <div style="display:flex; gap:6px;">
+            <button style="flex:1; height:32px; border:1px solid var(--m-accent-deep); border-radius:8px; background:var(--m-selected); color:var(--m-accent); font:600 12.5px/16px Inter, sans-serif; cursor:pointer;" style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">claude</button>
+            <button style="flex:1; height:32px; border:1px solid var(--m-line2); border-radius:8px; background:transparent; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" style-hover="background:var(--m-hover);" style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">codex</button>
+          </div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">Workspace</span>
+          <input data-spec="modal.newSession.disabledField" disabled="disabled" value="Agent default" style="height:34px; box-sizing:border-box; border:1px solid var(--m-line); border-radius:8px; background:var(--m-subtle); color:var(--m-ink3); font:400 13px/16px Inter, sans-serif; padding:0 11px; outline:none; opacity:0.7;">
+          <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">Set by the agent unless a folder path is given below.</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">Folder path</span>
+          <input data-spec="modal.newSession.pathField" placeholder="/opt/matron/web-journal" style="height:34px; box-sizing:border-box; border:1px solid var(--m-line2); border-radius:8px; background:var(--m-panel); color:var(--m-ink); font:400 12.5px/18px 'Fira Code', monospace; padding:0 11px; outline:none;" style-focus="border-color:var(--m-accent);">
+        </div>
+        <button onClick="{{ toggleBrowserTools }}" data-spec="modal.newSession.checkbox" data-value="{{ browserToolsMark }}" style="display:grid; grid-template-columns:18px minmax(0,1fr); align-items:start; gap:10px; padding:0; border:0; background:transparent; text-align:left; cursor:pointer;" style-focus="outline:2px solid var(--m-accent); outline-offset:3px;">
+          <span style="display:inline-flex; width:18px; height:18px; align-items:center; justify-content:center; border:{{ browserToolsBorder }}; border-radius:5px; background:{{ browserToolsBg }}; color:var(--m-on-accent); box-sizing:border-box;">
+            <sc-if value="{{ browserTools }}" hint-placeholder-val="{{ false }}">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4 10-10"></path></svg>
+            </sc-if>
+          </span>
+          <span style="display:flex; flex-direction:column; gap:2px;">
+            <span style="font:500 13px/17px Inter, sans-serif; color:var(--m-ink);">Enable browser tools</span>
+            <span style="font:400 11px/15px Inter, sans-serif; color:var(--m-ink2);">Lets the agent drive a headless browser in this session.</span>
+          </span>
+        </button>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; padding:11px 14px; border-top:1px solid var(--m-line); background:var(--m-panel);">
+        <span style="flex:1; font:400 11px/14px 'Fira Code', monospace; color:var(--m-ink3);">/start --claude</span>
+        <button onClick="{{ closeNewSession }}" style="height:32px; padding:0 14px; border:1px solid var(--m-line2); border-radius:8px; background:transparent; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" style-hover="background:var(--m-hover);" style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">Cancel</button>
+        <button onClick="{{ closeNewSession }}" style="display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 15px; border:0; border-radius:8px; background:var(--m-accent-deep); color:var(--m-on-accent); font:600 12.5px/16px Inter, sans-serif; cursor:pointer;" style-hover="filter:brightness(1.08);" style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">Start session</button>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
   <sc-if value="{{ uploadOpen }}" hint-placeholder-val="{{ false }}">
-  <div data-screen-label="Upload modal" data-spec="modal.upload" onClick="{{ closeUpload }}" style="position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; background:rgb(18 16 14 / 55%); padding:16px;">
-    <div onClick="{{ stopProp }}" style="display:flex; width:min(440px, 94vw); max-height:88vh; flex-direction:column; border:1px solid var(--m-line); border-radius:14px; background:var(--m-overlay); box-shadow:var(--m-sh-lg); box-sizing:border-box; overflow:hidden;">
+  <div data-screen-label="Upload modal" data-spec="modal.upload.scrim" onClick="{{ closeUpload }}" style="position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; background:rgb(18 16 14 / 55%); padding:16px;">
+    <div data-spec="modal.upload" onClick="{{ stopProp }}" style="display:flex; width:min(440px, 94vw); max-height:88vh; flex-direction:column; border:1px solid var(--m-line); border-radius:14px; background:var(--m-overlay); box-shadow:var(--m-sh-lg); box-sizing:border-box; overflow:hidden;">
 
       <div style="display:flex; align-items:center; gap:10px; padding:13px 14px 13px 16px; border-bottom:1px solid var(--m-line);">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2); flex:0 0 auto;"><path d="M12 16V4M12 4 7 9M12 4l5 5"></path><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"></path></svg>
@@ -1389,15 +1736,15 @@ backup: webapp.bak.20260724T100212Z</pre>
           </div>
         </div>
 
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span style="width:34px; height:34px; flex:0 0 auto; border-radius:7px; border:{{ uploadThumb0 }}; background:var(--m-raised);"></span>
+        <div data-spec="modal.upload.queue" style="display:flex; align-items:center; gap:8px;">
+          <span data-spec="modal.upload.thumb.active" style="width:34px; height:34px; flex:0 0 auto; border-radius:7px; border:{{ uploadThumb0 }}; background:var(--m-raised);"></span>
           <span style="width:34px; height:34px; flex:0 0 auto; border-radius:7px; border:{{ uploadThumb1 }}; background:var(--m-raised);"></span>
           <sc-if value="{{ uploadHasMore }}" hint-placeholder-val="{{ true }}">
           <span style="font:400 11.5px/15px Inter, sans-serif; color:var(--m-ink3);">{{ uploadRemaining }}</span>
           </sc-if>
         </div>
 
-        <textarea value="{{ caption }}" onChange="{{ onCaptionChange }}" rows="2" placeholder="Add a caption…" style="min-height:56px; border:1px solid var(--m-line2); border-radius:10px; background:var(--m-panel); color:var(--m-ink); font:400 13.5px/20px Inter, sans-serif; padding:10px 12px; resize:vertical; outline:none;" style-focus="border-color:var(--m-accent);"></textarea>
+        <textarea data-spec="modal.upload.caption" value="{{ caption }}" onChange="{{ onCaptionChange }}" rows="2" placeholder="Add a caption…" style="min-height:56px; border:1px solid var(--m-line2); border-radius:10px; background:var(--m-panel); color:var(--m-ink); font:400 13.5px/20px Inter, sans-serif; padding:10px 12px; resize:vertical; outline:none;" style-focus="border-color:var(--m-accent);"></textarea>
       </div>
 
       <div style="display:flex; align-items:center; gap:8px; padding:11px 14px; border-top:1px solid var(--m-line); background:var(--m-panel);">
@@ -1421,7 +1768,7 @@ class Component extends DCLogic {
     composer: "", hl: 0, toolOpen: false, diffOpen: true,
     uploadOpen: false, caption: "", prompt: null, sent: [], selected: 0,
     chatW: 1200, usageHover: false, tab: "active", recording: false, recSecs: 0,
-    uploadIdx: 0, mode: "live",
+    uploadIdx: 0, mode: "live", newSessionOpen: false, actionsOpen: false, browserTools: false,
   };
 
   COMMANDS = [
@@ -1562,9 +1909,22 @@ class Component extends DCLogic {
       newSession: () => this.setState({ composer: "/start ", screen: "chat" }),
       liveMode: s.mode === "live",
       galleryMode: s.mode === "gallery",
-      modeLabel: s.mode === "live" ? "states" : "back to thread",
+      round2Mode: s.mode === "round2",
+      modeLabel: s.mode === "live" ? "states" : s.mode === "gallery" ? "round 2" : "back to thread",
       modeInk: s.mode === "live" ? "var(--m-ink3)" : "var(--m-accent)",
-      toggleMode: () => this.setState((p) => ({ mode: p.mode === "live" ? "gallery" : "live" })),
+      toggleMode: () => this.setState((p) => ({ mode: p.mode === "live" ? "gallery" : p.mode === "gallery" ? "round2" : "live" })),
+      newSessionOpen: s.newSessionOpen,
+      openNewSession: () => this.setState({ newSessionOpen: true }),
+      closeNewSession: () => this.setState({ newSessionOpen: false }),
+      actionsOpen: s.actionsOpen,
+      actionsTriggerBg: s.actionsOpen ? "var(--m-active)" : "transparent",
+      toggleActions: () => this.setState((p) => ({ actionsOpen: !p.actionsOpen })),
+      closeActions: () => this.setState({ actionsOpen: false }),
+      browserTools: s.browserTools,
+      toggleBrowserTools: () => this.setState((p) => ({ browserTools: !p.browserTools })),
+      browserToolsMark: s.browserTools ? "1" : "0",
+      browserToolsBg: s.browserTools ? "var(--m-accent-deep)" : "transparent",
+      browserToolsBorder: s.browserTools ? "1px solid var(--m-accent-deep)" : "1px solid var(--m-line2)",
       tabActive: () => this.setState({ tab: "active" }),
       tabFavorites: () => this.setState({ tab: "favorites" }),
       tabArchived: () => this.setState({ tab: "archived" }),

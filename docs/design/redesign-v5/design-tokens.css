@@ -1,6 +1,6 @@
 /* Matron redesign — design tokens
    Generated from Matron Redesign.dc.html. Values mirror the rendered artifact exactly.
-   Companion files: design-tokens.json (machine-readable, incl. states + breakpoints), DESIGN-SPEC.md (intent). */
+   Companion files: design-tokens.json (machine-readable), GENERATIVE-SYSTEM.md (rules), DESIGN-SPEC.md. */
 
 :root {
     --m-app: #f4f2ee;
@@ -32,6 +32,9 @@
     --m-sh-sm: 0 1px 2px rgb(28 24 20 / 0.06);
     --m-sh-md: 0 4px 12px rgb(28 24 20 / 0.10);
     --m-sh-lg: 0 16px 48px rgb(28 24 20 / 0.16);
+    --m-scrollbar: rgb(28 24 20 / 0.22);
+    --m-scrollbar-hover: rgb(28 24 20 / 0.34);
+    --m-selection: rgb(13 148 136 / 0.20);
 }
 
 [data-theme="dark"] {
@@ -61,6 +64,9 @@
     --m-sh-sm: 0 1px 2px rgb(0 0 0 / 0.3);
     --m-sh-md: 0 4px 12px rgb(0 0 0 / 0.4);
     --m-sh-lg: 0 16px 48px rgb(0 0 0 / 0.5);
+    --m-scrollbar: rgb(255 255 255 / 0.20);
+    --m-scrollbar-hover: rgb(255 255 255 / 0.32);
+    --m-selection: rgb(45 212 191 / 0.26);
 }
 
 /* Type roles — see design-tokens.json → type.roles for intent per role */
@@ -93,3 +99,12 @@
     --m-font-mono-command: 500 12.5px/18px 'Fira Code';
     --m-font-mono-filename: 600 12.5px/18px 'Fira Code';
 }
+
+/* Native chrome — part of the theme, not an exception to it. See design-tokens.json → nativeChrome. */
+* { scrollbar-width: thin; scrollbar-color: var(--m-scrollbar) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--m-scrollbar); border: 3px solid transparent; background-clip: content-box; border-radius: 99px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--m-scrollbar-hover); border: 3px solid transparent; background-clip: content-box; }
+::selection { background: var(--m-selection); }
+:focus-visible { outline: 2px solid var(--m-accent); outline-offset: 2px; }

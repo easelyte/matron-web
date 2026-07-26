@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
-<title>Matron · light-tool-expanded</title>
-<meta name="matron-state" content="light-tool-expanded">
-<meta name="matron-state-note" content="Tool card expanded (output visible) alongside the expanded diff card.">
+<title>Matron · dark-round2</title>
+<meta name="matron-state" content="dark-round2">
+<meta name="matron-state-note" content="ROUND 2 · All four surfaces, dark.">
 <style>
 /* Self-hosted so these files are screenshot-faithful offline, not just probe-faithful.
    Inter: rsms/inter docs/font-files/InterVariable.woff2 (OFL). Fira Code: google/fonts
@@ -157,7 +157,7 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       <span style="display:inline-flex; width:26px; height:26px; align-items:center; justify-content:center; border-radius:50%; background:var(--m-selected); color:var(--m-accent); font:600 12px/16px Inter, sans-serif;">O</span>
       <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">operator@easelyte.ai</span>
       <span data-spec="sidebar.footer.connection" style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">connected</span>
-      <button data-spec="devtool.stateMatrix" title="Handoff affordance — NOT a product feature. Opens the state matrix." style="border:1px dashed var(--m-line2); border-radius:6px; background:transparent; color:var(--m-ink3); font:500 10px/14px Inter, sans-serif; cursor:pointer; padding:1px 5px; flex:0 0 auto;" data-style-hover="background:var(--m-hover);">states</button>
+      <button data-spec="devtool.stateMatrix" title="Handoff affordance — NOT a product feature. Opens the state matrix." style="border:1px dashed var(--m-line2); border-radius:6px; background:transparent; color:var(--m-accent); font:500 10px/14px Inter, sans-serif; cursor:pointer; padding:1px 5px; flex:0 0 auto;" data-style-hover="background:var(--m-hover);">back to thread</button>
     </div>
   </aside>
   
@@ -239,130 +239,123 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
 
     <div data-screen-label="Message canvas" data-spec="canvas" style="flex:1; min-height:0; overflow-y:auto;">
       
-      <div style="max-width:860px; margin:0 auto; padding:18px 20px 8px; display:flex; flex-direction:column;">
 
-        <div style="display:flex; align-items:center; gap:12px; margin:4px 0 14px;">
-          <span style="flex:1; height:1px; background:var(--m-line);"></span>
-          <span style="font:500 11px/14px Inter, sans-serif; color:var(--m-ink3);">Today · 24 July</span>
-          <span style="flex:1; height:1px; background:var(--m-line);"></span>
+      
+
+      
+      <div data-spec="round2" style="max-width:860px; margin:0 auto; padding:18px 20px 28px; display:flex; flex-direction:column; gap:26px;">
+
+        <div style="display:flex; flex-direction:column; gap:5px;">
+          <span style="font:600 15px/20px Inter, sans-serif;">Round 2 — four surfaces</span>
+          <span style="font:400 12px/16px Inter, sans-serif; color:var(--m-ink2); max-width:620px;">All four on one alignment grid: every direct child of a card shares the <strong style="font-weight:600;">outer left edge</strong> (card padding-left); icon-prefixed lines share an <strong style="font-weight:600;">inner edge</strong> at outer + 24px, and nothing else introduces a third edge. Timestamps share one right edge with the card's padding-right.</span>
         </div>
 
-        <div style="display:flex; justify-content:flex-end; margin:2px 0;">
-          <div data-spec="canvas.ownBubble" style="max-width:min(78%, 560px); padding:9px 13px; border-radius:14px 14px 4px 14px; background:var(--m-self); box-shadow:var(--m-sh-sm); font:400 14px/22px Inter, sans-serif;">morning — deploy the usage-bar fix to prod, then rotate the backups<span style="margin-left:9px; font:400 10px/14px Inter, sans-serif; color:var(--m-ink3); white-space:nowrap;">09:58</span></div>
-        </div>
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">1 · Prompt / Question card — event.prompt</span>
 
-        <div style="display:flex; align-items:center; gap:8px; margin:16px 0 4px;">
-          <span style="display:inline-flex; width:24px; height:24px; align-items:center; justify-content:center; border-radius:7px; background:var(--m-selected);"><img src="res/matron-logo-simple.svg" alt="" style="width:14px; height:14px;"></span>
-          <span style="font:600 13px/17px Inter, sans-serif;">claude</span>
-          <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:02</span>
-        </div>
-        <div style="padding-left:32px; display:flex; flex-direction:column; gap:8px;">
-          <div data-spec="event.text" style="max-width:680px; font:400 14px/22px Inter, sans-serif;">On it. Plan: build → atomic swap of <code style="padding:1px 5px; border-radius:4px; background:var(--m-subtle2); font:400 12.5px/18px 'Fira Code', monospace;">webapp/</code> → verify → rotate backups.</div>
-
-          <div style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); overflow:hidden;">
-            <button data-spec="event.tool_output.summary" style="display:flex; width:100%; align-items:center; gap:10px; padding:9px 12px; border:0; background:transparent; color:var(--m-ink); text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);">
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto; transform:rotate(0deg); transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
-              <code style="font:500 12.5px/18px 'Fira Code', monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">$ pnpm build</code>
-              <span style="flex:1;"></span>
-              <span style="padding:1px 8px; border-radius:999px; background:var(--m-diff-add); color:var(--m-green); font:600 11px/16px Inter, sans-serif; flex:0 0 auto;">exit 0</span>
-              <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3); flex:0 0 auto;">41s</span>
-            </button>
-            
-            <pre style="margin:0; padding:10px 12px; border-top:1px solid var(--m-line); background:var(--m-raised); font:400 12px/19px 'Fira Code', monospace; color:var(--m-ink2); white-space:pre-wrap; overflow-wrap:anywhere; max-height:280px; overflow:auto;">webpack 5.99 compiled successfully in 38412 ms
-webapp/ written (11.2 MB, 214 assets)
-backup: webapp.bak.20260724T100212Z</pre>
-            
-          </div>
-
-          <div style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); overflow:hidden;">
-            <div style="display:flex; align-items:center; gap:9px; padding:9px 12px;">
-              <button title="Expand diff" style="display:inline-flex; width:20px; height:20px; align-items:center; justify-content:center; border:0; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;">
-                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(0deg); transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
-              </button>
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path><path d="M15.5 12.5a2.1 2.1 0 0 1 3 3L12 22l-4 1 1-4Z"></path></svg>
-              <span data-spec="event.diff.filename" style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 12.5px/18px 'Fira Code', monospace;">src/journal/journal.pcss</span>
-              <span style="font:600 11px/16px 'Fira Code', monospace; color:var(--m-green); flex:0 0 auto;">+6</span>
-              <span style="font:600 11px/16px 'Fira Code', monospace; color:var(--m-crit); flex:0 0 auto;">−2</span>
-              <span style="flex:1;"></span>
-              <a style="font:500 12px/16px Inter, sans-serif; flex:0 0 auto; cursor:pointer;">Open file ↗</a>
+          <div data-spec="event.prompt.unanswered" data-target=".mj_PromptCard" style="max-width:680px; border:1px solid var(--m-line2); border-radius:10px; background:var(--m-panel); padding:12px 14px; display:flex; flex-direction:column; gap:10px;">
+            <div style="display:flex; align-items:baseline; gap:10px;">
+              <span style="flex:1; font:600 10px/14px Inter, sans-serif; letter-spacing:0.07em; text-transform:uppercase; color:var(--m-ink2);">Question</span>
+              <span data-spec="event.prompt.timestamp" style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:04</span>
             </div>
-            
-            <div style="border-top:1px solid var(--m-line); background:var(--m-raised); font:400 12px/19px 'Fira Code', monospace; overflow-x:auto;">
-              <div style="padding:2px 12px; color:var(--m-ink3); white-space:pre;">@@ -256,7 +256,11 @@ .mj_UsageBars</div>
-              <div style="padding:2px 12px; white-space:pre;">  .mj_UsageBars {</div>
-              <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-del); color:var(--m-crit);">-     gap: 4px;</div>
-              <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     /* micro-gap keeps three rows inside the pill */</div>
-              <div data-spec="event.diff.addRow" style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     gap: 2px;</div>
-              <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     align-content: center;</div>
-              <div style="padding:2px 12px 6px; white-space:pre;">  }</div>
+            <div style="display:grid; grid-template-columns:24px minmax(0,1fr); align-items:start; row-gap:6px;">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); margin-top:3px;"><path d="M4 6h16v12H4z"></path><path d="m4 7 8 6 8-6"></path></svg>
+              <span style="font:400 13.5px/20px Inter, sans-serif;">Queued (1) — send these now, or cancel and keep editing?</span>
             </div>
-            
-          </div>
-
-          <div style="max-width:680px; font:400 14px/22px Inter, sans-serif;">Build is clean and the diff is deployed to the staging copy. Verified:
-            <ul style="margin:8px 0 0; padding-left:20px;">
-              <li style="margin:3px 0;"><code style="padding:1px 5px; border-radius:4px; background:var(--m-subtle2); font:400 12.5px/18px 'Fira Code', monospace;">curl -s 127.0.0.1:8082</code> → 200 in 24 ms</li>
-              <li style="margin:3px 0;">usage bars render in both themes</li>
-              <li style="margin:3px 0;">no console errors on load</li>
-            </ul>
-          </div>
-          <div style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); overflow:hidden;">
-            <div style="display:flex; align-items:center; gap:8px; padding:6px 12px; border-bottom:1px solid var(--m-line);">
-              <span style="font:400 11px/16px 'Fira Code', monospace; color:var(--m-ink3);">nginx.conf</span>
-              <span style="flex:1;"></span>
-              <button style="border:0; background:transparent; color:var(--m-ink3); font:400 11px/14px Inter, sans-serif; cursor:pointer;" data-style-hover="color:var(--m-accent);">copy</button>
-            </div>
-            <pre style="margin:0; padding:10px 12px; font:400 12px/19px 'Fira Code', monospace; overflow-x:auto;"><span style="color:var(--m-accent);">location</span> /journal/ {
-    <span style="color:var(--m-accent);">proxy_pass</span> http://127.0.0.1:9810/;
-    <span style="color:var(--m-accent);">proxy_read_timeout</span> <span style="color:var(--m-crit);">3600s</span>;  <span style="color:var(--m-ink3);"># websocket frames</span>
-}</pre>
-          </div>
-          <div style="max-width:680px; font:400 14px/22px Inter, sans-serif;">To swap prod I need to restart nginx.</div>
-
-          <div data-screen-label="Permission request" data-spec="event.permission_request" data-target=".mj_PromptCard" style="max-width:680px; border:1px solid rgb(13 148 136 / 25%); border-radius:10px; background:var(--m-panel); padding:12px 14px; display:flex; flex-direction:column; gap:9px;">
-            <span style="font:600 10px/14px Inter, sans-serif; letter-spacing:0.07em; text-transform:uppercase; color:var(--m-accent);">Permission request</span>
-            <span style="font:400 13.5px/20px Inter, sans-serif;">Run <code style="padding:1px 5px; border-radius:4px; background:var(--m-subtle2); font:400 12.5px/18px 'Fira Code', monospace;">systemctl restart nginx</code> on prod?</span>
-            
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
-              <button style="height:30px; padding:0 14px; border:0; border-radius:8px; background:var(--m-accent-deep); color:var(--m-on-accent); font:600 12.5px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="filter:brightness(1.08);">Allow</button>
-              <button style="height:30px; padding:0 14px; border:1px solid var(--m-line2); border-radius:8px; background:transparent; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="background:var(--m-hover);">Always allow</button>
-              <button style="height:30px; padding:0 14px; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="background:var(--m-hover); color:var(--m-crit);">Deny</button>
+              <button style="display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 14px; border:0; border-radius:8px; background:var(--m-accent-deep); color:var(--m-on-accent); font:600 12.5px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="filter:brightness(1.08);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" stroke="none"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"></path></svg>
+                Send now
+              </button>
+              <button style="display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 14px; border:1px solid var(--m-line2); border-radius:8px; background:transparent; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="background:var(--m-hover);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+                Cancel
+              </button>
             </div>
-            
-            
+          </div>
+
+          <div data-spec="event.prompt.answered" data-target=".mj_PromptCard .mj_Answered" style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); padding:12px 14px; display:flex; flex-direction:column; gap:10px;">
+            <div style="display:flex; align-items:baseline; gap:10px;">
+              <span style="flex:1; font:600 10px/14px Inter, sans-serif; letter-spacing:0.07em; text-transform:uppercase; color:var(--m-ink3);">Question</span>
+              <span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:04</span>
+            </div>
+            <div style="display:grid; grid-template-columns:24px minmax(0,1fr); align-items:start; row-gap:8px;">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="var(--m-green)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="margin-top:2px;"><path d="m5 12 4 4 10-10"></path></svg>
+              <span style="font:500 13px/17px Inter, sans-serif; color:var(--m-ink2);">Answered · sent 2 queued messages</span>
+              <span></span>
+              <ol style="margin:0; padding-left:18px; display:flex; flex-direction:column; gap:4px; font:400 12.5px/18px Inter, sans-serif; color:var(--m-ink2);">
+                <li>watch the error rate for another 10 minutes</li>
+                <li>then rotate the backups</li>
+              </ol>
+            </div>
+          </div>
+          <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3); max-width:620px;">Both states keep the same three rows in the same order (label+time / body / resolution) so the card doesn't reflow when answered. The numbered list hangs off the inner edge — never a third indent.</span>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">2 · New session sheet — click <span style="text-transform:none; letter-spacing:0; font:500 11px/14px Inter, sans-serif; color:var(--m-accent);">New session</span> in the sidebar for the live modal</span>
+          <button style="align-self:flex-start; height:32px; padding:0 14px; border:1px solid var(--m-line2); border-radius:8px; background:transparent; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="background:var(--m-hover);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">Open new-session sheet</button>
+          <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3); max-width:620px;">Same shell as the upload dialog: 1px --m-line border, radius 14, --m-overlay fill, header 13/14/13/16 + close, body 14/16 with a 14px section rhythm, footer 11/14 on --m-panel. The disabled Workspace field is <span style="font-family:'Fira Code', monospace;">--m-subtle</span> fill with <span style="font-family:'Fira Code', monospace;">--m-ink3</span> text in both themes — the white-on-dark bug was an unthemed native input.</span>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">3 · Conversation actions menu — one component, two triggers</span>
+          <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
+            <span data-spec="menu.specimen" style="display:flex; flex-direction:column; width:212px; padding:4px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-overlay); box-shadow:var(--m-sh-md);">
+              <span style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border-radius:7px; font:400 13px/17px Inter, sans-serif;">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2);"><path d="M9 4h6l-1 6 3 3H7l3-3-1-6Z"></path><path d="M12 16v4"></path></svg><span>Pin</span>
+              </span>
+              <span data-spec="menu.item.hover" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border-radius:7px; background:var(--m-hover); font:400 13px/17px Inter, sans-serif;">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2);"><path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.9 7.2 19l.9-5.4L4.2 9.7l5.4-.8L12 4Z"></path></svg><span>Add to Favorites</span>
+              </span>
+              <span data-spec="menu.item.focus" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border-radius:7px; font:400 13px/17px Inter, sans-serif; outline:2px solid var(--m-accent); outline-offset:-2px;">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2);"><circle cx="12" cy="12" r="4.5"></circle></svg><span>Mark as unread</span>
+              </span>
+              <span style="height:1px; margin:4px 5px; background:var(--m-line);"></span>
+              <span data-spec="menu.item.archive.hover" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border-radius:7px; background:var(--m-hover); color:var(--m-crit); font:400 13px/17px Inter, sans-serif;">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h16v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z"></path><path d="M3 4h18v4H3zM10 13h4"></path></svg><span>Archive</span>
+              </span>
+            </span>
+            <span style="flex:1; min-width:220px; font:400 11px/16px Inter, sans-serif; color:var(--m-ink3);">Rows are <span style="font-family:'Fira Code', monospace;">grid 16px 1fr</span>, gap 10, padding 7/9, radius 7 inside a 4px-padded shell — so the hover fill insets from the menu edge instead of touching it. Focus is a <strong style="font-weight:600; color:var(--m-accent);">teal 2px inset outline</strong>, never browser-blue. Archive is separated by a hairline and turns critical on hover only. Same component for the sidebar right-click and the header ⋯ — only the anchor differs. Click the ⋯ in the header above to see it live.</span>
           </div>
         </div>
 
-        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px; margin:14px 0 2px;">
-          <div style="max-width:min(78%, 560px); padding:9px 13px; border-radius:14px 14px 4px 4px; background:var(--m-self); box-shadow:var(--m-sh-sm); font:400 14px/22px Inter, sans-serif;">yes</div>
-          <div style="max-width:min(78%, 560px); padding:9px 13px; border-radius:4px 14px 4px 14px; background:var(--m-self); box-shadow:var(--m-sh-sm); font:400 14px/22px Inter, sans-serif;">and watch the error rate for 10 minutes after<span style="margin-left:9px; font:400 10px/14px Inter, sans-serif; color:var(--m-ink3); white-space:nowrap;">10:05</span></div>
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">4 · Upload modal — single vs multi</span>
+          <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
+            <span data-spec="modal.upload.single" style="display:flex; width:min(340px, 100%); flex-direction:column; border:1px solid var(--m-line); border-radius:14px; background:var(--m-overlay); box-shadow:var(--m-sh-md); overflow:hidden;">
+              <span style="display:flex; align-items:center; gap:10px; padding:13px 14px 13px 16px; border-bottom:1px solid var(--m-line);">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2); flex:0 0 auto;"><path d="M12 16V4M12 4 7 9M12 4l5 5"></path><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"></path></svg>
+                <span style="font:600 14px/19px Inter, sans-serif;">Send file</span>
+              </span>
+              <span style="display:flex; flex-direction:column; gap:12px; padding:14px 16px;">
+                <span style="display:block; border:1px solid var(--m-line); border-radius:10px; background:var(--m-raised); overflow:hidden;">
+                  <svg width="100%" height="110" style="display:block;" role="img" aria-label="preview"><rect width="100%" height="100%" fill="var(--m-subtle2)"></rect><text x="50%" y="53%" text-anchor="middle" fill="var(--m-ink3)" style="font:400 11px 'Fira Code', monospace;">image preview</text></svg>
+                  <span style="display:flex; align-items:center; gap:9px; padding:9px 11px; border-top:1px solid var(--m-line); background:var(--m-panel);">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--m-accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path></svg>
+                    <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 12.5px/18px Inter, sans-serif;">deploy-notes.png</span>
+                    <span style="font:400 11px/16px 'Fira Code', monospace; color:var(--m-ink3); flex:0 0 auto;">1.2 MB</span>
+                  </span>
+                </span>
+                <span style="display:block; min-height:56px; border:1px solid var(--m-line2); border-radius:10px; background:var(--m-panel); color:var(--m-ink3); font:400 13.5px/20px Inter, sans-serif; padding:10px 12px;">Add a caption…</span>
+              </span>
+              <span style="display:flex; align-items:center; gap:8px; padding:11px 14px; border-top:1px solid var(--m-line); background:var(--m-panel);">
+                <span style="flex:1;"></span>
+                <span style="height:32px; display:inline-flex; align-items:center; padding:0 14px; border:1px solid var(--m-line2); border-radius:8px; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif;">Cancel</span>
+                <span style="height:32px; display:inline-flex; align-items:center; gap:7px; padding:0 15px; border-radius:8px; background:var(--m-accent-deep); color:var(--m-on-accent); font:600 12.5px/16px Inter, sans-serif;">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" stroke="none"><path d="M3.4 3.2 21 11.3a.8.8 0 0 1 0 1.4L3.4 20.8a.8.8 0 0 1-1.1-.9L4 13l9-1-9-1-1.7-6.9a.8.8 0 0 1 1.1-.9Z"></path></svg>
+                  Send
+                </span>
+              </span>
+            </span>
+            <span style="flex:1; min-width:220px; display:flex; flex-direction:column; gap:10px;">
+              <span style="font:400 11px/16px Inter, sans-serif; color:var(--m-ink3);">Single file: no counter chip, no thumbnail strip, no “Cancel all” — those appear only when N&gt;1, so a one-file send has nothing to read past. The filename lives in the file-info row under the preview; the modal title is always <span style="font-family:'Fira Code', monospace;">Send file</span>, never the filename.</span>
+              <button style="align-self:flex-start; height:32px; padding:0 14px; border:1px solid var(--m-line2); border-radius:8px; background:transparent; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="background:var(--m-hover);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">Open multi-file dialog (1 of 2)</button>
+              <span style="font:400 11px/16px Inter, sans-serif; color:var(--m-ink3);">Multi: header gains the <span style="font-family:'Fira Code', monospace;">n of N</span> chip, the body gains a 34px thumbnail strip (active = 2px teal ring, inactive = 1px --m-line2 on --m-raised) plus “N more file queued”, and the footer gains Cancel&nbsp;all + Skip. Send advances in place — the dialog never closes and reopens between files.</span>
+            </span>
+          </div>
         </div>
-
-        <div style="display:flex; align-items:center; gap:8px; margin:16px 0 4px;">
-          <span style="display:inline-flex; width:24px; height:24px; align-items:center; justify-content:center; border-radius:7px; background:var(--m-selected);"><img src="res/matron-logo-simple.svg" alt="" style="width:14px; height:14px;"></span>
-          <span style="font:600 13px/17px Inter, sans-serif;">claude</span>
-          <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:06</span>
-        </div>
-        <div style="padding-left:32px; display:flex; flex-direction:column; gap:8px;">
-          <div style="max-width:680px; font:400 14px/22px Inter, sans-serif;">Restarted. Error rate steady at <strong style="font-weight:600;">0.02%</strong> over the last 10 minutes — dashboards clean, websocket reconnects normal.</div>
-          <div style="max-width:680px; font:400 14px/22px Inter, sans-serif;">Backups rotated: oldest three pruned, latest verified with a test restore. Kept <a style="cursor:pointer;">webapp.bak.20260724T100212Z</a> as the rollback point.</div>
-        </div>
-
-        
-
-        
-        <div data-spec="activity" style="display:flex; align-items:center; gap:5px; margin:12px 0 4px 32px; color:var(--m-ink2); font:400 12px/16px Inter, sans-serif;">
-          <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:m-pulse 1.2s ease-in-out infinite;"></span>
-          <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:m-pulse 1.2s ease-in-out 0.15s infinite;"></span>
-          <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:m-pulse 1.2s ease-in-out 0.3s infinite; margin-right:4px;"></span>
-          claude is watching error rates
-        </div>
-        
       </div>
-      
-
-      
-
       
     </div>
 

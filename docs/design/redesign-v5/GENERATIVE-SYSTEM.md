@@ -152,15 +152,17 @@ The full API per component, including combinations the static states don't show.
 
 ---
 
-## 8. Where I was genuinely uncertain
+## 8. Uncertainties — all five resolved (2026-07-25, Fantin)
 
-Flagging these so you know they are soft, not load-bearing:
+These were flagged as soft. All five came back confirming the defaults, so they are now **decided** and should be treated as intent, not preference:
 
-1. **Usage thresholds (<50 / 50–84 / ≥85).** Invented. They should probably differ per meter — ctx at 85% is urgent, a weekly limit at 85% on a Friday is fine. If you make them per-meter, the design does not fight you.
-2. **The 2×2 usage grid vs one row of four.** Close call. 2×2 won because ctx deserves the top-left position, but a single row of four thin bars is defensible if the header ever gets busier.
-3. **Session list ordering** (running-first) interacts badly with pinning — a pinned idle session sorts below a running one. I did not resolve this; product call.
-4. **Subagent rows in the sidebar *and* pills under the header** is arguably redundant. I kept both because they answer different questions ("what exists" vs "what's working right now"), but if one goes, drop the sidebar rows.
-5. **The mic's position** (right of the textarea, left of send) assumes voice is a frequent input. If it is rare, it belongs left with attach.
+1. **Usage thresholds (<50 / 50–84 / ≥85)** — **flat and percentage-based across every meter.** Explicitly *not* per-meter and *not* timeframe-aware. My "make them per-meter" suggestion is withdrawn; don't implement it.
+2. **2×2 usage grid** — **keep.** Not a row of four.
+3. **Session ordering** — **pins at the top**, then the rest. This resolves the conflict I couldn't: pinning outranks running-first, and running-first orders within each group. The app already sorts this way.
+4. **Subagent rows in the sidebar *and* pills under the header** — **keep both.** They answer different questions ("what exists" vs "what's working right now").
+5. **Mic position** — **keep** it right of the textarea, left of send.
+
+Nothing in this design is awaiting a decision from the product side. The only outstanding input is data, not judgement: real transcripts, the bridge limits schema (received), and control-frequency data.
 
 ---
 
@@ -171,3 +173,82 @@ Nothing in this file is a substitute for these, and their absence is what made m
 - **Real transcripts** — my fixtures are plausible, not real. Real ones would have told me the true distribution of turn lengths, tool-call density, and how often a turn is only a diff.
 - **The bridge payload schema** for limits/status, so labels and units are derived rather than mapped.
 - **Frequency data** on which controls you actually use — that is what should drive the order-of-sacrifice list above, rather than my inference.
+
+
+---
+
+## 10. Cross-cutting invariants (round 2)
+
+These leaked last round: the pixels carried them, the documents didn't, so the implementation reproduced the layout and lost the rules. Stated here as rules, deliberately without pixel values where a value would hide the principle. Every surface — existing and future — must obey all six.
+
+### 10.1 One content-width policy
+
+There is exactly **one** content measure per region, and every child obeys it:
+
+- Thread prose and every event card: **680px max**, left-aligned to the agent indent.
+- Modal cards: **440px** (`min(440px, 94vw)`).
+- Menus and popovers: sized to content, **212–300px**, never full-width.
+- Own-message bubbles: `min(78%, 560px)`.
+
+A card never sets its own width to fit its content, and never stretches to the pane. If something needs to be wider than its region's measure, it scrolls inside itself (code, diffs, thumbnail strips) — the measure does not bend.
+
+### 10.2 The alignment grid — two left edges, one right edge
+
+**At most two left edges exist inside any card.**
+
+1. **Outer edge** = the card's `padding-left`. Every *direct child* starts here: the section label, body text, the action row, the resolved-state line. No exceptions, no optical nudges.
+2. **Inner edge** = outer + 24px. This is the text column of a fixed 24px icon gutter. Every icon-prefixed line shares it, and so does any list that hangs off such a line.
+
+A third edge is a bug. In practice that means: **an icon never displaces the text it labels into a new position** — it occupies the gutter, and the text lands on the inner edge whether the icon is present or not. Inline emoji are prohibited precisely because they *do* displace text: they make the left edge a function of glyph width, so no two rows line up. Icons are SVG in the gutter.
+
+**One right edge:** timestamps, counts, and sizes align to the card's `padding-right`, and that same right edge is shared across every message type in the thread — an event card's timestamp, a bubble's timestamp, and a tool card's duration all land on one vertical line. A timestamp is never centred in its row and never floats after the text.
+
+### 10.3 Section-spacing rhythm
+
+Within a container, the gap between stacked elements is **constant** — one value per container, set once on the flex/grid `gap`, never as per-child margins:
+
+| Container | Gap |
+|---|---|
+| Card internals (label / body / actions) | 10px |
+| Modal body sections | 14px |
+| Agent-turn elements | 8px |
+| Sidebar rows | 1px |
+| Field and its own label | 6px |
+| Button groups | 8px |
+
+Consequences: a label belongs to the field **below** it and is bound to it by the small gap — the ambiguity in the live new-session sheet (a label sitting between two fields, closer to the wrong one) is a rhythm failure, not a copy problem. And a card must not change its internal rhythm between states: the un-answered and answered prompt card keep the same three rows in the same order at the same gap, so resolving it doesn't reflow the thread.
+
+### 10.4 Both-theme parity includes native chrome
+
+A theme is not done when the custom elements are themed. Every one of these must be explicitly styled in **both** themes:
+
+- **Scrollbars** — `scrollbar-color` plus `::-webkit-scrollbar-*`, from `--m-scrollbar` / `--m-scrollbar-hover`. A default light scrollbar across a dark modal is the single most visible parity failure.
+- **Focus rings** — `2px solid var(--m-accent)`, offset 2px (inset −2px inside menus). **Never browser-blue.** A global `:focus-visible` rule is the floor, not a per-component opt-in.
+- **Text selection** — `::selection` from `--m-selection`.
+- **Native inputs** — every `input`/`textarea`/`select` sets `background`, `color`, and `border` explicitly. An unstyled input inherits the *UA* white, not the theme: that is the white-on-dark "Agent default" field. Placeholder colour is set too.
+- **Disabled fields** — `--m-subtle` fill with `--m-ink3` text, never opacity alone (opacity on a UA-white field is still white).
+- **Empty states** — every list has designed copy; never an empty box.
+- **Theme-dependent assets** — any icon or image that assumes a background must have both variants or be `currentColor`.
+
+### 10.5 One primary per surface
+
+Exactly one filled accent button per surface, on the affirmative action: **Send now**, **Start session**, **Send**, **Allow**. Everything alongside it is secondary (outlined) or ghost. Two equal-weight outlined buttons — as in the live prompt card, where *Cancel* and *Send now* are indistinguishable — means the surface has no primary and the operator has to read to find the safe path.
+
+Destructive actions are ghost, and reveal critical colour on hover only.
+
+### 10.6 Menus: one component, many anchors
+
+The conversation-actions menu is a single component. Only its anchor changes: **sidebar row → right-click (context menu only)**, **header → the ⋯ button**. Per the operator's call, sidebar rows carry **no persistent ⋯ affordance** — right-click is the only path there, which keeps the row's fixed columns (status glyph, name, time, badge) intact at every width.
+
+Menu internals: rows are `grid 16px 1fr` with a 10px gap inside a 4px-padded shell, and row radius is smaller than shell radius so the hover fill **insets** from the shell edge instead of touching it. Groups are separated by a hairline, not by a gap.
+
+### The hard states every surface must render
+
+Non-negotiable; each has a static file:
+
+| Surface | States |
+|---|---|
+| Prompt / Question card | un-answered · answered (+ queued list) · expired · read-only · both themes |
+| New session sheet | default · path typed · checkbox on · disabled workspace field · both themes |
+| Actions menu | rest · hover · keyboard-focused · destructive hover · both themes |
+| Upload modal | single file · multi-file (`n of N` + strip) · last file · caption filled · both themes |

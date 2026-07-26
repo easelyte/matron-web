@@ -2,9 +2,9 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
-<title>Matron · light-tool-expanded</title>
-<meta name="matron-state" content="light-tool-expanded">
-<meta name="matron-state-note" content="Tool card expanded (output visible) alongside the expanded diff card.">
+<title>Matron · light-new-session-filled</title>
+<meta name="matron-state" content="light-new-session-filled">
+<meta name="matron-state-note" content="ROUND 2 · New session sheet with browser tools enabled (checkbox on).">
 <style>
 /* Self-hosted so these files are screenshot-faithful offline, not just probe-faithful.
    Inter: rsms/inter docs/font-files/InterVariable.woff2 (OFL). Fira Code: google/fonts
@@ -261,16 +261,12 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
 
           <div style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); overflow:hidden;">
             <button data-spec="event.tool_output.summary" style="display:flex; width:100%; align-items:center; gap:10px; padding:9px 12px; border:0; background:transparent; color:var(--m-ink); text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);">
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto; transform:rotate(0deg); transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto; transform:rotate(-90deg); transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
               <code style="font:500 12.5px/18px 'Fira Code', monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">$ pnpm build</code>
               <span style="flex:1;"></span>
               <span style="padding:1px 8px; border-radius:999px; background:var(--m-diff-add); color:var(--m-green); font:600 11px/16px Inter, sans-serif; flex:0 0 auto;">exit 0</span>
               <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3); flex:0 0 auto;">41s</span>
             </button>
-            
-            <pre style="margin:0; padding:10px 12px; border-top:1px solid var(--m-line); background:var(--m-raised); font:400 12px/19px 'Fira Code', monospace; color:var(--m-ink2); white-space:pre-wrap; overflow-wrap:anywhere; max-height:280px; overflow:auto;">webpack 5.99 compiled successfully in 38412 ms
-webapp/ written (11.2 MB, 214 assets)
-backup: webapp.bak.20260724T100212Z</pre>
             
           </div>
 
@@ -394,6 +390,53 @@ backup: webapp.bak.20260724T100212Z</pre>
   </section>
   
 
+  
+  <div data-screen-label="New session modal" data-spec="modal.newSession.scrim" data-target=".mj_UploadConfirm_scrim" style="position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; background:rgb(18 16 14 / 55%); padding:16px;">
+    <div data-spec="modal.newSession" data-target=".mj_NewSessionSheet" style="display:flex; width:min(440px, 94vw); max-height:88vh; flex-direction:column; border:1px solid var(--m-line); border-radius:14px; background:var(--m-overlay); box-shadow:var(--m-sh-lg); box-sizing:border-box; overflow:hidden;">
+      <div style="display:flex; align-items:center; gap:10px; padding:13px 14px 13px 16px; border-bottom:1px solid var(--m-line);">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2); flex:0 0 auto;"><path d="M12 20h8"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path></svg>
+        <span style="font:600 14px/19px Inter, sans-serif;">New session</span>
+        <span style="flex:1;"></span>
+        <button title="Close" style="display:inline-flex; width:28px; height:28px; align-items:center; justify-content:center; border:0; border-radius:7px; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;" data-style-hover="background:var(--m-hover); color:var(--m-ink);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div style="flex:1; min-height:0; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:14px;">
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">Start on</span>
+          <div style="display:flex; gap:6px;">
+            <button style="flex:1; height:32px; border:1px solid var(--m-accent-deep); border-radius:8px; background:var(--m-selected); color:var(--m-accent); font:600 12.5px/16px Inter, sans-serif; cursor:pointer;" data-style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">claude</button>
+            <button style="flex:1; height:32px; border:1px solid var(--m-line2); border-radius:8px; background:transparent; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="background:var(--m-hover);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">codex</button>
+          </div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">Workspace</span>
+          <input data-spec="modal.newSession.disabledField" disabled="disabled" data-value="Agent default" style="height:34px; box-sizing:border-box; border:1px solid var(--m-line); border-radius:8px; background:var(--m-subtle); color:var(--m-ink3); font:400 13px/16px Inter, sans-serif; padding:0 11px; outline:none; opacity:0.7;">
+          <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">Set by the agent unless a folder path is given below.</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3);">Folder path</span>
+          <input data-spec="modal.newSession.pathField" placeholder="/opt/matron/web-journal" style="height:34px; box-sizing:border-box; border:1px solid var(--m-line2); border-radius:8px; background:var(--m-panel); color:var(--m-ink); font:400 12.5px/18px 'Fira Code', monospace; padding:0 11px; outline:none;" data-style-focus="border-color:var(--m-accent);">
+        </div>
+        <button data-spec="modal.newSession.checkbox" data-value="1" style="display:grid; grid-template-columns:18px minmax(0,1fr); align-items:start; gap:10px; padding:0; border:0; background:transparent; text-align:left; cursor:pointer;" data-style-focus="outline:2px solid var(--m-accent); outline-offset:3px;">
+          <span style="display:inline-flex; width:18px; height:18px; align-items:center; justify-content:center; border:1px solid var(--m-accent-deep); border-radius:5px; background:var(--m-accent-deep); color:var(--m-on-accent); box-sizing:border-box;">
+            
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4 10-10"></path></svg>
+            
+          </span>
+          <span style="display:flex; flex-direction:column; gap:2px;">
+            <span style="font:500 13px/17px Inter, sans-serif; color:var(--m-ink);">Enable browser tools</span>
+            <span style="font:400 11px/15px Inter, sans-serif; color:var(--m-ink2);">Lets the agent drive a headless browser in this session.</span>
+          </span>
+        </button>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; padding:11px 14px; border-top:1px solid var(--m-line); background:var(--m-panel);">
+        <span style="flex:1; font:400 11px/14px 'Fira Code', monospace; color:var(--m-ink3);">/start --claude</span>
+        <button style="height:32px; padding:0 14px; border:1px solid var(--m-line2); border-radius:8px; background:transparent; color:var(--m-ink); font:500 12.5px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="background:var(--m-hover);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">Cancel</button>
+        <button style="display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 15px; border:0; border-radius:8px; background:var(--m-accent-deep); color:var(--m-on-accent); font:600 12.5px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="filter:brightness(1.08);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:2px;">Start session</button>
+      </div>
+    </div>
+  </div>
   
 
   

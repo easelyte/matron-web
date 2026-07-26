@@ -4,11 +4,15 @@
 <meta charset="utf-8">
 <title>Matron · light-upload-first</title>
 <meta name="matron-state" content="light-upload-first">
-<meta name="matron-state-note" content="Upload modal, file 1 of 2 queued.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<meta name="matron-state-note" content="Upload modal, multi-file: 1 of 2 queued, thumbnail strip, Cancel all + Skip.">
 <style>
+/* Self-hosted so these files are screenshot-faithful offline, not just probe-faithful.
+   Inter: rsms/inter docs/font-files/InterVariable.woff2 (OFL). Fira Code: google/fonts
+   ofl/firacode/FiraCode[wght].ttf (OFL, licence alongside). Metrics unaffected either
+   way — every size/weight/line-height in this design is authored absolutely. */
+@font-face { font-family: Inter; font-weight: 100 900; font-style: normal; font-display: block; src: url("./fonts/InterVariable.woff2") format("woff2"); }
+@font-face { font-family: "Fira Code"; font-weight: 300 700; font-style: normal; font-display: block; src: url("./fonts/FiraCode%5Bwght%5D.ttf") format("truetype"); }
+
 
 :root {
   --m-app:#f4f2ee; --m-panel:#ffffff; --m-paper:#efece6; --m-raised:#faf8f4; --m-overlay:#ffffff;
@@ -21,6 +25,7 @@
   --m-green:#34c759; --m-amber:#ff9500; --m-red:#ff3b30; --m-crit:#bd2020;
   --m-diff-add:rgb(52 199 89 / 0.13); --m-diff-del:rgb(255 59 48 / 0.09);
   --m-sh-sm:0 1px 2px rgb(28 24 20 / 0.06); --m-sh-md:0 4px 12px rgb(28 24 20 / 0.10); --m-sh-lg:0 16px 48px rgb(28 24 20 / 0.16);
+  --m-scrollbar:rgb(28 24 20 / 0.22); --m-scrollbar-hover:rgb(28 24 20 / 0.34); --m-selection:rgb(13 148 136 / 0.20);
 }
 [data-theme="dark"] {
   --m-app:#121316; --m-panel:#1a1c20; --m-paper:#151619; --m-raised:#212429; --m-overlay:#282c32;
@@ -33,13 +38,22 @@
   --m-crit:#ff6a6a;
   --m-diff-add:rgb(52 199 89 / 0.12); --m-diff-del:rgb(255 107 107 / 0.10);
   --m-sh-sm:0 1px 2px rgb(0 0 0 / 0.3); --m-sh-md:0 4px 12px rgb(0 0 0 / 0.4); --m-sh-lg:0 16px 48px rgb(0 0 0 / 0.5);
+  --m-scrollbar:rgb(255 255 255 / 0.20); --m-scrollbar-hover:rgb(255 255 255 / 0.32); --m-selection:rgb(45 212 191 / 0.26);
 }
 html, body { width:100%; height:100%; margin:0; overflow:hidden; }
 body { background:var(--m-app); }
 a { color:var(--m-accent); text-decoration:none; }
 a:hover { text-decoration:underline; }
 textarea::placeholder, input::placeholder { color:var(--m-ink3); }
-* { scrollbar-width:thin; scrollbar-color:rgb(120 114 105 / 40%) transparent; }
+/* Native chrome is part of the theme, not an exception to it. */
+* { scrollbar-width:thin; scrollbar-color:var(--m-scrollbar) transparent; }
+*::-webkit-scrollbar { width:10px; height:10px; }
+*::-webkit-scrollbar-track { background:transparent; }
+*::-webkit-scrollbar-thumb { background:var(--m-scrollbar); border:3px solid transparent; background-clip:content-box; border-radius:99px; }
+*::-webkit-scrollbar-thumb:hover { background:var(--m-scrollbar-hover); border:3px solid transparent; background-clip:content-box; }
+*::-webkit-scrollbar-corner { background:transparent; }
+::selection { background:var(--m-selection); }
+:focus-visible { outline:2px solid var(--m-accent); outline-offset:2px; }
 @keyframes m-pulse { 0%,100% { opacity:.35; } 50% { opacity:1; } }
 @keyframes m-spin { to { transform:rotate(360deg); } }
 @keyframes m-wave { 0%,100% { transform:scaleY(0.3); } 50% { transform:scaleY(1); } }
@@ -65,13 +79,13 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       </button>
     </div>
     <div style="padding:0 12px 10px;">
-      <button title="Runs /start" style="display:flex; width:100%; align-items:center; justify-content:center; gap:8px; height:34px; border:1px solid rgb(13 148 136 / 25%); border-radius:8px; background:var(--m-selected); color:var(--m-accent); font:500 13px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="background:var(--m-active);">
+      <button data-spec="sidebar.newSession" title="Opens the new-session sheet (/start)" style="display:flex; width:100%; align-items:center; justify-content:center; gap:8px; height:34px; border:1px solid rgb(13 148 136 / 25%); border-radius:8px; background:var(--m-selected); color:var(--m-accent); font:500 13px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="background:var(--m-active);">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h8"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path></svg>
         New session
       </button>
     </div>
-    <div style="display:flex; gap:2px; margin:0 12px 8px; padding:2px; border-radius:999px; background:var(--m-subtle2);">
-      <button style="flex:1; border:0; border-radius:999px; padding:5px 8px; background:var(--m-panel); color:var(--m-ink); box-shadow:var(--m-sh-sm); font:500 12px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="color:var(--m-ink);">Active</button>
+    <div data-spec="sidebar.tabs" style="display:flex; gap:2px; margin:0 12px 8px; padding:2px; border-radius:999px; background:var(--m-subtle2);">
+      <button data-spec="sidebar.tab.active" style="flex:1; border:0; border-radius:999px; padding:5px 8px; background:var(--m-panel); color:var(--m-ink); box-shadow:var(--m-sh-sm); font:500 12px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="color:var(--m-ink);">Active</button>
       <button title="Favorites" style="flex:1; display:inline-flex; align-items:center; justify-content:center; gap:5px; border:0; border-radius:999px; padding:5px 8px; background:transparent; color:var(--m-ink2); box-shadow:none; font:500 12px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="color:var(--m-ink);"><svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" stroke="none"><path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.9 7.2 19l.9-5.4L4.2 9.7l5.4-.8L12 4Z"></path></svg>Favs</button>
       <button style="flex:1; border:0; border-radius:999px; padding:5px 8px; background:transparent; color:var(--m-ink2); box-shadow:none; font:500 12px/16px Inter, sans-serif; cursor:pointer;" data-style-hover="color:var(--m-ink);">Archived <span style="color:var(--m-ink3);">4</span></button>
     </div>
@@ -83,20 +97,20 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
     </div>
     <nav data-spec="sidebar.list" style="flex:1; min-height:0; overflow-y:auto; padding:2px 8px 8px; display:flex; flex-direction:column; gap:1px;">
       
-      <button style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:var(--m-selected); color:var(--m-ink); text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);">
+      <button data-spec="sidebar.row.selected" style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:var(--m-selected); color:var(--m-ink); text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);">
         <span style="position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:99px; background:var(--m-accent);"></span>
-        <span title="running" style="width:8px; height:8px; flex:0 0 auto; border-radius:50%; background:var(--m-accent); animation:m-pulse 1.6s ease-in-out infinite;"></span>
+        <span data-spec="sidebar.row.status" title="running" style="width:8px; height:8px; flex:0 0 auto; border-radius:50%; background:var(--m-accent); animation:m-pulse 1.6s ease-in-out infinite;"></span>
         <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
           <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 13px/17px Inter, sans-serif;">matron-web · deploy</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:06</span></span>
           <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">Restarted nginx; error rate steady at 0.02%</span>
         </span>
       </button>
-      <button style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:transparent; color:var(--m-ink); text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);">
+      <button data-spec="sidebar.row" style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:transparent; color:var(--m-ink); text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);">
         <span style="position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:99px; background:transparent;"></span>
         <span style="width:8px; display:inline-flex; justify-content:center; flex:0 0 auto; color:var(--m-ink3);"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1 6 3 3H7l3-3-1-6Z"></path><path d="M12 16v4"></path></svg></span>
         <span style="flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;">
           <span style="display:flex; align-items:baseline; gap:8px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 13px/17px Inter, sans-serif;">infra: backup rotation</span><span style="flex:0 0 auto; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">09:41</span></span>
-          <span style="display:flex; align-items:center; gap:6px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">Cron entry added for 03:15 UTC daily</span><span style="flex:0 0 auto; display:inline-flex; min-width:18px; height:18px; align-items:center; justify-content:center; padding:0 5px; border-radius:9px; background:var(--m-accent); color:var(--m-on-accent); font:600 10px/18px Inter, sans-serif;">3</span></span>
+          <span style="display:flex; align-items:center; gap:6px;"><span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 12px/16px Inter, sans-serif; color:var(--m-ink2);">Cron entry added for 03:15 UTC daily</span><span style="flex:0 0 auto; display:inline-flex; min-width:18px; height:18px; align-items:center; justify-content:center; padding:0 5px; border-radius:9px; background:var(--m-accent); color:var(--m-on-accent); font:600 10px/18px Inter, sans-serif;" data-spec="sidebar.row.unread">3</span></span>
         </span>
       </button>
       <button style="position:relative; display:flex; width:100%; align-items:center; gap:10px; padding:9px 10px; border:0; border-radius:8px; background:transparent; color:var(--m-ink); text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);">
@@ -149,7 +163,7 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
   
 
   
-  <div title="Drag to resize" style="width:5px; margin:0 -2px; flex:0 0 auto; cursor:col-resize; z-index:5;" data-style-hover="background:rgb(13 148 136 / 18%);"></div>
+  <div data-spec="sidebar.resizeHandle" title="Drag to resize" style="width:5px; margin:0 -2px; flex:0 0 auto; cursor:col-resize; z-index:5;" data-style-hover="background:rgb(13 148 136 / 18%);"></div>
   
 
   
@@ -158,9 +172,9 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
     <header data-screen-label="Header" data-spec="header" style="display:flex; align-items:center; gap:12px; flex:0 0 auto; min-height:58px; padding:0 14px; background:var(--m-panel); border-bottom:1px solid var(--m-line);">
       
       <div style="position:relative; min-width:0; display:flex; flex-direction:column; gap:1px;">
-        <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 15px/20px Inter, sans-serif;">matron-web · deploy</div>
+        <div data-spec="header.title" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 15px/20px Inter, sans-serif;">matron-web · deploy</div>
         
-        <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 11px/14px Inter, sans-serif; color:var(--m-ink2);">claude-sonnet-4-5 · /opt/matron/web-journal · <span style="color:var(--m-accent);">running</span></div>
+        <div data-spec="header.subtitle" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:400 11px/14px Inter, sans-serif; color:var(--m-ink2);">claude-sonnet-4-5 · /opt/matron/web-journal · <span style="color:var(--m-accent);">running</span></div>
         
         
         
@@ -168,9 +182,9 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       <span style="flex:1;"></span>
       <div style="position:relative; flex:0 0 auto; display:flex; align-items:center;">
       
-      <div style="display:grid; grid-template-columns:1fr 1fr; column-gap:16px; row-gap:4px; width:300px; flex:0 0 auto;">
-        <div style="display:grid; grid-template-columns:24px 1fr 32px; align-items:center; gap:7px; font:500 10.5px/13px 'Fira Code', monospace; color:var(--m-ink);">
-          <span style="text-align:right;">ctx</span>
+      <div data-spec="header.usage" style="display:grid; grid-template-columns:1fr 1fr; column-gap:16px; row-gap:4px; width:300px; flex:0 0 auto;">
+        <div data-spec="header.usage.row" style="display:grid; grid-template-columns:24px 1fr 32px; align-items:center; gap:7px; font:500 10.5px/13px 'Fira Code', monospace; color:var(--m-ink);">
+          <span data-spec="header.usage.label" style="text-align:right;">ctx</span>
           <span style="display:block; height:4px; border-radius:99px; background:var(--m-track); overflow:hidden;"><span style="display:block; height:100%; width:72%; border-radius:inherit; background:var(--m-amber);"></span></span>
           <span>72%</span>
         </div>
@@ -196,20 +210,23 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       </div>
       
       <span style="width:1px; height:26px; background:var(--m-line); flex:0 0 auto;"></span>
-      <button title="Compact context" style="display:inline-flex; height:28px; align-items:center; gap:6px; padding:0 10px; border:1px solid var(--m-line2); border-radius:999px; background:transparent; color:var(--m-ink2); font:500 12px/16px Inter, sans-serif; cursor:pointer; flex:0 0 auto;" data-style-hover="background:var(--m-hover); color:var(--m-ink);">
+      <button data-spec="header.compact" title="Compact context" style="display:inline-flex; height:28px; align-items:center; gap:6px; padding:0 10px; border:1px solid var(--m-line2); border-radius:999px; background:transparent; color:var(--m-ink2); font:500 12px/16px Inter, sans-serif; cursor:pointer; flex:0 0 auto;" data-style-hover="background:var(--m-hover); color:var(--m-ink);">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9 4 4M4 8V4h4"></path><path d="m15 15 5 5M20 16v4h-4"></path></svg>
         Compact
       </button>
       
-      <button title="More" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); cursor:pointer; flex:0 0 auto;" data-style-hover="background:var(--m-hover);">
+      <span style="position:relative; flex:0 0 auto;">
+      <button data-spec="header.more" title="Conversation actions" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); cursor:pointer;" data-style-hover="background:var(--m-hover);">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.5"></circle><circle cx="12" cy="12" r="1.5"></circle><circle cx="19" cy="12" r="1.5"></circle></svg>
       </button>
+      
+      </span>
     </header>
 
     
     <div data-screen-label="Subagent strip" data-spec="subagentStrip" style="display:flex; align-items:center; gap:8px; flex:0 0 auto; overflow-x:auto; padding:7px 14px; background:var(--m-panel); border-bottom:1px solid var(--m-line);">
       <span style="font:500 10px/14px Inter, sans-serif; letter-spacing:0.06em; text-transform:uppercase; color:var(--m-ink3); flex:0 0 auto;">Subagents</span>
-      <button style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; border:1px solid var(--m-line2); border-radius:999px; background:transparent; color:var(--m-ink); font:400 12px/16px Inter, sans-serif; cursor:pointer; white-space:nowrap; flex:0 0 auto;" data-style-hover="background:var(--m-hover);">
+      <button data-spec="subagentStrip.pill" style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px; border:1px solid var(--m-line2); border-radius:999px; background:transparent; color:var(--m-ink); font:400 12px/16px Inter, sans-serif; cursor:pointer; white-space:nowrap; flex:0 0 auto;" data-style-hover="background:var(--m-hover);">
         <span style="width:10px; height:10px; box-sizing:border-box; border:2px solid rgb(13 148 136 / 25%); border-top-color:var(--m-accent); border-radius:50%; animation:m-spin 0.8s linear infinite;"></span>
         test triage
       </button>
@@ -231,7 +248,7 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
         </div>
 
         <div style="display:flex; justify-content:flex-end; margin:2px 0;">
-          <div style="max-width:min(78%, 560px); padding:9px 13px; border-radius:14px 14px 4px 14px; background:var(--m-self); box-shadow:var(--m-sh-sm); font:400 14px/22px Inter, sans-serif;">morning — deploy the usage-bar fix to prod, then rotate the backups<span style="margin-left:9px; font:400 10px/14px Inter, sans-serif; color:var(--m-ink3); white-space:nowrap;">09:58</span></div>
+          <div data-spec="canvas.ownBubble" style="max-width:min(78%, 560px); padding:9px 13px; border-radius:14px 14px 4px 14px; background:var(--m-self); box-shadow:var(--m-sh-sm); font:400 14px/22px Inter, sans-serif;">morning — deploy the usage-bar fix to prod, then rotate the backups<span style="margin-left:9px; font:400 10px/14px Inter, sans-serif; color:var(--m-ink3); white-space:nowrap;">09:58</span></div>
         </div>
 
         <div style="display:flex; align-items:center; gap:8px; margin:16px 0 4px;">
@@ -240,10 +257,10 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
           <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">10:02</span>
         </div>
         <div style="padding-left:32px; display:flex; flex-direction:column; gap:8px;">
-          <div style="max-width:680px; font:400 14px/22px Inter, sans-serif;">On it. Plan: build → atomic swap of <code style="padding:1px 5px; border-radius:4px; background:var(--m-subtle2); font:400 12.5px/18px 'Fira Code', monospace;">webapp/</code> → verify → rotate backups.</div>
+          <div data-spec="event.text" style="max-width:680px; font:400 14px/22px Inter, sans-serif;">On it. Plan: build → atomic swap of <code style="padding:1px 5px; border-radius:4px; background:var(--m-subtle2); font:400 12.5px/18px 'Fira Code', monospace;">webapp/</code> → verify → rotate backups.</div>
 
           <div style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); overflow:hidden;">
-            <button style="display:flex; width:100%; align-items:center; gap:10px; padding:9px 12px; border:0; background:transparent; color:var(--m-ink); text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);">
+            <button data-spec="event.tool_output.summary" style="display:flex; width:100%; align-items:center; gap:10px; padding:9px 12px; border:0; background:transparent; color:var(--m-ink); text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);">
               <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto; transform:rotate(-90deg); transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
               <code style="font:500 12.5px/18px 'Fira Code', monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">$ pnpm build</code>
               <span style="flex:1;"></span>
@@ -259,7 +276,7 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
                 <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(0deg); transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
               </button>
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path><path d="M15.5 12.5a2.1 2.1 0 0 1 3 3L12 22l-4 1 1-4Z"></path></svg>
-              <span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 12.5px/18px 'Fira Code', monospace;">src/journal/journal.pcss</span>
+              <span data-spec="event.diff.filename" style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 12.5px/18px 'Fira Code', monospace;">src/journal/journal.pcss</span>
               <span style="font:600 11px/16px 'Fira Code', monospace; color:var(--m-green); flex:0 0 auto;">+6</span>
               <span style="font:600 11px/16px 'Fira Code', monospace; color:var(--m-crit); flex:0 0 auto;">−2</span>
               <span style="flex:1;"></span>
@@ -271,7 +288,7 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
               <div style="padding:2px 12px; white-space:pre;">  .mj_UsageBars {</div>
               <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-del); color:var(--m-crit);">-     gap: 4px;</div>
               <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     /* micro-gap keeps three rows inside the pill */</div>
-              <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     gap: 2px;</div>
+              <div data-spec="event.diff.addRow" style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     gap: 2px;</div>
               <div style="padding:2px 12px; white-space:pre; background:var(--m-diff-add);">+     align-content: center;</div>
               <div style="padding:2px 12px 6px; white-space:pre;">  }</div>
             </div>
@@ -298,7 +315,7 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
           </div>
           <div style="max-width:680px; font:400 14px/22px Inter, sans-serif;">To swap prod I need to restart nginx.</div>
 
-          <div data-screen-label="Permission request" data-spec="card.permission" style="max-width:680px; border:1px solid rgb(13 148 136 / 25%); border-radius:10px; background:var(--m-panel); padding:12px 14px; display:flex; flex-direction:column; gap:9px;">
+          <div data-screen-label="Permission request" data-spec="event.permission_request" data-target=".mj_PromptCard" style="max-width:680px; border:1px solid rgb(13 148 136 / 25%); border-radius:10px; background:var(--m-panel); padding:12px 14px; display:flex; flex-direction:column; gap:9px;">
             <span style="font:600 10px/14px Inter, sans-serif; letter-spacing:0.07em; text-transform:uppercase; color:var(--m-accent);">Permission request</span>
             <span style="font:400 13.5px/20px Inter, sans-serif;">Run <code style="padding:1px 5px; border-radius:4px; background:var(--m-subtle2); font:400 12.5px/18px 'Fira Code', monospace;">systemctl restart nginx</code> on prod?</span>
             
@@ -330,7 +347,7 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
         
 
         
-        <div style="display:flex; align-items:center; gap:5px; margin:12px 0 4px 32px; color:var(--m-ink2); font:400 12px/16px Inter, sans-serif;">
+        <div data-spec="activity" style="display:flex; align-items:center; gap:5px; margin:12px 0 4px 32px; color:var(--m-ink2); font:400 12px/16px Inter, sans-serif;">
           <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:m-pulse 1.2s ease-in-out infinite;"></span>
           <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:m-pulse 1.2s ease-in-out 0.15s infinite;"></span>
           <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:m-pulse 1.2s ease-in-out 0.3s infinite; margin-right:4px;"></span>
@@ -341,27 +358,29 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       
 
       
+
+      
     </div>
 
-    <footer data-screen-label="Composer" data-spec="composer" style="flex:0 0 auto; padding:8px 16px 12px;">
+    <footer data-screen-label="Composer" data-spec="composer.footer" style="flex:0 0 auto; padding:8px 16px 12px;">
       <div style="position:relative; max-width:860px; margin:0 auto;">
         
         
         
-        <div style="display:flex; align-items:flex-end; gap:6px; border:1px solid var(--m-line2); border-radius:12px; background:var(--m-panel); box-shadow:var(--m-sh-sm); padding:6px 8px 6px 6px;">
-          <button title="Attach file" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;" data-style-hover="background:var(--m-hover); color:var(--m-ink);">
+        <div data-spec="composer.shell" style="display:flex; align-items:flex-end; gap:6px; border:1px solid var(--m-line2); border-radius:12px; background:var(--m-panel); box-shadow:var(--m-sh-sm); padding:6px 8px 6px 6px;">
+          <button data-spec="composer.attach" title="Attach file" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;" data-style-hover="background:var(--m-hover); color:var(--m-ink);">
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m20.5 11.5-8.7 8.7a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7L9 17.4a2 2 0 0 1-2.8-2.8l8.5-8.5"></path></svg>
           </button>
-          <textarea rows="1" placeholder="Message claude — type / for commands" style="flex:1; min-width:0; border:0; outline:none; resize:none; background:transparent; color:var(--m-ink); font:400 14px/22px Inter, sans-serif; padding:6px 4px; max-height:160px; overflow-y:auto;"></textarea>
-          <button title="Voice message" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;" data-style-hover="background:var(--m-hover); color:var(--m-ink);">
+          <textarea data-spec="composer.input" rows="1" placeholder="Message claude — type / for commands" style="flex:1; min-width:0; border:0; outline:none; resize:none; background:transparent; color:var(--m-ink); font:400 14px/22px Inter, sans-serif; padding:6px 4px; max-height:160px; overflow-y:auto;"></textarea>
+          <button data-spec="composer.mic" title="Voice message" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink3); cursor:pointer; flex:0 0 auto;" data-style-hover="background:var(--m-hover); color:var(--m-ink);">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8"></path></svg>
           </button>
-          <button title="Send" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:9px; background:var(--m-accent-deep); color:var(--m-on-accent); cursor:pointer; flex:0 0 auto; opacity:0.45;" data-style-hover="filter:brightness(1.08);">
+          <button data-spec="composer.send" title="Send" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:9px; background:var(--m-accent-deep); color:var(--m-on-accent); cursor:pointer; flex:0 0 auto; opacity:0.45;" data-style-hover="filter:brightness(1.08);">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" stroke="none"><path d="M3.4 3.2 21 11.3a.8.8 0 0 1 0 1.4L3.4 20.8a.8.8 0 0 1-1.1-.9L4 13l9-1-9-1-1.7-6.9a.8.8 0 0 1 1.1-.9Z"></path></svg>
           </button>
         </div>
         
-        <div style="display:flex; gap:14px; padding:6px 8px 0; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">
+        <div data-spec="composer.hints" style="display:flex; gap:14px; padding:6px 8px 0; font:400 11px/14px Inter, sans-serif; color:var(--m-ink3);">
           <span><span style="font-family:'Fira Code', monospace;">/</span> commands</span>
           <span>shift+enter for newline</span>
           <span style="margin-left:auto;">ctx 72% · auto-idle in 18m</span>
@@ -372,8 +391,10 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
   
 
   
-  <div data-screen-label="Upload modal" data-spec="modal.upload" style="position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; background:rgb(18 16 14 / 55%); padding:16px;">
-    <div style="display:flex; width:min(440px, 94vw); max-height:88vh; flex-direction:column; border:1px solid var(--m-line); border-radius:14px; background:var(--m-overlay); box-shadow:var(--m-sh-lg); box-sizing:border-box; overflow:hidden;">
+
+  
+  <div data-screen-label="Upload modal" data-spec="modal.upload.scrim" style="position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; background:rgb(18 16 14 / 55%); padding:16px;">
+    <div data-spec="modal.upload" style="display:flex; width:min(440px, 94vw); max-height:88vh; flex-direction:column; border:1px solid var(--m-line); border-radius:14px; background:var(--m-overlay); box-shadow:var(--m-sh-lg); box-sizing:border-box; overflow:hidden;">
 
       <div style="display:flex; align-items:center; gap:10px; padding:13px 14px 13px 16px; border-bottom:1px solid var(--m-line);">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2); flex:0 0 auto;"><path d="M12 16V4M12 4 7 9M12 4l5 5"></path><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"></path></svg>
@@ -399,15 +420,15 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
           </div>
         </div>
 
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span style="width:34px; height:34px; flex:0 0 auto; border-radius:7px; border:2px solid var(--m-accent); background:var(--m-raised);"></span>
+        <div data-spec="modal.upload.queue" style="display:flex; align-items:center; gap:8px;">
+          <span data-spec="modal.upload.thumb.active" style="width:34px; height:34px; flex:0 0 auto; border-radius:7px; border:2px solid var(--m-accent); background:var(--m-raised);"></span>
           <span style="width:34px; height:34px; flex:0 0 auto; border-radius:7px; border:1px solid var(--m-line2); background:var(--m-raised);"></span>
           
           <span style="font:400 11.5px/15px Inter, sans-serif; color:var(--m-ink3);">1 more file queued</span>
           
         </div>
 
-        <textarea rows="2" placeholder="Add a caption…" style="min-height:56px; border:1px solid var(--m-line2); border-radius:10px; background:var(--m-panel); color:var(--m-ink); font:400 13.5px/20px Inter, sans-serif; padding:10px 12px; resize:vertical; outline:none;" data-style-focus="border-color:var(--m-accent);"></textarea>
+        <textarea data-spec="modal.upload.caption" rows="2" placeholder="Add a caption…" style="min-height:56px; border:1px solid var(--m-line2); border-radius:10px; background:var(--m-panel); color:var(--m-ink); font:400 13.5px/20px Inter, sans-serif; padding:10px 12px; resize:vertical; outline:none;" data-style-focus="border-color:var(--m-accent);"></textarea>
       </div>
 
       <div style="display:flex; align-items:center; gap:8px; padding:11px 14px; border-top:1px solid var(--m-line); background:var(--m-panel);">

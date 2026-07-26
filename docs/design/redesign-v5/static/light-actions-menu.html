@@ -2,9 +2,9 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
-<title>Matron · light-tool-expanded</title>
-<meta name="matron-state" content="light-tool-expanded">
-<meta name="matron-state-note" content="Tool card expanded (output visible) alongside the expanded diff card.">
+<title>Matron · light-actions-menu</title>
+<meta name="matron-state" content="light-actions-menu">
+<meta name="matron-state-note" content="ROUND 2 · Conversation actions menu open from the header ⋯ — teal focus, inset rows, hairline before Archive.">
 <style>
 /* Self-hosted so these files are screenshot-faithful offline, not just probe-faithful.
    Inter: rsms/inter docs/font-files/InterVariable.woff2 (OFL). Fira Code: google/fonts
@@ -216,9 +216,29 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
       </button>
       
       <span style="position:relative; flex:0 0 auto;">
-      <button data-spec="header.more" title="Conversation actions" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--m-ink2); cursor:pointer;" data-style-hover="background:var(--m-hover);">
+      <button data-spec="header.more" title="Conversation actions" style="display:inline-flex; width:32px; height:32px; align-items:center; justify-content:center; border:0; border-radius:8px; background:var(--m-active); color:var(--m-ink2); cursor:pointer;" data-style-hover="background:var(--m-hover);">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.5"></circle><circle cx="12" cy="12" r="1.5"></circle><circle cx="19" cy="12" r="1.5"></circle></svg>
       </button>
+      
+      <span data-spec="menu.conversationActions" data-target=".mj_ContextMenu" style="position:absolute; top:calc(100% + 8px); right:0; z-index:30; display:flex; flex-direction:column; width:212px; padding:4px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-overlay); box-shadow:var(--m-sh-md);">
+        <button data-spec="menu.item" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border:0; border-radius:7px; background:transparent; color:var(--m-ink); font:400 13px/17px Inter, sans-serif; text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:-2px;">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2);"><path d="M9 4h6l-1 6 3 3H7l3-3-1-6Z"></path><path d="M12 16v4"></path></svg>
+          <span>Pin</span>
+        </button>
+        <button data-spec="menu.item.favorite" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border:0; border-radius:7px; background:transparent; color:var(--m-ink); font:400 13px/17px Inter, sans-serif; text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:-2px;">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2);"><path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.9 7.2 19l.9-5.4L4.2 9.7l5.4-.8L12 4Z"></path></svg>
+          <span>Add to Favorites</span>
+        </button>
+        <button data-spec="menu.item.unread" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border:0; border-radius:7px; background:transparent; color:var(--m-ink); font:400 13px/17px Inter, sans-serif; text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:-2px;">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink2);"><circle cx="12" cy="12" r="4.5"></circle></svg>
+          <span>Mark as unread</span>
+        </button>
+        <span style="height:1px; margin:4px 5px; background:var(--m-line);"></span>
+        <button data-spec="menu.item.archive" style="display:grid; grid-template-columns:16px minmax(0,1fr); align-items:center; gap:10px; padding:7px 9px; border:0; border-radius:7px; background:transparent; color:var(--m-ink2); font:400 13px/17px Inter, sans-serif; text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover); color:var(--m-crit);" data-style-focus="outline:2px solid var(--m-accent); outline-offset:-2px;">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h16v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z"></path><path d="M3 4h18v4H3zM10 13h4"></path></svg>
+          <span>Archive</span>
+        </button>
+      </span>
       
       </span>
     </header>
@@ -261,16 +281,12 @@ textarea::placeholder, input::placeholder { color:var(--m-ink3); }
 
           <div style="max-width:680px; border:1px solid var(--m-line); border-radius:10px; background:var(--m-panel); overflow:hidden;">
             <button data-spec="event.tool_output.summary" style="display:flex; width:100%; align-items:center; gap:10px; padding:9px 12px; border:0; background:transparent; color:var(--m-ink); text-align:left; cursor:pointer;" data-style-hover="background:var(--m-hover);">
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto; transform:rotate(0deg); transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--m-ink3); flex:0 0 auto; transform:rotate(-90deg); transition:transform 120ms;"><path d="m6 9 6 6 6-6"></path></svg>
               <code style="font:500 12.5px/18px 'Fira Code', monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">$ pnpm build</code>
               <span style="flex:1;"></span>
               <span style="padding:1px 8px; border-radius:999px; background:var(--m-diff-add); color:var(--m-green); font:600 11px/16px Inter, sans-serif; flex:0 0 auto;">exit 0</span>
               <span style="font:400 11px/14px Inter, sans-serif; color:var(--m-ink3); flex:0 0 auto;">41s</span>
             </button>
-            
-            <pre style="margin:0; padding:10px 12px; border-top:1px solid var(--m-line); background:var(--m-raised); font:400 12px/19px 'Fira Code', monospace; color:var(--m-ink2); white-space:pre-wrap; overflow-wrap:anywhere; max-height:280px; overflow:auto;">webpack 5.99 compiled successfully in 38412 ms
-webapp/ written (11.2 MB, 214 assets)
-backup: webapp.bak.20260724T100212Z</pre>
             
           </div>
 

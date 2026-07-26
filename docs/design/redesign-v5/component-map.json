@@ -1,6 +1,6 @@
 {
   "$schema": "matron-component-map/1",
-  "generated": "2026-07-25T19:05Z",
+  "generated": "2026-07-26T09:22Z",
   "repo": {
     "name": "easelyte/matron-web",
     "branch": "main",
@@ -15,83 +15,293 @@
   "how": "data-spec (in the artifact and every static state) → the selector in src/journal that implements it. TWO independent axes: `status` = does the class/feature exist at the tree below (implemented | new | devtool); `visual` = does what exists match the design (aligned | divergent | unverified). A thing can be implemented and divergent — that combination is invisible to both the changelog's 'do not redo' list and its divergence list, so it gets its own field. `unverified` means settle it with the auto-diff, not by reading.",
   "components": [
     {
-      "spec": "sidebar",
-      "selector": ".mx_LeftPanel_outerWrapper > .mx_RoomListPanel",
-      "status": "implemented",
-      "notes": "width persisted via LEFT_PANEL_SIZE_KEY; drag clamp 240–420",
-      "visual": "unverified"
-    },
-    {
-      "spec": "sidebar.list",
-      "selector": ".mj_RoomList",
-      "status": "implemented",
-      "notes": "display:flex; flex-direction:column; gap:1px — the 1px row rhythm is load-bearing",
-      "visual": "unverified"
-    },
-    {
-      "spec": "sidebar.row",
-      "selector": ".mj_RoomListItem",
-      "status": "implemented",
-      "visual": "unverified"
-    },
-    {
-      "spec": "sidebar.row.selected",
-      "selector": ".mj_RoomListItem_selected",
-      "status": "implemented",
-      "notes": "3px accent bar via ::before, inset 8px",
-      "visual": "unverified"
-    },
-    {
-      "spec": "sidebar.row.status",
-      "selector": ".mj_RoomListStatus_running / .mj_RoomListStatus_idle",
+      "spec": "activity",
+      "selector": ".mj_Activity",
       "status": "implemented",
       "visual": "aligned"
     },
     {
-      "spec": "sidebar.row.unread",
-      "selector": ".mj_UnreadBadge / .mj_UnreadDot",
+      "spec": "attachmentChip.error",
+      "selector": "li.mj_AttachmentChip_error (+ _actions buttons)",
       "status": "implemented",
-      "visual": "aligned"
-    },
-    {
-      "spec": "sidebar.tabs",
-      "selector": ".mj_RoomListTabs > .mj_RoomListTab(.mj_RoomListTab_active)",
-      "status": "implemented",
-      "notes": "Favorites tab exists; count span is .mj_RoomListTab_count",
       "visual": "unverified"
     },
     {
-      "spec": "sidebar.empty.*",
-      "selector": ".mj_RoomListEmpty",
+      "spec": "attachmentChip.sending",
+      "selector": "li.mj_AttachmentChip.mj_AttachmentChip_sending",
       "status": "implemented",
-      "notes": "seven distinct copy variants — see design-tokens.json → copy.emptyStates",
+      "visual": "unverified"
+    },
+    {
+      "spec": "button.primary|secondary|ghostDanger|icon.*",
+      "selector": "per-component buttons; see design-tokens.json → states",
+      "status": "implemented",
       "visual": "aligned"
     },
     {
-      "spec": "sidebar.newSession",
-      "selector": "the New session button in .mj_RoomListHeaderActions → opens NewSessionSheet (.mj_UploadConfirm shell)",
+      "spec": "canvas",
+      "selector": ".mx_RoomView_messagePanel",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "canvas.agentGroup",
+      "selector": ".mx_EventTile[data-self=false] (+ .mx_DisambiguatedProfile)",
+      "status": "implemented",
+      "notes": "redesign renders agent turns as flat prose with a 32px indent, not bubbles",
+      "visual": "unverified"
+    },
+    {
+      "spec": "canvas.dateDivider",
+      "selector": "—",
+      "status": "new",
+      "suggested": ".mj_DayDivider",
+      "notes": "hairline + centred label, 500 11px/14px",
+      "visual": "n/a — nothing to compare"
+    },
+    {
+      "spec": "canvas.ownBubble",
+      "selector": ".mx_EventTile[data-self=true] .mx_EventTile_line",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "composer",
+      "selector": ".mx_MessageComposer",
+      "status": "implemented",
+      "visual": "unverified",
+      "visualNote": "Design composer container is TRANSPARENT (the warm --m-paper pane shows through the footer); the shell it sits in is --m-panel only for the input row. Verify the live composer is not filling white.",
+      "notes": "SUPERSEDED by the three rungs below — kept so old diffs resolve"
+    },
+    {
+      "spec": "composer.attach",
+      "selector": ".mx_MessageComposer_button",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "composer.footer",
+      "selector": ".mx_MessageComposer_wrapper",
       "status": "implemented",
       "visual": "divergent",
-      "visualNote": "Live renders a bare pencil icon in the header actions; the design specifies a full-width teal New session button (34px, --m-selected fill, 1px rgb(13 148 136 / 25%) border, 500 13px/16px label + 15px pencil). Functionally present, visually divergent."
+      "visualNote": "TRANSPARENT in the design — the warm --m-paper pane shows through. Only composer.shell is --m-panel. This distinction is what made the earlier 'composer background' reading ambiguous: the footer is transparent AND the input row is panel; both are correct."
     },
     {
-      "spec": "sidebar.footer.connection",
-      "selector": ".mj_SidebarFooterStatus_{online|connecting|offline}",
+      "spec": "composer.hints",
+      "selector": "—",
+      "status": "new",
+      "suggested": ".mj_ComposerHints",
+      "notes": "'/ commands', 'shift+enter for newline', right-aligned live ctx readout (ctxHintPct already computed in components.tsx)",
+      "visual": "n/a — nothing to compare"
+    },
+    {
+      "spec": "composer.input",
+      "selector": ".mx_BasicMessageComposer_input",
       "status": "implemented",
-      "notes": "must not be removed — it is the only chrome-level connection signal",
+      "visual": "unverified",
+      "notes": "transparent, borderless INSIDE the shell — the border belongs to composer.shell, not the textarea"
+    },
+    {
+      "spec": "composer.mic",
+      "selector": "the mic button in .mx_MessageComposer_actions",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "composer.offline",
+      "selector": "placeholder swap on the composer input",
+      "status": "implemented",
+      "notes": "copy: “Messages will send when reconnected” / online “Send a message…”",
       "visual": "aligned"
     },
     {
-      "spec": "sidebar.resizeHandle",
-      "selector": ".mx_ResizeHandle",
+      "spec": "composer.recording",
+      "selector": ".mj_VoiceRecording (+ _action, _stop)",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "composer.send",
+      "selector": ".mx_MessageComposer_sendMessage",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Design send is a FILLED 32×32 --m-accent-deep square, radius 9px, on-accent glyph — not a bare accent-coloured icon."
+    },
+    {
+      "spec": "composer.shell",
+      "selector": ".mx_MessageComposer_row",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "1px --m-line2, radius 12, --m-panel fill, --m-sh-sm, padding 6px 8px 6px 6px, align-items flex-end."
+    },
+    {
+      "spec": "composer.slashPalette",
+      "selector": ".mx_SlashPalette > .mx_SlashPalette_row(_highlighted)",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "devtool.stateMatrix",
+      "selector": "—",
+      "status": "devtool",
+      "notes": "handoff affordance in the mock's sidebar footer. DO NOT IMPLEMENT.",
+      "visual": "n/a"
+    },
+    {
+      "spec": "event.diff",
+      "selector": ".mj_DiffCard (_header/_filename/_badge/_body/_link)",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.diff.addRow",
+      "selector": ".mj_DiffLine_add",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Design tints the whole row background --m-diff-add; live colours the text only."
+    },
+    {
+      "spec": "event.diff.filename",
+      "selector": ".mj_DiffCard_filename",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.error",
+      "selector": ".mj_Error",
       "status": "implemented",
       "visual": "aligned"
+    },
+    {
+      "spec": "event.file",
+      "selector": "a.mj_File + .mj_FileSize + .mj_FileCaption",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.file.loading",
+      "selector": "button.mj_File[disabled] / .mj_MediaLoading",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "event.image",
+      "selector": "figure.mj_Image > img + figcaption",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.permission_request",
+      "selector": ".mj_PromptCard with permission (label “Permission needed”)",
+      "status": "implemented",
+      "notes": "redesign adds the teal-tinted border + one filled affirmative; only difference from Question",
+      "visual": "divergent",
+      "visualNote": "Class exists (shared PromptCard); design adds the teal-tinted border, accent label, and exactly one filled affirmative."
+    },
+    {
+      "spec": "event.prompt",
+      "selector": ".mj_PromptCard (label “Question”)",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "event.prompt_reply",
+      "selector": ".mj_MessageText (+ .mj_Answered for the resolved line)",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "event.prompt.answered",
+      "selector": ".mj_PromptCard .mj_Answered",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live stacks label/body/✓ Answered/⚡ Sending/numbered list at four different left edges with uneven gaps. Design keeps three rows (label+time / body / resolution) at a constant 10px gap, list hanging off the inner edge, so answering does not reflow the card."
+    },
+    {
+      "spec": "event.prompt.timestamp",
+      "selector": ".mj_PromptCard .mx_MessageTimestamp",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live floats it bottom-right of the whole card, below the content. Design puts it on the label row, on the shared right edge every message type uses."
+    },
+    {
+      "spec": "event.prompt.unanswered",
+      "selector": ".mj_PromptCard",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live has no primary — Cancel and Send now are both outlined, so nothing marks the affirmative. Design: Send now is the single filled --m-accent-deep button, Cancel secondary. Live also prefixes the body with inline emoji (📨/⚡/✓), which makes the left edge glyph-width-dependent; design uses SVG in a fixed 24px gutter so label/body/actions share one edge."
+    },
+    {
+      "spec": "event.text",
+      "selector": ".mj_Markdown",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.tool_output",
+      "selector": "details.mj_ToolCard > summary + .mj_ToolCommand + pre",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.tool_output.summary",
+      "selector": "details.mj_ToolCard > summary",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "event.toolOutput.expired",
+      "selector": ".mj_Expired",
+      "status": "implemented",
+      "notes": "copy: “Output expired after 24 hours.”",
+      "visual": "aligned"
+    },
+    {
+      "spec": "event.toolOutput.failed",
+      "selector": ".mj_ToolCard_failed",
+      "status": "implemented",
+      "visual": "aligned"
+    },
+    {
+      "spec": "event.unknown",
+      "selector": "details.mj_Unknown",
+      "status": "implemented",
+      "notes": "redesign gives it a dashed border on --m-raised so it reads as diagnostic, not content",
+      "visual": "divergent",
+      "visualNote": "Class exists; design adds the dashed --m-line2 border on --m-raised so it reads diagnostic."
+    },
+    {
+      "spec": "gallery",
+      "selector": "—",
+      "status": "devtool",
+      "notes": "the state matrix surface itself. DO NOT IMPLEMENT.",
+      "visual": "n/a"
     },
     {
       "spec": "header",
       "selector": ".mx_RoomHeader.mj_ChatHeader",
       "status": "implemented",
       "visual": "unverified"
+    },
+    {
+      "spec": "header.compact",
+      "selector": ".mj_CompactButton",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "header.more",
+      "selector": ".mj_ChatHeader .mj_IconButton (⋯)",
+      "status": "implemented",
+      "visual": "unverified",
+      "notes": "Sidebar rows must NOT carry a persistent ⋯ — right-click only (operator decision). The header ⋯ is the only persistent trigger."
+    },
+    {
+      "spec": "header.subtitle",
+      "selector": ".mj_HeaderEmail / the subtitle row in .mj_HeaderTitleCluster",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Design subtitle is model · workdir · run-state at 400 11px/14px --m-ink2, with the run-state word in accent."
     },
     {
       "spec": "header.title",
@@ -108,10 +318,10 @@
     },
     {
       "spec": "header.usage",
-      "selector": ".mj_UsageCluster .mj_UsageBars > .mj_UsageRow",
+      "selector": ".mj_UsageCluster .mj_UsageBars",
       "status": "implemented",
-      "notes": "2×2 column-first; ctx first and emphasised",
-      "visual": "divergent",
+      "notes": "the 2×2 grid container; individual rows are header.usage.row",
+      "visual": "unverified",
       "visualNote": "Labels: design bakes fixed short strings (ctx/fbl/5h/wk) via the relabel map; live derives them heuristically in usageBarLabel(). Values/geometry align."
     },
     {
@@ -121,148 +331,28 @@
       "visual": "aligned"
     },
     {
+      "spec": "header.usage.label",
+      "selector": ".mj_UsageLabel",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Fixed short labels via the relabel map; live derives them in usageBarLabel()."
+    },
+    {
+      "spec": "header.usage.row",
+      "selector": ".mj_UsageRow",
+      "status": "implemented",
+      "visual": "unverified",
+      "notes": "grid 24px 1fr 32px, gap 7px; the ctx row is 500 + --m-ink, others 400 + --m-ink2"
+    },
+    {
       "spec": "header.usagePopover",
       "selector": ".mj_HeaderMenu.mj_UsagePopover",
       "status": "implemented",
       "visual": "unverified"
     },
     {
-      "spec": "header.compact",
-      "selector": ".mj_CompactButton",
-      "status": "implemented",
-      "visual": "unverified"
-    },
-    {
-      "spec": "subagentStrip",
-      "selector": ".mj_SubagentStrip > .mj_SubagentPill",
-      "status": "implemented",
-      "visual": "unverified"
-    },
-    {
-      "spec": "canvas",
-      "selector": ".mx_RoomView_messagePanel",
-      "status": "implemented",
-      "visual": "unverified"
-    },
-    {
-      "spec": "canvas.dateDivider",
-      "selector": "—",
-      "status": "new",
-      "suggested": ".mj_DayDivider",
-      "notes": "hairline + centred label, 500 11px/14px",
-      "visual": "n/a — nothing to compare"
-    },
-    {
-      "spec": "canvas.agentGroup",
-      "selector": ".mx_EventTile[data-self=false] (+ .mx_DisambiguatedProfile)",
-      "status": "implemented",
-      "notes": "redesign renders agent turns as flat prose with a 32px indent, not bubbles",
-      "visual": "unverified"
-    },
-    {
-      "spec": "canvas.ownBubble",
-      "selector": ".mx_EventTile[data-self=true] .mx_EventTile_line",
-      "status": "implemented",
-      "visual": "unverified"
-    },
-    {
-      "spec": "event.text",
-      "selector": ".mj_Markdown",
-      "status": "implemented",
-      "visual": "unverified"
-    },
-    {
-      "spec": "event.prompt",
-      "selector": ".mj_PromptCard (label “Question”)",
-      "status": "implemented",
-      "visual": "aligned"
-    },
-    {
-      "spec": "event.permission_request",
-      "selector": ".mj_PromptCard with permission (label “Permission needed”)",
-      "status": "implemented",
-      "notes": "redesign adds the teal-tinted border + one filled affirmative; only difference from Question",
-      "visual": "divergent",
-      "visualNote": "Class exists (shared PromptCard); design adds the teal-tinted border, accent label, and exactly one filled affirmative."
-    },
-    {
-      "spec": "event.prompt_reply",
-      "selector": ".mj_MessageText (+ .mj_Answered for the resolved line)",
-      "status": "implemented",
-      "visual": "aligned"
-    },
-    {
-      "spec": "event.tool_output",
-      "selector": "details.mj_ToolCard > summary + .mj_ToolCommand + pre",
-      "status": "implemented",
-      "visual": "unverified"
-    },
-    {
-      "spec": "event.toolOutput.failed",
-      "selector": ".mj_ToolCard_failed",
-      "status": "implemented",
-      "visual": "aligned"
-    },
-    {
-      "spec": "event.toolOutput.expired",
-      "selector": ".mj_Expired",
-      "status": "implemented",
-      "notes": "copy: “Output expired after 24 hours.”",
-      "visual": "aligned"
-    },
-    {
-      "spec": "event.diff",
-      "selector": ".mj_DiffCard (_header/_filename/_badge/_body/_link)",
-      "status": "implemented",
-      "visual": "unverified"
-    },
-    {
-      "spec": "event.image",
-      "selector": "figure.mj_Image > img + figcaption",
-      "status": "implemented",
-      "visual": "unverified"
-    },
-    {
-      "spec": "event.file",
-      "selector": "a.mj_File + .mj_FileSize + .mj_FileCaption",
-      "status": "implemented",
-      "visual": "unverified"
-    },
-    {
-      "spec": "event.file.loading",
-      "selector": "button.mj_File[disabled] / .mj_MediaLoading",
-      "status": "implemented",
-      "visual": "aligned"
-    },
-    {
-      "spec": "event.unknown",
-      "selector": "details.mj_Unknown",
-      "status": "implemented",
-      "notes": "redesign gives it a dashed border on --m-raised so it reads as diagnostic, not content",
-      "visual": "divergent",
-      "visualNote": "Class exists; design adds the dashed --m-line2 border on --m-raised so it reads diagnostic."
-    },
-    {
-      "spec": "event.error",
-      "selector": ".mj_Error",
-      "status": "implemented",
-      "visual": "aligned"
-    },
-    {
-      "spec": "attachmentChip.sending",
-      "selector": "li.mj_AttachmentChip.mj_AttachmentChip_sending",
-      "status": "implemented",
-      "visual": "unverified"
-    },
-    {
-      "spec": "attachmentChip.error",
-      "selector": "li.mj_AttachmentChip_error (+ _actions buttons)",
-      "status": "implemented",
-      "visual": "unverified"
-    },
-    {
-      "spec": "activity",
-      "selector": ".mj_Activity",
+      "spec": "input.rest|focus|error|disabled",
+      "selector": "composer input, .mj_PromptText input, .mj_UploadConfirm_caption",
       "status": "implemented",
       "visual": "aligned"
     },
@@ -273,44 +363,67 @@
       "visual": "aligned"
     },
     {
-      "spec": "composer",
-      "selector": ".mx_MessageComposer .mx_BasicMessageComposer_input",
+      "spec": "menu.conversationActions",
+      "selector": ".mj_ContextMenu",
       "status": "implemented",
       "visual": "divergent",
-      "visualNote": "Design composer container is TRANSPARENT (the warm --m-paper pane shows through the footer); the shell it sits in is --m-panel only for the input row. Verify the live composer is not filling white."
+      "visualNote": "Live: browser-blue focus ring, rows are full-width filled boxes touching the shell edge, gaps between rows, no separator before Archive. Design: 4px-padded shell, row radius 7 < shell radius 10 so hover insets, 1px hairline before Archive, teal inset focus."
     },
     {
-      "spec": "composer.hints",
-      "selector": "—",
-      "status": "new",
-      "suggested": ".mj_ComposerHints",
-      "notes": "'/ commands', 'shift+enter for newline', right-aligned live ctx readout (ctxHintPct already computed in components.tsx)",
-      "visual": "n/a — nothing to compare"
-    },
-    {
-      "spec": "composer.slashPalette",
-      "selector": ".mx_SlashPalette > .mx_SlashPalette_row(_highlighted)",
+      "spec": "menu.item",
+      "selector": ".mj_ContextMenu button",
       "status": "implemented",
-      "visual": "unverified"
+      "visual": "divergent",
+      "visualNote": "grid 16px 1fr, gap 10, padding 7/9, 400 13/17."
     },
     {
-      "spec": "composer.recording",
-      "selector": ".mj_VoiceRecording (+ _action, _stop)",
+      "spec": "menu.item.archive",
+      "selector": ".mj_ContextMenu button (archive)",
       "status": "implemented",
-      "visual": "unverified"
+      "visual": "divergent",
+      "visualNote": "ghostDanger: --m-ink2 at rest, --m-crit on hover only."
     },
     {
-      "spec": "composer.offline",
-      "selector": "placeholder swap on the composer input",
+      "spec": "modal.newSession",
+      "selector": ".mj_NewSessionSheet",
       "status": "implemented",
-      "notes": "copy: “Messages will send when reconnected” / online “Send a message…”",
+      "visual": "divergent",
+      "visualNote": "Live: title right-aligned with a text 'Close' link, no header rule, section heading 'Start on <agent>' at body size, the workspace field ABOVE the 'Folder path' label (label bound to the wrong field), Start button floating with no footer bar. Design: upload-dialog shell — left title + icon + X close + header rule, 10px uppercase section labels each 6px above THEIR field, 14px section rhythm, footer bar on --m-panel with the resolved /start command + Cancel + Start session."
+    },
+    {
+      "spec": "modal.newSession.checkbox",
+      "selector": ".mj_NewSessionSheet input[type=checkbox]",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live uses the native checkbox (UA white square, browser-blue focus). Design: 18px custom box, --m-accent-deep when checked, 2px teal focus ring, label + helper text in a grid 18px 1fr so the text block shares one edge."
+    },
+    {
+      "spec": "modal.newSession.disabledField",
+      "selector": ".mj_NewSessionSheet input[disabled]",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "THE DARK-THEME BUG: unstyled native input renders UA white-on-dark. Design sets --m-subtle background + --m-ink3 colour + --m-line border explicitly in both themes; opacity alone does not fix a UA-white field."
+    },
+    {
+      "spec": "modal.newSession.pathField",
+      "selector": ".mj_NewSessionSheet input[type=text]",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Design is mono 12.5/18 (it holds a path), --m-panel fill, focus border --m-accent."
+    },
+    {
+      "spec": "modal.newSession.scrim",
+      "selector": ".mj_UploadConfirm_scrim (shared)",
+      "status": "implemented",
       "visual": "aligned"
     },
     {
       "spec": "modal.upload",
-      "selector": ".mj_UploadConfirm_scrim > .mj_UploadConfirm.mj_UploadConfirm_queue",
+      "selector": ".mj_UploadConfirm.mj_UploadConfirm_queue",
       "status": "implemented",
-      "visual": "unverified"
+      "visual": "divergent",
+      "notes": "the CARD. The scrim is modal.upload.scrim.",
+      "visualNote": "Live uses the raw filename as the modal title at heading size, has no 'Send file' header, no file-info row, no thumbnail strip, no n-of-N counter, and an unstyled horizontal scrollbar crossing the body. Design: fixed 'Send file' title + upload glyph, filename in the file-info row under the preview, 34px thumbnail strip (active = 2px teal ring), 'N more file queued', counter chip, themed scrollbars."
     },
     {
       "spec": "modal.upload.caption",
@@ -328,30 +441,134 @@
       "visual": "n/a — nothing to compare"
     },
     {
-      "spec": "button.primary|secondary|ghostDanger|icon.*",
-      "selector": "per-component buttons; see design-tokens.json → states",
+      "spec": "modal.upload.scrim",
+      "selector": ".mj_UploadConfirm_scrim",
+      "status": "implemented",
+      "visual": "aligned",
+      "notes": "rgb(18 16 14 / 55%) both themes"
+    },
+    {
+      "spec": "modal.upload.single",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_UploadConfirm (single-file variant)",
+      "notes": "N=1 hides the counter chip, thumbnail strip and Cancel all. Title is always 'Send file'; the filename lives in the file-info row under the preview, never as the modal title."
+    },
+    {
+      "spec": "modal.upload.thumb.active",
+      "selector": "—",
+      "status": "new",
+      "visual": "n/a — nothing to compare",
+      "suggested": ".mj_UploadConfirm_thumb_active",
+      "notes": "2px --m-accent ring; inactive is 1px --m-line2 on --m-raised"
+    },
+    {
+      "spec": "round2",
+      "selector": "—",
+      "status": "devtool",
+      "visual": "n/a",
+      "notes": "the round-2 surface gallery. DO NOT IMPLEMENT."
+    },
+    {
+      "spec": "sidebar",
+      "selector": ".mx_LeftPanel_outerWrapper > .mx_RoomListPanel",
+      "status": "implemented",
+      "notes": "width persisted via LEFT_PANEL_SIZE_KEY; drag clamp 240–420",
+      "visual": "unverified"
+    },
+    {
+      "spec": "sidebar.empty.*",
+      "selector": ".mj_RoomListEmpty",
+      "status": "implemented",
+      "notes": "seven distinct copy variants — see design-tokens.json → copy.emptyStates",
+      "visual": "aligned"
+    },
+    {
+      "spec": "sidebar.footer.connection",
+      "selector": ".mj_SidebarFooterStatus_{online|connecting|offline}",
+      "status": "implemented",
+      "notes": "must not be removed — it is the only chrome-level connection signal",
+      "visual": "aligned"
+    },
+    {
+      "spec": "sidebar.list",
+      "selector": ".mj_RoomList",
+      "status": "implemented",
+      "notes": "display:flex; flex-direction:column; gap:1px — the 1px row rhythm is load-bearing",
+      "visual": "unverified"
+    },
+    {
+      "spec": "sidebar.newSession",
+      "selector": "the New session button in .mj_RoomListHeaderActions → opens NewSessionSheet (.mj_UploadConfirm shell)",
+      "status": "implemented",
+      "visual": "divergent",
+      "visualNote": "Live renders a bare pencil icon in the header actions; the design specifies a full-width teal New session button (34px, --m-selected fill, 1px rgb(13 148 136 / 25%) border, 500 13px/16px label + 15px pencil). Functionally present, visually divergent."
+    },
+    {
+      "spec": "sidebar.resizeHandle",
+      "selector": ".mx_ResizeHandle",
       "status": "implemented",
       "visual": "aligned"
     },
     {
-      "spec": "input.rest|focus|error|disabled",
-      "selector": "composer input, .mj_PromptText input, .mj_UploadConfirm_caption",
+      "spec": "sidebar.row",
+      "selector": ".mj_RoomListItem",
       "status": "implemented",
-      "visual": "aligned"
+      "visual": "unverified"
     },
     {
-      "spec": "devtool.stateMatrix",
-      "selector": "—",
-      "status": "devtool",
-      "notes": "handoff affordance in the mock's sidebar footer. DO NOT IMPLEMENT.",
-      "visual": "n/a"
+      "spec": "sidebar.row.selected",
+      "selector": ".mj_RoomListItem_selected",
+      "status": "implemented",
+      "notes": "3px accent bar via ::before, inset 8px",
+      "visual": "unverified"
     },
     {
-      "spec": "gallery",
-      "selector": "—",
-      "status": "devtool",
-      "notes": "the state matrix surface itself. DO NOT IMPLEMENT.",
-      "visual": "n/a"
+      "spec": "sidebar.row.status",
+      "selector": ".mj_RoomListStatus_running",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "sidebar.row.unread",
+      "selector": ".mj_UnreadBadge",
+      "status": "implemented",
+      "visual": "unverified",
+      "notes": "tagged on the BADGE, not the row — the row is sidebar.row.unreadRow in the state matrix"
+    },
+    {
+      "spec": "sidebar.row.unreadRow",
+      "selector": ".mj_RoomListItem (unread variant)",
+      "status": "implemented",
+      "visual": "unverified",
+      "notes": "row-level treatment: name weight 600"
+    },
+    {
+      "spec": "sidebar.tab.active",
+      "selector": ".mj_RoomListTab_active",
+      "status": "implemented",
+      "visual": "aligned",
+      "notes": "raised panel chip + --m-sh-sm + primary ink"
+    },
+    {
+      "spec": "sidebar.tabs",
+      "selector": ".mj_RoomListTabs",
+      "status": "implemented",
+      "notes": "Favorites tab exists; count span is .mj_RoomListTab_count",
+      "visual": "unverified"
+    },
+    {
+      "spec": "subagentStrip",
+      "selector": ".mj_SubagentStrip",
+      "status": "implemented",
+      "visual": "unverified"
+    },
+    {
+      "spec": "subagentStrip.pill",
+      "selector": ".mj_SubagentPill",
+      "status": "implemented",
+      "visual": "unverified"
     }
   ],
   "visualLegend": {
@@ -385,5 +602,6 @@
     ],
     "tolerance": "Exact match on colour/weight/size. ±1px on padding/height (subpixel + the app's 15px root). Ignore font-family when a fallback stack is in play.",
     "expectation": "Every `unverified` above resolves to aligned or divergent on the first run. Treat the output as both the work list and the regression gate."
-  }
+  },
+  "granularity": "Each data-spec is tagged on the SAME element the selector resolves to. Where a component needs several rungs (composer footer vs shell vs input; modal scrim vs card; row vs badge) each rung is its own spec/selector pair, so a diff never compares a container against a child. Fixed after the first auto-diff run reported mismatched granularity."
 }
