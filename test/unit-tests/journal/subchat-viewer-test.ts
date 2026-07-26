@@ -87,8 +87,8 @@ describe("read-only subchat viewer", () => {
     });
 
     it.each([
-        ["running", "Running"],
-        ["done", "Finished"],
+        ["running", "working"],
+        ["done", "done"],
     ])("renders child chrome and read-only controls for a %s child", async (sessionState, stateLabel) => {
         const client = signedInClient(
             [conversation("parent", "running"), conversation("child", sessionState, "parent")],
@@ -98,9 +98,12 @@ describe("read-only subchat viewer", () => {
         rendered = await renderClient(client);
 
         const header = rendered.container.querySelector(".mj_SubChatHeader");
+        // §10.11: the header names the CHILD (title + SUBAGENT badge), the parent is named in
+        // the subtitle ("of Parent"), and the run-state reads "working"/"done".
         expect(header?.textContent).toContain("Research child");
+        expect(header?.querySelector(".mj_HeaderSubagentBadge")?.textContent).toBe("subagent");
+        expect(header?.querySelector(".mj_HeaderParentName")?.textContent).toBe("Parent");
         expect(header?.textContent).toContain(stateLabel);
-        expect(header?.textContent).toContain("claude-sonnet");
         // Context is now the leading "ctx" usage meter, not a subtitle text field.
         expect(header?.querySelector(".mj_UsageLabel")?.textContent).toBe("ctx");
         expect(rendered.container.querySelector(".mx_MessageComposer")).toBeNull();

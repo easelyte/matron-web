@@ -51,7 +51,7 @@ describe("subchat conversation list", () => {
         container.remove();
     });
 
-    it("hides linked children but keeps orphan children as top-level fallbacks", async () => {
+    it("nests linked children under their parent and keeps orphan children as top-level fallbacks", async () => {
         const client = new MatronJournalClient();
         const state = client.getSnapshot();
         (client as unknown as ClientInternals).state = {
@@ -74,10 +74,15 @@ describe("subchat conversation list", () => {
             root.render(React.createElement(MatronApp, { client }));
         });
 
-        const names = [...container.querySelectorAll('[data-testid="room-name"]')].map(
-            (element) => element.textContent,
-        );
-        expect(names).toEqual(["Root", "Orphan child"]);
+        const rows = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListItem")];
+        const names = rows.map((row) => row.querySelector('[data-testid="room-name"]')?.textContent);
+        // #532: the linked child now renders nested (↳ prefix) beneath its parent; the orphan
+        // (missing parent) stays a top-level fallback.
+        expect(names).toEqual(["Root", "↳ Linked child", "Orphan child"]);
+        const childRow = rows[1];
+        expect(childRow.classList.contains("mj_RoomListItem_sub")).toBe(true);
+        // The parent's own row is NOT a subagent row.
+        expect(rows[0].classList.contains("mj_RoomListItem_sub")).toBe(false);
     });
 
     it("shows a child as a top-level fallback when its parent is archived", async () => {

@@ -242,4 +242,66 @@ describe("subagent strip integration", () => {
         expect(pills).toHaveLength(2);
         expect([...pills].map((pill) => pill.textContent)).toEqual(["Child", "Sibling"]);
     });
+
+    it("pins a back chip naming the parent in child view and returns to it on click (#531)", async () => {
+        const conversations = [
+            conversation("parent", "Parent deploy", "running"),
+            conversation("child", "Child", "running", "parent"),
+            conversation("sibling", "Sibling", "done", "parent"),
+        ];
+        const client = signedInClient(conversations, "child");
+        const selectConversation = jest.spyOn(client, "selectConversation").mockResolvedValue();
+        rendered = await renderClient(client);
+
+        const back = rendered.container.querySelector<HTMLButtonElement>(".mj_SubagentBack");
+        expect(back).not.toBeNull();
+        // Names its destination — the parent title, not a bare "Back".
+        expect(back?.querySelector(".mj_SubagentBack_name")?.textContent).toBe("Parent deploy");
+        expect(back?.getAttribute("aria-label")).toBe("Back to Parent deploy");
+        // Pinned before the scrolling pill run, separated by a hairline.
+        expect(rendered.container.querySelector(".mj_SubagentStrip_hairline")).not.toBeNull();
+        expect(rendered.container.querySelector(".mj_SubagentStrip_run")).not.toBeNull();
+
+        await act(async () => back?.click());
+        expect(selectConversation).toHaveBeenCalledWith("parent");
+    });
+
+    it("shows no back chip in parent view (#531)", async () => {
+        const conversations = [
+            conversation("parent", "Parent", "running"),
+            conversation("child", "Child", "running", "parent"),
+        ];
+        rendered = await renderClient(signedInClient(conversations, "parent"));
+
+        expect(rendered.container.querySelector(".mj_SubagentBack")).toBeNull();
+        expect(rendered.container.querySelector(".mj_SubagentStrip_hairline")).toBeNull();
+    });
+
+    it("marks the current sibling pill as ringed + non-interactive in child view (#531)", async () => {
+        const conversations = [
+            conversation("parent", "Parent", "running"),
+            conversation("child", "Child", "running", "parent"),
+            conversation("sibling", "Sibling", "done", "parent"),
+        ];
+        rendered = await renderClient(signedInClient(conversations, "child"));
+
+        const current = rendered.container.querySelector<HTMLButtonElement>(".mj_SubagentPill_current");
+        expect(current?.textContent).toBe("Child");
+        expect(current?.disabled).toBe(true);
+    });
+
+    it("returns to the parent on Escape when nothing else is open (#531 §10.11.E)", async () => {
+        const conversations = [
+            conversation("parent", "Parent", "running"),
+            conversation("child", "Child", "running", "parent"),
+        ];
+        const client = signedInClient(conversations, "child");
+        const selectConversation = jest.spyOn(client, "selectConversation").mockResolvedValue();
+        rendered = await renderClient(client);
+
+        await act(async () => {
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        });
+        expect(selectConversation).toHaveBeenCalledWith("parent");
+    });
 });

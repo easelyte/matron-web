@@ -1641,13 +1641,25 @@ describe("EventRow context menu and source sheet", () => {
         jest.restoreAllMocks();
     });
 
-    test("right-click a text EventRow opens a menu with Copy and View source", async () => {
+    test("right-click a text EventRow opens a menu with Copy, Copy as Markdown, and View source", async () => {
         rendered = await renderAppWithEvents([textEvent(5, "hi")]);
         await openRowMenu(rendered.container, 5);
         const items = [...rendered.container.querySelectorAll('.mj_EventRowMenu [role="menuitem"]')].map(
             (node) => node.textContent,
         );
-        expect(items).toEqual(["Copy", "View source"]);
+        expect(items).toEqual(["Copy", "Copy as Markdown", "View source"]);
+    });
+
+    test("Copy as Markdown copies the raw body; Copy strips markdown", async () => {
+        const writeText = jest.fn().mockResolvedValue(undefined);
+        Object.assign(navigator, { clipboard: { writeText } });
+        rendered = await renderAppWithEvents([textEvent(5, "**bold** and `code`")]);
+        await openRowMenu(rendered.container, 5);
+        await clickMenuItem(rendered.container, "Copy as Markdown");
+        expect(writeText).toHaveBeenLastCalledWith("**bold** and `code`");
+        await openRowMenu(rendered.container, 5);
+        await clickMenuItem(rendered.container, "Copy");
+        expect(writeText).toHaveBeenLastCalledWith("bold and code");
     });
 
     test("a non-text event hides Copy, keeps View source", async () => {
@@ -1679,7 +1691,7 @@ describe("EventRow context menu and source sheet", () => {
         expect(writeText).toHaveBeenCalledWith("hello");
     });
 
-    test("View source shows the event DTO JSON; Copy button, Done, Esc, and backdrop all close", async () => {
+    test("View source shows the event DTO JSON + meta grid; Copy JSON, Close, Esc, and backdrop all close", async () => {
         const writeText = jest.fn().mockResolvedValue(undefined);
         Object.assign(navigator, { clipboard: { writeText } });
         rendered = await renderAppWithEvents([textEvent(5, "hi")]);
@@ -1688,9 +1700,15 @@ describe("EventRow context menu and source sheet", () => {
         const pre = rendered.container.querySelector(".mj_EventSource_json");
         expect(pre?.textContent).toContain('"seq": 5');
         expect(pre?.textContent).toContain('"body": "hi"');
-        await clickButton(rendered.container, "Copy");
+        // §10.8: scalar fields lifted into a meta grid + a size in the footer.
+        const metaLabels = [...rendered.container.querySelectorAll(".mj_EventSource_metaLabel")].map(
+            (node) => node.textContent,
+        );
+        expect(metaLabels).toEqual(["seq", "sender", "timestamp", "convo"]);
+        expect(rendered.container.querySelector(".mj_EventSource_note")?.textContent).toMatch(/Read-only · \d+ bytes/);
+        await clickButton(rendered.container, "Copy JSON");
         expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"seq": 5'));
-        await clickButton(rendered.container, "Done");
+        await clickButton(rendered.container, "Close");
         expect(rendered.container.querySelector(".mj_EventSource")).toBeNull();
         expect(document.activeElement).toBe(rendered.container.querySelector('[data-event-id="5"]'));
 
@@ -1715,8 +1733,10 @@ describe("EventRow context menu and source sheet", () => {
         await clickMenuItem(rendered.container, "View source");
         const sheet = rendered.container.querySelector(".mj_EventSource");
         const buttons = [...(sheet?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
-        expect(buttons.map((candidate) => candidate.textContent)).toEqual(["Copy", "Done"]);
-        expect(document.activeElement).toBe(buttons[1]);
+        // DOM order: header ✕ close (icon only) · footer Close · footer Copy JSON.
+        expect(buttons.map((candidate) => candidate.textContent)).toEqual(["", "Close", "Copy JSON"]);
+        // Initial focus is the primary Copy JSON action (the last button).
+        expect(document.activeElement).toBe(buttons[2]);
 
         const forward = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
         await act(async () => document.dispatchEvent(forward));
@@ -1731,7 +1751,7 @@ describe("EventRow context menu and source sheet", () => {
         });
         await act(async () => document.dispatchEvent(backward));
         expect(backward.defaultPrevented).toBe(true);
-        expect(document.activeElement).toBe(buttons[1]);
+        expect(document.activeElement).toBe(buttons[2]);
     });
 
     test("long-press opens the menu; a scroll during the press cancels it", async () => {
@@ -1887,7 +1907,7 @@ describe("UploadConfirmDialog", () => {
         }
         expect(document.activeElement).toBe(dialog.querySelector<HTMLTextAreaElement>("textarea"));
 
-        await act(async () => button(dialog, "Cancel").click());
+        await act(async () => button(dialog, "Skip").click());
         expect(appContent.hasAttribute("inert")).toBe(false);
         expect(document.activeElement).toBe(composer);
     });
