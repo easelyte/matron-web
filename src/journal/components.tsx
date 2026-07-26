@@ -1565,7 +1565,6 @@ export function HeaderShell({
     hasSubtitle,
     limits,
     rightControls,
-    persistentControls,
     hideControlsWhenCompact = false,
     collapse,
 }: {
@@ -1578,9 +1577,6 @@ export function HeaderShell({
     hasSubtitle: boolean;
     limits?: NonNullable<SessionStatus["limits"]>;
     rightControls?: React.ReactNode;
-    // Rendered even at the compact breakpoint (unlike rightControls) — for affordances
-    // that must not disappear on narrow/mobile where the sidebar menu is also hidden.
-    persistentControls?: React.ReactNode;
     hideControlsWhenCompact?: boolean;
     collapse: { usageCollapsed: boolean; titleCollapsed: boolean };
 }): React.ReactElement {
@@ -1664,154 +1660,12 @@ export function HeaderShell({
                         <UsageCluster limits={limits} now={now} />
                     </div>
                 ) : null}
-                {(controls || persistentControls) &&
-                    (Boolean(limits?.length) || Boolean(usageCollapsed && ctxMeter)) && (
-                        <span className="mj_HeaderDivider" aria-hidden="true" />
-                    )}
+                {controls && (Boolean(limits?.length) || Boolean(usageCollapsed && ctxMeter)) && (
+                    <span className="mj_HeaderDivider" aria-hidden="true" />
+                )}
                 {controls}
-                {persistentControls}
             </div>
         </header>
-    );
-}
-
-// Header "⋯" overflow: the selected conversation's actions (same set as the sidebar
-// row menu), opened by click only (never hover — these mutate state).
-function HeaderOverflowMenu({
-    client,
-    conversation,
-    state,
-}: {
-    client: MatronJournalClient;
-    conversation: Conversation;
-    state: ClientState;
-}): React.ReactElement {
-    const [open, setOpen] = useState(false);
-    const openerRef = useRef<HTMLButtonElement>(null);
-    const panelRef = useRef<HTMLDivElement>(null);
-    const close = useCallback(() => setOpen(false), []);
-    useDismissablePopover(open, close, { openerRef, panelRef });
-    useLayoutEffect(() => {
-        if (open) panelRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-    }, [open]);
-
-    const id = conversation.id;
-    const isPinned = state.pinnedIds.has(id);
-    const isFavorite = state.favoriteIds.has(id);
-    const isArchived = state.archivedIds.has(id);
-    const isUnread = effectiveUnread(conversation, state.unreadOverrideIds);
-    const act = (run: () => void): void => {
-        const opener = openerRef.current;
-        close();
-        run();
-        // Defer past the re-render: a non-navigating action (pin/favorite/read) keeps the
-        // opener mounted → restore focus to it; archiving the selected conversation clears
-        // selection and unmounts this whole header, so skip rather than focus a dead node.
-        requestAnimationFrame(() => {
-            if (opener?.isConnected) opener.focus();
-        });
-    };
-
-    return (
-        <div
-            className="mj_HeaderOverflow"
-            onBlur={(event) => {
-                // Tab / Shift+Tab out of the menu closes it (focus left the whole control).
-                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close();
-            }}
-        >
-            <button
-                ref={openerRef}
-                type="button"
-                className="mj_IconButton mj_HeaderOverflowTrigger"
-                aria-label="Conversation actions"
-                aria-haspopup="menu"
-                aria-expanded={open}
-                onClick={() => setOpen((current) => !current)}
-            >
-                <KebabIcon aria-hidden />
-            </button>
-            {open && (
-                <div
-                    className="mj_HeaderMenu mj_RoomItemMenu"
-                    role="menu"
-                    ref={panelRef}
-                    onKeyDown={(event) => {
-                        const items = Array.from(
-                            event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
-                        );
-                        const currentIndex = items.findIndex((item) => item === document.activeElement);
-                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                            event.preventDefault();
-                            const direction = event.key === "ArrowDown" ? 1 : -1;
-                            const nextIndex =
-                                currentIndex === -1
-                                    ? event.key === "ArrowDown"
-                                        ? 0
-                                        : items.length - 1
-                                    : (currentIndex + direction + items.length) % items.length;
-                            items[nextIndex]?.focus();
-                        } else if (event.key === "Escape") {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            close();
-                            openerRef.current?.focus();
-                        }
-                    }}
-                >
-                    <button
-                        className="mj_RoomItemMenu_item"
-                        type="button"
-                        role="menuitem"
-                        onClick={() =>
-                            act(() => (isPinned ? client.unpinConversation(id) : client.pinConversation(id)))
-                        }
-                    >
-                        <PinIcon aria-hidden />
-                        {isPinned ? "Unpin" : "Pin"}
-                    </button>
-                    <button
-                        className="mj_RoomItemMenu_item"
-                        type="button"
-                        role="menuitem"
-                        onClick={() =>
-                            act(() =>
-                                isFavorite ? client.unfavoriteConversation(id) : client.favoriteConversation(id),
-                            )
-                        }
-                    >
-                        {isFavorite ? <StarFilledIcon aria-hidden /> : <StarIcon aria-hidden />}
-                        {isFavorite ? "Remove from Favorites" : "Add to Favorites"}
-                    </button>
-                    {!isArchived && (
-                        <button
-                            className="mj_RoomItemMenu_item"
-                            type="button"
-                            role="menuitem"
-                            onClick={() =>
-                                act(() =>
-                                    isUnread ? client.markConversationRead(id) : client.markConversationUnread(id),
-                                )
-                            }
-                        >
-                            {isUnread ? <MarkReadIcon aria-hidden /> : <MarkUnreadIcon aria-hidden />}
-                            {isUnread ? "Mark as read" : "Mark as unread"}
-                        </button>
-                    )}
-                    <button
-                        className="mj_RoomItemMenu_item"
-                        type="button"
-                        role="menuitem"
-                        onClick={() =>
-                            act(() => (isArchived ? client.unarchiveConversation(id) : client.archiveConversation(id)))
-                        }
-                    >
-                        {isArchived ? <UnarchiveIcon aria-hidden /> : <ArchiveIcon aria-hidden />}
-                        {isArchived ? "Unarchive" : "Archive"}
-                    </button>
-                </div>
-            )}
-        </div>
     );
 }
 
@@ -1873,18 +1727,6 @@ function ChatHeader({
                         <CompactIcon />
                         <span>Compact</span>
                     </button>
-                )
-            }
-            persistentControls={
-                // Keyed by conversation id so a selection change while the menu is open
-                // remounts (and closes) it, instead of silently retargeting the actions.
-                conversation && (
-                    <HeaderOverflowMenu
-                        key={conversation.id}
-                        client={client}
-                        conversation={conversation}
-                        state={state}
-                    />
                 )
             }
             hideControlsWhenCompact

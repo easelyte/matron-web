@@ -6,9 +6,11 @@ Please see LICENSE files in the repository root for full details.
 */
 
 :root {
-    /* v5: one shared max-width for every agent content block (prose, tool card, diff
-       card, code block, prompt card) so the column reads uniform instead of jagged. */
-    --mj-content-width: 680px;
+    /* v5: every agent content block (prose, tool card, diff card, code block, prompt
+       card) shares this width so the column reads uniform. Operator override of the mock's
+       680px cap — content is fluid: it fills the chat pane (minus the wrapper's equal
+       L/R gutters) at any window size. */
+    --mj-content-width: 100%;
     /* --- v2 warm-neutral surfaces + brighter teal accent (docs/design/primitives-v2.md) --- */
     --cpd-color-bg-accent: #0f766e;
     --cpd-color-bg-accent-emphasis: #0d9488;
@@ -237,10 +239,11 @@ button {
 
 .mj_RoomListHeader {
     display: flex;
-    min-height: 46px;
-    align-items: end;
+    align-items: center;
     justify-content: space-between;
-    padding: 0 16px 0 12px;
+    /* v5 mock wordmark row: 14px top / 10px bottom so the logo isn't cramped against
+       the New session button below it. */
+    padding: 14px 16px 10px 14px;
 }
 
 /* v5 sidebar wordmark: logo + brand name (was a bare "Home" text). */
@@ -255,6 +258,12 @@ button {
     width: 22px;
     height: 22px;
     flex: 0 0 auto;
+}
+
+/* The logo mark is dark; render it white in the dark theme so it stays legible on the
+   dark sidebar panel. brightness(0) → solid black silhouette, invert(1) → white. */
+[data-theme="dark"] .mj_WordmarkLogo {
+    filter: brightness(0) invert(1);
 }
 
 .mj_RoomListHeader h1 {
@@ -594,10 +603,9 @@ button {
 
 .mx_RoomView_messageListWrapper {
     display: flex;
-    /* v5: centre the reading column at 860px with 20px side gutters (mock canvas). */
+    /* v5 (operator override): fluid — fill the chat pane with equal 20px L/R gutters,
+       no centred max-width cap. Content grows with the window. */
     width: 100%;
-    max-width: 860px;
-    margin-inline: auto;
     box-sizing: border-box;
     flex-direction: column;
     justify-content: flex-end;
