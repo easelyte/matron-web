@@ -67,6 +67,19 @@ const ALIASES = {
 
 const HIGHLIGHT_OPTIONS = { languages: CURATED, aliases: ALIASES };
 
+/**
+ * Shared resource guard: above this size/line budget the parser is skipped and the raw text
+ * is shown/copied instead. Both MarkdownBody (render) and markdownToPlainText (Copy) gate on
+ * this so a ~220KB / 20k-node message never parses on the main thread (~5.6s / 305MB → wedge).
+ */
+export function exceedsMarkdownRenderLimit(text: string): boolean {
+    let newlineCount = 0;
+    for (let index = 0; index < text.length && newlineCount < MARKDOWN_MAX_LINES; index += 1) {
+        if (text.charCodeAt(index) === 10) newlineCount += 1;
+    }
+    return text.length > MARKDOWN_MAX || newlineCount >= MARKDOWN_MAX_LINES;
+}
+
 // Parse markdown SOURCE to an mdast tree with the SAME GFM extensions MarkdownBody renders
 // from, so the plain-text extraction agrees with what the operator sees. A regex stripper is
 // wrong here: it deletes paired intraword underscores (AWS_ACCESS_KEY_ID, foo_bar_baz) that
@@ -77,6 +90,9 @@ interface MdastNode {
     type: string;
     value?: string;
     alt?: string | null;
+    // GFM task-list state lives here, NOT in the child text: true = [x], false = [ ], null/
+    // undefined = an ordinary (non-task) list item.
+    checked?: boolean | null;
     children?: MdastNode[];
 }
 
@@ -128,10 +144,16 @@ function mdastToText(node: MdastNode): string {
     }
     // Block container (root, list, listItem, blockquote, footnoteDefinition, …): its block
     // children are separated by a blank line.
-    return children
+    const body = children
         .map(mdastToText)
         .filter((part) => part.length > 0)
         .join("\n\n");
+    // GFM task-list item: preserve the checkbox marker (state is on listItem.checked, never in
+    // the child text) so pasted checklists keep done/todo distinct.
+    if (node.type === "listItem" && node.checked != null) {
+        return `${node.checked ? "[x]" : "[ ]"} ${body}`;
+    }
+    return body;
 }
 
 /**
@@ -141,6 +163,9 @@ function mdastToText(node: MdastNode): string {
  * fenced-code content survive exactly as rendered.
  */
 export function markdownToPlainText(source: string): string {
+    // Above the render budget, MarkdownBody shows the raw text unparsed — Copy agrees with it
+    // and skips the parse entirely, so a huge message never wedges the main thread.
+    if (exceedsMarkdownRenderLimit(source)) return source;
     const tree = plainTextProcessor.parse(source) as unknown as MdastNode;
     return mdastToText(tree)
         .replace(/[^\S\n]+\n/g, "\n")
@@ -350,12 +375,7 @@ class MarkdownErrorBoundary extends Component<MarkdownErrorBoundaryProps, Markdo
 }
 
 function MarkdownBodyComponent({ text, streaming = false, label }: MarkdownBodyProps): React.ReactElement {
-    let newlineCount = 0;
-    for (let index = 0; index < text.length && newlineCount < MARKDOWN_MAX_LINES; index += 1) {
-        if (text.charCodeAt(index) === 10) newlineCount += 1;
-    }
-
-    if (text.length > MARKDOWN_MAX || newlineCount >= MARKDOWN_MAX_LINES) {
+    if (exceedsMarkdownRenderLimit(text)) {
         return <div className="mj_MessageText mj_MarkdownRaw">{text}</div>;
     }
 

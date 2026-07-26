@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { markdownToPlainText } from "../../../src/journal/markdown";
+import { MARKDOWN_MAX, MARKDOWN_MAX_LINES, markdownToPlainText } from "../../../src/journal/markdown";
 
 describe("markdownToPlainText", () => {
     it("preserves intraword underscores in technical identifiers (not emphasis)", () => {
@@ -47,5 +47,34 @@ describe("markdownToPlainText", () => {
     it("returns an empty string for empty or whitespace-only input", () => {
         expect(markdownToPlainText("")).toBe("");
         expect(markdownToPlainText("   \n  ")).toBe("");
+    });
+
+    it("preserves GFM task-list checkbox state", () => {
+        const out = markdownToPlainText("- [x] deployed\n- [ ] verified");
+        expect(out).toContain("[x] deployed");
+        expect(out).toContain("[ ] verified");
+        // Ordinary (non-task) list items get no marker.
+        expect(markdownToPlainText("- plain item")).toBe("plain item");
+    });
+
+    describe("resource guard (skips the parse above the render budget)", () => {
+        it("still parses to plain text just under the line limit", () => {
+            const source = `${"**bold**\n".repeat(MARKDOWN_MAX_LINES - 2)}**bold**`;
+            const out = markdownToPlainText(source);
+            expect(out).not.toContain("**"); // parsed → emphasis stripped
+            expect(out).toContain("bold");
+        });
+
+        it("returns the RAW source unparsed at/over the line limit", () => {
+            const source = "**bold**\n".repeat(MARKDOWN_MAX_LINES); // >= MARKDOWN_MAX_LINES newlines
+            // Fast path: identical to input, markdown syntax intact (no parse).
+            expect(markdownToPlainText(source)).toBe(source);
+            expect(markdownToPlainText(source)).toContain("**bold**");
+        });
+
+        it("returns the RAW source unparsed over the char limit", () => {
+            const source = `a_b_${"x".repeat(MARKDOWN_MAX)}`; // > MARKDOWN_MAX chars, no newlines
+            expect(markdownToPlainText(source)).toBe(source);
+        });
     });
 });
