@@ -1861,15 +1861,54 @@ textarea {
     padding: 13px 14px 13px 16px;
 }
 
+/* Tray glyph immediately left of the "Send file" title (design *-upload-* statics). */
+.mj_UploadConfirm_uploadIcon {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+    color: var(--cpd-color-icon-secondary);
+}
+
+/* Title sits at natural width so the "n of N" chip hugs it on the left; the spacer below
+   pushes the ✕ close to the right edge. */
 .mj_UploadConfirm_header .mj_UploadConfirm_title {
-    flex: 1;
+    flex: 0 1 auto;
     min-width: 0;
 }
 
-/* Upload title is always "Send file" in mono (the filename lives in the file-info row). */
-.mj_UploadConfirm_queue .mj_UploadConfirm_title {
-    font-family: "Fira Code", monospace;
-    font-size: 13px;
+.mj_UploadConfirm_headerSpacer {
+    flex: 1;
+}
+
+/* ✕ close — a 28px ghost button on the header's right edge; dismisses the whole upload. */
+.mj_UploadConfirm_close {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--cpd-color-icon-tertiary);
+    font-size: 15px;
+    cursor: pointer;
+}
+
+.mj_UploadConfirm_close:hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_UploadConfirm_close:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_UploadConfirm_close:disabled {
+    cursor: default;
+    opacity: 0.5;
 }
 
 .mj_UploadConfirm_body {
@@ -1909,26 +1948,48 @@ textarea {
 
 /* File-info row under the preview: name (ellipsised) + size on the right. */
 .mj_UploadConfirm_fileName {
+    flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
     color: var(--cpd-color-text-primary);
     font:
-        500 13px/18px Inter,
+        500 12.5px/16px Inter,
         sans-serif;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-/* Non-image preview placeholder (keeps the preview area's shape for any file type). */
-.mj_UploadConfirm_previewPlaceholder {
-    display: flex;
-    height: 72px;
-    align-items: center;
-    justify-content: center;
+/* Preview + file-info are one bordered card (design *-upload-* statics): the preview/
+   placeholder fills the top, a hairline divides it from the file-info row below. */
+.mj_UploadConfirm_previewCard {
+    position: relative;
+    overflow: hidden;
     border: 1px solid var(--cpd-color-border-subtle);
     border-radius: 10px;
     background: var(--cpd-color-bg-canvas-raised);
-    color: var(--cpd-color-icon-secondary);
+}
+
+/* Non-image preview placeholder: diagonal hatch + centered mono "image preview" label. */
+.mj_UploadConfirm_previewPlaceholder {
+    display: flex;
+    height: 150px;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--cpd-color-bg-canvas-raised);
+    background-image: repeating-linear-gradient(
+        45deg,
+        var(--cpd-color-bg-canvas-raised) 0,
+        var(--cpd-color-bg-canvas-raised) 4px,
+        var(--cpd-color-bg-subtle-secondary) 4px,
+        var(--cpd-color-bg-subtle-secondary) 8px
+    );
+}
+
+.mj_UploadConfirm_previewPlaceholder span {
+    color: var(--cpd-color-text-tertiary);
+    font:
+        400 11px/16px "Fira Code",
+        monospace;
 }
 
 /* 34px thumbnail strip (multi-file): active = 2px teal ring, inactive = 1px line on raised.
@@ -1980,34 +2041,41 @@ textarea {
         sans-serif;
 }
 
-/* Preview stretches to the full body width so its L/R edges line up with the file-info
-   row + caption below it (symmetric 16px body padding); object-fit keeps the image
-   aspect, letterboxed on the raised background. */
+/* Real image fills the top of the preview card; object-fit keeps aspect, letterboxed on
+   the raised card background (no own border/radius — the card clips it). */
 .mj_UploadConfirm_preview {
+    display: block;
     width: 100%;
     max-height: 50vh;
-    align-self: stretch;
-    border: 1px solid var(--cpd-color-border-disabled);
-    border-radius: 8px;
-    background: var(--cpd-color-bg-subtle-primary);
+    background: var(--cpd-color-bg-canvas-raised);
     object-fit: contain;
 }
 
+/* File-info row: a LIGHT bar under the preview (hairline top, panel bg) — doc icon +
+   ellipsised name + right-aligned mono size. NOT a heavy filled card. */
 .mj_UploadConfirm_fileMeta {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    display: flex;
     align-items: center;
-    gap: var(--cpd-space-3x);
-    border: 1px solid var(--cpd-color-border-disabled);
-    border-radius: 8px;
-    background: var(--cpd-color-bg-subtle-primary);
-    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    gap: 9px;
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-default);
+    padding: 9px 11px;
 }
 
-.mj_UploadConfirm_fileMeta > span:first-of-type {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+.mj_UploadConfirm_fileIcon {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_UploadConfirm_fileMeta .mj_FileSize {
+    flex: 0 0 auto;
+    margin-left: 0;
+    color: var(--cpd-color-text-tertiary);
+    font:
+        400 11px/16px "Fira Code",
+        monospace;
 }
 
 .mj_UploadConfirm_caption {
@@ -2083,11 +2151,23 @@ textarea {
     opacity: 0.5;
 }
 
-/* v4 primary button: filled --m-accent-deep, weight 600, hover brightens (no colour swap). */
+/* v4 primary button: filled --m-accent-deep, weight 600, hover brightens (no colour swap).
+   Paper-plane glyph + label (design *-upload-* statics). */
 .mj_UploadConfirm_actions button.mj_UploadConfirm_send {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding-right: 15px;
+    padding-left: 15px;
     background: var(--cpd-color-bg-accent);
     color: var(--cpd-color-text-on-accent);
     font-weight: 600;
+}
+
+.mj_UploadConfirm_actions button.mj_UploadConfirm_send svg {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
 }
 
 .mj_UploadConfirm_actions button.mj_UploadConfirm_send:hover:not(:disabled) {

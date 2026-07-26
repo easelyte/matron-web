@@ -2058,6 +2058,37 @@ describe("UploadConfirmDialog", () => {
         expect(confirm).toHaveBeenCalledWith(headId, "look here");
     });
 
+    it("header carries the tray glyph + a ✕ close that cancels the whole upload; Send carries the plane glyph", async () => {
+        const client = signedInClient();
+        const cancelAll = jest.spyOn(client, "cancelStagedFiles").mockImplementation(() => undefined);
+        rendered = await renderClient(client);
+        await stage(client, [new File(["x"], "shot.png", { type: "image/png" })]);
+
+        const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
+        const header = dialog.querySelector(".mj_UploadConfirm_header")!;
+        expect(header.querySelector(".mj_UploadConfirm_uploadIcon")).not.toBeNull();
+        expect(dialog.querySelector(".mj_UploadConfirm_send svg")).not.toBeNull();
+
+        const close = button(dialog, "Close");
+        expect(header.contains(close)).toBe(true);
+        await act(async () => close.click());
+        expect(cancelAll).toHaveBeenCalledTimes(1);
+    });
+
+    it("single file: no 'n of N' count and no thumbnail strip, but the ✕ close is present", async () => {
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await stage(client, [new File(["only"], "solo.pdf", { type: "application/pdf" })]);
+
+        const dialog = rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
+        expect(dialog.querySelector(".mj_UploadConfirm_count")).toBeNull();
+        expect(dialog.querySelector(".mj_UploadConfirm_strip")).toBeNull();
+        expect(dialog.querySelector(".mj_UploadConfirm_previewPlaceholder")).not.toBeNull();
+        expect(button(dialog, "Close")).not.toBeNull();
+        // The footer "Cancel all" is multi-file only; a lone file dismisses via the ✕.
+        expect(dialog.querySelector('button[aria-label="Cancel all"]')).toBeNull();
+    });
+
     it("makes background keyboard controls inert and restores composer focus when the dialog closes", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);

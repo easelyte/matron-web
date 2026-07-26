@@ -243,14 +243,24 @@ const state: ClientState = {
 const params = new URLSearchParams(window.location.search);
 document.documentElement.setAttribute("data-theme", params.get("theme") === "dark" ? "dark" : "light");
 
+// A real (decodable) 8x8 PNG so the harness image-preview path renders a true thumbnail
+// instead of a broken-image glyph (garbage bytes don't decode).
+const PNG_8X8 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAHElEQVR42mNkYPhfz0AEYBxVSF+Fo25EGwUAaOQF/S2Q6iEAAAAASUVORK5CYII=";
+const imageFile = (name: string): File =>
+    new File([Uint8Array.from(atob(PNG_8X8), (c) => c.charCodeAt(0))], name, { type: "image/png" });
+
 // Expose hooks so the Playwright driver can drive states (stage files → upload modal, etc.).
 (window as unknown as { __matron: unknown }).__matron = {
     client,
-    stageImage: (name = "screenshot.png") =>
-        client.stageFiles([new File([new Uint8Array(1024)], name, { type: "image/png" })]),
+    stageImage: (name = "screenshot.png") => client.stageFiles([imageFile(name)]),
+    // Single NON-image file → hatched "image preview" placeholder + the single-file case
+    // (no thumbnail strip, no "n of N" pill).
+    stageDoc: () =>
+        client.stageFiles([new File([new Uint8Array(1024)], "deploy-runbook.pdf", { type: "application/pdf" })]),
     stageTwo: () =>
         client.stageFiles([
-            new File([new Uint8Array(1024)], "Screenshot 2026-07-25 at 10.12.05.png", { type: "image/png" }),
+            imageFile("Screenshot 2026-07-25 at 10.12.05.png"),
             new File([new Uint8Array(512)], "error-log.txt", { type: "text/plain" }),
         ]),
     setTheme: (t: string) => document.documentElement.setAttribute("data-theme", t),

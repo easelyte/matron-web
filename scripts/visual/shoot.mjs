@@ -93,6 +93,15 @@ const SHOTS_SPEC = [
     },
     {
         comp: "upload",
+        state: "single-doc",
+        clip: ".mj_UploadConfirm",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.stageDoc());
+            await p.waitForSelector(".mj_UploadConfirm_queue");
+        },
+    },
+    {
+        comp: "upload",
         state: "queue",
         clip: ".mj_UploadConfirm",
         setup: async (p) => {

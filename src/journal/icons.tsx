@@ -265,6 +265,26 @@ export function CloseIcon(props: IconProps): React.ReactElement {
     );
 }
 
+// Upload-modal header glyph: an up-arrow rising out of a tray (design *-upload-* statics).
+export function UploadTrayIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M12 16V4M12 4 7 9M12 4l5 5" />
+            <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+        </Icon>
+    );
+}
+
+// Document glyph for the upload file-info row (folded-corner sheet, design *-upload-* statics).
+export function FileIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+            <path d="M14 2v6h6" />
+        </Icon>
+    );
+}
+
 // Message-context-menu gutter icons (§10.7: every row carries an icon).
 export function ClipboardIcon(props: IconProps): React.ReactElement {
     // Plain "Copy" — a clipboard/overlapping-sheets glyph (design light-message-menu).
