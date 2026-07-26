@@ -123,6 +123,19 @@ describe("journal session status presentation", () => {
         expect(resetDisplay(Number.NaN, "later", now)).toBe("later");
     });
 
+    it("prefers the resets_at_ms epoch-ms field over the resets_at ISO string", () => {
+        const now = Date.parse("2026-07-15T08:00:00Z");
+        const ms = Date.parse("2026-07-15T08:45:00Z"); // → 45m
+        // resets_at_ms (4th arg) wins even when resets_at points elsewhere.
+        expect(resetDisplay("2026-07-15T11:20:00Z", undefined, now, ms)).toBe("45m");
+        // ...and works when resets_at is absent entirely.
+        expect(resetDisplay(undefined, undefined, now, ms)).toBe("45m");
+        // Non-finite resets_at_ms is ignored → falls back to the resets_at string.
+        expect(resetDisplay("2026-07-15T08:45:00Z", undefined, now, Number.NaN)).toBe("45m");
+        // Neither field usable → fallback string.
+        expect(resetDisplay(undefined, "soon", now, Number.NaN)).toBe("soon");
+    });
+
     it("uses the same green, amber, and red usage thresholds", () => {
         expect([usageLevel(49), usageLevel(50), usageLevel(84), usageLevel(85)]).toEqual([
             "low",

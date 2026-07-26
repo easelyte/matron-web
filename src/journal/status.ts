@@ -161,12 +161,19 @@ export function resetDisplay(
     resetsAt: string | number | undefined,
     fallback: string | undefined,
     now = Date.now(),
+    resetsAtMs?: number,
 ): string {
-    if (resetsAt === undefined || resetsAt === null || resetsAt === "") return fallback ?? "";
-
-    // New bridge sends epoch ms (number); old bridge sends an ISO string. Accept both —
-    // this removes the deploy-order coupling between bridge and client.
-    const resetTime = typeof resetsAt === "number" ? resetsAt : Date.parse(resetsAt);
+    // Prefer the bridge's epoch-ms field (`resets_at_ms`, NEW) when finite; else fall back
+    // to `resets_at`, accepting either an ISO string (bridge default) or a number (belt-and-
+    // suspenders). This removes deploy-order coupling between bridge and client.
+    const resetTime =
+        typeof resetsAtMs === "number" && Number.isFinite(resetsAtMs)
+            ? resetsAtMs
+            : resetsAt === undefined || resetsAt === null || resetsAt === ""
+              ? NaN
+              : typeof resetsAt === "number"
+                ? resetsAt
+                : Date.parse(resetsAt);
     if (!Number.isFinite(resetTime)) return fallback ?? "";
 
     const interval = resetTime - now;

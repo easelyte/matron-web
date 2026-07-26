@@ -174,8 +174,12 @@ export interface SessionStatus {
         unit?: string;
         model?: string;
         resets?: string;
-        // Epoch ms (number, new bridge) OR ISO string (old bridge). resetDisplay accepts both.
+        // ISO string (KEPT — the bridge did not change this). resetDisplay still accepts a
+        // number here too as a belt-and-suspenders fallback for any pre-contract frame.
         resets_at?: string | number;
+        // Epoch ms (number, NEW — the bridge adds this alongside the ISO `resets_at`).
+        // resetDisplay PREFERS this when present.
+        resets_at_ms?: number;
     }>;
     email?: string;
 }

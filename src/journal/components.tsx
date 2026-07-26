@@ -1449,16 +1449,26 @@ export function useDismissablePopover(
 
 // Redesign-v4 pane-width bands (ResizeObserver on the chat pane, not viewport):
 // >=640 full 2×2 usage grid (keep all four bars as long as they genuinely fit — the
-// 2×2 is ~300px and clears a minimal title down to ~640); <640 collapse to a ctx+5h
+// 2×2 is ~350px and clears a minimal title down to ~640); <640 collapse to a ctx+5h
 // two-row stack + popover with all four. >=560 full subtitle + Compact; <560 subtitle →
 // status dot + short model, title popover, Compact hidden.
 const USAGE_COLLAPSE_PX = 640;
+// #526: with host cpu/ram the grid grows to a 3rd column (~500px) — it needs a wider pane
+// to render without crushing the title, so collapse earlier (to the ctx+5h popover, which
+// still lists all six bars). Only the collapse WIDTH moves for the wide grid; the collapse
+// BEHAVIOUR (ctx+5h stack + popover) is unchanged, preserving the tuned narrow experience.
+const USAGE_COLLAPSE_WIDE_PX = 760;
+const USAGE_WIDE_METER_COUNT = 4; // >4 meters ⇒ 3rd column ⇒ use the wide threshold
 const TITLE_COLLAPSE_PX = 560;
 
-export function useAdaptiveHeader(bodyEl: HTMLElement | null): {
+export function useAdaptiveHeader(
+    bodyEl: HTMLElement | null,
+    meterCount = 0,
+): {
     usageCollapsed: boolean;
     titleCollapsed: boolean;
 } {
+    const usageCollapsePx = meterCount > USAGE_WIDE_METER_COUNT ? USAGE_COLLAPSE_WIDE_PX : USAGE_COLLAPSE_PX;
     const [collapse, setCollapse] = useState({ usageCollapsed: false, titleCollapsed: false });
     const collapseRef = useRef(collapse);
 
@@ -1480,7 +1490,7 @@ export function useAdaptiveHeader(bodyEl: HTMLElement | null): {
             if (frame != null) return;
             frame = requestAnimationFrame(() => {
                 frame = null;
-                const usageCollapsed = latestWidth < USAGE_COLLAPSE_PX;
+                const usageCollapsed = latestWidth < usageCollapsePx;
                 const titleCollapsed = latestWidth < TITLE_COLLAPSE_PX;
                 if (
                     collapseRef.current.usageCollapsed !== usageCollapsed ||
@@ -1498,7 +1508,7 @@ export function useAdaptiveHeader(bodyEl: HTMLElement | null): {
             observer.disconnect();
             if (frame != null) cancelAnimationFrame(frame);
         };
-    }, [bodyEl]);
+    }, [bodyEl, usageCollapsePx]);
 
     return collapse;
 }
@@ -1559,7 +1569,7 @@ export function UsageCluster({
                 .filter((limit) => limit.label.trim())
                 .map((limit, index) => {
                     const norm = normalizePercent(limit.percent);
-                    const reset = resetDisplay(limit.resets_at, limit.resets, displayNow);
+                    const reset = resetDisplay(limit.resets_at, limit.resets, displayNow, limit.resets_at_ms);
                     const level = norm === null ? "unknown" : usageLevel(norm);
                     // Raw used/limit pair (ctx bar → e.g. 144k/200k). Only meters that carry
                     // both raw numbers render it; the pair is folded into aria-valuetext too.
@@ -1752,7 +1762,7 @@ export function HeaderShell({
     const collapsedMeters = ctxMeter ? (sessionMeter ? [ctxMeter, sessionMeter] : [ctxMeter]) : [];
     const worst = limits ? worstLimit(limits) : undefined;
     const worstNormalized = worst ? (normalizePercent(worst.percent) ?? 0) : undefined;
-    const worstReset = worst ? resetDisplay(worst.resets_at, worst.resets, now) : "";
+    const worstReset = worst ? resetDisplay(worst.resets_at, worst.resets, now, worst.resets_at_ms) : "";
     const usageLabel =
         worstNormalized === undefined
             ? "Usage — all metrics"
@@ -4772,7 +4782,13 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     const [dragActive, setDragActive] = useState(state.dragActive);
     const [draftReloadTicks, setDraftReloadTicks] = useState<Record<string, number>>({});
     const [bodyEl, setBodyEl] = useState<HTMLElement | null>(null);
-    const collapse = useAdaptiveHeader(bodyEl);
+    // Meter count drives the usage collapse threshold: the synthetic ctx bar + each
+    // non-blank limit. >4 (host cpu/ram present) needs the wider pane before the 3-column
+    // grid renders inline instead of collapsing to the popover.
+    const meterCount =
+        (state.sessionStatus?.context ? 1 : 0) +
+        (state.sessionStatus?.limits?.filter((limit) => limit.label.trim()).length ?? 0);
+    const collapse = useAdaptiveHeader(bodyEl, meterCount);
     const appContent = useRef<HTMLDivElement>(null);
     const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);

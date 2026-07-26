@@ -483,7 +483,11 @@ textarea {
 
 .mj_UsageCluster {
     display: flex;
-    width: 300px;
+    /* Content-width: 4 bars → 2 columns (~350px), 6 bars (host cpu/ram, #526) → 3 columns
+       (~500px). The full grid only renders when the pane is wide enough to hold it — see
+       useAdaptiveHeader's meter-count-aware collapse threshold — so it never gets squeezed
+       into a horizontal scroll; below the threshold it collapses to the ctx+5h popover. */
+    width: auto;
     max-width: 100%;
     min-width: 0;
     height: 64px;
@@ -505,25 +509,25 @@ textarea {
 }
 
 .mj_UsageCluster .mj_UsageBars {
-    /* 2×2, column-first (ctx/5h left, fbl/wk right), column-gap 16. row-gap 10 makes the
-       two-row bars block 36px tall — equal to the title+subtitle block — so their tops
-       and bottoms line up (operator's title-second-line == 5h-row-bottom). >4 meters flow
-       to further columns, reachable via x-scroll. */
-    grid-template-columns: 1fr 1fr;
+    /* Column-first fill, 2 rows: ctx/5h | fbl/wk | cpu/ram (#526). Columns size to their
+       content (grid-auto-columns: max-content) so the cluster stays exactly as wide as the
+       bars it holds — no reserved empty column. column-gap 16. row-gap 10 makes the two-row
+       block 36px tall = the title+subtitle block, so tops/bottoms line up. */
     grid-template-rows: auto auto;
     grid-auto-flow: column;
+    grid-auto-columns: max-content;
     column-gap: 16px;
     row-gap: 10px;
     max-height: 100%;
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: hidden;
     overscroll-behavior: contain;
 }
 
 .mj_UsageRow {
-    /* v4 mock: label(24) / track(1fr) / percent(32), gap 7, Fira Code. */
+    /* v4 mock: label(24) / track / percent(32), gap 7, Fira Code. Fixed 68px track (columns
+       are content-sized now, so a 1fr track would collapse to its 40px min). */
     display: grid;
-    grid-template-columns: 24px minmax(40px, 1fr) 32px;
+    grid-template-columns: 24px 68px 32px;
     align-items: center;
     column-gap: 7px;
     font-family: "Fira Code", monospace;
@@ -534,7 +538,7 @@ textarea {
 /* ctx row carries a raw used/limit pair (e.g. 144k/200k) between the track and the
    percent; percent stays the far-right column so it right-aligns across rows. */
 .mj_UsageRow_raw {
-    grid-template-columns: 24px minmax(40px, 1fr) auto 32px;
+    grid-template-columns: 24px 68px auto 32px;
 }
 
 .mj_UsageRaw {
