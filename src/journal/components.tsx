@@ -2111,9 +2111,11 @@ function ReadOnlyHint(): React.ReactElement {
 export function QueuedReleaseCard({
     event,
     isReadOnly = false,
+    resolvedAction,
 }: {
     event: JournalEvent;
     isReadOnly?: boolean;
+    resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
 }): React.ReactElement {
     const items = (Array.isArray(event.payload.items) ? event.payload.items : []).flatMap((item) => {
         if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
@@ -2130,6 +2132,7 @@ export function QueuedReleaseCard({
     });
     const declaredPrimaryIndex = actions.findIndex((action) => action.intent === "primary");
     const primaryIndex = declaredPrimaryIndex >= 0 ? declaredPrimaryIndex : actions.length > 0 ? 0 : -1;
+    const resolution = items.map((item) => resolvedAction?.(item.id)).find((action) => action !== undefined);
 
     return (
         <div className="mj_PromptCard mj_QueuedReleaseCard">
@@ -2164,7 +2167,7 @@ export function QueuedReleaseCard({
                     <span className="mj_PromptQuestion">{asString(event.payload.body)}</span>
                 )}
             </div>
-            {!isReadOnly && actions.length > 0 && (
+            {!isReadOnly && resolution === undefined && actions.length > 0 && (
                 <div className="mj_PromptOptions">
                     {actions.map((action, index) => {
                         const variant = index === primaryIndex ? "primary" : "neutral";
@@ -2181,6 +2184,14 @@ export function QueuedReleaseCard({
                             </button>
                         );
                     })}
+                </div>
+            )}
+            {resolution !== undefined && (
+                <div className="mj_PromptResolved">
+                    <span className="mj_PromptGlyph mj_PromptGlyph_ok" aria-hidden="true">
+                        <PromptCheckGlyph />
+                    </span>
+                    <span className="mj_Answered">{resolution === "send" ? "Sent" : "Cancelled"}</span>
                 </div>
             )}
         </div>
@@ -2712,11 +2723,13 @@ export function EventContent({
     event,
     answeredPrompts,
     isReadOnly = false,
+    resolvedAction,
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
     answeredPrompts: Set<number>;
     isReadOnly?: boolean;
+    resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
 }): React.ReactElement {
     switch (event.type) {
         case "text":
@@ -2727,7 +2740,7 @@ export function EventContent({
             );
         case "prompt":
             if (asString(event.payload.kind) === "queued_release") {
-                return <QueuedReleaseCard event={event} isReadOnly={isReadOnly} />;
+                return <QueuedReleaseCard event={event} isReadOnly={isReadOnly} resolvedAction={resolvedAction} />;
             }
             return (
                 <PromptCard
@@ -2803,6 +2816,7 @@ function EventRow({
     event,
     answeredPrompts,
     isReadOnly = false,
+    resolvedAction,
     continuation = false,
     lastInSection = true,
     rowHandlers,
@@ -2811,6 +2825,7 @@ function EventRow({
     event: JournalEvent;
     answeredPrompts: Set<number>;
     isReadOnly?: boolean;
+    resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
     continuation?: boolean;
     lastInSection?: boolean;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
@@ -2867,6 +2882,7 @@ function EventRow({
                             event={event}
                             answeredPrompts={answeredPrompts}
                             isReadOnly={isReadOnly}
+                            resolvedAction={resolvedAction}
                         />
                     </div>
                 </div>
@@ -3079,6 +3095,23 @@ function Timeline({
             ),
         [state.events],
     );
+    const releasedActions = useMemo(() => {
+        const actions = new Map<string, "send" | "cancel">();
+        for (const event of state.events) {
+            if (event.type !== "prompt_reply" || !Array.isArray(event.payload.released)) continue;
+            const action = asString(event.payload.action);
+            if (action !== "send" && action !== "cancel") continue;
+            for (const releasedId of event.payload.released) {
+                const itemId = asString(releasedId);
+                if (itemId) actions.set(itemId, action);
+            }
+        }
+        return actions;
+    }, [state.events]);
+    const resolvedAction = useCallback(
+        (itemId: string): "send" | "cancel" | undefined => releasedActions.get(itemId),
+        [releasedActions],
+    );
     const scrollToBottom = useCallback((): void => {
         const node = scrollRef.current;
         if (node) node.scrollTop = node.scrollHeight;
@@ -3203,6 +3236,7 @@ function Timeline({
                                             event={item.event}
                                             answeredPrompts={answeredPrompts}
                                             isReadOnly={isReadOnly}
+                                            resolvedAction={resolvedAction}
                                             continuation={
                                                 previous?.kind === "event" &&
                                                 previous.event.sender === item.event.sender &&
