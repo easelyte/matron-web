@@ -2744,18 +2744,16 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
     );
 }
 
-const QUEUE_ACTION_OPTION_IDS = new Set(["cancel", "interrupt"]);
-
 function isLegacyQueuePrompt(event: JournalEvent): boolean {
     if (event.type !== "prompt" || asString(event.payload.kind) === "queued_release") return false;
     if (!Array.isArray(event.payload.options)) return false;
-    return event.payload.options.some(
-        (option) =>
-            typeof option === "object" &&
-            option !== null &&
-            !Array.isArray(option) &&
-            QUEUE_ACTION_OPTION_IDS.has(asString((option as EventPayload).id)),
-    );
+    return event.payload.options.some((option) => {
+        if (typeof option !== "object" || option === null || Array.isArray(option)) return false;
+        const payload = option as EventPayload;
+        const id = asString(payload.id);
+        const value = asString(payload.value);
+        return (id === "cancel" && /^cancel:\d+$/.test(value)) || (id === "interrupt" && value === "interrupt");
+    });
 }
 
 // Queue-control tap echoes are identified by the queued prompt they target,

@@ -348,12 +348,18 @@ describe("markdown render-site integration", () => {
         const ordinaryPrompt: JournalEvent = {
             ...textEvent(103, "unused"),
             type: "prompt",
-            payload: { question: "Continue?", options: ["Yes", "No"] },
+            payload: {
+                question: "Continue?",
+                options: [
+                    { id: "yes", label: "Yes", value: "Yes" },
+                    { id: "cancel", label: "Cancel", value: "No" },
+                ],
+            },
         };
         const ordinaryReply: JournalEvent = {
             ...textEvent(104, "unused"),
             type: "prompt_reply",
-            payload: { choice: "cancel:5", target_seq: ordinaryPrompt.seq },
+            payload: { choice: "Yes", target_seq: ordinaryPrompt.seq },
         };
         const legacyPrompt: JournalEvent = {
             ...textEvent(105, "unused"),
@@ -362,7 +368,7 @@ describe("markdown render-site integration", () => {
                 question: "Queued item",
                 options: [
                     { id: "interrupt", label: "Send now", value: "interrupt" },
-                    { id: "cancel", label: "Cancel", value: "cancel:5" },
+                    { id: "cancel", label: "Cancel", value: "cancel:0" },
                 ],
             },
         };
@@ -374,7 +380,7 @@ describe("markdown render-site integration", () => {
         const legacyCancelReply: JournalEvent = {
             ...textEvent(107, "unused"),
             type: "prompt_reply",
-            payload: { choice: "cancel:5", target_seq: legacyPrompt.seq },
+            payload: { choice: "cancel:0", target_seq: legacyPrompt.seq },
         };
         const client = signedInClient({
             events: [
@@ -394,7 +400,7 @@ describe("markdown render-site integration", () => {
         expect(rendered.container.querySelector(`[data-event-id="${queueAction.seq}"]`)).toBeNull();
         expect(rendered.container.querySelector(`[data-event-id="${bridgeRelease.seq}"]`)).toBeNull();
         expect(rendered.container.querySelector(`[data-event-id="${ordinaryReply.seq}"]`)?.textContent).toContain(
-            "cancel:5",
+            "Yes",
         );
         const legacyCard = rendered.container.querySelector(`[data-event-id="${legacyPrompt.seq}"] .mj_PromptCard`);
         expect(legacyCard).not.toBeNull();
