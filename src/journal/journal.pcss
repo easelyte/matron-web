@@ -2427,6 +2427,12 @@ li.mj_AttachmentChip_error {
 
 .mj_DiffLine_hunk {
     color: var(--cpd-color-text-secondary);
+    /* #522: the hunk header (`@@ -a,b +c,d @@`) is diff metadata, not source.
+       Fira Code draws `@` as a ring-enclosed `a` (its base glyph — NOT a
+       ligature, so font-feature-settings can't undo it), which made `@@`
+       unreadable. Render the header row in a plain monospace whose at-sign is
+       conventional; the diff body keeps Fira Code. */
+    font-family: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 .mj_DiffLine_ctx {
