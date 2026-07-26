@@ -1029,7 +1029,7 @@ function ConversationList({
                                     {(
                                         [
                                             ["active", "Active"],
-                                            ["favorites", "Favorites"],
+                                            ["favorites", "Favs"],
                                             ["archived", "Archived"],
                                         ] as const
                                     ).map(([key, label]) => (
@@ -1039,14 +1039,18 @@ function ConversationList({
                                             data-tab={key}
                                             className={`mj_RoomListTab${tab === key ? " mj_RoomListTab_active" : ""}`}
                                             aria-pressed={tab === key}
+                                            aria-label={key === "favorites" ? "Favorites" : undefined}
                                             onClick={(event) => {
                                                 setTab(key);
                                                 event.currentTarget.focus({ preventScroll: true });
                                             }}
                                         >
+                                            {key === "favorites" && (
+                                                <StarFilledIcon className="mj_RoomListTab_star" aria-hidden />
+                                            )}
                                             {label}
                                             {key === "archived" && archivedTotal > 0 && (
-                                                <span className="mj_RoomListTab_count"> ({archivedTotal})</span>
+                                                <span className="mj_RoomListTab_count"> {archivedTotal}</span>
                                             )}
                                         </button>
                                     ))}
@@ -1665,6 +1669,134 @@ export function HeaderShell({
     );
 }
 
+// Header "⋯" overflow: the selected conversation's actions (same set as the sidebar
+// row menu), opened by click only (never hover — these mutate state).
+function HeaderOverflowMenu({
+    client,
+    conversation,
+    state,
+}: {
+    client: MatronJournalClient;
+    conversation: Conversation;
+    state: ClientState;
+}): React.ReactElement {
+    const [open, setOpen] = useState(false);
+    const openerRef = useRef<HTMLButtonElement>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+    const close = useCallback(() => setOpen(false), []);
+    useDismissablePopover(open, close, { openerRef, panelRef });
+    useLayoutEffect(() => {
+        if (open) panelRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }, [open]);
+
+    const id = conversation.id;
+    const isPinned = state.pinnedIds.has(id);
+    const isFavorite = state.favoriteIds.has(id);
+    const isArchived = state.archivedIds.has(id);
+    const isUnread = effectiveUnread(conversation, state.unreadOverrideIds);
+    const act = (run: () => void): void => {
+        close();
+        run();
+        openerRef.current?.focus();
+    };
+
+    return (
+        <div className="mj_HeaderOverflow">
+            <button
+                ref={openerRef}
+                type="button"
+                className="mj_IconButton mj_HeaderOverflowTrigger"
+                aria-label="Conversation actions"
+                aria-haspopup="menu"
+                aria-expanded={open}
+                onClick={() => setOpen((current) => !current)}
+            >
+                <KebabIcon aria-hidden />
+            </button>
+            {open && (
+                <div
+                    className="mj_HeaderMenu mj_RoomItemMenu"
+                    role="menu"
+                    ref={panelRef}
+                    onKeyDown={(event) => {
+                        const items = Array.from(
+                            event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+                        );
+                        const currentIndex = items.findIndex((item) => item === document.activeElement);
+                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                            event.preventDefault();
+                            const direction = event.key === "ArrowDown" ? 1 : -1;
+                            const nextIndex =
+                                currentIndex === -1
+                                    ? event.key === "ArrowDown"
+                                        ? 0
+                                        : items.length - 1
+                                    : (currentIndex + direction + items.length) % items.length;
+                            items[nextIndex]?.focus();
+                        } else if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            close();
+                            openerRef.current?.focus();
+                        }
+                    }}
+                >
+                    <button
+                        className="mj_RoomItemMenu_item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                            act(() => (isPinned ? client.unpinConversation(id) : client.pinConversation(id)))
+                        }
+                    >
+                        <PinIcon aria-hidden />
+                        {isPinned ? "Unpin" : "Pin"}
+                    </button>
+                    <button
+                        className="mj_RoomItemMenu_item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                            act(() =>
+                                isFavorite ? client.unfavoriteConversation(id) : client.favoriteConversation(id),
+                            )
+                        }
+                    >
+                        {isFavorite ? <StarFilledIcon aria-hidden /> : <StarIcon aria-hidden />}
+                        {isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+                    </button>
+                    {!isArchived && (
+                        <button
+                            className="mj_RoomItemMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() =>
+                                act(() =>
+                                    isUnread ? client.markConversationRead(id) : client.markConversationUnread(id),
+                                )
+                            }
+                        >
+                            {isUnread ? <MarkReadIcon aria-hidden /> : <MarkUnreadIcon aria-hidden />}
+                            {isUnread ? "Mark as read" : "Mark as unread"}
+                        </button>
+                    )}
+                    <button
+                        className="mj_RoomItemMenu_item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                            act(() => (isArchived ? client.unarchiveConversation(id) : client.archiveConversation(id)))
+                        }
+                    >
+                        {isArchived ? <UnarchiveIcon aria-hidden /> : <ArchiveIcon aria-hidden />}
+                        {isArchived ? "Unarchive" : "Archive"}
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
+
 function ChatHeader({
     client,
     state,
@@ -1708,22 +1840,25 @@ function ChatHeader({
             }
             hasSubtitle={hasSubtitle}
             rightControls={
-                status?.context && (
-                    <button
-                        className="mj_CompactButton"
-                        type="button"
-                        aria-label="Compact conversation"
-                        title="Compact the conversation — sends /compact"
-                        onClick={() =>
-                            void client
-                                .sendMessage("/compact")
-                                .catch((error) => console.warn("Compact command failed to send:", error))
-                        }
-                    >
-                        <CompactIcon />
-                        <span>Compact</span>
-                    </button>
-                )
+                <>
+                    {status?.context && (
+                        <button
+                            className="mj_CompactButton"
+                            type="button"
+                            aria-label="Compact conversation"
+                            title="Compact the conversation — sends /compact"
+                            onClick={() =>
+                                void client
+                                    .sendMessage("/compact")
+                                    .catch((error) => console.warn("Compact command failed to send:", error))
+                            }
+                        >
+                            <CompactIcon />
+                            <span>Compact</span>
+                        </button>
+                    )}
+                    {conversation && <HeaderOverflowMenu client={client} conversation={conversation} state={state} />}
+                </>
             }
             hideControlsWhenCompact
             limits={meters}

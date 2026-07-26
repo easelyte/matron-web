@@ -232,6 +232,23 @@ describe("usage limit accessibility", () => {
         expect(badge?.textContent).toBe("denied");
         expect(badge?.classList.contains("mj_ToolBadge_failed")).toBe(true);
     });
+
+    it("opens the header overflow menu with the selected conversation's actions", async () => {
+        const client = signedInClient();
+        rendered = await renderClient(client);
+
+        const trigger = button(rendered.container, "Conversation actions");
+        expect(rendered.container.querySelector('.mj_HeaderOverflow [role="menu"]')).toBeNull();
+
+        await act(async () => trigger.click());
+
+        const menu = rendered.container.querySelector('.mj_HeaderOverflow [role="menu"]');
+        expect(menu).not.toBeNull();
+        const labels = Array.from(menu?.querySelectorAll('[role="menuitem"]') ?? []).map((item) =>
+            item.textContent?.trim(),
+        );
+        expect(labels).toEqual(["Pin", "Add to Favorites", "Mark as unread", "Archive"]);
+    });
 });
 
 describe("markdown render-site integration", () => {
@@ -2303,7 +2320,7 @@ describe("conversation list tabs", () => {
         expect(tabButton(rendered.container, "active").getAttribute("aria-pressed")).toBe("true");
         expect(tabButton(rendered.container, "favorites").getAttribute("aria-pressed")).toBe("false");
         expect(tabButton(rendered.container, "archived").getAttribute("aria-pressed")).toBe("false");
-        expect(tabButton(rendered.container, "archived").textContent).toBe("Archived (1)");
+        expect(tabButton(rendered.container, "archived").textContent).toBe("Archived 1");
         expect(names()).toEqual(["Fav Room", "Other Room"]);
 
         await act(async () => tabButton(rendered!.container, "favorites").click());

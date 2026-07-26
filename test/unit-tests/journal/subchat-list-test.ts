@@ -151,7 +151,7 @@ describe("subchat conversation list", () => {
             root.render(React.createElement(MatronApp, { client }));
         });
         const favoritesTab = [...container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].find(
-            (button) => button.textContent === "Favorites",
+            (button) => button.getAttribute("aria-label") === "Favorites",
         );
         await act(async () => favoritesTab?.click());
 

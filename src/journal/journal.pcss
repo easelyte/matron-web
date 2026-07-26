@@ -225,6 +225,23 @@ textarea {
     background: var(--cpd-color-border-subtle);
 }
 
+/* Header "⋯" overflow menu (mock): 3-dot trigger + click-menu of session actions. */
+.mj_HeaderOverflow {
+    position: relative;
+    display: inline-flex;
+    flex: 0 0 auto;
+}
+
+.mj_HeaderOverflowTrigger svg {
+    width: 18px;
+    height: 18px;
+}
+
+.mj_HeaderOverflow .mj_HeaderMenu {
+    top: calc(100% + var(--cpd-space-1x));
+    right: 0;
+}
+
 /* Session run-state in the subtitle — teal while running (v3 mock), muted otherwise. */
 .mj_HeaderState {
     color: var(--cpd-color-text-secondary);
@@ -810,8 +827,12 @@ textarea {
 }
 
 .mj_RoomListTab {
+    display: inline-flex;
     flex: 1 1 0;
     min-width: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
     border: 0;
     border-radius: var(--cpd-radius-pill);
     background: transparent;
