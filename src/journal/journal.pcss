@@ -1709,49 +1709,83 @@ li.mj_AttachmentChip_error {
     opacity: 0.6;
 }
 
+/* v5 event.prompt (Question) + event.permission_request are one card family: chrome
+   (border / r10 / panel / pad 12·14), a label+time header row, a 24px-gutter icon+body
+   grid (§10.2 inner edge — SVG in the gutter, never inline emoji, which make the text's
+   left edge a function of glyph width), and an actions row with exactly one filled
+   primary (§10.5). Both states keep the same rows in the same order so answering doesn't
+   reflow the card (§10.3). Permission only differs by the teal border + accent label. */
 .mj_PromptCard {
-    min-width: min(360px, 55vw);
-}
-
-/* v5 event.permission_request: the only differences from a Question card are the
-   teal-tinted border, the accent uppercase label, and exactly one filled affirmative
-   (the first option, Allow). The card carries its own chrome (border/radius/panel/pad)
-   because the shared base is unstyled. */
-.mj_PromptCard_permission {
-    border: 1px solid rgb(13 148 136 / 25%);
+    display: flex;
+    min-width: 0;
+    max-width: var(--mj-content-width);
+    flex-direction: column;
+    gap: 10px;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-subtle);
     border-radius: 10px;
     background: var(--cpd-color-bg-canvas-default);
     padding: 12px 14px;
 }
 
-.mj_PromptCard_permission .mj_PromptLabel {
-    color: var(--cpd-color-text-action-accent);
+.mj_PromptCard_permission {
+    border-color: rgb(13 148 136 / 25%);
+}
+
+.mj_PromptHeader {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+
+.mj_PromptLabel {
+    flex: 1;
+    min-width: 0;
+    color: var(--cpd-color-text-secondary);
     font:
         600 10px/14px Inter,
         sans-serif;
     letter-spacing: 0.07em;
-}
-
-.mj_PromptCard_permission .mj_PromptOptions button.mj_PromptOption_affirmative {
-    border: 0;
-    background: var(--cpd-color-bg-accent);
-    color: var(--cpd-color-text-on-accent);
-    font-weight: 600;
-}
-
-.mj_PromptCard_permission .mj_PromptOptions button.mj_PromptOption_affirmative:hover {
-    filter: brightness(1.08);
-}
-
-.mj_PromptCard p {
-    margin: 0 0 var(--cpd-space-3x);
-}
-
-.mj_PromptLabel {
-    margin-bottom: var(--cpd-space-1x);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-xs-semibold);
     text-transform: uppercase;
+}
+
+.mj_PromptCard_permission .mj_PromptLabel {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_PromptTime {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-secondary);
+    font:
+        400 11px/14px Inter,
+        sans-serif;
+    white-space: nowrap;
+}
+
+.mj_PromptBody,
+.mj_PromptResolved {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    align-items: start;
+    row-gap: 6px;
+}
+
+.mj_PromptGlyph {
+    display: inline-flex;
+    margin-top: 3px;
+    color: var(--cpd-color-icon-secondary);
+}
+
+/* Answered check = the design's green (#34c759 == --cpd-color-usage-low). */
+.mj_PromptGlyph_ok {
+    margin-top: 2px;
+    color: var(--cpd-color-usage-low);
+}
+
+.mj_PromptQuestion {
+    font:
+        400 13.5px/20px Inter,
+        sans-serif;
 }
 
 .mj_PromptOptions,
@@ -1764,18 +1798,61 @@ li.mj_AttachmentChip_error {
 .mj_PromptOptions button,
 .mj_PromptText button,
 .mj_PromptText input {
-    min-height: 32px;
+    min-height: 30px;
     box-sizing: border-box;
     border: 1px solid var(--cpd-color-border-interactive-secondary);
     border-radius: 8px;
-    background: var(--cpd-color-bg-canvas-default);
+    background: transparent;
     color: var(--cpd-color-text-primary);
-    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+    padding: 0 14px;
+    font:
+        500 12.5px/16px Inter,
+        sans-serif;
 }
 
 .mj_PromptText input {
     flex: 1;
     min-width: 180px;
+    padding: 0 12px;
+}
+
+/* §10.5 the one filled primary: permission Allow, an affirmative question option, or the
+   free-text Send. Everything else is outlined/ghost. */
+.mj_PromptOptions button.mj_PromptOption_affirmative,
+.mj_PromptText button.mj_PromptOption_affirmative {
+    border: 0;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+    font-weight: 600;
+}
+
+.mj_PromptOptions button.mj_PromptOption_affirmative:hover:not(:disabled),
+.mj_PromptText button.mj_PromptOption_affirmative:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+
+.mj_PromptOptions button:not(.mj_PromptOption_affirmative):hover,
+.mj_PromptText button:not(.mj_PromptOption_affirmative):hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_PromptOptions button:focus-visible,
+.mj_PromptText button:focus-visible,
+.mj_PromptText input:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_PromptText button:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.mj_PromptResolved .mj_Answered {
+    color: var(--cpd-color-text-secondary);
+    font:
+        500 13px/17px Inter,
+        sans-serif;
 }
 
 .mj_Answered,

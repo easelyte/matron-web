@@ -2008,27 +2008,41 @@ function PromptCard({
     const answer = (choice?: string, text?: string): void => {
         if (client.sendPromptReply(event.seq, choice, text)) setLocallyAnswered(true);
     };
+    // §10.5 one primary per surface: exactly one filled affirmative. For permission it's
+    // "Allow"; for a generic question the first option whose label reads affirmative
+    // (send/yes/continue/confirm/ok/approve). Chosen by SEMANTICS, not position, so a
+    // reordered payload never fills "Always allow" / "Deny" / "Cancel".
+    const affirmativeIndex = options.findIndex((option) =>
+        permission
+            ? option.label.trim().toLocaleLowerCase() === "allow"
+            : PROMPT_AFFIRMATIVE.test(option.label.trim()),
+    );
 
     return (
         <div className={permission ? "mj_PromptCard mj_PromptCard_permission" : "mj_PromptCard"}>
-            <div className="mj_PromptLabel">{permission ? "Permission needed" : "Question"}</div>
-            <p>{question}</p>
+            <div className="mj_PromptHeader">
+                <span className="mj_PromptLabel">{permission ? "Permission request" : "Question"}</span>
+                <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
+                    {formatTime(event.ts)}
+                </time>
+            </div>
+            <div className="mj_PromptBody">
+                <span className="mj_PromptGlyph" aria-hidden="true">
+                    {permission ? <PromptTerminalGlyph /> : <PromptMailGlyph />}
+                </span>
+                <span className="mj_PromptQuestion">{question}</span>
+            </div>
             {!isReadOnly && !disabled && options.length > 0 && (
                 <div className="mj_PromptOptions">
-                    {options.map((option) => {
-                        // The single filled affirmative is chosen by semantics ("Allow"), not
-                        // position — a reordered payload must not fill "Always allow" or "Deny".
-                        const affirmative = permission && option.label.trim().toLocaleLowerCase() === "allow";
-                        return (
-                            <button
-                                key={`${option.label}:${option.value}`}
-                                className={affirmative ? "mj_PromptOption_affirmative" : undefined}
-                                onClick={() => answer(option.value)}
-                            >
-                                {option.label}
-                            </button>
-                        );
-                    })}
+                    {options.map((option, index) => (
+                        <button
+                            key={`${option.label}:${option.value}`}
+                            className={index === affirmativeIndex ? "mj_PromptOption_affirmative" : undefined}
+                            onClick={() => answer(option.value)}
+                        >
+                            {option.label}
+                        </button>
+                    ))}
                 </div>
             )}
             {!isReadOnly && !disabled && (event.payload.allows_free_text === true || options.length === 0) && (
@@ -2044,13 +2058,50 @@ function PromptCard({
                         onChange={(changeEvent) => setFreeText(changeEvent.target.value)}
                         placeholder="Type an answer"
                     />
-                    <button type="submit" disabled={!freeText.trim()}>
+                    <button type="submit" className="mj_PromptOption_affirmative" disabled={!freeText.trim()}>
                         Send
                     </button>
                 </form>
             )}
-            {disabled && <div className="mj_Answered">✓ Answered</div>}
+            {disabled && (
+                <div className="mj_PromptResolved">
+                    <span className="mj_PromptGlyph mj_PromptGlyph_ok" aria-hidden="true">
+                        <PromptCheckGlyph />
+                    </span>
+                    <span className="mj_Answered">Answered</span>
+                </div>
+            )}
         </div>
+    );
+}
+
+// §10.2 alignment grid: SVG glyphs in the 24px prompt-card gutter (never inline emoji,
+// which make the text's left edge a function of glyph width). Stroke inherits currentColor.
+const PROMPT_AFFIRMATIVE = /^(send|yes|continue|confirm|ok|okay|approve|proceed|accept)\b/i;
+
+function PromptMailGlyph(): React.ReactElement {
+    return (
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 6h16v12H4z" />
+            <path d="m4 7 8 6 8-6" />
+        </svg>
+    );
+}
+
+function PromptTerminalGlyph(): React.ReactElement {
+    return (
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m5 7 5 5-5 5" />
+            <path d="M13 17h6" />
+        </svg>
+    );
+}
+
+function PromptCheckGlyph(): React.ReactElement {
+    return (
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m5 12 4 4 10-10" />
+        </svg>
     );
 }
 

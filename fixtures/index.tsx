@@ -167,6 +167,25 @@ const events: JournalEvent[] = [
         type: "telemetry_snapshot",
         payload: { cpu: 0.42, mem: "1.8GB", note: "unrecognised event → diagnostic card, never hidden" },
     },
+    {
+        // Question card — UNANSWERED (label+time / gutter mail icon + body / Send now·Cancel).
+        seq: 10,
+        convo_id: "c1",
+        ts: T + 540,
+        sender: "agent:claude",
+        type: "prompt",
+        payload: { question: "Queued (1) — send these now, or cancel and keep editing?", options: ["Send now", "Cancel"] },
+    },
+    {
+        // Question card — ANSWERED (green check + resolution line); seq 12 reply resolves it.
+        seq: 11,
+        convo_id: "c1",
+        ts: T + 600,
+        sender: "agent:claude",
+        type: "prompt",
+        payload: { question: "Which environment should I deploy to?", options: ["Staging", "Production"] },
+    },
+    { seq: 12, convo_id: "c1", ts: T + 660, sender: "user:operator", type: "prompt_reply", payload: { target_seq: 11, choice: "Staging" } },
 ];
 
 const client = new MatronJournalClient();
