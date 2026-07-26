@@ -76,7 +76,16 @@ import {
     makeRecentFoldersStore,
     recentFolderArgument,
 } from "./slash-palette";
-import { normalizePercent, resetDisplay, usageShortLabel, usageOrderRank, usageLevel, worstLimit } from "./status";
+import {
+    compactTokens,
+    normalizePercent,
+    resetDisplay,
+    usageAccessibleLabel,
+    usageShortLabel,
+    usageOrderRank,
+    usageLevel,
+    worstLimit,
+} from "./status";
 import {
     asNumber,
     asString,
@@ -1511,15 +1520,23 @@ function buildUsageMeters(
     limits: SessionStatus["limits"] | undefined,
 ): NonNullable<SessionStatus["limits"]> {
     const meters: NonNullable<SessionStatus["limits"]> = [];
-    // Full label "context" (not "ctx") so the accessible name stays descriptive;
-    // usageShortLabel() renders the visible "ctx".
-    if (status?.context) meters.push({ label: "context", percent: status.context.pct });
+    // Synthetic ctx meter carries id "context" (drives short tag / rank / a11y name) plus
+    // the raw used/limit pair (tokens/window) so the row can show e.g. 144k/200k.
+    if (status?.context) {
+        meters.push({
+            id: "context",
+            label: "context",
+            percent: status.context.pct,
+            used: status.context.tokens,
+            limit: status.context.window,
+        });
+    }
     if (limits?.length) meters.push(...limits);
-    // Normalise to the design's 2×2 grid order (ctx, session, model-weekly, week-all);
+    // Normalise to the design's column-first grid order (ctx/5h, fbl/model/wk, cpu/ram);
     // stable so any extra limits keep their relative order after the known ones.
     return meters
         .map((meter, index) => ({ meter, index }))
-        .sort((a, b) => usageOrderRank(a.meter.label) - usageOrderRank(b.meter.label) || a.index - b.index)
+        .sort((a, b) => usageOrderRank(a.meter) - usageOrderRank(b.meter) || a.index - b.index)
         .map((entry) => entry.meter);
 }
 
@@ -1544,29 +1561,47 @@ export function UsageCluster({
                     const norm = normalizePercent(limit.percent);
                     const reset = resetDisplay(limit.resets_at, limit.resets, displayNow);
                     const level = norm === null ? "unknown" : usageLevel(norm);
+                    // Raw used/limit pair (ctx bar → e.g. 144k/200k). Only meters that carry
+                    // both raw numbers render it; the pair is folded into aria-valuetext too.
+                    const rawPair =
+                        limit.used != null && limit.limit != null
+                            ? `${compactTokens(limit.used)}/${compactTokens(limit.limit)}`
+                            : undefined;
+                    const accessibleLabel = usageAccessibleLabel(limit);
+                    const valueText =
+                        norm === null
+                            ? "usage unknown"
+                            : `${norm}% used${rawPair ? `, ${rawPair}` : ""}${reset ? `, resets ${reset}` : ""}`;
                     return (
-                        <div className="mj_UsageRow" key={index} title={reset ? `resets ${reset}` : undefined}>
+                        <div
+                            className={`mj_UsageRow${rawPair ? " mj_UsageRow_raw" : ""}`}
+                            key={index}
+                            title={reset ? `resets ${reset}` : undefined}
+                        >
                             {/* Visible label is the short tag; the accessible name keeps the
                                 full server-authored label so SR users know which limit it is. */}
                             <span className="mj_UsageLabel" aria-hidden="true">
-                                {usageShortLabel(limit.label)}
+                                {usageShortLabel(limit)}
                             </span>
                             <span
                                 className="mj_UsageTrack"
                                 role="progressbar"
-                                aria-label={limit.label}
+                                aria-label={accessibleLabel}
                                 aria-valuemin={0}
                                 aria-valuemax={100}
                                 aria-valuenow={norm ?? undefined}
-                                aria-valuetext={
-                                    norm === null ? "usage unknown" : `${norm}% used${reset ? `, resets ${reset}` : ""}`
-                                }
+                                aria-valuetext={valueText}
                             >
                                 <span
                                     className={`mj_UsageFill mj_UsageFill_${level}`}
                                     style={{ width: norm === null ? "100%" : `${norm}%` }}
                                 />
                             </span>
+                            {rawPair && (
+                                <span className="mj_UsageRaw" aria-hidden="true">
+                                    {rawPair}
+                                </span>
+                            )}
                             <span className={`mj_UsagePercent mj_UsagePercent_${level}`}>
                                 {norm === null ? "—" : `${Math.round(norm)}%`}
                             </span>
@@ -1709,7 +1744,11 @@ export function HeaderShell({
     // Collapsed usage keeps two rows — ctx + the 5h (Session) limit — since the header
     // band has the height for two and one bar reads as too little (operator's call).
     const ctxMeter = limits?.length ? limits[0] : undefined;
-    const sessionMeter = limits?.find((meter) => usageShortLabel(meter.label) === "5h");
+    // 5h session limit: match the stable id first, fall back to the short-tag heuristic
+    // for older/cached frames that lack ids.
+    const sessionMeter = limits?.find(
+        (meter) => meter.id === "session_5h" || (!meter.id && usageShortLabel(meter) === "5h"),
+    );
     const collapsedMeters = ctxMeter ? (sessionMeter ? [ctxMeter, sessionMeter] : [ctxMeter]) : [];
     const worst = limits ? worstLimit(limits) : undefined;
     const worstNormalized = worst ? (normalizePercent(worst.percent) ?? 0) : undefined;

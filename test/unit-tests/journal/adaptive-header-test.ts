@@ -468,6 +468,21 @@ describe("HeaderShell", () => {
         expect(collapsedUsage?.getAttribute("aria-label")).toBe("Usage — worst limit 72%, resets 2m");
     });
 
+    it("keeps the 5h session meter in the collapsed stack via its stable id", async () => {
+        const { container } = await mountHeader({
+            limits: [
+                { id: "context", label: "context", percent: 72, used: 144_000, limit: 200_000 },
+                { id: "week_all", label: "Week (all models)", percent: 63 },
+                { id: "session_5h", label: "Session", percent: 41 },
+            ],
+            collapse: { usageCollapsed: true, titleCollapsed: false },
+        });
+        // Collapsed trigger keeps two rows: ctx (limits[0]) + the id-matched 5h session.
+        const trigger = container.querySelector(".mj_UsageCluster_collapsed")!;
+        const tags = [...trigger.querySelectorAll(".mj_UsageLabel")].map((n) => n.textContent);
+        expect(tags).toEqual(["ctx", "5h"]);
+    });
+
     it("renders the full subtitle when expanded and swaps to the compact subtitle at <560", async () => {
         // No subtitle content → no meta row.
         const empty = await mountHeader();

@@ -118,7 +118,14 @@ const events: JournalEvent[] = [
             body: "```nginx\nlocation /journal/ {\n    proxy_pass http://127.0.0.1:9810/;\n    proxy_read_timeout 3600s;  # websocket frames\n}\n```",
         },
     },
-    { seq: 2, convo_id: "c1", ts: T + 60, sender: "agent:claude", type: "text", payload: { body: "To swap prod I need to restart nginx." } },
+    {
+        seq: 2,
+        convo_id: "c1",
+        ts: T + 60,
+        sender: "agent:claude",
+        type: "text",
+        payload: { body: "To swap prod I need to restart nginx." },
+    },
     {
         seq: 3,
         convo_id: "c1",
@@ -132,7 +139,14 @@ const events: JournalEvent[] = [
         },
     },
     { seq: 4, convo_id: "c1", ts: T + 180, sender: "user:operator", type: "text", payload: { body: "yes" } },
-    { seq: 5, convo_id: "c1", ts: T + 240, sender: "user:operator", type: "text", payload: { body: "and watch the error rate for 10 minutes after" } },
+    {
+        seq: 5,
+        convo_id: "c1",
+        ts: T + 240,
+        sender: "user:operator",
+        type: "text",
+        payload: { body: "and watch the error rate for 10 minutes after" },
+    },
     {
         seq: 6,
         convo_id: "c1",
@@ -142,7 +156,8 @@ const events: JournalEvent[] = [
         payload: {
             command: "systemctl restart nginx && systemctl status nginx",
             exit_code: 0,
-            snippet: "● nginx.service - A high performance web server\n     Active: active (running) since Fri 10:06:02 UTC\n     Process: 24518 ExecReload (code=exited, status=0/SUCCESS)",
+            snippet:
+                "● nginx.service - A high performance web server\n     Active: active (running) since Fri 10:06:02 UTC\n     Process: 24518 ExecReload (code=exited, status=0/SUCCESS)",
         },
     },
     {
@@ -189,7 +204,10 @@ const events: JournalEvent[] = [
         ts: T + 540,
         sender: "agent:claude",
         type: "prompt",
-        payload: { question: "Queued (1) — send these now, or cancel and keep editing?", options: ["Send now", "Cancel"] },
+        payload: {
+            question: "Queued (1) — send these now, or cancel and keep editing?",
+            options: ["Send now", "Cancel"],
+        },
     },
     {
         // Question card — ANSWERED (green check + resolution line); seq 13 reply resolves it.
@@ -200,7 +218,14 @@ const events: JournalEvent[] = [
         type: "prompt",
         payload: { question: "Which environment should I deploy to?", options: ["Staging", "Production"] },
     },
-    { seq: 13, convo_id: "c1", ts: T + 660, sender: "user:operator", type: "prompt_reply", payload: { target_seq: 12, choice: "Staging" } },
+    {
+        seq: 13,
+        convo_id: "c1",
+        ts: T + 660,
+        sender: "user:operator",
+        type: "prompt_reply",
+        payload: { target_seq: 12, choice: "Staging" },
+    },
 ];
 
 const client = new MatronJournalClient();
@@ -216,10 +241,14 @@ const state: ClientState = {
     sessionStatus: {
         model: "claude-sonnet",
         context: { tokens: 144_000, window: 200_000, pct: 72 },
+        // id-driven limits (v5+ bridge): ctx is synthesized from context; the rest carry
+        // stable ids → short tags 5h/fbl/wk/cpu/ram + column-first 3×2 grid order.
         limits: [
-            { label: "Session", percent: 41, resets: "3h20" },
-            { label: "Week (all models)", percent: 63, resets: "4d" },
-            { label: "Week (Sonnet 5)", percent: 78, resets: "4d" },
+            { id: "week_all", label: "Week (all models)", percent: 63, resets: "4d" },
+            { id: "session_5h", label: "Session", percent: 41, resets: "3h20" },
+            { id: "host_ram", label: "Host RAM", percent: 55, unit: "%" },
+            { id: "week_fable", label: "Week (Fable)", percent: 22, resets: "4d" },
+            { id: "host_cpu", label: "Host CPU", percent: 34, unit: "%" },
         ],
     },
     archivedIds: archiveStore.read(SESSION).ids,

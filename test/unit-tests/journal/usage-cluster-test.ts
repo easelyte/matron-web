@@ -78,6 +78,47 @@ describe("UsageCluster", () => {
         expect(worstLimit(limits)).toBe(limits[1]);
     });
 
+    it("renders id-driven short tags and long accessible names (ctx/5h/fbl/wk/cpu/ram)", async () => {
+        await renderUsage([
+            { id: "context", label: "context", percent: 72, used: 144_000, limit: 200_000 },
+            { id: "session_5h", label: "Session", percent: 41 },
+            { id: "week_fable", label: "Week (Fable)", percent: 22 },
+            { id: "week_all", label: "Week (all models)", percent: 63 },
+            { id: "host_cpu", label: "Host CPU", percent: 34 },
+            { id: "host_ram", label: "Host RAM", percent: 55 },
+        ]);
+
+        const rows = container.querySelectorAll(".mj_UsageRow");
+        expect(rows).toHaveLength(6);
+        expect([...container.querySelectorAll(".mj_UsageLabel")].map((n) => n.textContent)).toEqual([
+            "ctx",
+            "5h",
+            "fbl",
+            "wk",
+            "cpu",
+            "ram",
+        ]);
+        expect(
+            [...container.querySelectorAll('[role="progressbar"]')].map((n) => n.getAttribute("aria-label")),
+        ).toEqual(["context", "5-hour session", "weekly, Fable", "weekly, all models", "host CPU", "host RAM"]);
+    });
+
+    it("renders the raw used/limit pair for the context meter and folds it into the valuetext", async () => {
+        await renderUsage([{ id: "context", label: "context", percent: 72, used: 144_000, limit: 200_000 }]);
+
+        const row = container.querySelector(".mj_UsageRow")!;
+        expect(row.classList.contains("mj_UsageRow_raw")).toBe(true);
+        expect(row.querySelector(".mj_UsageRaw")?.textContent).toBe("144k/200k");
+        expect(row.querySelector('[role="progressbar"]')?.getAttribute("aria-valuetext")).toBe("72% used, 144k/200k");
+    });
+
+    it("omits the raw pair for meters without used/limit", async () => {
+        await renderUsage([{ id: "session_5h", label: "Session", percent: 41 }]);
+        const row = container.querySelector(".mj_UsageRow")!;
+        expect(row.classList.contains("mj_UsageRow_raw")).toBe(false);
+        expect(row.querySelector(".mj_UsageRaw")).toBeNull();
+    });
+
     it("uses duplicate-safe row keys", async () => {
         const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
 

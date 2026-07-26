@@ -60,7 +60,45 @@ const USAGE_SHORT_LABELS: Record<string, string> = {
 
 const WEEK_PER_MODEL = /^Week \((.+)\)$/i;
 
-export function usageShortLabel(label: string): string {
+// A limit-ish argument: the label/short-tag/rank/a11y functions prefer the stable `id`
+// when present and fall back to the human `label` for older/cached frames.
+export type UsageMeterLike = { id?: string; label: string };
+
+// Canonical id → short tag. Owns the id path; retires the label relabel-map for it.
+const USAGE_ID_SHORT_LABELS: Record<string, string> = {
+    context: "ctx",
+    session_5h: "5h",
+    week_fable: "fbl",
+    week_all: "wk",
+    host_cpu: "cpu",
+    host_ram: "ram",
+};
+
+// Canonical id → grid rank. Column-first 3×2: col1 [ctx,5h], col2 [fbl/model, wk],
+// col3 [cpu,ram]. Per-model weekly (`week_<slug>`) shares rank 2 with fbl.
+const USAGE_ID_RANKS: Record<string, number> = {
+    context: 0,
+    session_5h: 1,
+    week_fable: 2,
+    week_all: 3,
+    host_cpu: 4,
+    host_ram: 5,
+};
+
+// Canonical id → long accessible name. Unknown ids fall back to the raw `label`.
+const USAGE_ID_LONG_LABELS: Record<string, string> = {
+    context: "context",
+    session_5h: "5-hour session",
+    week_all: "weekly, all models",
+    week_fable: "weekly, Fable",
+    host_cpu: "host CPU",
+    host_ram: "host RAM",
+};
+
+const WEEK_ID = /^week_(.+)$/;
+
+// Label-only short tag (fallback when no `id`): the pre-v5 relabel-map heuristic.
+function usageShortLabelFromLabel(label: string): string {
     const trimmed = label.trim();
     const mapped = USAGE_SHORT_LABELS[trimmed];
     if (mapped) return mapped;
@@ -74,11 +112,37 @@ export function usageShortLabel(label: string): string {
     return usageBarLabel(trimmed);
 }
 
-// Canonical 2×2 grid order (design static, column-first fill): ctx / session down the
-// left column, model-weekly / week-all down the right. The bridge sends limits in an
-// arbitrary order, so normalise before rendering.
-export function usageOrderRank(label: string): number {
-    const trimmed = label.trim();
+export function usageShortLabel(meter: UsageMeterLike): string {
+    if (meter.id) {
+        const mapped = USAGE_ID_SHORT_LABELS[meter.id];
+        if (mapped) return mapped;
+        // `week_<model>` (not week_all / week_fable, both mapped above) → 3-char model tag.
+        const week = meter.id.match(WEEK_ID);
+        if (week) return week[1].slice(0, 3).toLocaleLowerCase();
+        // Unknown id → fall through to the label heuristic below.
+    }
+    return usageShortLabelFromLabel(meter.label);
+}
+
+// Long accessible name (SR): keyed off `id` when present, else the raw server `label`.
+export function usageAccessibleLabel(meter: UsageMeterLike): string {
+    if (meter.id) {
+        const mapped = USAGE_ID_LONG_LABELS[meter.id];
+        if (mapped) return mapped;
+    }
+    return meter.label;
+}
+
+// Canonical column-first grid order. The bridge sends limits in arbitrary order, so
+// normalise before rendering; prefer the stable `id`, fall back to the label heuristic.
+export function usageOrderRank(meter: UsageMeterLike): number {
+    if (meter.id) {
+        const rank = USAGE_ID_RANKS[meter.id];
+        if (rank !== undefined) return rank;
+        if (WEEK_ID.test(meter.id)) return 2;
+        return 6; // unknown id sorts after host meters
+    }
+    const trimmed = meter.label.trim();
     if (trimmed === "ctx" || trimmed === "context") return 0;
     if (trimmed === "Session") return 1;
     if (trimmed === "Week" || /^Week \(all models\)$/i.test(trimmed)) return 3;
@@ -93,10 +157,16 @@ export function usageLevel(percent: number): "low" | "medium" | "high" {
     return "high";
 }
 
-export function resetDisplay(resetsAt: string | undefined, fallback: string | undefined, now = Date.now()): string {
-    if (!resetsAt) return fallback ?? "";
+export function resetDisplay(
+    resetsAt: string | number | undefined,
+    fallback: string | undefined,
+    now = Date.now(),
+): string {
+    if (resetsAt === undefined || resetsAt === null || resetsAt === "") return fallback ?? "";
 
-    const resetTime = Date.parse(resetsAt);
+    // New bridge sends epoch ms (number); old bridge sends an ISO string. Accept both —
+    // this removes the deploy-order coupling between bridge and client.
+    const resetTime = typeof resetsAt === "number" ? resetsAt : Date.parse(resetsAt);
     if (!Number.isFinite(resetTime)) return fallback ?? "";
 
     const interval = resetTime - now;

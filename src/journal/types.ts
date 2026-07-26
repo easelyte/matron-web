@@ -161,10 +161,21 @@ export interface SessionStatus {
         pct: number;
     };
     limits?: Array<{
+        // Stable machine key from the bridge (v5+): `session_5h`, `week_all`, `week_fable`,
+        // `week_<slug>` (e.g. `week_sonnet_5`), and host meters `host_cpu` / `host_ram`.
+        // Absent on older/cached frames — the client falls back to parsing `label`.
+        id?: string;
         label: string;
         percent: number;
+        // Raw used/limit pair (context bar rides these to show e.g. 144k/200k). Optional —
+        // only the synthesized ctx meter carries them today.
+        used?: number;
+        limit?: number;
+        unit?: string;
+        model?: string;
         resets?: string;
-        resets_at?: string;
+        // Epoch ms (number, new bridge) OR ISO string (old bridge). resetDisplay accepts both.
+        resets_at?: string | number;
     }>;
     email?: string;
 }

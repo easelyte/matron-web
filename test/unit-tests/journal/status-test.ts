@@ -10,6 +10,7 @@ import {
     mergeSessionStatus,
     normalizePercent,
     resetDisplay,
+    usageAccessibleLabel,
     usageBarLabel,
     usageLevel,
     usageOrderRank,
@@ -31,29 +32,95 @@ describe("journal session status presentation", () => {
     });
 
     it("bakes fixed short usage labels (v5 relabel map) with a per-model fallback", () => {
-        expect(usageShortLabel("Session")).toBe("5h");
-        expect(usageShortLabel("Week (all models)")).toBe("wk");
-        expect(usageShortLabel("Week")).toBe("wk");
-        expect(usageShortLabel("fable")).toBe("fbl");
+        // Label-only fallback path (no id) — older/cached frames.
+        expect(usageShortLabel({ label: "Session" })).toBe("5h");
+        expect(usageShortLabel({ label: "Week (all models)" })).toBe("wk");
+        expect(usageShortLabel({ label: "Week" })).toBe("wk");
+        expect(usageShortLabel({ label: "fable" })).toBe("fbl");
         // per-model weekly → 3-char model tag, never truncated in the 24px column
-        expect(usageShortLabel("Week (Sonnet 5)")).toBe("son");
-        expect(usageShortLabel("Week (Opus 4.8)")).toBe("opu");
+        expect(usageShortLabel({ label: "Week (Sonnet 5)" })).toBe("son");
+        expect(usageShortLabel({ label: "Week (Opus 4.8)" })).toBe("opu");
         // unknown → heuristic fallback
-        expect(usageShortLabel("Custom limit")).toBe("Custom limit");
+        expect(usageShortLabel({ label: "Custom limit" })).toBe("Custom limit");
     });
 
-    it("ranks usage meters into the design's 2×2 grid order", () => {
-        const labels = ["Week (all models)", "Week (Sonnet 5)", "Session", "context"];
-        const ordered = [...labels].sort((a, b) => usageOrderRank(a) - usageOrderRank(b));
-        expect(ordered).toEqual(["context", "Session", "Week (Sonnet 5)", "Week (all models)"]);
+    it("prefers the stable id for the short tag, retiring the relabel map", () => {
+        // id wins over label; a mislabelled server label doesn't matter.
+        expect(usageShortLabel({ id: "context", label: "anything" })).toBe("ctx");
+        expect(usageShortLabel({ id: "session_5h", label: "Session" })).toBe("5h");
+        expect(usageShortLabel({ id: "week_fable", label: "Week (Fable)" })).toBe("fbl");
+        expect(usageShortLabel({ id: "week_all", label: "Week (all models)" })).toBe("wk");
+        expect(usageShortLabel({ id: "host_cpu", label: "Host CPU" })).toBe("cpu");
+        expect(usageShortLabel({ id: "host_ram", label: "Host RAM" })).toBe("ram");
+        // week_<model> → first 3 chars of the slug, lowercase
+        expect(usageShortLabel({ id: "week_sonnet_5", label: "Week (Sonnet 5)" })).toBe("son");
+        expect(usageShortLabel({ id: "week_opus", label: "Week (Opus)" })).toBe("opu");
+        // unknown id → fall through to the label heuristic
+        expect(usageShortLabel({ id: "mystery", label: "Session" })).toBe("5h");
     });
 
-    it("formats nearby reset times as compact countdowns", () => {
+    it("maps id → long accessible name, falling back to the raw label", () => {
+        expect(usageAccessibleLabel({ id: "context", label: "context" })).toBe("context");
+        expect(usageAccessibleLabel({ id: "session_5h", label: "Session" })).toBe("5-hour session");
+        expect(usageAccessibleLabel({ id: "week_all", label: "Week (all models)" })).toBe("weekly, all models");
+        expect(usageAccessibleLabel({ id: "week_fable", label: "Week (Fable)" })).toBe("weekly, Fable");
+        expect(usageAccessibleLabel({ id: "host_cpu", label: "Host CPU" })).toBe("host CPU");
+        expect(usageAccessibleLabel({ id: "host_ram", label: "Host RAM" })).toBe("host RAM");
+        // unknown id + no id → raw label
+        expect(usageAccessibleLabel({ id: "week_sonnet_5", label: "Week (Sonnet 5)" })).toBe("Week (Sonnet 5)");
+        expect(usageAccessibleLabel({ label: "Session" })).toBe("Session");
+    });
+
+    it("ranks usage meters into the design's column-first grid order", () => {
+        // id path: ctx/5h | fbl/model,wk | cpu/ram
+        const byId = [
+            { id: "host_ram", label: "Host RAM" },
+            { id: "week_all", label: "Week (all models)" },
+            { id: "week_sonnet_5", label: "Week (Sonnet 5)" },
+            { id: "host_cpu", label: "Host CPU" },
+            { id: "session_5h", label: "Session" },
+            { id: "week_fable", label: "Week (Fable)" },
+            { id: "context", label: "context" },
+        ];
+        // fbl and week_<model> both hold rank 2 → their relative order is the stable
+        // input order (week_sonnet_5 precedes week_fable here).
+        expect([...byId].sort((a, b) => usageOrderRank(a) - usageOrderRank(b)).map((m) => m.id)).toEqual([
+            "context",
+            "session_5h",
+            "week_sonnet_5",
+            "week_fable",
+            "week_all",
+            "host_cpu",
+            "host_ram",
+        ]);
+
+        // label-only fallback path keeps the original 2×2 order.
+        const byLabel = [
+            { label: "Week (all models)" },
+            { label: "Week (Sonnet 5)" },
+            { label: "Session" },
+            { label: "context" },
+        ];
+        expect([...byLabel].sort((a, b) => usageOrderRank(a) - usageOrderRank(b)).map((m) => m.label)).toEqual([
+            "context",
+            "Session",
+            "Week (Sonnet 5)",
+            "Week (all models)",
+        ]);
+    });
+
+    it("formats nearby reset times as compact countdowns from ISO strings or epoch ms", () => {
         const now = Date.parse("2026-07-15T08:00:00Z");
         expect(resetDisplay("2026-07-15T08:00:30Z", undefined, now)).toBe("now");
         expect(resetDisplay("2026-07-15T08:45:00Z", undefined, now)).toBe("45m");
         expect(resetDisplay("2026-07-15T11:20:00Z", undefined, now)).toBe("3h20");
         expect(resetDisplay(undefined, "soon", now)).toBe("soon");
+        // Epoch-ms (new bridge) is accepted identically to the ISO string above.
+        expect(resetDisplay(Date.parse("2026-07-15T08:45:00Z"), undefined, now)).toBe("45m");
+        expect(resetDisplay(Date.parse("2026-07-15T11:20:00Z"), undefined, now)).toBe("3h20");
+        // Empty string / NaN fall back.
+        expect(resetDisplay("", "later", now)).toBe("later");
+        expect(resetDisplay(Number.NaN, "later", now)).toBe("later");
     });
 
     it("uses the same green, amber, and red usage thresholds", () => {
