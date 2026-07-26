@@ -26,10 +26,15 @@ interface ClientInternals {
     state: ClientState;
 }
 
-const conversation = (id: string, title: string, parent_convo_id?: string): Conversation => ({
+const conversation = (
+    id: string,
+    title: string,
+    parent_convo_id?: string,
+    session_state: Conversation["session_state"] = "done",
+): Conversation => ({
     id,
     title,
-    session_state: "done",
+    session_state,
     last_seq: 0,
     unread_count: 0,
     snippet: "",
@@ -60,7 +65,10 @@ describe("subchat conversation list", () => {
             session: SESSION,
             conversations: [
                 conversation("root", "Root"),
-                conversation("root:sub:linked", "Linked child", "root"),
+                // #533: a nested child only renders while RUNNING, so the linked child must be
+                // running to appear beneath its parent. The orphan (missing parent) is a
+                // top-level fallback and is NOT subject to the active-only gate.
+                conversation("root:sub:linked", "Linked child", "root", "running"),
                 conversation("missing:sub:orphan", "Orphan child", "missing"),
             ],
             selectedConversationId: undefined,
@@ -83,6 +91,51 @@ describe("subchat conversation list", () => {
         expect(childRow.classList.contains("mj_RoomListItem_sub")).toBe(true);
         // The parent's own row is NOT a subagent row.
         expect(rows[0].classList.contains("mj_RoomListItem_sub")).toBe(false);
+    });
+
+    it("nests only RUNNING children in Active/Favorites; a done child drops out but Archived is unchanged (#533)", async () => {
+        const client = new MatronJournalClient();
+        const state = client.getSnapshot();
+        (client as unknown as ClientInternals).state = {
+            ...state,
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("root", "Root", undefined, "running"),
+                conversation("root:sub:running", "Running child", "root", "running"),
+                conversation("root:sub:done", "Done child", "root", "done"),
+                conversation("root:sub:archived", "Archived child", "root", "done"),
+            ],
+            // The archived child is archived regardless of its (done) session state.
+            archivedIds: new Set(["root:sub:archived"]),
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+
+        const names = (): string[] =>
+            [...container.querySelectorAll('[data-testid="room-name"]')].map((element) => element.textContent ?? "");
+        const clickTab = async (label: string): Promise<void> => {
+            const tab = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListTab")].find((button) =>
+                (button.textContent ?? "").includes(label),
+            );
+            await act(async () => tab?.click());
+        };
+
+        // Active: only the RUNNING child nests; the done child does NOT render a sidebar row.
+        expect(names()).toEqual(["Root", "↳ Running child"]);
+        expect(names().some((name) => name.includes("Done child"))).toBe(false);
+
+        // The done child is NOT dropped from the store — it stays in state.conversations so the
+        // header pill strip can still surface it when the parent is selected.
+        expect(client.getSnapshot().conversations.some((c) => c.id === "root:sub:done")).toBe(true);
+
+        // Archived tab: the archived child is discoverable regardless of its (done) session state
+        // — the active-only gate does not apply here (behavior unchanged from #532).
+        await clickTab("Archived");
+        expect(names()).toEqual(["Archived child"]);
     });
 
     it("shows a child as a top-level fallback when its parent is archived", async () => {
@@ -197,7 +250,7 @@ describe("subchat conversation list", () => {
         expect(childName().some((name) => name.includes("Linked child"))).toBe(false);
 
         // Favorites (parent favorited): the archived child must NOT leak in either.
-        await clickTab("Favs");
+        await clickTab("Favorites");
         expect(childName().some((name) => name.includes("Linked child"))).toBe(false);
 
         // Archived: the archived child IS discoverable (flat top-level row) + unarchivable.

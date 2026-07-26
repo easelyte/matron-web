@@ -834,7 +834,9 @@ textarea {
     padding: 7px 14px;
 }
 
-/* The scrolling sibling run: pills flow horizontally and scroll; the label leads. */
+/* The scrolling sibling run: pills flow horizontally and scroll; the label leads.
+   #534: reserve padding-bottom so the horizontal scrollbar (when the pills
+   overflow) clears the pill row instead of sitting cramped against it. */
 .mj_SubagentStrip_run {
     display: flex;
     min-width: 0;
@@ -842,6 +844,7 @@ textarea {
     align-items: center;
     gap: var(--cpd-space-2x);
     overflow-x: auto;
+    padding-bottom: var(--cpd-space-2x);
     scrollbar-width: thin;
     scrollbar-color: var(--mj-scrollbar) transparent;
 }
@@ -1067,11 +1070,6 @@ textarea {
     transition:
         background var(--cpd-dur-fast) var(--cpd-ease),
         color var(--cpd-dur-fast) var(--cpd-ease);
-}
-
-.mj_RoomListTab_count {
-    color: var(--cpd-color-text-primary);
-    font-weight: 400;
 }
 
 .mj_RoomListTab:hover {

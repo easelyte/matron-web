@@ -1113,7 +1113,7 @@ function ConversationList({
                                     {(
                                         [
                                             ["active", "Active"],
-                                            ["favorites", "Favs"],
+                                            ["favorites", "Favorites"],
                                             ["archived", "Archived"],
                                         ] as const
                                     ).map(([key, label]) => (
@@ -1129,13 +1129,7 @@ function ConversationList({
                                                 event.currentTarget.focus({ preventScroll: true });
                                             }}
                                         >
-                                            {key === "favorites" && (
-                                                <StarFilledIcon className="mj_RoomListTab_star" aria-hidden />
-                                            )}
                                             {label}
-                                            {key === "archived" && archivedTotal > 0 && (
-                                                <span className="mj_RoomListTab_count"> {archivedTotal}</span>
-                                            )}
                                         </button>
                                     ))}
                                 </div>
@@ -1178,13 +1172,23 @@ function ConversationList({
                                         archiving a child removes it from these tabs. The Archived
                                         tab renders flat (archived parents + archived children as
                                         top-level rows), so an archived child stays discoverable +
-                                        unarchivable regardless of its parent's state. */}
+                                        unarchivable regardless of its parent's state.
+                                        #533: children are TRANSIENT here — a child row is spliced
+                                        in ONLY while it is running (subagents are one-shot; a done/
+                                        idle child drops out of the sidebar but stays in
+                                        state.conversations so the header pill strip still shows it
+                                        when its parent is selected). The Archived tab is unaffected
+                                        by this active-only gate. */}
                                     {tab === "archived"
                                         ? visibleRows.map((conversation) => renderConversation(conversation, false))
                                         : visibleRows.flatMap((conversation) => [
                                               renderConversation(conversation, false),
                                               ...childrenOf(state.conversations, conversation.id)
-                                                  .filter((child) => !state.archivedIds.has(child.id))
+                                                  .filter(
+                                                      (child) =>
+                                                          child.session_state === "running" &&
+                                                          !state.archivedIds.has(child.id),
+                                                  )
                                                   .map((child) => renderConversation(child, true)),
                                           ])}
                                     {tab === "active" && !hasAnyActive && archivedTotal === 0 && (

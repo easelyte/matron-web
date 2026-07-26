@@ -2359,7 +2359,8 @@ describe("conversation list tabs", () => {
         expect(tabButton(rendered.container, "active").getAttribute("aria-pressed")).toBe("true");
         expect(tabButton(rendered.container, "favorites").getAttribute("aria-pressed")).toBe("false");
         expect(tabButton(rendered.container, "archived").getAttribute("aria-pressed")).toBe("false");
-        expect(tabButton(rendered.container, "archived").textContent).toBe("Archived 1");
+        // #535: the Archived tab no longer renders a conversation count — just the label.
+        expect(tabButton(rendered.container, "archived").textContent).toBe("Archived");
         expect(names()).toEqual(["Fav Room", "Other Room"]);
 
         await act(async () => tabButton(rendered!.container, "favorites").click());
