@@ -937,34 +937,62 @@ textarea {
     height: 14px;
 }
 
+/* §10.6 conversation-actions menu (one component, sidebar-row + header ⋯ anchors): a
+   4px-padded shell, rows are grid 16px/1fr @10px gap, row radius (7) < shell radius (10)
+   so the hover fill insets from the shell edge, and the destructive Archive is split off
+   by a hairline (not a gap). Focus is the teal ring inset −2px, never browser-blue. */
 .mj_RoomItemMenu {
-    width: min(220px, calc(100vw - var(--cpd-space-4x)));
+    width: min(224px, calc(100vw - var(--cpd-space-4x)));
     max-height: calc(100vh - var(--cpd-space-4x));
+    gap: 0;
+    border-radius: 10px;
+    padding: 4px;
     overflow-y: auto;
 }
 
 .mj_EventRowMenu {
-    width: min(220px, calc(100vw - var(--cpd-space-4x)));
+    width: min(224px, calc(100vw - var(--cpd-space-4x)));
+    gap: 0;
+    border-radius: 10px;
+    padding: 4px;
 }
 
 .mj_RoomItemMenu_item {
-    display: flex;
+    display: grid;
     width: 100%;
+    grid-template-columns: 16px 1fr;
     align-items: center;
-    gap: var(--cpd-space-2x);
-    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    gap: 10px;
+    border-radius: 7px;
+    padding: 7px 8px;
     text-align: left;
+    font:
+        500 12.5px/16px Inter,
+        sans-serif;
 }
 
-.mj_RoomItemMenu_item:hover,
+.mj_RoomItemMenu_item:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
 .mj_RoomItemMenu_item:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: -2px;
     background: var(--cpd-color-bg-subtle-primary);
 }
 
 .mj_RoomItemMenu_item svg {
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
     flex: 0 0 auto;
+    color: var(--cpd-color-icon-secondary);
+}
+
+/* Archive/Unarchive is the destructive group — a hairline above it, not a gap. */
+.mj_RoomItemMenu_item:last-child:not(:only-child) {
+    margin-top: 4px;
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    padding-top: 8px;
 }
 
 .mj_MarkAllReadButton {
@@ -1439,8 +1467,22 @@ textarea {
 }
 
 .mj_UploadConfirm_header {
+    display: flex;
     flex: 0 0 auto;
+    align-items: center;
+    gap: 10px;
     padding: 13px 14px 13px 16px;
+}
+
+.mj_UploadConfirm_header .mj_UploadConfirm_title {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Upload title is always "Send file" in mono (the filename lives in the file-info row). */
+.mj_UploadConfirm_queue .mj_UploadConfirm_title {
+    font-family: "Fira Code", monospace;
+    font-size: 13px;
 }
 
 .mj_UploadConfirm_body {
@@ -1466,10 +1508,85 @@ textarea {
         sans-serif;
 }
 
+/* "n of N" chip (multi-file). */
 .mj_UploadConfirm_count {
+    flex: 0 0 auto;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: 999px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    padding: 1px 9px;
+    font:
+        500 11px/16px "Fira Code",
+        monospace;
+}
+
+/* File-info row under the preview: name (ellipsised) + size on the right. */
+.mj_UploadConfirm_fileName {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--cpd-color-text-primary);
+    font:
+        500 13px/18px Inter,
+        sans-serif;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Non-image preview placeholder (keeps the preview area's shape for any file type). */
+.mj_UploadConfirm_previewPlaceholder {
+    display: flex;
+    height: 72px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: 10px;
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-icon-secondary);
+}
+
+/* 34px thumbnail strip (multi-file): active = 2px teal ring, inactive = 1px line on raised. */
+.mj_UploadConfirm_strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.mj_UploadThumb {
+    display: inline-flex;
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    overflow: hidden;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_UploadThumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.mj_UploadThumb svg {
+    width: 16px;
+    height: 16px;
+}
+
+.mj_UploadThumb_active {
+    border: 2px solid var(--cpd-color-text-action-accent);
+}
+
+.mj_UploadConfirm_more {
     color: var(--cpd-color-text-secondary);
     font:
-        400 13.5px/20px Inter,
+        400 11px/16px Inter,
         sans-serif;
 }
 
@@ -1582,6 +1699,167 @@ textarea {
     margin: 0;
     color: var(--cpd-color-text-critical-primary);
     font: var(--cpd-font-body-sm-regular);
+}
+
+/* v5 new-session sheet: the upload-dialog shell + a fully themed form. The load-bearing
+   fix is §10.4 — the native inputs were unstyled, so they inherited the UA white and
+   vanished on dark ("Agent default" white-on-dark). Every input/checkbox/label now sets
+   its own themed colours, and each label binds to the field BELOW it at the 6px field
+   rhythm (§10.3). */
+.mj_NewSessionSheet {
+    gap: 14px;
+}
+
+.mj_NewSessionSheet_head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.mj_NewSessionSheet_head .mj_UploadConfirm_title {
+    flex: 1;
+    min-width: 0;
+}
+
+.mj_NewSessionSheet_close {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cpd-color-icon-secondary);
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet_close:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_NewSessionSheet_close:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_NewSessionSheet > p,
+.mj_NewSessionSheet [role="status"] {
+    margin: 0;
+    color: var(--cpd-color-text-secondary);
+    font:
+        400 13px/18px Inter,
+        sans-serif;
+}
+
+/* A field label binds to the field BELOW it (§10.3 6px). */
+.mj_NewSessionSheet label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--cpd-color-text-secondary);
+    font:
+        500 12px/16px Inter,
+        sans-serif;
+}
+
+/* §10.4 native text input: explicit background/colour/border in BOTH themes. */
+.mj_NewSessionSheet input[type="text"] {
+    display: block;
+    width: 100%;
+    min-height: 34px;
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    padding: 0 12px;
+    font:
+        400 13.5px/20px Inter,
+        sans-serif;
+}
+
+.mj_NewSessionSheet input[type="text"]::placeholder {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_NewSessionSheet input[type="text"]:focus,
+.mj_NewSessionSheet input[type="text"]:focus-visible {
+    border-color: var(--cpd-color-border-interactive-primary);
+    outline: none;
+}
+
+.mj_NewSessionSheet input[type="text"]:disabled {
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    cursor: default;
+}
+
+/* Checkbox row: the label wraps the checkbox, so reset the block-label rule to inline. */
+.mj_NewSessionSheet label:has(input[type="checkbox"]) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 0;
+    color: var(--cpd-color-text-primary);
+    font:
+        400 13.5px/20px Inter,
+        sans-serif;
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--cpd-color-bg-accent);
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+/* Agent / recent-folder pick lists. */
+.mj_NewSessionSheet [role="list"] {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.mj_NewSessionSheet [role="listitem"] {
+    display: flex;
+    width: 100%;
+    box-sizing: border-box;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    padding: 8px 12px;
+    font:
+        400 13px/18px Inter,
+        sans-serif;
+    text-align: left;
+    cursor: pointer;
+}
+
+.mj_NewSessionSheet [role="listitem"]:hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_NewSessionSheet [role="listitem"]:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.mj_NewSessionSheet [role="listitem"]:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
 }
 
 .mj_AttachmentChip {

@@ -215,6 +215,16 @@ const state: ClientState = {
 // The client keeps its state private; mirror the test harness's internal override.
 (client as unknown as { state: ClientState }).state = state;
 
+// Stub the new-session data path so a driver click on "New session" reaches the folders
+// form (agent → recent folders) where the themed inputs / checkbox / Start live.
+(client as unknown as { listAgents: () => Promise<unknown[]> }).listAgents = async () => [
+    { device_id: "dev-local", connected: true, label: "workstation", hostname: "workstation", name: "workstation" },
+];
+(client as unknown as { recentFolders: () => Promise<unknown[]> }).recentFolders = async () => [
+    { path: "/opt/matron/web-journal" },
+    { path: "/opt/matron/journal" },
+];
+
 const params = new URLSearchParams(window.location.search);
 document.documentElement.setAttribute("data-theme", params.get("theme") === "dark" ? "dark" : "light");
 

@@ -489,13 +489,15 @@ export function NewSessionSheet({
 
     return (
         <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-new-session-title">
-            <div className="mj_UploadConfirm">
-                <div className="mj_UploadConfirm_actions">
+            <div className="mj_UploadConfirm mj_NewSessionSheet">
+                <div className="mj_NewSessionSheet_head">
                     <h2 className="mj_UploadConfirm_title" id="mj-new-session-title">
                         New session
                     </h2>
-                    <button type="button" aria-label="Close" onClick={dismiss}>
-                        Close
+                    <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={dismiss}>
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
                     </button>
                 </div>
 
@@ -4102,24 +4104,45 @@ function UploadConfirmPage({
     return (
         <div className="mj_UploadConfirm mj_UploadConfirm_queue">
             <header className="mj_UploadConfirm_header">
-                <h2 className="mj_UploadConfirm_title">
-                    {head.file.name}
-                    {staged.total > 1 && (
-                        <span className="mj_UploadConfirm_count">
-                            {" "}
-                            — File {position} of {staged.total}
-                        </span>
-                    )}
-                </h2>
+                {/* §10.1/§10.2: the title is ALWAYS "Send file" (never the filename — the
+                    filename lives in the file-info row below). "n of N" is a chip. */}
+                <h2 className="mj_UploadConfirm_title">Send file</h2>
+                {staged.total > 1 && (
+                    <span className="mj_UploadConfirm_count">
+                        {position} of {staged.total}
+                    </span>
+                )}
             </header>
             <div className="mj_UploadConfirm_body">
                 {isImage && previewUrl ? (
                     <img className="mj_UploadConfirm_preview" src={previewUrl} alt={head.file.name} />
                 ) : (
-                    <div className="mj_UploadConfirm_fileMeta">
+                    <div className="mj_UploadConfirm_previewPlaceholder" aria-hidden="true">
                         <AttachmentIcon />
-                        <span>{head.file.name}</span>
-                        <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
+                    </div>
+                )}
+                <div className="mj_UploadConfirm_fileMeta">
+                    <span className="mj_UploadConfirm_fileName">{head.file.name}</span>
+                    <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
+                </div>
+                {staged.total > 1 && (
+                    <div className="mj_UploadConfirm_strip" role="list" aria-label="Queued files">
+                        {staged.items.map((item) => {
+                            const active = item.id === head.id;
+                            return (
+                                <span
+                                    key={item.id}
+                                    role="listitem"
+                                    className={active ? "mj_UploadThumb mj_UploadThumb_active" : "mj_UploadThumb"}
+                                    title={item.file.name}
+                                >
+                                    {active && isImage && previewUrl ? <img src={previewUrl} alt="" /> : <AttachmentIcon aria-hidden />}
+                                </span>
+                            );
+                        })}
+                        {staged.items.length > 1 && (
+                            <span className="mj_UploadConfirm_more">{staged.items.length - 1} more file queued</span>
+                        )}
                     </div>
                 )}
                 {preflight && <p className="mj_UploadConfirm_error">{preflight}</p>}

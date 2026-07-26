@@ -1892,7 +1892,7 @@ describe("UploadConfirmDialog", () => {
         expect(document.activeElement).toBe(composer);
     });
 
-    it("shows name+size (no img) for non-images, pages 'File k of N', and isolates captions per page", async () => {
+    it("shows name+size (no img) for non-images, pages 'k of N', and isolates captions per page", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
         await stage(client, [
@@ -1900,7 +1900,8 @@ describe("UploadConfirmDialog", () => {
             new File(["b"], "b.txt", { type: "text/plain" }),
         ]);
         const dialog = (): HTMLElement => rendered!.container.querySelector('[role="dialog"]')!;
-        expect(dialog().textContent).toContain("File 1 of 2");
+        expect(dialog().textContent).toContain("1 of 2");
+        expect(dialog().textContent).toContain("Send file");
         expect(dialog().querySelector("img")).toBeNull();
         expect(dialog().textContent).toContain("a.txt");
 
@@ -1912,7 +1913,7 @@ describe("UploadConfirmDialog", () => {
             const headId = client.getSnapshot().stagedUploads!.items[0].id;
             client.skipStagedFile(headId);
         });
-        expect(dialog().textContent).toContain("File 2 of 2");
+        expect(dialog().textContent).toContain("2 of 2");
         expect(dialog().querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("");
     });
 
