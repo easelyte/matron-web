@@ -4561,11 +4561,13 @@ function UploadConfirmPage({
                     </span>
                 )}
                 <span className="mj_UploadConfirm_headerSpacer" />
-                {/* ✕ dismisses the whole upload (same handler as footer "Cancel all"); it is the
-                    only dismiss affordance for a lone file, where the footer button is hidden. */}
+                {/* ✕ is DESTRUCTIVE: cancelStagedFiles() irreversibly clears the ENTIRE staged
+                    queue (every file + all typed captions), not just this page. Its accessible
+                    name must disclose that — count-aware, so a SR user hears what is discarded.
+                    Same handler + semantics as the footer "Cancel all" (hidden for a lone file). */}
                 <button
                     className="mj_UploadConfirm_close"
-                    aria-label="Close"
+                    aria-label={staged.total > 1 ? "Cancel all uploads" : "Cancel upload"}
                     disabled={staged.confirming}
                     onClick={() => client.cancelStagedFiles()}
                 >
