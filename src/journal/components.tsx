@@ -1573,8 +1573,9 @@ export function UsageCluster({
                     const norm = normalizePercent(limit.percent);
                     const reset = resetDisplay(limit.resets_at, limit.resets, displayNow, limit.resets_at_ms);
                     const level = norm === null ? "unknown" : usageLevel(norm);
-                    // Raw used/limit pair (ctx bar → e.g. 144k/200k). Only meters that carry
-                    // both raw numbers render it; the pair is folded into aria-valuetext too.
+                    // Raw used/limit pair (ctx bar → e.g. 144k/200k). Not shown as the visible
+                    // figure (operator wants the PERCENT visible like every other bar); kept
+                    // only for the accessible aria-valuetext + a hover title.
                     const rawPair =
                         limit.used != null && limit.limit != null
                             ? `${compactTokens(limit.used)}/${compactTokens(limit.limit)}`
@@ -1584,11 +1585,14 @@ export function UsageCluster({
                         norm === null
                             ? "usage unknown"
                             : `${norm}% used${rawPair ? `, ${rawPair}` : ""}${reset ? `, resets ${reset}` : ""}`;
+                    // Hover title carries the raw pair (a11y-adjacent affordance) alongside
+                    // any reset countdown; the visible figure is the percent only.
+                    const titleParts = [rawPair, reset ? `resets ${reset}` : undefined].filter(Boolean);
                     return (
                         <div
-                            className={`mj_UsageRow${rawPair ? " mj_UsageRow_raw" : ""}`}
+                            className="mj_UsageRow"
                             key={index}
-                            title={reset ? `resets ${reset}` : undefined}
+                            title={titleParts.length ? titleParts.join(", ") : undefined}
                         >
                             {/* Visible label is the short tag; the accessible name keeps the
                                 full server-authored label so SR users know which limit it is. */}
@@ -1609,11 +1613,6 @@ export function UsageCluster({
                                     style={{ width: norm === null ? "100%" : `${norm}%` }}
                                 />
                             </span>
-                            {rawPair && (
-                                <span className="mj_UsageRaw" aria-hidden="true">
-                                    {rawPair}
-                                </span>
-                            )}
                             <span className={`mj_UsagePercent mj_UsagePercent_${level}`}>
                                 {norm === null ? "—" : `${Math.round(norm)}%`}
                             </span>
@@ -1752,16 +1751,23 @@ export function HeaderShell({
     const now = useMinuteClock();
     const titleHeadingId = useId();
 
-    // ctx is the first meter (context %); it stays visible when usage collapses.
     // Collapsed usage keeps two rows — ctx + the 5h (Session) limit — since the header
     // band has the height for two and one bar reads as too little (operator's call).
-    const ctxMeter = limits?.length ? limits[0] : undefined;
-    // 5h session limit: match the stable id first, fall back to the short-tag heuristic
-    // for older/cached frames that lack ids.
+    // Pin BOTH by stable id, NOT by grid position: host cpu/ram now sort to limits[0]
+    // (#529 follow-up), so a positional pick would collapse to cpu/ram. Match the
+    // short-tag heuristic as a fallback for older/cached frames that lack ids.
+    const ctxMeter = limits?.find((meter) => meter.id === "context" || (!meter.id && usageShortLabel(meter) === "ctx"));
     const sessionMeter = limits?.find(
         (meter) => meter.id === "session_5h" || (!meter.id && usageShortLabel(meter) === "5h"),
     );
-    const collapsedMeters = ctxMeter ? (sessionMeter ? [ctxMeter, sessionMeter] : [ctxMeter]) : [];
+    // ctx first, then 5h — pinned by id above. If a degenerate frame carries neither
+    // (limits present but no ctx/5h), fall back to the first meter so the collapsed
+    // disclosure still renders instead of vanishing.
+    const collapsedMeters = [ctxMeter, sessionMeter].filter((meter): meter is NonNullable<typeof meter> =>
+        Boolean(meter),
+    );
+    if (collapsedMeters.length === 0 && limits?.length) collapsedMeters.push(limits[0]);
+    const hasCollapsedUsage = collapsedMeters.length > 0;
     const worst = limits ? worstLimit(limits) : undefined;
     const worstNormalized = worst ? (normalizePercent(worst.percent) ?? 0) : undefined;
     const worstReset = worst ? resetDisplay(worst.resets_at, worst.resets, now, worst.resets_at_ms) : "";
@@ -1831,7 +1837,7 @@ export function HeaderShell({
                 </div>
             )}
             <div className="mj_HeaderControls">
-                {usageCollapsed && ctxMeter ? (
+                {usageCollapsed && hasCollapsedUsage ? (
                     <HeaderDisclosure
                         className="mj_HeaderUsageDisclosure"
                         triggerClassName="mj_HeaderCluster mj_UsageCluster mj_UsageCluster_collapsed"
@@ -1848,7 +1854,7 @@ export function HeaderShell({
                     </div>
                 ) : null}
                 {(controls || persistentControls) &&
-                    (Boolean(limits?.length) || Boolean(usageCollapsed && ctxMeter)) && (
+                    (Boolean(limits?.length) || Boolean(usageCollapsed && hasCollapsedUsage)) && (
                         <span className="mj_HeaderDivider" aria-hidden="true" />
                     )}
                 {controls}

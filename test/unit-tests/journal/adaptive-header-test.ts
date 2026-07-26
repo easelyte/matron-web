@@ -509,16 +509,23 @@ describe("HeaderShell", () => {
         expect(collapsedUsage?.getAttribute("aria-label")).toBe("Usage — worst limit 72%, resets 2m");
     });
 
-    it("keeps the 5h session meter in the collapsed stack via its stable id", async () => {
+    it("pins the collapsed stack to ctx + 5h by id, not by grid position", async () => {
+        // Host cpu/ram sort to the front of the grid (#529 host-vitals-first), so the
+        // collapsed pair must be chosen by id — a positional limits[0]/limits[1] pick would
+        // wrongly collapse to cpu/ram. Order here mirrors the reordered grid output.
         const { container } = await mountHeader({
             limits: [
+                { id: "host_cpu", label: "Host CPU", percent: 34 },
+                { id: "host_ram", label: "Host RAM", percent: 55 },
                 { id: "context", label: "context", percent: 72, used: 144_000, limit: 200_000 },
-                { id: "week_all", label: "Week (all models)", percent: 63 },
                 { id: "session_5h", label: "Session", percent: 41 },
+                { id: "week_fable", label: "Week (Fable)", percent: 22 },
+                { id: "week_all", label: "Week (all models)", percent: 63 },
             ],
             collapse: { usageCollapsed: true, titleCollapsed: false },
         });
-        // Collapsed trigger keeps two rows: ctx (limits[0]) + the id-matched 5h session.
+        // Collapsed trigger keeps exactly two rows: the id-matched ctx + 5h session — NOT
+        // cpu/ram, even though those now lead the array.
         const trigger = container.querySelector(".mj_UsageCluster_collapsed")!;
         const tags = [...trigger.querySelectorAll(".mj_UsageLabel")].map((n) => n.textContent);
         expect(tags).toEqual(["ctx", "5h"]);

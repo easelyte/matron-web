@@ -74,15 +74,16 @@ const USAGE_ID_SHORT_LABELS: Record<string, string> = {
     host_ram: "ram",
 };
 
-// Canonical id → grid rank. Column-first 3×2: col1 [ctx,5h], col2 [fbl/model, wk],
-// col3 [cpu,ram]. Per-model weekly (`week_<slug>`) shares rank 2 with fbl.
+// Canonical id → grid rank. Column-first 3×2: col1 [cpu,ram], col2 [ctx,5h],
+// col3 [fbl/model, wk]. Host vitals lead (leftmost column, #529 follow-up). Per-model
+// weekly (`week_<slug>`) shares rank 4 with fbl.
 const USAGE_ID_RANKS: Record<string, number> = {
-    context: 0,
-    session_5h: 1,
-    week_fable: 2,
-    week_all: 3,
-    host_cpu: 4,
-    host_ram: 5,
+    host_cpu: 0,
+    host_ram: 1,
+    context: 2,
+    session_5h: 3,
+    week_fable: 4,
+    week_all: 5,
 };
 
 // Canonical id → long accessible name. Unknown ids fall back to the raw `label`.
@@ -139,15 +140,15 @@ export function usageOrderRank(meter: UsageMeterLike): number {
     if (meter.id) {
         const rank = USAGE_ID_RANKS[meter.id];
         if (rank !== undefined) return rank;
-        if (WEEK_ID.test(meter.id)) return 2;
-        return 6; // unknown id sorts after host meters
+        if (WEEK_ID.test(meter.id)) return 4; // per-model weekly shares the fbl column
+        return 6; // unknown id sorts last
     }
     const trimmed = meter.label.trim();
-    if (trimmed === "ctx" || trimmed === "context") return 0;
-    if (trimmed === "Session") return 1;
-    if (trimmed === "Week" || /^Week \(all models\)$/i.test(trimmed)) return 3;
-    if (WEEK_PER_MODEL.test(trimmed)) return 2;
-    return 4;
+    if (trimmed === "ctx" || trimmed === "context") return 2;
+    if (trimmed === "Session") return 3;
+    if (trimmed === "Week" || /^Week \(all models\)$/i.test(trimmed)) return 5;
+    if (WEEK_PER_MODEL.test(trimmed)) return 4;
+    return 6;
 }
 
 export function usageLevel(percent: number): "low" | "medium" | "high" {

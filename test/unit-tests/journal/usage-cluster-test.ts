@@ -103,13 +103,20 @@ describe("UsageCluster", () => {
         ).toEqual(["context", "5-hour session", "weekly, Fable", "weekly, all models", "host CPU", "host RAM"]);
     });
 
-    it("renders the raw used/limit pair for the context meter and folds it into the valuetext", async () => {
+    it("shows the ctx PERCENT as the visible figure and keeps the raw pair for a11y only", async () => {
+        // Operator: the ctx bar's visible number must be its percent (like every other bar),
+        // NOT the raw 144k/200k pair. Raw survives only in aria-valuetext + the hover title.
         await renderUsage([{ id: "context", label: "context", percent: 72, used: 144_000, limit: 200_000 }]);
 
         const row = container.querySelector(".mj_UsageRow")!;
-        expect(row.classList.contains("mj_UsageRow_raw")).toBe(true);
-        expect(row.querySelector(".mj_UsageRaw")?.textContent).toBe("144k/200k");
+        // No visible raw element / row modifier anymore.
+        expect(row.classList.contains("mj_UsageRow_raw")).toBe(false);
+        expect(row.querySelector(".mj_UsageRaw")).toBeNull();
+        // Visible figure is the percent.
+        expect(row.querySelector(".mj_UsagePercent")?.textContent).toBe("72%");
+        // Raw pair still reachable: accessible valuetext + hover title.
         expect(row.querySelector('[role="progressbar"]')?.getAttribute("aria-valuetext")).toBe("72% used, 144k/200k");
+        expect(row.getAttribute("title")).toBe("144k/200k");
     });
 
     it("omits the raw pair for meters without used/limit", async () => {
@@ -117,6 +124,10 @@ describe("UsageCluster", () => {
         const row = container.querySelector(".mj_UsageRow")!;
         expect(row.classList.contains("mj_UsageRow_raw")).toBe(false);
         expect(row.querySelector(".mj_UsageRaw")).toBeNull();
+        expect(row.querySelector(".mj_UsagePercent")?.textContent).toBe("41%");
+        // No used/limit → no raw in valuetext, and no title (no reset here either).
+        expect(row.querySelector('[role="progressbar"]')?.getAttribute("aria-valuetext")).toBe("41% used");
+        expect(row.getAttribute("title")).toBeNull();
     });
 
     it("uses duplicate-safe row keys", async () => {

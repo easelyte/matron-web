@@ -72,7 +72,7 @@ describe("journal session status presentation", () => {
     });
 
     it("ranks usage meters into the design's column-first grid order", () => {
-        // id path: ctx/5h | fbl/model,wk | cpu/ram
+        // id path: cpu/ram | ctx/5h | fbl/model,wk (host vitals lead, #529 follow-up)
         const byId = [
             { id: "host_ram", label: "Host RAM" },
             { id: "week_all", label: "Week (all models)" },
@@ -82,19 +82,23 @@ describe("journal session status presentation", () => {
             { id: "week_fable", label: "Week (Fable)" },
             { id: "context", label: "context" },
         ];
-        // fbl and week_<model> both hold rank 2 → their relative order is the stable
+        // fbl and week_<model> both hold rank 4 → their relative order is the stable
         // input order (week_sonnet_5 precedes week_fable here).
         expect([...byId].sort((a, b) => usageOrderRank(a) - usageOrderRank(b)).map((m) => m.id)).toEqual([
+            "host_cpu",
+            "host_ram",
             "context",
             "session_5h",
             "week_sonnet_5",
             "week_fable",
             "week_all",
-            "host_cpu",
-            "host_ram",
         ]);
 
-        // label-only fallback path keeps the original 2×2 order.
+        // Unknown ids sort last, after every known meter.
+        expect(usageOrderRank({ id: "mystery", label: "Mystery" })).toBe(6);
+
+        // label-only fallback path (frames lacking ids): host vitals never appear label-only
+        // (they always carry ids), so ctx leads the fallback set → ctx/5h/model/wk.
         const byLabel = [
             { label: "Week (all models)" },
             { label: "Week (Sonnet 5)" },

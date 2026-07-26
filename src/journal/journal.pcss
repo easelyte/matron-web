@@ -509,7 +509,7 @@ textarea {
 }
 
 .mj_UsageCluster .mj_UsageBars {
-    /* Column-first fill, 2 rows: ctx/5h | fbl/wk | cpu/ram (#526). Columns size to their
+    /* Column-first fill, 2 rows: cpu/ram | ctx/5h | fbl/wk (#529 host-vitals-first). Columns size to their
        content (grid-auto-columns: max-content) so the cluster stays exactly as wide as the
        bars it holds — no reserved empty column. column-gap 16. row-gap 10 makes the two-row
        block 36px tall = the title+subtitle block, so tops/bottoms line up. */
@@ -539,19 +539,6 @@ textarea {
     font-family: "Fira Code", monospace;
     font-size: 10.5px;
     line-height: 13px;
-}
-
-/* ctx row carries a raw used/limit pair (e.g. 144k/200k) between the track and the
-   percent; percent stays the far-right column so it right-aligns across rows. */
-.mj_UsageRow_raw {
-    grid-template-columns: 24px 68px auto 32px;
-}
-
-.mj_UsageRaw {
-    color: var(--cpd-color-text-secondary);
-    font-weight: 400;
-    white-space: nowrap;
-    text-align: right;
 }
 
 .mj_UsageLabel,
@@ -646,11 +633,6 @@ textarea {
     grid-template-columns: 24px 72px 32px;
 }
 
-/* The collapsed trigger is a tight ctx+5h stack with no room for the raw pair. */
-.mj_UsageCluster_collapsed .mj_UsageRaw {
-    display: none;
-}
-
 .mj_UsageCluster_collapsed:hover {
     background: var(--cpd-color-bg-subtle-secondary);
 }
@@ -670,10 +652,6 @@ textarea {
     grid-template-columns: 28px 1fr 40px;
     font-size: 11px;
     line-height: 16px;
-}
-
-.mj_UsagePopover .mj_UsageRow_raw {
-    grid-template-columns: 28px 1fr auto 40px;
 }
 
 /* Compact title block (<560): title + status-dot/short-model, hover → popover. */
