@@ -81,6 +81,7 @@ import {
     asNumber,
     asString,
     childrenOf,
+    childSidebarPlacement,
     type ClientState,
     type Conversation,
     conversationTitle,
@@ -90,7 +91,6 @@ import {
     isNearBottom,
     type JournalEvent,
     type PendingMessage,
-    parentPresent,
     type RecentFolder,
     isSubChat,
     type SessionStatus,
@@ -836,10 +836,19 @@ function ConversationList({
             .filter((conversation) => !state.archivedIds.has(conversation.id))
             .map((conversation) => conversation.id),
     );
+    // Every conversation id (archived AND not) — lets childSidebarPlacement tell a
+    // parent-exists-but-archived child apart from a genuinely orphaned one.
+    const allIds = new Set(state.conversations.map((conversation) => conversation.id));
+    // #536: ONE predicate gates BOTH sidebar paths (top-level fallback + nested splice)
+    // so they can never diverge again. A non-child always renders top-level; a child
+    // renders top-level only when childSidebarPlacement says so (orphan → always; parent
+    // exists → running-only, and then only when it can't nest under a visible parent).
+    const rendersAsTopLevelRow = (conversation: Conversation): boolean =>
+        !isSubChat(conversation) || childSidebarPlacement(conversation, ids, allIds) === "top-level";
     const conversations = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
         return state.conversations
-            .filter((conversation) => !parentPresent(conversation, ids))
+            .filter((conversation) => rendersAsTopLevelRow(conversation))
             .filter(
                 (conversation) =>
                     !normalized ||
@@ -854,10 +863,10 @@ function ConversationList({
         ...activeAll.filter((conversation) => !state.pinnedIds.has(conversation.id)),
     ];
     // #532: the Archived tab lists EVERY archived conversation flat — including an archived
-    // CHILD of an active parent, which `conversations` drops via parentPresent (so it can be
-    // nested under its live parent in Active). Deriving the archived set from the full list
-    // (not the parentPresent-filtered `conversations`) keeps that child discoverable + it
-    // renders flat, matching how archived parents already render. Search still applies.
+    // CHILD of an active parent, which `conversations` drops via rendersAsTopLevelRow (so it
+    // can be nested under its live parent in Active). Deriving the archived set from the full
+    // list (not the filtered `conversations`) keeps that child discoverable + it renders
+    // flat, matching how archived parents already render. Search still applies.
     const archived = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
         return state.conversations
@@ -877,13 +886,13 @@ function ConversationList({
               ? archived
               : active;
     const hasAnyActive = state.conversations.some(
-        (conversation) => !state.archivedIds.has(conversation.id) && !parentPresent(conversation, ids),
+        (conversation) => !state.archivedIds.has(conversation.id) && rendersAsTopLevelRow(conversation),
     );
     const hasAnyFavorite = state.conversations.some(
         (conversation) =>
             state.favoriteIds.has(conversation.id) &&
             !state.archivedIds.has(conversation.id) &&
-            !parentPresent(conversation, ids),
+            rendersAsTopLevelRow(conversation),
     );
     // Count every archived conversation (parents AND archived children of active parents) so
     // the tab badge matches the flat Archived list they render into (#532).
@@ -895,7 +904,7 @@ function ConversationList({
         (conversation) =>
             effectiveUnread(conversation, state.unreadOverrideIds) &&
             !state.archivedIds.has(conversation.id) &&
-            !parentPresent(conversation, ids),
+            rendersAsTopLevelRow(conversation),
     );
     const menuConversation = roomMenu
         ? state.conversations.find((conversation) => conversation.id === roomMenu.conversationId)
@@ -1173,12 +1182,15 @@ function ConversationList({
                                         tab renders flat (archived parents + archived children as
                                         top-level rows), so an archived child stays discoverable +
                                         unarchivable regardless of its parent's state.
-                                        #533: children are TRANSIENT here — a child row is spliced
-                                        in ONLY while it is running (subagents are one-shot; a done/
-                                        idle child drops out of the sidebar but stays in
-                                        state.conversations so the header pill strip still shows it
-                                        when its parent is selected). The Archived tab is unaffected
-                                        by this active-only gate. */}
+                                        #533/#536: children are TRANSIENT — a child nests here ONLY
+                                        while running (subagents are one-shot; a done/idle child
+                                        drops out of the sidebar but stays in state.conversations so
+                                        the header pill strip still shows it when its parent is
+                                        selected). The gate is childSidebarPlacement — the SAME
+                                        predicate that builds the top-level list above — so the
+                                        nested path and the fallback path stay in lock-step (a done
+                                        child of an ARCHIVED parent can't leak in via either). The
+                                        Archived tab is unaffected. */}
                                     {tab === "archived"
                                         ? visibleRows.map((conversation) => renderConversation(conversation, false))
                                         : visibleRows.flatMap((conversation) => [
@@ -1186,8 +1198,8 @@ function ConversationList({
                                               ...childrenOf(state.conversations, conversation.id)
                                                   .filter(
                                                       (child) =>
-                                                          child.session_state === "running" &&
-                                                          !state.archivedIds.has(child.id),
+                                                          !state.archivedIds.has(child.id) &&
+                                                          childSidebarPlacement(child, ids, allIds) === "nested",
                                                   )
                                                   .map((child) => renderConversation(child, true)),
                                           ])}

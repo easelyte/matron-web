@@ -138,7 +138,10 @@ describe("subchat conversation list", () => {
         expect(names()).toEqual(["Archived child"]);
     });
 
-    it("shows a child as a top-level fallback when its parent is archived", async () => {
+    it("hides a done child whose (archived) parent still exists — not top-level, not in Active (#536)", async () => {
+        // The blocker: a parent that EXISTS but is archived is NOT an orphan, so its done
+        // child must be filtered like any other done child — it must NOT reappear as a
+        // permanent top-level room. (Previously the fallback path bypassed the transient gate.)
         const client = new MatronJournalClient();
         const state = client.getSnapshot();
         (client as unknown as ClientInternals).state = {
@@ -158,10 +161,81 @@ describe("subchat conversation list", () => {
             root.render(React.createElement(MatronApp, { client }));
         });
 
+        const names = (): string[] =>
+            [...container.querySelectorAll('[data-testid="room-name"]')].map((element) => element.textContent ?? "");
+        const clickTab = async (label: string): Promise<void> => {
+            const tab = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListTab")].find((button) =>
+                (button.textContent ?? "").includes(label),
+            );
+            await act(async () => tab?.click());
+        };
+
+        // Active: the archived parent is gone AND its done child does not leak in.
+        expect(names()).toEqual([]);
+        expect(container.textContent).toContain("No active conversations.");
+        // The done child is not archived either, so it appears nowhere in the flat Archived tab.
+        await clickTab("Archived");
+        expect(names()).toEqual(["Root"]);
+    });
+
+    it("keeps a genuinely orphaned child (missing parent) visible top-level regardless of state (#536)", async () => {
+        // Recovery path: only a truly MISSING parent (id absent from state) grants a child
+        // unconditional top-level visibility — even when the child itself is done.
+        const client = new MatronJournalClient();
+        const state = client.getSnapshot();
+        (client as unknown as ClientInternals).state = {
+            ...state,
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [conversation("orphan:child", "Orphan child", "deleted-parent")],
+            selectedConversationId: undefined,
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+
+        await act(async () => {
+            root.render(React.createElement(MatronApp, { client }));
+        });
+
         const names = [...container.querySelectorAll('[data-testid="room-name"]')].map(
             (element) => element.textContent,
         );
-        expect(names).toEqual(["Linked child"]);
+        expect(names).toEqual(["Orphan child"]);
+    });
+
+    it("shows a RUNNING child of an archived parent top-level (transient), not a permanent room (#536)", async () => {
+        // A running child of an archived parent can't nest (its parent isn't an Active row),
+        // so it renders top-level — but per the transient rule, not permanently: once it is
+        // done it is hidden (covered by the archived-parent-done-child test above).
+        const client = new MatronJournalClient();
+        const state = client.getSnapshot();
+        (client as unknown as ClientInternals).state = {
+            ...state,
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("root", "Root"),
+                conversation("root:sub:run", "Running child", "root", "running"),
+            ],
+            archivedIds: new Set(["root"]),
+            selectedConversationId: undefined,
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+
+        await act(async () => {
+            root.render(React.createElement(MatronApp, { client }));
+        });
+
+        // Top-level (NOT nested — its parent is archived, so there is no parent row to nest under).
+        const rows = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListItem")];
+        const names = rows.map((row) => row.querySelector('[data-testid="room-name"]')?.textContent);
+        expect(names).toEqual(["Running child"]);
+        expect(rows[0].classList.contains("mj_RoomListItem_sub")).toBe(false);
     });
 
     it("excludes a linked child's unread override from the active aggregate and mark-all", async () => {

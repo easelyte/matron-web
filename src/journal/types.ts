@@ -276,6 +276,41 @@ export function parentPresent(c: Conversation, ids: ReadonlySet<string>): boolea
     return isSubChat(c) && c.parent_convo_id !== c.id && c.parent_convo_id != null && ids.has(c.parent_convo_id);
 }
 
+export type ChildSidebarPlacement = "nested" | "top-level" | "hidden";
+
+/**
+ * #536: the SINGLE source of truth for where a subagent CHILD lands in the Active/
+ * Favorites sidebar. Children reach the sidebar via two paths — nested under a visible
+ * parent, or as a top-level fallback — and every ad-hoc filter added to one path kept
+ * missing the other (the archived-children round, then the transient-gate round). This
+ * predicate decides a child's fate ONCE so both call sites stay in lock-step.
+ *
+ * Callers pass a child (isSubChat === true). Archived children are NOT decided here —
+ * they belong to the Archived tab exclusively (the archived partition handles them).
+ *
+ *  - parent EXISTS (active OR archived) → TRANSIENT rule: a running child is shown
+ *    (nested when the parent is a visible/non-archived row, else top-level); a done/idle
+ *    child is hidden. Subagents are one-shot, so a finished child must not linger.
+ *  - parent genuinely MISSING (id absent from state — e.g. deleted) → top-level
+ *    regardless of state (orphan recovery path stays).
+ *
+ * The distinction that fixes the recurring blocker: a parent that EXISTS but is archived
+ * is NOT an orphan. Its done children are filtered like any other done child; only a
+ * truly missing parent grants unconditional recovery visibility.
+ */
+export function childSidebarPlacement(
+    child: Conversation,
+    activeParentIds: ReadonlySet<string>,
+    allIds: ReadonlySet<string>,
+): ChildSidebarPlacement {
+    const parentId = child.parent_convo_id;
+    if (parentId == null || parentId === "" || parentId === child.id || !allIds.has(parentId)) {
+        return "top-level"; // orphan / missing parent → recovery visibility, any state
+    }
+    if (child.session_state !== "running") return "hidden"; // parent exists → transient rule
+    return activeParentIds.has(parentId) ? "nested" : "top-level";
+}
+
 export function isNearBottom(scrollTop: number, scrollHeight: number, clientHeight: number, thresholdPx = 80): boolean {
     return scrollHeight - scrollTop - clientHeight <= thresholdPx;
 }
