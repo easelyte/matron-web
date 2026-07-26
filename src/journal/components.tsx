@@ -2049,7 +2049,6 @@ function SubChatHeader({
         selected?.parent_convo_id != null
             ? state.conversations.find((conversation) => conversation.id === selected.parent_convo_id)
             : undefined;
-    const progress = selected?.snippet?.trim();
     const runLabel = running ? "working" : runState || "idle";
     const goBack = (): void => {
         if (!selected) {
@@ -2083,7 +2082,6 @@ function SubChatHeader({
                             of <span className="mj_HeaderParentName">{conversationTitle(parent)}</span>
                         </span>
                     )}
-                    {progress && <span className="mj_HeaderProgress">{progress}</span>}
                     {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runLabel}</span>}
                 </>
             }
