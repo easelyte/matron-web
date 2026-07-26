@@ -2744,15 +2744,29 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
     );
 }
 
-// Queue-release tap echoes are identified by the queued prompt they target,
+const QUEUE_ACTION_OPTION_IDS = new Set(["cancel", "interrupt"]);
+
+function isLegacyQueuePrompt(event: JournalEvent): boolean {
+    if (event.type !== "prompt" || asString(event.payload.kind) === "queued_release") return false;
+    if (!Array.isArray(event.payload.options)) return false;
+    return event.payload.options.some(
+        (option) =>
+            typeof option === "object" &&
+            option !== null &&
+            !Array.isArray(option) &&
+            QUEUE_ACTION_OPTION_IDS.has(asString((option as EventPayload).id)),
+    );
+}
+
+// Queue-control tap echoes are identified by the queued prompt they target,
 // not by their choice value: normal prompts may legitimately use the same
 // choices. Bridge-authored release events are control records too, so neither
 // shape renders as a chat bubble.
-export function isQueuedReleaseReply(event: JournalEvent, queuedReleasePromptSeqs: ReadonlySet<number>): boolean {
+export function isQueuedReleaseReply(event: JournalEvent, queuePromptSeqs: ReadonlySet<number>): boolean {
     if (event.type !== "prompt_reply") return false;
     return (
         asString(event.payload.kind) === "queued_release" ||
-        queuedReleasePromptSeqs.has(asNumber(event.payload.target_seq, Number.NaN))
+        queuePromptSeqs.has(asNumber(event.payload.target_seq, Number.NaN))
     );
 }
 
@@ -3109,23 +3123,24 @@ function Timeline({
         | undefined
     >(undefined);
     const historyScrollRestored = useRef(false);
-    const queuedReleasePromptSeqs = useMemo(
-        () =>
-            new Set(
-                state.events
-                    .filter((event) => event.type === "prompt" && asString(event.payload.kind) === "queued_release")
-                    .map((event) => event.seq),
-            ),
-        [state.events],
-    );
+    const queuePromptSeqs = useMemo(() => {
+        const queuedReleasePromptSeqs = new Set<number>();
+        const legacyQueuePromptSeqs = new Set<number>();
+        for (const event of state.events) {
+            if (event.type !== "prompt") continue;
+            if (asString(event.payload.kind) === "queued_release") queuedReleasePromptSeqs.add(event.seq);
+            else if (isLegacyQueuePrompt(event)) legacyQueuePromptSeqs.add(event.seq);
+        }
+        return new Set([...queuedReleasePromptSeqs, ...legacyQueuePromptSeqs]);
+    }, [state.events]);
     const visibleEvents = useMemo(
         () =>
             state.events.filter(
                 (event) =>
                     !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
-                    !isQueuedReleaseReply(event, queuedReleasePromptSeqs),
+                    !isQueuedReleaseReply(event, queuePromptSeqs),
             ),
-        [state.events, queuedReleasePromptSeqs],
+        [state.events, queuePromptSeqs],
     );
     const timeline = useMemo(
         () =>
@@ -3152,7 +3167,12 @@ function Timeline({
     const releasedActions = useMemo(() => {
         const actions = new Map<string, "send" | "cancel">();
         for (const event of state.events) {
-            if (event.type !== "prompt_reply" || !Array.isArray(event.payload.released)) continue;
+            if (
+                event.type !== "prompt_reply" ||
+                asString(event.payload.kind) !== "queued_release" ||
+                !Array.isArray(event.payload.released)
+            )
+                continue;
             const action = asString(event.payload.action);
             if (action !== "send" && action !== "cancel") continue;
             for (const releasedId of event.payload.released) {
