@@ -1597,10 +1597,13 @@ textarea {
         sans-serif;
 }
 
+/* Preview stretches to the full body width so its L/R edges line up with the file-info
+   row + caption below it (symmetric 16px body padding); object-fit keeps the image
+   aspect, letterboxed on the raised background. */
 .mj_UploadConfirm_preview {
-    max-width: 100%;
+    width: 100%;
     max-height: 50vh;
-    align-self: center;
+    align-self: stretch;
     border: 1px solid var(--cpd-color-border-disabled);
     border-radius: 8px;
     background: var(--cpd-color-bg-subtle-primary);
@@ -1609,13 +1612,13 @@ textarea {
 
 .mj_UploadConfirm_fileMeta {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: var(--cpd-space-3x);
     border: 1px solid var(--cpd-color-border-disabled);
     border-radius: 8px;
     background: var(--cpd-color-bg-subtle-primary);
-    padding: var(--cpd-space-4x);
+    padding: var(--cpd-space-3x) var(--cpd-space-4x);
 }
 
 .mj_UploadConfirm_fileMeta > span:first-of-type {
