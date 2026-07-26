@@ -1565,6 +1565,7 @@ export function HeaderShell({
     hasSubtitle,
     limits,
     rightControls,
+    persistentControls,
     hideControlsWhenCompact = false,
     collapse,
 }: {
@@ -1577,6 +1578,9 @@ export function HeaderShell({
     hasSubtitle: boolean;
     limits?: NonNullable<SessionStatus["limits"]>;
     rightControls?: React.ReactNode;
+    // Rendered even at the compact breakpoint (unlike rightControls) — for affordances
+    // that must not disappear on narrow/mobile where the sidebar menu is also hidden.
+    persistentControls?: React.ReactNode;
     hideControlsWhenCompact?: boolean;
     collapse: { usageCollapsed: boolean; titleCollapsed: boolean };
 }): React.ReactElement {
@@ -1660,10 +1664,12 @@ export function HeaderShell({
                         <UsageCluster limits={limits} now={now} />
                     </div>
                 ) : null}
-                {controls && (Boolean(limits?.length) || Boolean(usageCollapsed && ctxMeter)) && (
-                    <span className="mj_HeaderDivider" aria-hidden="true" />
-                )}
+                {(controls || persistentControls) &&
+                    (Boolean(limits?.length) || Boolean(usageCollapsed && ctxMeter)) && (
+                        <span className="mj_HeaderDivider" aria-hidden="true" />
+                    )}
                 {controls}
+                {persistentControls}
             </div>
         </header>
     );
@@ -1695,13 +1701,25 @@ function HeaderOverflowMenu({
     const isArchived = state.archivedIds.has(id);
     const isUnread = effectiveUnread(conversation, state.unreadOverrideIds);
     const act = (run: () => void): void => {
+        const opener = openerRef.current;
         close();
         run();
-        openerRef.current?.focus();
+        // Defer past the re-render: a non-navigating action (pin/favorite/read) keeps the
+        // opener mounted → restore focus to it; archiving the selected conversation clears
+        // selection and unmounts this whole header, so skip rather than focus a dead node.
+        requestAnimationFrame(() => {
+            if (opener?.isConnected) opener.focus();
+        });
     };
 
     return (
-        <div className="mj_HeaderOverflow">
+        <div
+            className="mj_HeaderOverflow"
+            onBlur={(event) => {
+                // Tab / Shift+Tab out of the menu closes it (focus left the whole control).
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close();
+            }}
+        >
             <button
                 ref={openerRef}
                 type="button"
@@ -1840,25 +1858,34 @@ function ChatHeader({
             }
             hasSubtitle={hasSubtitle}
             rightControls={
-                <>
-                    {status?.context && (
-                        <button
-                            className="mj_CompactButton"
-                            type="button"
-                            aria-label="Compact conversation"
-                            title="Compact the conversation — sends /compact"
-                            onClick={() =>
-                                void client
-                                    .sendMessage("/compact")
-                                    .catch((error) => console.warn("Compact command failed to send:", error))
-                            }
-                        >
-                            <CompactIcon />
-                            <span>Compact</span>
-                        </button>
-                    )}
-                    {conversation && <HeaderOverflowMenu client={client} conversation={conversation} state={state} />}
-                </>
+                status?.context && (
+                    <button
+                        className="mj_CompactButton"
+                        type="button"
+                        aria-label="Compact conversation"
+                        title="Compact the conversation — sends /compact"
+                        onClick={() =>
+                            void client
+                                .sendMessage("/compact")
+                                .catch((error) => console.warn("Compact command failed to send:", error))
+                        }
+                    >
+                        <CompactIcon />
+                        <span>Compact</span>
+                    </button>
+                )
+            }
+            persistentControls={
+                // Keyed by conversation id so a selection change while the menu is open
+                // remounts (and closes) it, instead of silently retargeting the actions.
+                conversation && (
+                    <HeaderOverflowMenu
+                        key={conversation.id}
+                        client={client}
+                        conversation={conversation}
+                        state={state}
+                    />
+                )
             }
             hideControlsWhenCompact
             limits={meters}

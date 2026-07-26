@@ -248,6 +248,13 @@ describe("usage limit accessibility", () => {
             item.textContent?.trim(),
         );
         expect(labels).toEqual(["Pin", "Add to Favorites", "Mark as unread", "Archive"]);
+
+        // Escape closes the menu and returns focus to the trigger.
+        await act(async () => {
+            menu?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        });
+        expect(rendered.container.querySelector('.mj_HeaderOverflow [role="menu"]')).toBeNull();
+        expect(document.activeElement).toBe(trigger);
     });
 });
 
