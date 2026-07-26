@@ -167,9 +167,13 @@ const events: JournalEvent[] = [
         type: "telemetry_snapshot",
         payload: { cpu: 0.42, mem: "1.8GB", note: "unrecognised event → diagnostic card, never hidden" },
     },
+    // A user message so the prompt below starts a NEW section (first-in-section) — this is
+    // the case where a duplicate timestamp (profile row + card header) would show if the
+    // card didn't own its timestamp.
+    { seq: 10, convo_id: "c1", ts: T + 520, sender: "user:operator", type: "text", payload: { body: "go ahead" } },
     {
         // Question card — UNANSWERED (label+time / gutter mail icon + body / Send now·Cancel).
-        seq: 10,
+        seq: 11,
         convo_id: "c1",
         ts: T + 540,
         sender: "agent:claude",
@@ -177,15 +181,15 @@ const events: JournalEvent[] = [
         payload: { question: "Queued (1) — send these now, or cancel and keep editing?", options: ["Send now", "Cancel"] },
     },
     {
-        // Question card — ANSWERED (green check + resolution line); seq 12 reply resolves it.
-        seq: 11,
+        // Question card — ANSWERED (green check + resolution line); seq 13 reply resolves it.
+        seq: 12,
         convo_id: "c1",
         ts: T + 600,
         sender: "agent:claude",
         type: "prompt",
         payload: { question: "Which environment should I deploy to?", options: ["Staging", "Production"] },
     },
-    { seq: 12, convo_id: "c1", ts: T + 660, sender: "user:operator", type: "prompt_reply", payload: { target_seq: 11, choice: "Staging" } },
+    { seq: 13, convo_id: "c1", ts: T + 660, sender: "user:operator", type: "prompt_reply", payload: { target_seq: 12, choice: "Staging" } },
 ];
 
 const client = new MatronJournalClient();

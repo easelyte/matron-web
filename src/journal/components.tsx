@@ -2594,14 +2594,19 @@ function EventRow({
                 <span className="mx_DisambiguatedProfile">
                     <MsgAvatar />
                     <span className="mx_DisambiguatedProfile_displayName">{displaySender(event.sender)}</span>
-                    {/* tool_output owns its timestamp inline (after the exit badge). */}
-                    {event.type !== "tool_output" && (
-                        <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                            <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
-                                {formatTime(event.ts)}
-                            </time>
-                        </a>
-                    )}
+                    {/* tool_output owns its timestamp inline (after the exit badge); prompt /
+                        permission cards own theirs in the card header (§10.2). Suppress the
+                        profile-row time for all three so a first-in-section event never shows
+                        two identical timestamps. */}
+                    {event.type !== "tool_output" &&
+                        event.type !== "prompt" &&
+                        event.type !== "permission_request" && (
+                            <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
+                                <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                                    {formatTime(event.ts)}
+                                </time>
+                            </a>
+                        )}
                 </span>
             )}
             <div className="mx_EventTile_line">
