@@ -238,6 +238,73 @@ describe("subchat conversation list", () => {
         expect(rows[0].classList.contains("mj_RoomListItem_sub")).toBe(false);
     });
 
+    it("does not target a hidden done child of an archived parent in mark-all (#536)", async () => {
+        // Blocker 1: the hidden child has no row and no Mark-all button; mark-all must not
+        // target it either, or its unread override would be stuck with no way to clear it.
+        const client = new MatronJournalClient();
+        const state = client.getSnapshot();
+        (client as unknown as ClientInternals).state = {
+            ...state,
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [conversation("root", "Root"), conversation("root:sub:linked", "Linked child", "root")],
+            archivedIds: new Set(["root"]),
+            unreadOverrideIds: new Set(["root:sub:linked"]),
+            selectedConversationId: undefined,
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+
+        await act(async () => {
+            root.render(React.createElement(MatronApp, { client }));
+        });
+
+        // No Mark-all button (the hidden child is not an active-unread row) and mark-all leaves
+        // the override untouched (the hidden child is never a target).
+        expect(container.querySelector('button[aria-label="Mark all as read"]')).toBeNull();
+        await act(async () => client.markAllRead());
+        expect(client.getSnapshot().unreadOverrideIds).toEqual(new Set(["root:sub:linked"]));
+    });
+
+    it("renders a running grandchild top-level (never lost) and hides a done grandchild (#536)", async () => {
+        // Blocker 2: nesting is capped at one level. A running grandchild (its direct parent is
+        // itself a nested child) can't nest, so it must render TOP-LEVEL rather than being
+        // pulled from the list and never rendered. A done grandchild stays hidden.
+        const client = new MatronJournalClient();
+        const state = client.getSnapshot();
+        (client as unknown as ClientInternals).state = {
+            ...state,
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("gp", "Grandparent", undefined, "running"),
+                conversation("gp:p", "Parent child", "gp", "running"),
+                conversation("gp:p:g", "Grandchild", "gp:p", "running"),
+                conversation("gp:p:g2", "Done grandchild", "gp:p", "done"),
+            ],
+            selectedConversationId: undefined,
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+
+        await act(async () => {
+            root.render(React.createElement(MatronApp, { client }));
+        });
+
+        const rows = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListItem")];
+        const names = rows.map((row) => row.querySelector('[data-testid="room-name"]')?.textContent);
+        // Grandparent, its nested running child, then the running grandchild as a top-level row.
+        // The done grandchild is hidden. No running descendant is lost.
+        expect(names).toEqual(["Grandparent", "↳ Parent child", "Grandchild"]);
+        // The grandchild renders as a top-level row (not an indented subagent row).
+        const grandchildRow = rows[2];
+        expect(grandchildRow.classList.contains("mj_RoomListItem_sub")).toBe(false);
+    });
+
     it("excludes a linked child's unread override from the active aggregate and mark-all", async () => {
         const client = new MatronJournalClient();
         const state = client.getSnapshot();

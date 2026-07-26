@@ -80,6 +80,7 @@ import { normalizePercent, resetDisplay, usageShortLabel, usageOrderRank, usageL
 import {
     asNumber,
     asString,
+    buildSidebarIndex,
     childrenOf,
     childSidebarPlacement,
     type ClientState,
@@ -92,6 +93,7 @@ import {
     type JournalEvent,
     type PendingMessage,
     type RecentFolder,
+    rendersAsTopLevelRow,
     isSubChat,
     type SessionStatus,
     type StagedUploadItem,
@@ -831,24 +833,17 @@ function ConversationList({
         if (!roomMenu) return;
         roomMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     }, [roomMenu]);
-    const ids = new Set(
-        state.conversations
-            .filter((conversation) => !state.archivedIds.has(conversation.id))
-            .map((conversation) => conversation.id),
-    );
-    // Every conversation id (archived AND not) — lets childSidebarPlacement tell a
-    // parent-exists-but-archived child apart from a genuinely orphaned one.
-    const allIds = new Set(state.conversations.map((conversation) => conversation.id));
-    // #536: ONE predicate gates BOTH sidebar paths (top-level fallback + nested splice)
-    // so they can never diverge again. A non-child always renders top-level; a child
-    // renders top-level only when childSidebarPlacement says so (orphan → always; parent
-    // exists → running-only, and then only when it can't nest under a visible parent).
-    const rendersAsTopLevelRow = (conversation: Conversation): boolean =>
-        !isSubChat(conversation) || childSidebarPlacement(conversation, ids, allIds) === "top-level";
+    // #536: ONE canonical index feeds BOTH sidebar paths here (top-level fallback + nested
+    // splice) AND the client-side selection/unread/mark-all consumers, so "rendered" and
+    // "selectable/counted" can never diverge. rendersAsTopLevelRow: a non-child always
+    // renders top-level; a child renders top-level only when childSidebarPlacement says so
+    // (orphan → always; parent exists → running-only, and then only when it can't nest).
+    const sidebarIndex = buildSidebarIndex(state.conversations, state.archivedIds);
+    const isTopLevelRow = (conversation: Conversation): boolean => rendersAsTopLevelRow(conversation, sidebarIndex);
     const conversations = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
         return state.conversations
-            .filter((conversation) => rendersAsTopLevelRow(conversation))
+            .filter((conversation) => isTopLevelRow(conversation))
             .filter(
                 (conversation) =>
                     !normalized ||
@@ -863,10 +858,10 @@ function ConversationList({
         ...activeAll.filter((conversation) => !state.pinnedIds.has(conversation.id)),
     ];
     // #532: the Archived tab lists EVERY archived conversation flat — including an archived
-    // CHILD of an active parent, which `conversations` drops via rendersAsTopLevelRow (so it
-    // can be nested under its live parent in Active). Deriving the archived set from the full
-    // list (not the filtered `conversations`) keeps that child discoverable + it renders
-    // flat, matching how archived parents already render. Search still applies.
+    // CHILD of an active parent, which `conversations` drops via isTopLevelRow (so it can be
+    // nested under its live parent in Active). Deriving the archived set from the full list
+    // (not the filtered `conversations`) keeps that child discoverable + it renders flat,
+    // matching how archived parents already render. Search still applies.
     const archived = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
         return state.conversations
@@ -886,13 +881,13 @@ function ConversationList({
               ? archived
               : active;
     const hasAnyActive = state.conversations.some(
-        (conversation) => !state.archivedIds.has(conversation.id) && rendersAsTopLevelRow(conversation),
+        (conversation) => !state.archivedIds.has(conversation.id) && isTopLevelRow(conversation),
     );
     const hasAnyFavorite = state.conversations.some(
         (conversation) =>
             state.favoriteIds.has(conversation.id) &&
             !state.archivedIds.has(conversation.id) &&
-            rendersAsTopLevelRow(conversation),
+            isTopLevelRow(conversation),
     );
     // Count every archived conversation (parents AND archived children of active parents) so
     // the tab badge matches the flat Archived list they render into (#532).
@@ -904,7 +899,7 @@ function ConversationList({
         (conversation) =>
             effectiveUnread(conversation, state.unreadOverrideIds) &&
             !state.archivedIds.has(conversation.id) &&
-            rendersAsTopLevelRow(conversation),
+            isTopLevelRow(conversation),
     );
     const menuConversation = roomMenu
         ? state.conversations.find((conversation) => conversation.id === roomMenu.conversationId)
@@ -1199,7 +1194,7 @@ function ConversationList({
                                                   .filter(
                                                       (child) =>
                                                           !state.archivedIds.has(child.id) &&
-                                                          childSidebarPlacement(child, ids, allIds) === "nested",
+                                                          childSidebarPlacement(child, sidebarIndex) === "nested",
                                                   )
                                                   .map((child) => renderConversation(child, true)),
                                           ])}

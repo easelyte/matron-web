@@ -11,6 +11,7 @@ import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation
 import { JournalDatabase } from "./database";
 import { mergeSessionStatus } from "./status";
 import {
+    buildSidebarIndex,
     type ClientState,
     type Conversation,
     type DeviceDTO,
@@ -20,8 +21,8 @@ import {
     MESSAGE_EVENT_TYPES,
     normalizeServerUrl,
     type PendingMessage,
-    parentPresent,
     type RecentFolder,
+    rendersAsTopLevelRow,
     type RpcReply,
     type ServerFrame,
     type Session,
@@ -172,19 +173,14 @@ function firstSelectableConversation(
     preferredId: string | undefined,
     archivedIds: Set<string>,
 ): Conversation | undefined {
-    const ids = new Set(
-        conversations
-            .filter((conversation) => !archivedIds.has(conversation.id))
-            .map((conversation) => conversation.id),
-    );
-    const preferred = conversations.find(
-        (conversation) =>
-            conversation.id === preferredId && !archivedIds.has(conversation.id) && !parentPresent(conversation, ids),
-    );
-    return (
-        preferred ??
-        conversations.find((conversation) => !archivedIds.has(conversation.id) && !parentPresent(conversation, ids))
-    );
+    // #536: auto-selection uses the SAME canonical predicate as rendering — a child that
+    // is not a top-level sidebar row (hidden done child, or a nested child) must never be
+    // silently auto-selected on reload; skip to the next selectable top-level row.
+    const index = buildSidebarIndex(conversations, archivedIds);
+    const selectable = (conversation: Conversation): boolean =>
+        !archivedIds.has(conversation.id) && rendersAsTopLevelRow(conversation, index);
+    const preferred = conversations.find((conversation) => conversation.id === preferredId && selectable(conversation));
+    return preferred ?? conversations.find(selectable);
 }
 
 function storeSelectedConversation(session: Session, conversationId: string | undefined): void {
@@ -528,15 +524,14 @@ export class MatronJournalClient {
 
     public markAllRead(): void {
         const previousControlError = this.state.controlError;
-        const ids = new Set(
-            this.state.conversations
-                .filter((conversation) => !this.state.archivedIds.has(conversation.id))
-                .map((conversation) => conversation.id),
-        );
+        // #536: mark-all targets exactly the rows Active renders as top-level (canonical
+        // predicate) — never a hidden done child (no row, no Mark-all button) nor a nested
+        // child, both of which would otherwise leave a stuck, untargetable unread badge.
+        const index = buildSidebarIndex(this.state.conversations, this.state.archivedIds);
         let anyFailed = false;
         for (const conversation of this.state.conversations) {
-            if (parentPresent(conversation, ids)) continue;
             if (this.state.archivedIds.has(conversation.id)) continue;
+            if (!rendersAsTopLevelRow(conversation, index)) continue;
             if (!effectiveUnread(conversation, this.state.unreadOverrideIds)) continue;
             // Single canonical mark-read path; it clears the override and flushes the server read.
             if (!this.markConversationRead(conversation.id)) anyFailed = true;
@@ -1890,13 +1885,16 @@ export class MatronJournalClient {
     }
 
     private emit(): void {
-        const ids = new Set(
-            this.state.conversations
-                .filter((conversation) => !this.state.archivedIds.has(conversation.id))
-                .map((conversation) => conversation.id),
-        );
+        // #536: the desktop badge counts exactly the rows Active renders as top-level
+        // (canonical predicate) — a hidden done child (no row, no way to clear it) and a
+        // nested child both contribute zero, so the badge can never outlive its rows.
+        const index = buildSidebarIndex(this.state.conversations, this.state.archivedIds);
         const unread = this.state.conversations.reduce(
-            (total, conversation) => total + (parentPresent(conversation, ids) ? 0 : conversation.unread_count),
+            (total, conversation) =>
+                total +
+                (!this.state.archivedIds.has(conversation.id) && rendersAsTopLevelRow(conversation, index)
+                    ? conversation.unread_count
+                    : 0),
             0,
         );
         ((window as Window & { electron?: ElectronBadgeBridge }).electron as ElectronBadgeBridge | undefined)?.send(

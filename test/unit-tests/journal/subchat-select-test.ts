@@ -111,15 +111,33 @@ describe("subchat automatic selection", () => {
         expect(client.getSnapshot().selectedConversationId).toBe("missing:sub:orphan");
     });
 
-    it("selects a child as a top-level fallback when its parent is archived", async () => {
-        const conversations = [CONVERSATIONS[0], CONVERSATIONS[1]];
+    it("does NOT auto-select a done child whose archived parent still exists (#536)", async () => {
+        // Blocker 1: the render gate hides a done child of an archived parent, so auto-select
+        // must agree — a hidden child is never a top-level row and must never be silently
+        // selected on reload (invisible selection). With nothing else selectable, selection
+        // is cleared.
+        const conversations = [CONVERSATIONS[0], CONVERSATIONS[1]]; // root (archived) + done child
         const client = new MatronJournalClient();
         storeArchivedIds(SESSION, new Set(["root"]));
         jest.spyOn(JournalDatabase, "open").mockResolvedValue(database(conversations));
 
         await (client as unknown as ClientInternals).startSession(SESSION);
 
-        expect(client.getSnapshot().selectedConversationId).toBe("root:sub:linked");
+        expect(client.getSnapshot().selectedConversationId).toBeUndefined();
+    });
+
+    it("auto-selects a RUNNING child of an archived parent (top-level transient, #536)", async () => {
+        // A running child of an archived parent renders top-level (can't nest), so it IS a
+        // valid selection target — unlike its done sibling above.
+        const runningChild: Conversation = { ...conversation("root:sub:run", "root"), session_state: "running" };
+        const conversations = [conversation("root"), runningChild];
+        const client = new MatronJournalClient();
+        storeArchivedIds(SESSION, new Set(["root"]));
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database(conversations));
+
+        await (client as unknown as ClientInternals).startSession(SESSION);
+
+        expect(client.getSnapshot().selectedConversationId).toBe("root:sub:run");
     });
 
     it("does not apply stale events or send stale viewing after a rapid sibling switch", async () => {
