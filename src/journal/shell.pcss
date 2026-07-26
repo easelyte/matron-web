@@ -583,10 +583,10 @@ button {
 
 .mx_RoomHeader {
     width: 100%;
-    /* v5 mock header band = 58px, zero vertical padding (padding:0 14px). The
-       usage cluster and title cluster are both already 58px, so the old 84px
-       min-height was pure excess top/bottom padding the operator flagged. */
-    min-height: 58px;
+    /* Header band raised to 64px (operator: "a little higher"). At 64 the 36px title
+       block (title+subtitle) and the 36px 2×2 bars block (row-gap 10) both centre to
+       14–50, so title-top == bars-top AND subtitle-bottom == the 5h/wk row bottom. */
+    min-height: 64px;
     box-sizing: border-box;
     padding: 0 12px 0 18px;
     background: var(--cpd-color-bg-canvas-default);

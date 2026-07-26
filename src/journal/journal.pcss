@@ -112,15 +112,15 @@ textarea {
 .mj_HeaderTitleCluster {
     display: flex;
     min-width: 0;
-    min-height: 58px;
+    min-height: 64px;
     flex-direction: column;
-    /* Top-align the title so its top lands on the 2×2 bars' top (the centred 2×2 starts
-       ~14px into the 58px band): operator's "title-top == bars-top". */
-    justify-content: flex-start;
+    /* The title block (title + subtitle = 36px) and the 2×2 bars block (also 36px with
+       row-gap 10) are equal height, so centring both in the 64px band aligns their tops
+       (title-top == bars-top) AND their bottoms (subtitle-bottom == 5h/wk row bottom). */
+    justify-content: center;
     align-items: flex-start;
     justify-self: start;
     gap: 2px;
-    padding-top: 14px;
 }
 
 .mj_HeaderTitleCluster .mx_RoomHeader_heading {
@@ -394,7 +394,7 @@ textarea {
     width: 300px;
     max-width: 100%;
     min-width: 0;
-    height: 58px;
+    height: 64px;
     /* Centre the 2×2 grid vertically so its centre lands on the band centre — which is
        where the Compact pill centres too (operator: bars-centre == Compact-middle). */
     align-items: center;
@@ -408,13 +408,15 @@ textarea {
 }
 
 .mj_UsageCluster .mj_UsageBars {
-    /* v4 mock: 2×2, column-first (ctx/5h left, fbl/wk right), column-gap 16 /
-       row-gap 4. >4 meters flow to further columns, reachable via x-scroll. */
+    /* 2×2, column-first (ctx/5h left, fbl/wk right), column-gap 16. row-gap 10 makes the
+       two-row bars block 36px tall — equal to the title+subtitle block — so their tops
+       and bottoms line up (operator's title-second-line == 5h-row-bottom). >4 meters flow
+       to further columns, reachable via x-scroll. */
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto auto;
     grid-auto-flow: column;
     column-gap: 16px;
-    row-gap: 4px;
+    row-gap: 10px;
     max-height: 100%;
     overflow-x: auto;
     overflow-y: hidden;
