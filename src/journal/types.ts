@@ -282,75 +282,102 @@ export type ChildSidebarPlacement = "nested" | "top-level" | "hidden";
  * #536: precomputed lookups shared by every sidebar-visibility consumer so the SAME
  * classification drives rendering, selection, unread aggregation, the desktop badge, and
  * mark-all. Build it once per derivation from the conversation list + the archived set.
+ * `placement` holds each conversation's fully-resolved Active/Favorites placement (see
+ * buildSidebarIndex) — consumers READ it rather than re-deriving, so no two consumers can
+ * disagree and no approximation of "is the parent a real top-level row" survives.
  */
 export interface SidebarIndex {
-    /** Ids of NON-archived conversations (a present, live parent id). */
-    activeParentIds: Set<string>;
     /** Every conversation id, archived or not — distinguishes archived-parent from orphan. */
     allIds: Set<string>;
-    /** id → conversation, so placement can inspect a child's parent (depth-1 nesting cap). */
+    /** id → conversation. */
     byId: Map<string, Conversation>;
+    /** id → fully-resolved Active/Favorites placement (memoized, cycle-safe). */
+    placement: Map<string, ChildSidebarPlacement>;
 }
 
+/**
+ * #536 (terminal): resolve EVERY conversation's Active/Favorites placement once, through
+ * the SAME recursive classifier, memoized and cycle-safe. This removes the last
+ * approximation — a running child nests ONLY when its direct parent's ACTUAL resolved
+ * placement is "top-level" (a real, rendered top-level row); if the parent is archived,
+ * hidden, or itself nested, the child cannot nest and follows the transient rule directly
+ * (running → "top-level", done/idle → "hidden"). So a running descendant is always
+ * reachable — nested under a real top-level parent, or top-level itself — never lost, at
+ * any tree depth.
+ *
+ * Placement rules per conversation:
+ *  - not a subchat → "top-level" (its Active presence is gated by archived at call sites).
+ *  - subchat, parent missing / self-referential / cyclic → "top-level" (orphan recovery).
+ *  - subchat, parent present, NOT running → "hidden" (one-shot: a finished child lingers
+ *    nowhere in Active).
+ *  - subchat, parent present, running → "nested" iff the parent is a non-archived row whose
+ *    resolved placement is "top-level"; otherwise "top-level".
+ */
 export function buildSidebarIndex(conversations: Conversation[], archivedIds: ReadonlySet<string>): SidebarIndex {
-    const activeParentIds = new Set<string>();
     const allIds = new Set<string>();
     const byId = new Map<string, Conversation>();
     for (const conversation of conversations) {
         allIds.add(conversation.id);
         byId.set(conversation.id, conversation);
-        if (!archivedIds.has(conversation.id)) activeParentIds.add(conversation.id);
     }
-    return { activeParentIds, allIds, byId };
+
+    const placement = new Map<string, ChildSidebarPlacement>();
+    const resolving = new Set<string>(); // in-progress ids → parent-chain cycle guard
+
+    const resolve = (conversation: Conversation): ChildSidebarPlacement => {
+        const cached = placement.get(conversation.id);
+        if (cached) return cached;
+        // Re-entered while its own resolution is in progress → a parent_convo_id cycle. Break
+        // it by treating this node as top-level (recovery) so a running descendant is reachable
+        // and resolution terminates. Not cached here; the outermost call caches the real value.
+        if (resolving.has(conversation.id)) return "top-level";
+
+        if (!isSubChat(conversation)) {
+            placement.set(conversation.id, "top-level");
+            return "top-level";
+        }
+        const parentId = conversation.parent_convo_id;
+        if (parentId == null || parentId === "" || parentId === conversation.id || !allIds.has(parentId)) {
+            placement.set(conversation.id, "top-level"); // orphan / missing parent → recovery
+            return "top-level";
+        }
+        if (conversation.session_state !== "running") {
+            placement.set(conversation.id, "hidden"); // parent present, not running → transient hide
+            return "hidden";
+        }
+        // Running child: nest ONLY under a real top-level row — the parent's ACTUAL resolved
+        // placement, not an approximation. Archived parents are never hosts.
+        resolving.add(conversation.id);
+        const parent = byId.get(parentId);
+        const parentIsTopLevelRow = parent != null && !archivedIds.has(parent.id) && resolve(parent) === "top-level";
+        resolving.delete(conversation.id);
+
+        const result: ChildSidebarPlacement = parentIsTopLevelRow ? "nested" : "top-level";
+        placement.set(conversation.id, result);
+        return result;
+    };
+
+    for (const conversation of conversations) resolve(conversation);
+    return { allIds, byId, placement };
 }
 
 /**
- * #536: the SINGLE source of truth for where a subagent CHILD lands in the Active/
- * Favorites sidebar. Children reach the sidebar via two paths — nested under a visible
- * parent, or as a top-level fallback — and every ad-hoc filter added to one path kept
- * missing the other (archived-children, then the transient gate, then the client-side
- * selection/unread consumers). This predicate decides a child's fate ONCE so all call
- * sites stay in lock-step.
- *
- * Callers pass a child (isSubChat === true). Archived children are NOT decided here —
- * they belong to the Archived tab exclusively (the archived partition handles them).
- *
- *  - parent genuinely MISSING (id absent from state — e.g. deleted) → top-level
- *    regardless of state (orphan recovery path stays).
- *  - parent EXISTS (active OR archived) → TRANSIENT rule: a done/idle child is hidden
- *    (subagents are one-shot, so a finished child must not linger). A running child nests
- *    ONLY under a non-archived TOP-LEVEL row; if the direct parent is archived or is
- *    ITSELF a nested child (a grandchild, deeper than one level), the running descendant
- *    renders TOP-LEVEL instead — nesting is capped at one level, so no running descendant
- *    is ever pulled from the list yet left unrendered.
- *
- * The distinction that fixes the recurring blocker: a parent that EXISTS but is archived
- * is NOT an orphan. Its done children are filtered like any other done child; only a
- * truly missing parent grants unconditional recovery visibility.
+ * #536: the SINGLE source of truth for where a subagent conversation lands in the Active/
+ * Favorites sidebar — a pure lookup of the placement resolved once in buildSidebarIndex, so
+ * all call sites (rendering, selection, unread, badge, mark-all) stay in lock-step. Defaults
+ * to "top-level" for an id absent from the index (orphan-style recovery).
  */
-export function childSidebarPlacement(child: Conversation, index: SidebarIndex): ChildSidebarPlacement {
-    const { activeParentIds, allIds, byId } = index;
-    const parentId = child.parent_convo_id;
-    if (parentId == null || parentId === "" || parentId === child.id || !allIds.has(parentId)) {
-        return "top-level"; // orphan / missing parent → recovery visibility, any state
-    }
-    if (child.session_state !== "running") return "hidden"; // parent exists → transient rule
-    const parent = byId.get(parentId);
-    // Nest ONLY under a non-archived TOP-LEVEL row. A parent that is archived (present but
-    // not in activeParentIds) or is itself a nested child (parentPresent) is not a valid
-    // host, so the running descendant renders top-level — never lost (depth-1 cap).
-    const parentIsTopLevelRow =
-        parent != null && activeParentIds.has(parentId) && !parentPresent(parent, activeParentIds);
-    return parentIsTopLevelRow ? "nested" : "top-level";
+export function childSidebarPlacement(conversation: Conversation, index: SidebarIndex): ChildSidebarPlacement {
+    return index.placement.get(conversation.id) ?? "top-level";
 }
 
 /**
  * #536: the ONE canonical "does this conversation render as a TOP-LEVEL sidebar row?"
- * predicate. A non-child always does; a child does only when childSidebarPlacement says
- * "top-level" (orphan, archived-parent-running, or grandchild-running). Used by rendering,
- * auto-selection, unread aggregation, the desktop badge, and mark-all so a row that is not
- * rendered can never be silently auto-selected or counted. Callers still exclude archived
- * ids separately where a tab or aggregate requires it.
+ * predicate. A non-child always does; a child does only when its resolved placement is
+ * "top-level" (orphan, archived-parent-running, or a running descendant that cannot nest).
+ * Used by rendering, auto-selection, unread aggregation, the desktop badge, and mark-all so
+ * a row that is not rendered can never be silently auto-selected or counted. Callers still
+ * exclude archived ids separately where a tab or aggregate requires it.
  */
 export function rendersAsTopLevelRow(conversation: Conversation, index: SidebarIndex): boolean {
     return !isSubChat(conversation) || childSidebarPlacement(conversation, index) === "top-level";

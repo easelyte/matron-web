@@ -1,4 +1,11 @@
-import { isSubChat, childrenOf, runningChildrenOf, parentPresent } from "../../../src/journal/types";
+import {
+    buildSidebarIndex,
+    childSidebarPlacement,
+    isSubChat,
+    childrenOf,
+    runningChildrenOf,
+    parentPresent,
+} from "../../../src/journal/types";
 import type { Conversation } from "../../../src/journal/types";
 
 const convo = (id: string, extra: Partial<Conversation> = {}): Conversation => ({
@@ -37,5 +44,52 @@ describe("subchat derivations", () => {
         expect(parentPresent(c1, ids)).toBe(true);
         expect(parentPresent(convo("x", { parent_convo_id: "x" }), new Set(["x"]))).toBe(false);
         expect(parentPresent(convo("y", { parent_convo_id: "gone" }), ids)).toBe(false);
+    });
+
+    describe("buildSidebarIndex placement resolution (#536)", () => {
+        const placementOf = (convos: Conversation[], archived: Set<string>, id: string): string =>
+            childSidebarPlacement(convos.find((c) => c.id === id)!, buildSidebarIndex(convos, archived));
+
+        it("resolves a running grandchild rooted at an ARCHIVED parent to top-level (never lost)", () => {
+            // archived A → done child B → running grandchild C. B is 'hidden', so it is NOT a
+            // valid host: C cannot nest and must resolve to top-level (has a row), not vanish.
+            const A = convo("A"); // root (archived below)
+            const B = convo("B", { parent_convo_id: "A", session_state: "done" });
+            const C = convo("C", { parent_convo_id: "B", session_state: "running" });
+            const convos = [A, B, C];
+            const archived = new Set(["A"]);
+            expect(placementOf(convos, archived, "B")).toBe("hidden");
+            expect(placementOf(convos, archived, "C")).toBe("top-level");
+        });
+
+        it("resolves a done grandchild rooted at an archived parent to hidden", () => {
+            const A = convo("A");
+            const B = convo("B", { parent_convo_id: "A", session_state: "done" });
+            const C = convo("C", { parent_convo_id: "B", session_state: "done" });
+            const convos = [A, B, C];
+            expect(placementOf(convos, new Set(["A"]), "C")).toBe("hidden");
+        });
+
+        it("nests a running child under a real top-level parent but not under a nested one", () => {
+            // GP (top-level) → running P (nests) → running grandchild G (parent P is nested, so
+            // G resolves top-level, not nested).
+            const GP = convo("GP", { session_state: "running" });
+            const P = convo("P", { parent_convo_id: "GP", session_state: "running" });
+            const G = convo("G", { parent_convo_id: "P", session_state: "running" });
+            const convos = [GP, P, G];
+            const empty = new Set<string>();
+            expect(placementOf(convos, empty, "P")).toBe("nested");
+            expect(placementOf(convos, empty, "G")).toBe("top-level");
+        });
+
+        it("does not infinite-loop on a parent_convo_id cycle", () => {
+            const A = convo("A", { parent_convo_id: "B", session_state: "running" });
+            const B = convo("B", { parent_convo_id: "A", session_state: "running" });
+            // The guarantee under test is termination; assert it returns a fully-populated index.
+            const index = buildSidebarIndex([A, B], new Set<string>());
+            expect(index.placement.size).toBe(2);
+            expect(["nested", "top-level", "hidden"]).toContain(index.placement.get("A"));
+            expect(["nested", "top-level", "hidden"]).toContain(index.placement.get("B"));
+        });
     });
 });

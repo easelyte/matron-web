@@ -305,6 +305,41 @@ describe("subchat conversation list", () => {
         expect(grandchildRow.classList.contains("mj_RoomListItem_sub")).toBe(false);
     });
 
+    it("renders a running grandchild rooted at an ARCHIVED parent (terminal case, not lost) (#536)", async () => {
+        // The case the parentPresent host approximation lost: archived A → done child B (hidden)
+        // → running grandchild C. B is not a real top-level row, so C must resolve top-level and
+        // get a row — B's "not active" appearance must not be mistaken for host eligibility.
+        const client = new MatronJournalClient();
+        const state = client.getSnapshot();
+        (client as unknown as ClientInternals).state = {
+            ...state,
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("A", "Root A"),
+                conversation("A:B", "Child B", "A", "done"),
+                conversation("A:B:C", "Grandchild C", "A:B", "running"),
+            ],
+            archivedIds: new Set(["A"]),
+            selectedConversationId: undefined,
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+
+        await act(async () => {
+            root.render(React.createElement(MatronApp, { client }));
+        });
+
+        const rows = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListItem")];
+        const names = rows.map((row) => row.querySelector('[data-testid="room-name"]')?.textContent);
+        // Only the running grandchild renders (top-level row); the archived root and the hidden
+        // done child do not.
+        expect(names).toEqual(["Grandchild C"]);
+        expect(rows[0].classList.contains("mj_RoomListItem_sub")).toBe(false);
+    });
+
     it("excludes a linked child's unread override from the active aggregate and mark-all", async () => {
         const client = new MatronJournalClient();
         const state = client.getSnapshot();
