@@ -76,5 +76,26 @@ describe("markdownToPlainText", () => {
             const source = `a_b_${"x".repeat(MARKDOWN_MAX)}`; // > MARKDOWN_MAX chars, no newlines
             expect(markdownToPlainText(source)).toBe(source);
         });
+
+        // The line budget must count CR, LF, and CRLF endings alike — a CR-only / CRLF payload
+        // that stays under the CHAR limit must not slip past and parse.
+        it.each([
+            ["LF", "\n"],
+            ["CR", "\r"],
+            ["CRLF", "\r\n"],
+        ])("returns raw at/over the line limit for %s endings", (_name, eol) => {
+            const source = `- [x] item${eol}`.repeat(MARKDOWN_MAX_LINES);
+            expect(markdownToPlainText(source)).toBe(source);
+        });
+
+        it.each([
+            ["CR", "\r"],
+            ["CRLF", "\r\n"],
+        ])("still parses just under the line limit for %s endings", (_name, eol) => {
+            const source = `- [x] item${eol}`.repeat(MARKDOWN_MAX_LINES - 2);
+            // Parsed → task-list markers preserved (not the raw "- [x]" bullet syntax).
+            expect(markdownToPlainText(source)).toContain("[x] item");
+            expect(markdownToPlainText(source)).not.toContain("- [x]");
+        });
     });
 });

@@ -73,11 +73,12 @@ const HIGHLIGHT_OPTIONS = { languages: CURATED, aliases: ALIASES };
  * this so a ~220KB / 20k-node message never parses on the main thread (~5.6s / 305MB → wedge).
  */
 export function exceedsMarkdownRenderLimit(text: string): boolean {
-    let newlineCount = 0;
-    for (let index = 0; index < text.length && newlineCount < MARKDOWN_MAX_LINES; index += 1) {
-        if (text.charCodeAt(index) === 10) newlineCount += 1;
-    }
-    return text.length > MARKDOWN_MAX || newlineCount >= MARKDOWN_MAX_LINES;
+    if (text.length > MARKDOWN_MAX) return true;
+    // Count logical line endings — CR, LF, and CRLF each as ONE (CRLF matches once, not twice).
+    // Counting only LF let a CR-only / CRLF payload slip past the line budget and still parse
+    // to tens of thousands of nodes → a multi-second main-thread wedge in render AND Copy.
+    const lineEndings = text.match(/\r\n|\r|\n/g)?.length ?? 0;
+    return lineEndings >= MARKDOWN_MAX_LINES;
 }
 
 // Parse markdown SOURCE to an mdast tree with the SAME GFM extensions MarkdownBody renders
