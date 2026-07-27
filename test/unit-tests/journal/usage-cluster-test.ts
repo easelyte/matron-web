@@ -19,8 +19,8 @@ type Limits = NonNullable<SessionStatus["limits"]>;
 let container: HTMLDivElement;
 let root: Root;
 
-async function renderUsage(limits: Limits): Promise<void> {
-    await act(async () => root.render(React.createElement(UsageCluster, { limits })));
+async function renderUsage(limits: Limits, now?: number): Promise<void> {
+    await act(async () => root.render(React.createElement(UsageCluster, { limits, now })));
 }
 
 beforeAll(() => {
@@ -128,6 +128,49 @@ describe("UsageCluster", () => {
         // No used/limit → no raw in valuetext, and no title (no reset here either).
         expect(row.querySelector('[role="progressbar"]')?.getAttribute("aria-valuetext")).toBe("41% used");
         expect(row.getAttribute("title")).toBeNull();
+    });
+
+    it("renders a host vital with a FRESH sampled_at_ms normally (no stale state)", async () => {
+        const now = 1_000_000_000_000;
+        await renderUsage([{ id: "host_cpu", label: "Host CPU", percent: 34, sampled_at_ms: now - 10_000 }], now);
+
+        const row = container.querySelector(".mj_UsageRow")!;
+        expect(row.classList.contains("mj_UsageRow_stale")).toBe(false);
+        // Accessible name is the plain long label; no "last sampled" suffix, no title.
+        expect(row.querySelector('[role="progressbar"]')?.getAttribute("aria-label")).toBe("host CPU");
+        expect(row.getAttribute("title")).toBeNull();
+        expect(row.querySelector(".mj_UsagePercent")?.textContent).toBe("34%");
+    });
+
+    it("dims a host vital with a STALE sampled_at_ms and surfaces the age in aria + title", async () => {
+        const now = 1_000_000_000_000;
+        // 4 minutes old → past HOST_VITALS_STALE_MS (60s).
+        await renderUsage([{ id: "host_cpu", label: "Host CPU", percent: 34, sampled_at_ms: now - 240_000 }], now);
+
+        const row = container.querySelector(".mj_UsageRow")!;
+        expect(row.classList.contains("mj_UsageRow_stale")).toBe(true);
+        expect(row.querySelector('[role="progressbar"]')?.getAttribute("aria-label")).toBe(
+            "host CPU, last sampled 4m ago",
+        );
+        expect(row.getAttribute("title")).toBe("host CPU, last sampled 4m ago");
+        // Still shows the value (no layout shift / hard removal), just dimmed via the class.
+        expect(row.querySelector(".mj_UsagePercent")?.textContent).toBe("34%");
+    });
+
+    it("never applies stale logic to meters WITHOUT sampled_at_ms (ctx/5h/wk/fbl unaffected)", async () => {
+        const now = 1_000_000_000_000;
+        await renderUsage(
+            [
+                { id: "session_5h", label: "Session", percent: 41 },
+                { id: "week_all", label: "Week (all models)", percent: 63 },
+            ],
+            now,
+        );
+
+        for (const row of container.querySelectorAll(".mj_UsageRow")) {
+            expect(row.classList.contains("mj_UsageRow_stale")).toBe(false);
+        }
+        expect(container.querySelector('[role="progressbar"]')?.getAttribute("aria-label")).toBe("5-hour session");
     });
 
     it("uses duplicate-safe row keys", async () => {

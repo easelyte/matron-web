@@ -246,9 +246,12 @@ const state: ClientState = {
         limits: [
             { id: "week_all", label: "Week (all models)", percent: 63, resets: "4d" },
             { id: "session_5h", label: "Session", percent: 41, resets: "3h20" },
-            { id: "host_ram", label: "Host RAM", percent: 55, unit: "%" },
+            // host_ram: FRESH sample (10s old) → renders normally. host_cpu: STALE (4m old,
+            // past HOST_VITALS_STALE_MS=60s) → renders dimmed with "last sampled 4m ago" in the
+            // accessible name. Contact sheet shows the fresh vs stale host-vital states together.
+            { id: "host_ram", label: "Host RAM", percent: 55, unit: "%", sampled_at_ms: Date.now() - 10_000 },
             { id: "week_fable", label: "Week (Fable)", percent: 22, resets: "4d" },
-            { id: "host_cpu", label: "Host CPU", percent: 34, unit: "%" },
+            { id: "host_cpu", label: "Host CPU", percent: 34, unit: "%", sampled_at_ms: Date.now() - 240_000 },
         ],
     },
     archivedIds: archiveStore.read(SESSION).ids,

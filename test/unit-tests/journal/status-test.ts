@@ -6,10 +6,14 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    HOST_VITALS_STALE_MS,
     compactTokens,
+    formatSampleAge,
+    isSampleStale,
     mergeSessionStatus,
     normalizePercent,
     resetDisplay,
+    sampleAgeMs,
     usageAccessibleLabel,
     usageBarLabel,
     usageLevel,
@@ -203,5 +207,28 @@ describe("journal session status presentation", () => {
             limits: [{ label: "Session", percent: 39, resets: "soon" }],
             email: "agent@example.com",
         });
+    });
+
+    it("ages and expires host-vital samples via sampled_at_ms", () => {
+        const now = 1_000_000_000_000;
+        // No sampled_at_ms → no age, never stale (non-host meters / older bridges).
+        expect(sampleAgeMs(undefined, now)).toBeNull();
+        expect(isSampleStale(undefined, now)).toBe(false);
+        // Fresh sample under the threshold → not stale.
+        expect(sampleAgeMs(now - 10_000, now)).toBe(10_000);
+        expect(isSampleStale(now - 10_000, now)).toBe(false);
+        // Exactly at the threshold is NOT yet stale (strictly-greater boundary).
+        expect(isSampleStale(now - HOST_VITALS_STALE_MS, now)).toBe(false);
+        expect(isSampleStale(now - HOST_VITALS_STALE_MS - 1, now)).toBe(true);
+        // Future-stamped sample (clock skew) clamps to 0 age, never stale.
+        expect(sampleAgeMs(now + 5_000, now)).toBe(0);
+        expect(isSampleStale(now + 5_000, now)).toBe(false);
+    });
+
+    it("formats host-vital sample ages for the accessible name", () => {
+        expect(formatSampleAge(30_000)).toBe("just now");
+        expect(formatSampleAge(4 * 60_000)).toBe("4m ago");
+        expect(formatSampleAge(2 * 60 * 60_000)).toBe("2h ago");
+        expect(formatSampleAge(3 * 24 * 60 * 60_000)).toBe("3d ago");
     });
 });

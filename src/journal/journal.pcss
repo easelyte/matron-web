@@ -596,6 +596,15 @@ textarea {
     color: var(--cpd-color-text-secondary);
 }
 
+/* Stale host vitals (host_cpu/host_ram whose `sampled_at_ms` is past HOST_VITALS_STALE_MS):
+   dim the whole row so the value reads as "not live" rather than misleadingly current. Only
+   opacity — no layout shift, keeps the bar in place, and desaturates label + track + fill +
+   percent together in one subtle move (0.45 matches the disabled-control opacity used
+   elsewhere). The real age is exposed via the accessible name + hover title. */
+.mj_UsageRow_stale {
+    opacity: 0.45;
+}
+
 /* Header disclosures (collapsed usage <760, title <560): trigger + hover popover
    wrapped together so the mouse can travel into the panel without dismissing. */
 .mj_HeaderUsageDisclosure {
