@@ -112,6 +112,7 @@ import {
     hasSubagentChildRows,
     type FileKind,
     fileKindFromMime,
+    type HostVitals,
     isNearBottom,
     type MediaDims,
     parseMediaDims,
@@ -1588,9 +1589,10 @@ function useMinuteClock(now?: number): number {
 
 // The usage meter leads with a synthetic "ctx" bar (context-window %), matching
 // the v3/v4 mock where ctx is the first, emphasised meter; the rate limits follow.
-function buildUsageMeters(
+export function buildUsageMeters(
     status: SessionStatus | undefined,
     limits: SessionStatus["limits"] | undefined,
+    hostVitals?: HostVitals | null,
 ): NonNullable<SessionStatus["limits"]> {
     const meters: NonNullable<SessionStatus["limits"]> = [];
     // Synthetic ctx meter carries id "context" (drives short tag / rank / a11y name) plus
@@ -1605,9 +1607,24 @@ function buildUsageMeters(
         });
     }
     if (limits?.length) meters.push(...limits);
+    // Host-global vitals override (#529 3-repo feature): when the host-scoped push is present,
+    // it is the authoritative live figure for host_cpu / host_ram across EVERY conversation —
+    // override each host meter's percent + sample stamp (cpu→host_cpu, ram→host_ram). Absent
+    // (older server/bridge, or no push yet) → keep the per-status `limits` host entries verbatim
+    // (existing behaviour). The overridden sampled_at_ms drives isSampleStale, so a healthy 5s
+    // push keeps the bars un-dimmed; if the push stops, the stamp ages out and the dim fires.
+    const merged = hostVitals
+        ? meters.map((meter) => {
+              if (meter.id === "host_cpu")
+                  return { ...meter, percent: hostVitals.cpu, sampled_at_ms: hostVitals.sampled_at_ms };
+              if (meter.id === "host_ram")
+                  return { ...meter, percent: hostVitals.ram, sampled_at_ms: hostVitals.sampled_at_ms };
+              return meter;
+          })
+        : meters;
     // Normalise to the design's column-first grid order (ctx/5h, fbl/model/wk, cpu/ram);
     // stable so any extra limits keep their relative order after the known ones.
-    return meters
+    return merged
         .map((meter, index) => ({ meter, index }))
         .sort((a, b) => usageOrderRank(a.meter) - usageOrderRank(b.meter) || a.index - b.index)
         .map((entry) => entry.meter);
@@ -2094,7 +2111,7 @@ function ChatHeader({
     const status = state.sessionStatus;
     const runState = conversation?.session_state;
     const limits = status?.limits?.filter((limit) => limit.label.trim());
-    const meters = buildUsageMeters(status, limits);
+    const meters = buildUsageMeters(status, limits, state.hostVitals);
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
     const hasSubtitle = Boolean(status?.model || runState);
     return (
@@ -2171,7 +2188,7 @@ function SubChatHeader({
     const selected = client.selectedConversation();
     const status = state.sessionStatus;
     const limits = status?.limits?.filter((limit) => limit.label.trim());
-    const meters = buildUsageMeters(status, limits);
+    const meters = buildUsageMeters(status, limits, state.hostVitals);
     const runState = selected?.session_state;
     const running = runState === "running";
     const shortModel = status?.model ? shortModelName(status.model) : undefined;

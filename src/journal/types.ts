@@ -133,9 +133,21 @@ export interface ToolStreamPayload {
     };
 }
 
+// Host-global vitals reading (#529 3-repo feature). The journal server pushes this on a
+// host-scoped ephemeral frame (NO convo_id) roughly every 5s; one value drives the
+// host_cpu / host_ram usage bars for EVERY conversation. `sampled_at_ms` is the epoch ms of
+// the reading so the staleness dim (status.ts HOST_VITALS_STALE_MS) still ages it if pushes stop.
+export interface HostVitals {
+    cpu: number;
+    ram: number;
+    sampled_at_ms: number;
+}
+
 export interface JournalEphemeralFrame {
     kind: "ephemeral";
-    convo_id: string;
+    // Host-scoped frames (host_vitals) carry NO convo_id — the client must not gate them on the
+    // selected-conversation guard. Conversation-scoped frames (activity/status/streams) do.
+    convo_id?: string;
     message_ref?: string;
     text?: string;
     replace_text?: string;
@@ -145,6 +157,9 @@ export interface JournalEphemeralFrame {
     };
     tool_stream?: ToolStreamPayload;
     status?: SessionStatus;
+    // Present only on the host-global push (no convo_id). Absent on older servers/bridges →
+    // client falls back to the per-status `limits` host entries + existing staleness dim.
+    host_vitals?: HostVitals;
 }
 
 export type ServerFrame = JournalEvent | JournalControlFrame | JournalEphemeralFrame | JournalRpcFrame;
@@ -273,6 +288,10 @@ export interface ClientState {
     hasOlderHistory: boolean;
     activity?: JournalEphemeralFrame["activity"];
     sessionStatus?: SessionStatus;
+    // Host-global vitals (#529): one host reading (cpu/ram/sample stamp) shared by the whole app,
+    // pushed with no convo_id. Threaded into buildUsageMeters to override the per-status host_cpu /
+    // host_ram meters. Null/undefined → no push yet (or older server) → fall back to per-status limits.
+    hostVitals?: HostVitals | null;
     textStreams: Record<string, string>;
     toolStreams: Record<string, ToolStreamState>;
     dragActive: boolean;
