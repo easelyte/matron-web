@@ -505,6 +505,40 @@ describe("MatronJournalClient state handling", () => {
         });
     });
 
+    it("stores a host-global vitals frame globally, even with no convo_id and no selection", () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        // No selection at all: the host frame must still land, and the convo guard must not misfire.
+        state.state = { ...signedInState(client), selectedConversationId: undefined };
+
+        state.handleEphemeral({
+            kind: "ephemeral",
+            host_vitals: { cpu: 42, ram: 71, sampled_at_ms: 1_000 },
+        });
+
+        expect(client.getSnapshot().hostVitals).toEqual({ cpu: 42, ram: 71, sampled_at_ms: 1_000 });
+    });
+
+    it("does not disturb per-conversation ephemeral state when a host-vitals frame arrives", () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.handleEphemeral({
+            kind: "ephemeral",
+            convo_id: "c1",
+            status: { model: "claude-sonnet" },
+        });
+
+        state.handleEphemeral({
+            kind: "ephemeral",
+            host_vitals: { cpu: 12, ram: 34, sampled_at_ms: 5_000 },
+        });
+
+        // Host frame stored, and the earlier conversation status is untouched.
+        expect(client.getSnapshot().hostVitals).toEqual({ cpu: 12, ram: 34, sampled_at_ms: 5_000 });
+        expect(client.getSnapshot().sessionStatus).toMatchObject({ model: "claude-sonnet" });
+    });
+
     it("mirrors the local id into the outgoing payload for exact reconciliation", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);

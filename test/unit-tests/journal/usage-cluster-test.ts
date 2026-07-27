@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { UsageCluster } from "../../../src/journal/components";
+import { buildUsageMeters, UsageCluster } from "../../../src/journal/components";
 import { worstLimit } from "../../../src/journal/status";
 import { type SessionStatus } from "../../../src/journal/types";
 
@@ -183,5 +183,65 @@ describe("UsageCluster", () => {
 
         expect(container.querySelectorAll(".mj_UsageRow")).toHaveLength(2);
         expect(consoleError.mock.calls.some(([message]) => String(message).includes("same key"))).toBe(false);
+    });
+});
+
+describe("buildUsageMeters host-vitals override (#529)", () => {
+    const perStatusLimits: Limits = [
+        { id: "host_cpu", label: "Host CPU", percent: 10, sampled_at_ms: 1_000 },
+        { id: "host_ram", label: "Host RAM", percent: 20, sampled_at_ms: 1_000 },
+        { id: "session_5h", label: "Session", percent: 41 },
+    ];
+
+    function byId(meters: Limits, id: string): Limits[number] {
+        const found = meters.find((meter) => meter.id === id);
+        if (!found) throw new Error(`meter ${id} not present`);
+        return found;
+    }
+
+    it("overrides host_cpu / host_ram percent + sampled_at_ms from the global value", () => {
+        const meters = buildUsageMeters(undefined, perStatusLimits, {
+            cpu: 77,
+            ram: 88,
+            sampled_at_ms: 9_999,
+        });
+
+        expect(byId(meters, "host_cpu")).toMatchObject({ percent: 77, sampled_at_ms: 9_999 });
+        expect(byId(meters, "host_ram")).toMatchObject({ percent: 88, sampled_at_ms: 9_999 });
+        // Non-host meters are untouched by the override.
+        expect(byId(meters, "session_5h").percent).toBe(41);
+    });
+
+    it("falls back to per-status limits host entries when the global value is absent", () => {
+        for (const absent of [undefined, null]) {
+            const meters = buildUsageMeters(undefined, perStatusLimits, absent);
+            expect(byId(meters, "host_cpu")).toMatchObject({ percent: 10, sampled_at_ms: 1_000 });
+            expect(byId(meters, "host_ram")).toMatchObject({ percent: 20, sampled_at_ms: 1_000 });
+        }
+    });
+
+    it("does not synthesize host meters that are absent from the per-status limits", () => {
+        // Override semantics only: with no host_* entry to override, nothing is added.
+        const meters = buildUsageMeters(undefined, [{ id: "session_5h", label: "Session", percent: 41 }], {
+            cpu: 77,
+            ram: 88,
+            sampled_at_ms: 9_999,
+        });
+        expect(meters.some((meter) => meter.id === "host_cpu" || meter.id === "host_ram")).toBe(false);
+    });
+
+    it("an overridden FRESH sampled_at_ms renders the host bar un-dimmed (staleness safety net)", async () => {
+        const now = 1_000_000_000_000;
+        // Per-status stamp is ancient (would be stale), but the global push is fresh → override wins.
+        const meters = buildUsageMeters(
+            undefined,
+            [{ id: "host_cpu", label: "Host CPU", percent: 12, sampled_at_ms: now - 240_000 }],
+            { cpu: 55, ram: 60, sampled_at_ms: now - 3_000 },
+        );
+
+        await renderUsage(meters, now);
+        const row = container.querySelector(".mj_UsageRow")!;
+        expect(row.classList.contains("mj_UsageRow_stale")).toBe(false);
+        expect(row.querySelector(".mj_UsagePercent")?.textContent).toBe("55%");
     });
 });

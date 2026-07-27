@@ -15,6 +15,7 @@ import {
     type ClientState,
     type Conversation,
     type DeviceDTO,
+    type HostVitals,
     isSubChat,
     type JournalEphemeralFrame,
     type JournalEvent,
@@ -222,6 +223,11 @@ export class MatronJournalClient {
     private readonly history = new Map<string, ConversationHistoryState>();
     private readonly activities = new Map<string, JournalEphemeralFrame["activity"]>();
     private readonly statuses = new Map<string, NonNullable<JournalEphemeralFrame["status"]>>();
+    // Host-global vitals (#529): ONE value for the whole app, keyed to no conversation. Set from
+    // the host-scoped ephemeral push and threaded into every UsageCluster via ClientState.hostVitals
+    // to override the per-status host_cpu / host_ram meters. Null until the first push (or on an
+    // older server that never sends it) → buildUsageMeters falls back to the per-status limits.
+    private hostVitals: HostVitals | null = null;
     private readonly textStreams = new Map<string, Record<string, string>>();
     private readonly toolStreams = new Map<string, Record<string, ToolStreamState>>();
     private readonly retiredStreamRefs = new Set<string>();
@@ -1476,6 +1482,7 @@ export class MatronJournalClient {
             hasOlderHistory: true,
             activity: undefined,
             sessionStatus: undefined,
+            hostVitals: null,
             textStreams: {},
             toolStreams: {},
         });
@@ -1652,35 +1659,47 @@ export class MatronJournalClient {
     }
 
     private handleEphemeral(frame: JournalEphemeralFrame): void {
+        // Host-global vitals push (#529 3-repo feature): host-scoped, NO convo_id. Store the one
+        // value globally and repaint every header. This MUST branch before the selected-conversation
+        // guard below — a host frame has no convo_id, so that guard would drop it (or, when nothing
+        // is selected, both sides are undefined and it would misfire refreshEphemeralState).
+        if (frame.host_vitals) {
+            this.hostVitals = frame.host_vitals;
+            this.patch({ hostVitals: this.hostVitals });
+            return;
+        }
+        // Every remaining branch is conversation-scoped; a frame without convo_id is malformed here.
+        const convoId = frame.convo_id;
+        if (convoId === undefined) return;
         if (frame.activity) {
-            if (frame.activity.state === "idle") this.activities.delete(frame.convo_id);
-            else this.activities.set(frame.convo_id, frame.activity);
+            if (frame.activity.state === "idle") this.activities.delete(convoId);
+            else this.activities.set(convoId, frame.activity);
         }
         if (frame.status) {
-            this.statuses.set(frame.convo_id, mergeSessionStatus(this.statuses.get(frame.convo_id), frame.status));
+            this.statuses.set(convoId, mergeSessionStatus(this.statuses.get(convoId), frame.status));
         }
         if (frame.tool_stream && frame.message_ref) {
-            this.applyToolStream(frame);
+            this.applyToolStream(frame, convoId);
         }
         if (frame.message_ref && (typeof frame.text === "string" || typeof frame.replace_text === "string")) {
-            const key = `${frame.convo_id}:${frame.message_ref}`;
+            const key = `${convoId}:${frame.message_ref}`;
             if (!this.retiredStreamRefs.has(key)) {
-                const streams = this.textStreams.get(frame.convo_id) ?? {};
+                const streams = this.textStreams.get(convoId) ?? {};
                 streams[frame.message_ref] =
                     typeof frame.replace_text === "string"
                         ? frame.replace_text
                         : `${streams[frame.message_ref] ?? ""}${frame.text ?? ""}`;
-                this.textStreams.set(frame.convo_id, streams);
+                this.textStreams.set(convoId, streams);
             }
         }
-        if (frame.convo_id === this.state.selectedConversationId) this.refreshEphemeralState(frame.convo_id);
+        if (convoId === this.state.selectedConversationId) this.refreshEphemeralState(convoId);
     }
 
-    private applyToolStream(frame: JournalEphemeralFrame): void {
+    private applyToolStream(frame: JournalEphemeralFrame, convoId: string): void {
         const payload = frame.tool_stream;
         const messageRef = frame.message_ref;
-        if (!payload || !messageRef || this.retiredStreamRefs.has(`${frame.convo_id}:${messageRef}`)) return;
-        const streams = this.toolStreams.get(frame.convo_id) ?? {};
+        if (!payload || !messageRef || this.retiredStreamRefs.has(`${convoId}:${messageRef}`)) return;
+        const streams = this.toolStreams.get(convoId) ?? {};
         if (payload.event === "end") {
             delete streams[messageRef];
         } else if (payload.event === "sync") {
@@ -1711,7 +1730,7 @@ export class MatronJournalClient {
                 streams[messageRef] = current;
             }
         }
-        this.toolStreams.set(frame.convo_id, streams);
+        this.toolStreams.set(convoId, streams);
     }
 
     private refreshEphemeralState(conversationId: string): void {
@@ -1904,6 +1923,7 @@ export class MatronJournalClient {
         this.history.clear();
         this.activities.clear();
         this.statuses.clear();
+        this.hostVitals = null;
         this.textStreams.clear();
         this.toolStreams.clear();
         this.retiredStreamRefs.clear();
