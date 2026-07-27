@@ -938,10 +938,17 @@ function ConversationList({
         const running = conversation.session_state === "running";
         const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
         // #541: when this parent's subagent rows are collapsed, surface a subtle count of the
-        // hidden (running, non-archived) child rows so the collapse is discoverable on the row
-        // itself. Only parent rows can host children, so subagent rows never show this.
+        // hidden child rows so the collapse is discoverable on the row itself. Gate on the
+        // CANONICAL index (hasSubagentChildRows = parentsWithChildRows) — NOT an independent
+        // running-child count — so it agrees with the menu and the placement derivation. An
+        // archived parent hosts no child rows (its running children are promoted to top-level),
+        // so it is absent from that set → no count, no false "N hidden" even if its collapse
+        // state persisted through archival. The set is only populated for real hosts, so the
+        // running-child count below always measures exactly the rows collapse is suppressing.
         const collapsedSubagentCount =
-            !isSubagent && state.collapsedSubagentParentIds.has(conversation.id)
+            !isSubagent &&
+            state.collapsedSubagentParentIds.has(conversation.id) &&
+            hasSubagentChildRows(conversation, sidebarIndex)
                 ? childrenOf(state.conversations, conversation.id).filter(
                       (child) => !state.archivedIds.has(child.id) && child.session_state === "running",
                   ).length

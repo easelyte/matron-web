@@ -546,4 +546,43 @@ describe("subchat conversation list", () => {
         );
         expect(childRow).toBeUndefined();
     });
+
+    it("an archived parent with persisted collapse shows NO hidden-count; its children promote to top-level", async () => {
+        // Codex #45: collapse P, then archive P. Collapse state persists through archival, but an
+        // archived parent hosts no child rows (running children promote to top-level Active rows).
+        // The count affordance must follow the canonical index — NOT leak a false "N hidden".
+        const client = new MatronJournalClient();
+        (client as unknown as ClientInternals).state = {
+            ...client.getSnapshot(),
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("root", "Root", undefined, "running"),
+                conversation("root:sub:linked", "Linked child", "root", "running"),
+            ],
+            collapsedSubagentParentIds: new Set(["root"]),
+            archivedIds: new Set(["root"]),
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+        const clickTab = async (label: string): Promise<void> => {
+            const tab = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListTab")].find((button) =>
+                (button.textContent ?? "").includes(label),
+            );
+            await act(async () => tab?.click());
+        };
+
+        // Active: the archived parent is gone; its running child promotes to a top-level row
+        // (no ↳ nesting, since the archived parent is not a host). No collapsed-count anywhere.
+        expect(names()).toEqual(["Linked child"]);
+        expect(container.querySelector(".mj_RoomListCollapsedSubs")).toBeNull();
+
+        // Archived tab: the archived parent renders flat WITHOUT any "N subagents hidden" chip.
+        await clickTab("Archived");
+        expect(names()).toEqual(["Root"]);
+        expect(container.querySelector(".mj_RoomListCollapsedSubs")).toBeNull();
+    });
 });
