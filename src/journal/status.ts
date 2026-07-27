@@ -158,6 +158,38 @@ export function usageLevel(percent: number): "low" | "medium" | "high" {
     return "high";
 }
 
+// Host-vitals staleness threshold. The bridge samples host cpu/ram on a 15s cadence but
+// only PUBLISHES on turn-end (and replays the last frame verbatim to new viewers), so on an
+// idle conversation a host reading can be minutes/hours old while displaying as current.
+// 60s = 4× the 15s sample cadence: comfortably past one publish window without flapping on a
+// single skipped tick. Only meters carrying `sampled_at_ms` (host_cpu / host_ram) are aged;
+// ctx/5h/wk/fbl have none → never stale.
+export const HOST_VITALS_STALE_MS = 60_000;
+
+// Age (ms) of a meter's last real sample, or null when the meter carries no `sampled_at_ms`
+// (older bridge, or a non-host meter → no staleness logic). Clamped at 0 so a sample stamped
+// slightly ahead of the client clock never reports a negative age.
+export function sampleAgeMs(sampledAtMs: number | undefined, now: number): number | null {
+    if (sampledAtMs === undefined || !Number.isFinite(sampledAtMs)) return null;
+    return Math.max(0, now - sampledAtMs);
+}
+
+// True when a host reading is old enough to be misleading if shown as live.
+export function isSampleStale(sampledAtMs: number | undefined, now: number): boolean {
+    const age = sampleAgeMs(sampledAtMs, now);
+    return age !== null && age > HOST_VITALS_STALE_MS;
+}
+
+// Human age for the accessible name / hover title, e.g. "3m ago", "2h ago", "1d ago".
+// Called only for stale samples (age > 60s), so sub-minute rendering is unreachable; the
+// "just now" arm is a defensive floor, not a real display state.
+export function formatSampleAge(ageMs: number): string {
+    if (ageMs < 60_000) return "just now";
+    if (ageMs < 60 * 60_000) return `${Math.floor(ageMs / 60_000)}m ago`;
+    if (ageMs < 24 * 60 * 60_000) return `${Math.floor(ageMs / (60 * 60_000))}h ago`;
+    return `${Math.floor(ageMs / (24 * 60 * 60_000))}d ago`;
+}
+
 export function resetDisplay(
     resetsAt: string | number | undefined,
     fallback: string | undefined,

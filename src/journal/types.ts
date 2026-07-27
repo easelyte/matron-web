@@ -180,6 +180,13 @@ export interface SessionStatus {
         // Epoch ms (number, NEW — the bridge adds this alongside the ISO `resets_at`).
         // resetDisplay PREFERS this when present.
         resets_at_ms?: number;
+        // Epoch ms of the last REAL sample for this meter (host vitals only: host_cpu /
+        // host_ram). Host readings only refresh on turn-end and get replayed verbatim to new
+        // viewers, so on an idle conversation the displayed value can be minutes/hours stale
+        // while looking current. When present, the client expires stale readings (renders a
+        // muted state past HOST_VITALS_STALE_MS). Absent on older bridges / non-host meters →
+        // no staleness logic (current behaviour). See status.ts HOST_VITALS_STALE_MS.
+        sampled_at_ms?: number;
     }>;
     email?: string;
 }
