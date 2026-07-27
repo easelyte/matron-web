@@ -546,6 +546,23 @@ button {
     gap: var(--cpd-space-0-5x);
 }
 
+/* #541: collapsed-subagents count on a parent row — a subtle tertiary chevron+count that
+   signals hidden child rows and stays minimal (matches the meta column's muted styling). */
+.mj_RoomListCollapsedSubs {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    color: var(--cpd-color-text-tertiary);
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 14px;
+}
+
+.mj_RoomListCollapsedSubs svg {
+    width: 12px;
+    height: 12px;
+}
+
 .mj_RoomListTime {
     /* v4 meta.xs (timestamp): 11px / 400 / 14px, tertiary ink. */
     color: var(--cpd-color-text-tertiary);

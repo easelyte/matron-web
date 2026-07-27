@@ -111,6 +111,7 @@ function blankState(): ClientState {
         pinnedIds: new Set(),
         favoriteIds: new Set(),
         unreadOverrideIds: new Set(),
+        collapsedSubagentParentIds: new Set(),
         controlError: undefined,
         events: [],
         pendingMessages: [],
@@ -172,11 +173,14 @@ function firstSelectableConversation(
     conversations: Conversation[],
     preferredId: string | undefined,
     archivedIds: Set<string>,
+    collapsedParentIds: ReadonlySet<string>,
 ): Conversation | undefined {
     // #536: auto-selection uses the SAME canonical predicate as rendering — a child that
     // is not a top-level sidebar row (hidden done child, or a nested child) must never be
     // silently auto-selected on reload; skip to the next selectable top-level row.
-    const index = buildSidebarIndex(conversations, archivedIds);
+    // #541: same collapsed set as render/mark-all/badge, so a collapsed (hidden) child is
+    // never auto-selected either.
+    const index = buildSidebarIndex(conversations, archivedIds, collapsedParentIds);
     const selectable = (conversation: Conversation): boolean =>
         !archivedIds.has(conversation.id) && rendersAsTopLevelRow(conversation, index);
     const preferred = conversations.find((conversation) => conversation.id === preferredId && selectable(conversation));
@@ -514,6 +518,19 @@ export class MatronJournalClient {
         this.setFlag(unreadStore, "unreadOverrideIds", id, true);
     }
 
+    /**
+     * #541: toggle whether a parent conversation's subagent child rows are collapsed in the
+     * sidebar. Session-local (no store persistence) — the collapsed set is threaded into every
+     * buildSidebarIndex call, so collapsing suppresses the child rows across render, selection,
+     * unread aggregation, the desktop badge, and mark-all in lock-step.
+     */
+    public toggleSubagentCollapse(parentId: string): void {
+        const next = new Set(this.state.collapsedSubagentParentIds);
+        if (next.has(parentId)) next.delete(parentId);
+        else next.add(parentId);
+        this.patch({ collapsedSubagentParentIds: next });
+    }
+
     public markConversationRead(conversationId: string): boolean {
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
         if (!conversation) return true;
@@ -527,7 +544,11 @@ export class MatronJournalClient {
         // #536: mark-all targets exactly the rows Active renders as top-level (canonical
         // predicate) — never a hidden done child (no row, no Mark-all button) nor a nested
         // child, both of which would otherwise leave a stuck, untargetable unread badge.
-        const index = buildSidebarIndex(this.state.conversations, this.state.archivedIds);
+        const index = buildSidebarIndex(
+            this.state.conversations,
+            this.state.archivedIds,
+            this.state.collapsedSubagentParentIds,
+        );
         let anyFailed = false;
         for (const conversation of this.state.conversations) {
             if (this.state.archivedIds.has(conversation.id)) continue;
@@ -1226,7 +1247,12 @@ export class MatronJournalClient {
         const pinnedIds = pinnedRead.ids;
         const favoriteIds = favoriteRead.ids;
         const unreadOverrideIds = unreadRead.ids;
-        const selectedConversation = firstSelectableConversation(conversations, storedConversationId, archivedIds);
+        const selectedConversation = firstSelectableConversation(
+            conversations,
+            storedConversationId,
+            archivedIds,
+            this.state.collapsedSubagentParentIds,
+        );
         this.state = {
             ...blankState(),
             phase: "signed-in",
@@ -1486,7 +1512,12 @@ export class MatronJournalClient {
                 : !this.storeHydrated.unread
                   ? "unread"
                   : "all";
-        const selectedConversation = firstSelectableConversation(conversations, previousSelection, archivedIds);
+        const selectedConversation = firstSelectableConversation(
+            conversations,
+            previousSelection,
+            archivedIds,
+            this.state.collapsedSubagentParentIds,
+        );
         this.patch({
             conversations,
             archivedIds,
@@ -1888,7 +1919,11 @@ export class MatronJournalClient {
         // #536: the desktop badge counts exactly the rows Active renders as top-level
         // (canonical predicate) — a hidden done child (no row, no way to clear it) and a
         // nested child both contribute zero, so the badge can never outlive its rows.
-        const index = buildSidebarIndex(this.state.conversations, this.state.archivedIds);
+        const index = buildSidebarIndex(
+            this.state.conversations,
+            this.state.archivedIds,
+            this.state.collapsedSubagentParentIds,
+        );
         const unread = this.state.conversations.reduce(
             (total, conversation) =>
                 total +
