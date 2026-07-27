@@ -42,9 +42,15 @@ import {
     CodeBracketsIcon,
     CompactIcon,
     ComposeIcon,
+    ArchiveFileIcon,
+    AudioFileIcon,
     FileEditIcon,
     FileIcon,
+    ImageFileIcon,
     KebabIcon,
+    PdfFileIcon,
+    TextFileIcon,
+    VideoFileIcon,
     MarkdownIcon,
     MarkAllReadIcon,
     MarkReadIcon,
@@ -104,7 +110,11 @@ import {
     displaySender,
     type EventPayload,
     hasSubagentChildRows,
+    type FileKind,
+    fileKindFromMime,
     isNearBottom,
+    type MediaDims,
+    parseMediaDims,
     type JournalEvent,
     type PendingMessage,
     type RecentFolder,
@@ -2585,18 +2595,33 @@ function ToolOutput({ client, event }: { client: MatronJournalClient; event: Jou
     );
 }
 
+// §6: pick a file-tile glyph from the coarse MIME bucket. Generic sheet is the fallback.
+const FILE_KIND_ICON: Record<FileKind, (props: React.SVGProps<SVGSVGElement>) => React.ReactElement> = {
+    image: ImageFileIcon,
+    pdf: PdfFileIcon,
+    text: TextFileIcon,
+    audio: AudioFileIcon,
+    video: VideoFileIcon,
+    archive: ArchiveFileIcon,
+    generic: FileIcon,
+};
+
 function AuthenticatedMedia({
     client,
     mediaId,
     image,
     filename,
     caption,
+    dims,
+    contentType,
 }: {
     client: MatronJournalClient;
     mediaId: string;
     image: boolean;
     filename?: string;
     caption?: string;
+    dims?: MediaDims;
+    contentType?: string;
 }): React.ReactElement {
     const [url, setUrl] = useState<string>();
     const [error, setError] = useState<string>();
@@ -2619,22 +2644,41 @@ function AuthenticatedMedia({
 
     if (error) return <div className="mj_Error">{error}</div>;
     if (image) {
-        return url ? (
+        // Reserve an aspect-ratio box BEFORE the blob decodes so the thread doesn't reflow
+        // when the image finishes loading. `width` seeds the intrinsic size (capped by the
+        // .mj_Image max-width in CSS); `aspectRatio` holds the height. Absent dims → no
+        // reserved box, current fluid behaviour (fallback for un-measured images).
+        const frameStyle: React.CSSProperties | undefined = dims
+            ? { aspectRatio: `${dims.width} / ${dims.height}`, width: dims.width }
+            : undefined;
+        return (
             <figure className="mj_Image">
-                <img src={url} alt={caption || "Shared image"} />
+                <div
+                    className={`mj_ImageFrame${dims ? " mj_ImageFrame_sized" : ""}`}
+                    style={frameStyle}
+                    data-dims={dims ? `${dims.width}x${dims.height}` : undefined}
+                >
+                    {url ? (
+                        <img src={url} alt={caption || "Shared image"} />
+                    ) : (
+                        <div className="mj_MediaLoading">{loading ? "Loading image…" : "Image"}</div>
+                    )}
+                </div>
                 {caption && <figcaption>{caption}</figcaption>}
             </figure>
-        ) : (
-            <div className="mj_MediaLoading">{loading ? "Loading image…" : "Image"}</div>
         );
     }
+    const KindIcon = FILE_KIND_ICON[fileKindFromMime(contentType)];
+    const fileLabel = filename || "Download attachment";
     return url ? (
         <a className="mj_File" href={url} download={filename || "attachment"}>
-            ↓ {filename || "Download attachment"}
+            <KindIcon className="mj_FileIcon" />
+            <span className="mj_FileName">{fileLabel}</span>
         </a>
     ) : (
         <button className="mj_File" onClick={() => void load()} disabled={loading}>
-            ↓ {loading ? "Preparing download…" : filename || "Download attachment"}
+            <KindIcon className="mj_FileIcon" />
+            <span className="mj_FileName">{loading ? "Preparing download…" : fileLabel}</span>
         </button>
     );
 }
@@ -2957,7 +3001,14 @@ export function EventContent({
         case "image": {
             const mediaId = asString(event.payload.blob_ref);
             return mediaId ? (
-                <AuthenticatedMedia client={client} mediaId={mediaId} image caption={asString(event.payload.caption)} />
+                <AuthenticatedMedia
+                    client={client}
+                    mediaId={mediaId}
+                    image
+                    caption={asString(event.payload.caption)}
+                    dims={parseMediaDims(event.payload.dims)}
+                    contentType={asString(event.payload.content_type) || undefined}
+                />
             ) : (
                 <div className="mj_Muted">Image unavailable</div>
             );
@@ -2972,6 +3023,7 @@ export function EventContent({
                             mediaId={mediaId}
                             image={false}
                             filename={asString(event.payload.filename, "attachment")}
+                            contentType={asString(event.payload.content_type) || undefined}
                         />
                     ) : (
                         <span className="mj_Muted">File unavailable</span>

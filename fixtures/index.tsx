@@ -226,6 +226,48 @@ const events: JournalEvent[] = [
         type: "prompt_reply",
         payload: { target_seq: 12, choice: "Staging" },
     },
+    // §6 media fidelity: an image WITH bridge dims → the tile reserves a 3:2 aspect box
+    // before the blob decodes (no thread reflow). blob_ref resolves via the mediaUrl stub.
+    {
+        seq: 14,
+        convo_id: "c1",
+        ts: T + 720,
+        sender: "user:operator",
+        type: "image",
+        payload: { blob_ref: "img-dims", content_type: "image/png", dims: { width: 1200, height: 800 }, size: 184_320 },
+    },
+    // An image WITHOUT dims → fallback, no reserved box (fluid, current behaviour).
+    {
+        seq: 15,
+        convo_id: "c1",
+        ts: T + 760,
+        sender: "user:operator",
+        type: "image",
+        payload: { blob_ref: "img-nodims", content_type: "image/png", caption: "no dims — fluid fallback" },
+    },
+    // A non-image file with a known MIME → PDF affordance + human-readable size.
+    {
+        seq: 16,
+        convo_id: "c1",
+        ts: T + 800,
+        sender: "user:operator",
+        type: "file",
+        payload: {
+            blob_ref: "file-pdf",
+            filename: "deploy-runbook.pdf",
+            content_type: "application/pdf",
+            size: 245_760,
+        },
+    },
+    // A file with unknown/absent MIME → generic affordance (fallback bucket).
+    {
+        seq: 17,
+        convo_id: "c1",
+        ts: T + 840,
+        sender: "user:operator",
+        type: "file",
+        payload: { blob_ref: "file-generic", filename: "archive.bin", size: 51_200 },
+    },
 ];
 
 const client = new MatronJournalClient();
@@ -281,6 +323,12 @@ const PNG_8X8 =
     "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAHElEQVR42mNkYPhfz0AEYBxVSF+Fo25EGwUAaOQF/S2Q6iEAAAAASUVORK5CYII=";
 const imageFile = (name: string): File =>
     new File([Uint8Array.from(atob(PNG_8X8), (c) => c.charCodeAt(0))], name, { type: "image/png" });
+
+// Stub mediaUrl for the §6 thread media events: image tiles decode this data URL (the frame
+// reserves its box from the payload dims regardless of the decoded pixels), file tiles only
+// call mediaUrl on click so their tiles render icon-first without hitting the network.
+(client as unknown as { mediaUrl: (id: string) => Promise<string> }).mediaUrl = async (id: string) =>
+    id.startsWith("img") ? `data:image/png;base64,${PNG_8X8}` : `data:application/octet-stream;base64,`;
 
 // Expose hooks so the Playwright driver can drive states (stage files → upload modal, etc.).
 (window as unknown as { __matron: unknown }).__matron = {

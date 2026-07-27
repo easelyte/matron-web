@@ -285,6 +285,70 @@ export function FileIcon(props: IconProps): React.ReactElement {
     );
 }
 
+// File-kind affordances (§6): the file tile picks one of these from payload.content_type
+// via fileKindFromMime(). All share the folded-sheet silhouette + a kind mark; unknown MIME
+// falls back to the plain FileIcon above.
+export function ImageFileIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+            <path d="M14 2v6h6" />
+            <circle cx="9" cy="13" r="1.3" />
+            <path d="m8 19 3-3 2 2 2-2 3 3" />
+        </Icon>
+    );
+}
+
+export function PdfFileIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+            <path d="M14 2v6h6" />
+            <path d="M8 13v5M8 13h1.5a1.3 1.3 0 0 1 0 2.6H8M13 13v5M13 13h2M13 15.5h1.5M17.5 13v5M17.5 13h1.8" />
+        </Icon>
+    );
+}
+
+export function TextFileIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+            <path d="M14 2v6h6" />
+            <path d="M8 13h8M8 16h8M8 19h5" />
+        </Icon>
+    );
+}
+
+export function AudioFileIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+            <path d="M14 2v6h6" />
+            <path d="M15 12v5.2a1.7 1.7 0 1 1-1.6-1.7H15M15 12l-4 1v4.2a1.7 1.7 0 1 1-1.6-1.7H11" />
+        </Icon>
+    );
+}
+
+export function VideoFileIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+            <path d="M14 2v6h6" />
+            <path d="m10 13 5 3-5 3Z" />
+        </Icon>
+    );
+}
+
+export function ArchiveFileIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+            <path d="M14 2v6h6" />
+            <path d="M11 12v1M11 15v1M11 18v1.5a1 1 0 0 0 2 0V18M11 13h2M11 16h2" />
+        </Icon>
+    );
+}
+
 // Message-context-menu gutter icons (§10.7: every row carries an icon).
 export function ClipboardIcon(props: IconProps): React.ReactElement {
     // Plain "Copy" — a clipboard/overlapping-sheets glyph (design light-message-menu).
