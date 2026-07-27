@@ -116,6 +116,36 @@ const SHOTS_SPEC = [
         clip: ".mx_RoomListPanel",
         setup: async (p) => p.waitForSelector(".mj_RoomListItem_sub"),
     },
+    // #541: manual collapse/expand of a parent's subagent child rows via the row menu.
+    {
+        comp: "sidebar",
+        state: "collapse-menu",
+        clip: ".mx_RoomListPanel",
+        setup: async (p) => {
+            await p.waitForSelector(".mj_RoomListItem_sub");
+            const parent = p.locator(".mj_RoomListItem_wrapper", {
+                has: p.locator('[data-testid="room-name"]', { hasText: "matron-web · deploy" }),
+            });
+            await parent.locator(".mj_RoomListItem").click({ button: "right" });
+            await p.locator('.mj_RoomItemMenu [role="menuitem"]', { hasText: "Collapse subagents" }).waitFor();
+        },
+    },
+    {
+        comp: "sidebar",
+        state: "collapsed",
+        clip: ".mx_RoomListPanel",
+        setup: async (p) => {
+            await p.waitForSelector(".mj_RoomListItem_sub");
+            const parent = p.locator(".mj_RoomListItem_wrapper", {
+                has: p.locator('[data-testid="room-name"]', { hasText: "matron-web · deploy" }),
+            });
+            await parent.locator(".mj_RoomListItem").click({ button: "right" });
+            await p.locator('.mj_RoomItemMenu [role="menuitem"]', { hasText: "Collapse subagents" }).click();
+            // Child rows detach; the parent gains the collapsed-count affordance.
+            await p.locator(".mj_RoomListItem_sub").waitFor({ state: "detached" });
+            await p.waitForSelector(".mj_RoomListCollapsedSubs");
+        },
+    },
     {
         comp: "header",
         state: "usage-align",
@@ -207,8 +237,18 @@ async function labeled(file, text, theme) {
     const label = Buffer.from(
         `<svg width="${w}" height="${LABEL_H}"><rect width="100%" height="100%" fill="${theme === "dark" ? "#16181c" : "#fff"}"/><text x="6" y="18" font-family="monospace" font-size="12" fill="${theme === "dark" ? "#bbb" : "#444"}">${text}</text></svg>`,
     );
-    return sharp({ create: { width: w, height: meta.height + LABEL_H, channels: 4, background: theme === "dark" ? "#16181c" : "#fff" } })
-        .composite([{ input: label, top: 0, left: 0 }, { input: await img.toBuffer(), top: LABEL_H, left: 0 }])
+    return sharp({
+        create: {
+            width: w,
+            height: meta.height + LABEL_H,
+            channels: 4,
+            background: theme === "dark" ? "#16181c" : "#fff",
+        },
+    })
+        .composite([
+            { input: label, top: 0, left: 0 },
+            { input: await img.toBuffer(), top: LABEL_H, left: 0 },
+        ])
         .png()
         .toBuffer();
 }
@@ -223,7 +263,8 @@ async function montageComponent(comp, results) {
     const rows = [];
     for (const state of states) {
         const rowImgs = [];
-        if (hasMock && state === "queue") rowImgs.push(await labeled(mockPath, "MOCK · upload-modal-mock.png", "light"));
+        if (hasMock && state === "queue")
+            rowImgs.push(await labeled(mockPath, "MOCK · upload-modal-mock.png", "light"));
         for (const theme of THEMES) {
             const cell = cells.find((c) => c.state === state && c.theme === theme);
             if (cell) rowImgs.push(await labeled(cell.file, `app · ${comp} · ${state} · ${theme}`, theme));
