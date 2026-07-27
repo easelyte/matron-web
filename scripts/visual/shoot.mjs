@@ -196,6 +196,32 @@ const SHOTS_SPEC = [
             await p.waitForSelector(".mj_SubagentBack");
         },
     },
+    // §6 media tiles: image WITH dims (reserved aspect box), WITHOUT dims (fluid fallback),
+    // and file tiles whose icon comes from the MIME bucket (pdf vs generic).
+    {
+        comp: "media",
+        state: "image-dims",
+        clip: '[data-event-id="14"]',
+        setup: async (p) => p.locator('[data-event-id="14"] .mj_ImageFrame_sized').scrollIntoViewIfNeeded(),
+    },
+    {
+        comp: "media",
+        state: "image-nodims",
+        clip: '[data-event-id="15"]',
+        setup: async (p) => p.locator('[data-event-id="15"] .mj_Image').scrollIntoViewIfNeeded(),
+    },
+    {
+        comp: "media",
+        state: "file-pdf",
+        clip: '[data-event-id="16"]',
+        setup: async (p) => p.locator('[data-event-id="16"] .mj_File').scrollIntoViewIfNeeded(),
+    },
+    {
+        comp: "media",
+        state: "file-generic",
+        clip: '[data-event-id="17"]',
+        setup: async (p) => p.locator('[data-event-id="17"] .mj_File').scrollIntoViewIfNeeded(),
+    },
 ];
 
 const THEMES = ["light", "dark"];
