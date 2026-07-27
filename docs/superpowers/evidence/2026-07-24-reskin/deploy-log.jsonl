@@ -23,3 +23,4 @@
 {"ts":"2026-07-26T23:08:12Z","pr":40,"sha":"3232206","css":"main.153075a7.css","js":"main.f7747650.js","backup":"webapp.bak.20260726T230810Z","note":"usage refinements: host cpu/ram first column, ctx shows % (raw pair -> aria/title), narrow collapse pinned to ctx+5h by id"}
 {"ts":"2026-07-26T23:19:23Z","pr":41,"sha":"d97ce9b","css":"main.27e6f3b8.css","js":"main.f7747650.js","backup":"webapp.bak.20260726T231910Z","note":"drop usage leading-column emphasis (first-child 500/primary-ink rule) — uniform bars per operator"}
 {"ts":"2026-07-26T23:49:29Z","pr":42,"sha":"0dbbbc2","css":"main.7cd1dd51.css","js":"main.f7747650.js","backup":"webapp.bak.20260726T234927Z","note":"subagent strip +1px top padding above pills"}
+{"ts":"2026-07-27T01:06:02Z","pr":43,"css":"main.fe7c38a2.css","js":"main.f7747650.js","backup":"webapp.bak.20260727T010551Z","note":"subagent strip top padding 8->10px (more space above pills)"}
