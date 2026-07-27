@@ -152,7 +152,9 @@ Please see LICENSE files in the repository root for full details.
     --cpd-color-text-action-accent: #2dd4bf;
     --cpd-color-text-critical-primary: #ff6a6a;
     --cpd-color-text-link-external: #2dd4bf;
-    --cpd-color-text-on-accent: #0b201c;
+    /* Accent bg (--cpd-color-bg-accent #0f766e) is identical in both themes, so
+       on-accent text must be white in dark too — near-black failed contrast. */
+    --cpd-color-text-on-accent: #fff;
     --cpd-color-text-on-badge: #fff;
     --cpd-color-text-placeholder: #6d675f;
     --cpd-color-text-primary: #e7e4df;
