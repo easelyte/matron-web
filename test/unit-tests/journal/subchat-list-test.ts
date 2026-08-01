@@ -433,4 +433,156 @@ describe("subchat conversation list", () => {
         await clickTab("Archived");
         expect(childName()).toEqual(["Linked child"]);
     });
+
+    // Manual collapse/expand of subagent child rows via the sidebar row menu.
+    const roomNames = (): string[] =>
+        [...container.querySelectorAll('[data-testid="room-name"]')].map((element) => element.textContent ?? "");
+    const openRowMenu = async (parentName: string): Promise<void> => {
+        const wrapper = [...container.querySelectorAll<HTMLDivElement>(".mj_RoomListItem_wrapper")].find(
+            (element) => element.querySelector('[data-testid="room-name"]')?.textContent === parentName,
+        );
+        const trigger = wrapper?.querySelector<HTMLButtonElement>(".mj_RoomItemMenu_trigger");
+        await act(async () => trigger?.click());
+    };
+    const menuItem = (label: string): HTMLButtonElement | undefined =>
+        [...container.querySelectorAll<HTMLButtonElement>('.mj_RoomItemMenu [role="menuitem"]')].find(
+            (element) => (element.textContent ?? "").trim() === label,
+        );
+
+    it("collapse toggle hides then shows a parent's running subagent child rows", async () => {
+        const client = new MatronJournalClient();
+        (client as unknown as ClientInternals).state = {
+            ...client.getSnapshot(),
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("root", "Root", undefined, "running"),
+                conversation("root:sub:linked", "Linked child", "root", "running"),
+            ],
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+
+        // Expanded (default): the running child nests beneath its parent.
+        expect(roomNames()).toEqual(["Root", "↳ Linked child"]);
+        expect(container.querySelector(".mj_RoomListCollapsedSubs")).toBeNull();
+
+        // Collapse via the row menu → child row suppressed, count affordance appears on the parent.
+        await openRowMenu("Root");
+        expect(menuItem("Show subagents")).toBeUndefined();
+        await act(async () => menuItem("Collapse subagents")!.click());
+        expect(roomNames()).toEqual(["Root"]);
+        expect(container.querySelector(".mj_RoomListCollapsedSubs")?.textContent).toBe("1");
+        // The child is still in the store (reachable via the in-session subagent pills).
+        expect(client.getSnapshot().conversations.some((c) => c.id === "root:sub:linked")).toBe(true);
+        expect(client.getSnapshot().collapsedSubagentParentIds.has("root")).toBe(true);
+
+        // Re-open → the item now offers "Show subagents"; clicking restores the child row.
+        await openRowMenu("Root");
+        expect(menuItem("Collapse subagents")).toBeUndefined();
+        await act(async () => menuItem("Show subagents")!.click());
+        expect(roomNames()).toEqual(["Root", "↳ Linked child"]);
+        expect(container.querySelector(".mj_RoomListCollapsedSubs")).toBeNull();
+    });
+
+    it("shows the collapse item only for a parent that currently hosts child rows", async () => {
+        const client = new MatronJournalClient();
+        (client as unknown as ClientInternals).state = {
+            ...client.getSnapshot(),
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("host", "Host", undefined, "running"),
+                conversation("host:sub:run", "Running child", "host", "running"),
+                // A childless parent + a parent whose only child is done host NO child rows.
+                conversation("solo", "Solo", undefined, "running"),
+                conversation("donep", "DoneParent", undefined, "running"),
+                conversation("donep:sub:done", "Done child", "donep", "done"),
+            ],
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+
+        await openRowMenu("Host");
+        expect(menuItem("Collapse subagents")).toBeDefined();
+
+        await openRowMenu("Solo");
+        expect(menuItem("Collapse subagents")).toBeUndefined();
+        expect(menuItem("Show subagents")).toBeUndefined();
+
+        await openRowMenu("DoneParent");
+        expect(menuItem("Collapse subagents")).toBeUndefined();
+    });
+
+    it("a collapsed child is excluded from sidebar selection/visibility consumers", async () => {
+        const client = new MatronJournalClient();
+        (client as unknown as ClientInternals).state = {
+            ...client.getSnapshot(),
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("root", "Root", undefined, "running"),
+                conversation("root:sub:linked", "Linked child", "root", "running"),
+            ],
+            // Collapsed from the start: the child must not render, so it cannot be clicked/selected.
+            collapsedSubagentParentIds: new Set(["root"]),
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+
+        // No sidebar row exists for the collapsed child → not selectable from the list.
+        expect(roomNames()).toEqual(["Root"]);
+        const childRow = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListItem")].find((row) =>
+            (row.querySelector('[data-testid="room-name"]')?.textContent ?? "").includes("Linked child"),
+        );
+        expect(childRow).toBeUndefined();
+    });
+
+    it("an archived parent with persisted collapse shows NO hidden-count; its children promote to top-level", async () => {
+        // Collapse P, then archive P. Collapse state persists through archival, but an archived
+        // parent hosts no child rows (running children promote to top-level Active rows). The count
+        // affordance must follow the canonical index — NOT leak a false "N hidden".
+        const client = new MatronJournalClient();
+        (client as unknown as ClientInternals).state = {
+            ...client.getSnapshot(),
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("root", "Root", undefined, "running"),
+                conversation("root:sub:linked", "Linked child", "root", "running"),
+            ],
+            collapsedSubagentParentIds: new Set(["root"]),
+            archivedIds: new Set(["root"]),
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+        const clickTab = async (label: string): Promise<void> => {
+            const tab = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListTab")].find((button) =>
+                (button.textContent ?? "").includes(label),
+            );
+            await act(async () => tab?.click());
+        };
+
+        // Active: the archived parent is gone; its running child promotes to a top-level row
+        // (no ↳ nesting, since the archived parent is not a host). No collapsed-count anywhere.
+        expect(roomNames()).toEqual(["Linked child"]);
+        expect(container.querySelector(".mj_RoomListCollapsedSubs")).toBeNull();
+
+        // Archived tab: the archived parent renders flat WITHOUT any "N subagents hidden" chip.
+        await clickTab("Archived");
+        expect(roomNames()).toEqual(["Root"]);
+        expect(container.querySelector(".mj_RoomListCollapsedSubs")).toBeNull();
+    });
 });
