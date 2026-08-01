@@ -2938,7 +2938,23 @@ li.mj_AttachmentChip_error {
 }
 
 .mj_File {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1-5x);
     color: var(--cpd-color-text-link-external);
+    text-align: left;
+}
+
+.mj_FileIcon {
+    flex: 0 0 auto;
+    /* Icon sits on the secondary ink so the MIME bucket reads independent of the link colour. */
+    color: var(--cpd-color-icon-secondary);
+    font-size: 18px;
+}
+
+.mj_FileName {
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 button.mj_File {
@@ -2946,6 +2962,7 @@ button.mj_File {
     background: transparent;
     cursor: pointer;
     padding: 0;
+    font: inherit;
 }
 
 .mj_FileSize {
@@ -2954,6 +2971,35 @@ button.mj_File {
 
 .mj_FileCaption {
     margin-top: 4px;
+}
+
+/* Reflow fix: when the bridge sent dims, the frame carries an inline aspect-ratio + width so
+   its box is reserved before the blob decodes. The sized modifier caps it to the image
+   max-width and holds height via the aspect ratio; the img fills the frame exactly. Without
+   dims the frame is layout-neutral (contents own their size, fluid fallback). */
+.mj_ImageFrame {
+    display: block;
+}
+
+.mj_ImageFrame_sized {
+    max-width: 100%;
+    max-height: 520px;
+    overflow: hidden;
+    border-radius: 6px;
+}
+
+.mj_ImageFrame_sized img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.mj_ImageFrame_sized .mj_MediaLoading {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .mj_Image {

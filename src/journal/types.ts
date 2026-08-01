@@ -438,6 +438,43 @@ export function asNumber(value: unknown, fallback = 0): number {
     return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+// Image intrinsic pixel dimensions. The bridge attaches these (client-measured on the
+// common upload path) to image/file payloads as `dims: { width, height }` so the web
+// client can reserve an aspect-ratio box BEFORE the blob decodes, which avoids the thread
+// reflow that otherwise happens as each image finishes loading.
+export interface MediaDims {
+    width: number;
+    height: number;
+}
+
+// Parse `payload.dims`. Returns undefined when absent or non-positive (bridge-originated
+// images / clients that did not measure) so the caller falls back to the un-reserved render.
+export function parseMediaDims(value: unknown): MediaDims | undefined {
+    if (!isObject(value)) return undefined;
+    const width = asNumber(value.width, 0);
+    const height = asNumber(value.height, 0);
+    return width > 0 && height > 0 ? { width, height } : undefined;
+}
+
+// Coarse file buckets used to pick a file-tile affordance from a MIME type. A few sensible
+// buckets plus a generic fallback; deliberately NOT an exhaustive icon library.
+export type FileKind = "image" | "pdf" | "text" | "audio" | "video" | "archive" | "generic";
+
+const ARCHIVE_MIME = /(zip|tar|gzip|x-7z-compressed|x-rar|x-bzip|compress)/;
+
+// Map a MIME (`payload.content_type`) to a coarse FileKind. Absent/blank maps to "generic".
+export function fileKindFromMime(contentType: unknown): FileKind {
+    const mime = asString(contentType).trim().toLowerCase();
+    if (!mime) return "generic";
+    if (mime.startsWith("image/")) return "image";
+    if (mime.startsWith("audio/")) return "audio";
+    if (mime.startsWith("video/")) return "video";
+    if (mime === "application/pdf") return "pdf";
+    if (mime.startsWith("text/")) return "text";
+    if (ARCHIVE_MIME.test(mime)) return "archive";
+    return "generic";
+}
+
 export function displaySender(sender: string): string {
     const separator = sender.indexOf(":");
     return separator === -1 ? sender : sender.slice(separator + 1);

@@ -9,9 +9,39 @@ import {
     endpointUrl,
     enforceToolLogTtl,
     eventSnippet,
+    fileKindFromMime,
     normalizeServerUrl,
+    parseMediaDims,
     websocketUrl,
 } from "../../../src/journal/types";
+
+describe("matron-journal media payload helpers", () => {
+    it("parses positive dims and rejects absent / non-positive / malformed", () => {
+        expect(parseMediaDims({ width: 1200, height: 800 })).toEqual({ width: 1200, height: 800 });
+        expect(parseMediaDims(undefined)).toBeUndefined();
+        expect(parseMediaDims(null)).toBeUndefined();
+        expect(parseMediaDims({})).toBeUndefined();
+        expect(parseMediaDims({ width: 0, height: 800 })).toBeUndefined();
+        expect(parseMediaDims({ width: 100, height: -1 })).toBeUndefined();
+        expect(parseMediaDims({ width: "1200", height: "800" })).toBeUndefined();
+        expect(parseMediaDims({ width: Number.NaN, height: 10 })).toBeUndefined();
+    });
+
+    it("buckets MIME types into file kinds, falling back to generic", () => {
+        expect(fileKindFromMime("image/png")).toBe("image");
+        expect(fileKindFromMime("application/pdf")).toBe("pdf");
+        expect(fileKindFromMime("text/plain")).toBe("text");
+        expect(fileKindFromMime("audio/mpeg")).toBe("audio");
+        expect(fileKindFromMime("video/mp4")).toBe("video");
+        expect(fileKindFromMime("application/zip")).toBe("archive");
+        expect(fileKindFromMime("application/x-tar")).toBe("archive");
+        expect(fileKindFromMime("APPLICATION/PDF")).toBe("pdf");
+        expect(fileKindFromMime("application/octet-stream")).toBe("generic");
+        expect(fileKindFromMime("")).toBe("generic");
+        expect(fileKindFromMime(undefined)).toBe("generic");
+        expect(fileKindFromMime(42)).toBe("generic");
+    });
+});
 
 describe("matron-journal wire helpers", () => {
     it("normalizes secure and loopback server URLs", () => {
