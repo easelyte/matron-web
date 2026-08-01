@@ -4444,6 +4444,12 @@ function Composer({
                                         const files = [...event.clipboardData.files];
                                         if (files.length > 0) {
                                             event.preventDefault();
+                                            // Consume the paste fully. Staging opens the upload modal, whose
+                                            // useEffect registers a document-level paste listener; React 19
+                                            // flushes that effect synchronously within a trusted paste, so the
+                                            // SAME event would otherwise bubble to the just-mounted listener and
+                                            // stage the file a second time. stopPropagation prevents the double.
+                                            event.stopPropagation();
                                             client.stageFiles(files);
                                         }
                                     }}
