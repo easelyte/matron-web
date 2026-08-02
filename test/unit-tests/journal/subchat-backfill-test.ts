@@ -27,6 +27,7 @@ function conversation(id: string, extra: Partial<Conversation> = {}): Omit<Conve
         id,
         title: "Agent",
         session_state: "running",
+        session_outcome: null,
         last_seq: 5,
         unread_count: 0,
         snippet: "",
@@ -91,13 +92,13 @@ describe("subchat existing-client backfill", () => {
     });
 
     afterEach(() => {
+        jest.useRealTimers();
         jest.restoreAllMocks();
     });
 
     it("marks a fresh snapshot complete so the next startup does not backfill", async () => {
         const snapshotRequest = jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue({
             seq: 5,
-            capabilities: ["session_outcome"],
             conversations: [conversation("c1")],
         });
         const client = new MatronJournalClient();
@@ -116,7 +117,6 @@ describe("subchat existing-client backfill", () => {
         const database = await seedExistingClient();
         const snapshot = {
             seq: 99,
-            capabilities: ["session_outcome"],
             conversations: [conversation("c1", { parent_convo_id: "p1", session_state: "done" })],
         };
         const snapshotRequest = jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue(snapshot);
@@ -142,7 +142,6 @@ describe("subchat existing-client backfill", () => {
         await sealLegacyBackfill();
         const snapshotRequest = jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue({
             seq: 5,
-            capabilities: ["session_outcome"],
             conversations: [conversation("c1", { session_state: "done", session_outcome: "interrupted" })],
         });
         const client = new MatronJournalClient();
@@ -175,23 +174,80 @@ describe("subchat existing-client backfill", () => {
         database.close();
     });
 
-    it("does not seal outcome reconciliation until a snapshot explicitly advertises support", async () => {
+    it("does not wedge or seal outcome reconciliation when snapshot rows omit the outcome field", async () => {
         const database = await seedExistingClient({ session_state: "done", session_outcome: null });
+        const rowWithoutOutcome = conversation("c1", { session_state: "done" });
+        delete rowWithoutOutcome.session_outcome;
 
         await database.backfillParentLinks({
             seq: 6,
-            conversations: [conversation("c1", { session_state: "done" })],
+            conversations: [rowWithoutOutcome],
         });
         expect(await database.backfillDone()).toBe(false);
         expect((await database.conversations())[0]).toMatchObject({ session_outcome: null });
 
         await database.backfillParentLinks({
             seq: 7,
-            capabilities: ["session_outcome"],
             conversations: [conversation("c1", { last_seq: 6, session_state: "done", session_outcome: "interrupted" })],
         });
         expect(await database.backfillDone()).toBe(true);
         expect((await database.conversations())[0]).toMatchObject({ session_outcome: "interrupted" });
+        database.close();
+    });
+
+    it("continues signed-in startup when an outcome-incapable snapshot omits the field", async () => {
+        const database = await seedExistingClient({ session_state: "done", session_outcome: null });
+        const rowWithoutOutcome = conversation("c1", { session_state: "done" });
+        delete rowWithoutOutcome.session_outcome;
+        jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue({ seq: 6, conversations: [rowWithoutOutcome] });
+        const client = new MatronJournalClient();
+
+        await expect(internals(client).startSession(SESSION)).resolves.toBeUndefined();
+
+        expect(client.getSnapshot().phase).toBe("signed-in");
+        expect(await database.backfillDone()).toBe(false);
+        internals(client).connection?.stop();
+        internals(client).database?.close();
+        database.close();
+    });
+
+    it("does not seal when only some snapshot rows carry the outcome field", async () => {
+        const database = await seedExistingClient();
+        const rowWithoutOutcome = conversation("c2");
+        delete rowWithoutOutcome.session_outcome;
+
+        await database.backfillParentLinks({
+            seq: 6,
+            conversations: [conversation("c1", { session_outcome: "completed" }), rowWithoutOutcome],
+        });
+
+        expect(await database.backfillDone()).toBe(false);
+        database.close();
+    });
+
+    it("times out a stalled migration snapshot without wedging startup or sealing", async () => {
+        const database = await seedExistingClient();
+        jest.spyOn(JournalApi.prototype, "snapshot").mockReturnValue(new Promise(() => undefined));
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const realSetTimeout = window.setTimeout.bind(window);
+        const timeoutSpy = jest.spyOn(window, "setTimeout").mockImplementation((handler, timeout, ...args) => {
+            if (timeout === 10_000) {
+                queueMicrotask(() => {
+                    if (typeof handler === "function") handler(...args);
+                });
+                return 1 as unknown as ReturnType<typeof setTimeout>;
+            }
+            return realSetTimeout(handler, timeout, ...args) as unknown as ReturnType<typeof setTimeout>;
+        });
+        const client = new MatronJournalClient();
+
+        await expect(internals(client).startSession(SESSION)).resolves.toBeUndefined();
+
+        expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 10_000);
+        expect(client.getSnapshot().phase).toBe("signed-in");
+        expect(await database.backfillDone()).toBe(false);
+        internals(client).connection?.stop();
+        internals(client).database?.close();
         database.close();
     });
 
@@ -239,12 +295,63 @@ describe("subchat existing-client backfill", () => {
         database.close();
     });
 
+    it("rejects a malformed outcome without sealing a fresh-install backfill", async () => {
+        const database = await JournalDatabase.open(SESSION.serverUrl, SESSION.userId, SESSION.username);
+        const malformed = {
+            seq: 6,
+            conversations: [conversation("c1", { session_outcome: "cancelled" as Conversation["session_outcome"] })],
+        };
+
+        await expect(database.markBackfillDone(malformed)).rejects.toThrow(
+            "malformed session_outcome in snapshot element",
+        );
+
+        expect(await database.backfillDone()).toBe(false);
+        database.close();
+    });
+
+    it("rejects a malformed outcome before applying or sealing the backfill", async () => {
+        const database = await seedExistingClient();
+        const malformed = {
+            seq: 6,
+            conversations: [
+                conversation("c1", {
+                    parent_convo_id: "p1",
+                    session_outcome: "cancelled" as Conversation["session_outcome"],
+                }),
+            ],
+        };
+
+        await expect(database.backfillParentLinks(malformed)).rejects.toThrow(
+            "malformed session_outcome in snapshot element",
+        );
+
+        expect((await database.conversations())[0]).toMatchObject({ parent_convo_id: null, session_outcome: null });
+        expect(await database.backfillDone()).toBe(false);
+        database.close();
+    });
+
+    it("rejects a malformed outcome before replacing a fresh snapshot", async () => {
+        const database = await JournalDatabase.open(SESSION.serverUrl, SESSION.userId, SESSION.username);
+        const malformed = {
+            seq: 6,
+            conversations: [conversation("c1", { session_outcome: 1 as unknown as null })],
+        };
+
+        await expect(database.replaceWithSnapshot(malformed)).rejects.toThrow(
+            "malformed session_outcome in snapshot element",
+        );
+
+        expect(await database.conversations()).toEqual([]);
+        expect(await database.backfillDone()).toBe(false);
+        database.close();
+    });
+
     it("preserves an existing immutable parent when the snapshot reports a different one", async () => {
         const database = await seedExistingClient({ parent_convo_id: "p1" });
 
         await database.backfillParentLinks({
             seq: 6,
-            capabilities: ["session_outcome"],
             conversations: [conversation("c1", { parent_convo_id: "p2", session_state: "done" })],
         });
 
@@ -304,7 +411,6 @@ describe("subchat existing-client backfill", () => {
         // (rather than sealing a possibly-stale state). No throw.
         await database.backfillParentLinks({
             seq: 11,
-            capabilities: ["session_outcome"],
             conversations: [
                 conversation("c1", {
                     last_seq: lastSeq as unknown as number,

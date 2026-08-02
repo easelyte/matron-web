@@ -21,10 +21,23 @@ const CURSOR_KEY = "cursor";
 const BACKFILL_KEY = "subchat_backfill_v1";
 const OUTCOME_BACKFILL_KEY = "session_outcome_backfill_v1";
 const BACKFILL_ERROR_KEY = "subchat_backfill_error";
-const SESSION_OUTCOME_CAPABILITY = "session_outcome";
 
-function snapshotSupportsSessionOutcome(snapshot: SnapshotResponse): boolean {
-    return Array.isArray(snapshot.capabilities) && snapshot.capabilities.includes(SESSION_OUTCOME_CAPABILITY);
+function hasValidSessionOutcome(value: unknown): value is Conversation["session_outcome"] {
+    return value === null || value === "completed" || value === "interrupted" || value === "failed";
+}
+
+function validateSnapshotRows(snapshot: SnapshotResponse): boolean {
+    if (!snapshot || !Array.isArray(snapshot.conversations)) throw new Error("malformed snapshot");
+    let everyRowHasSessionOutcome = true;
+    for (const summary of snapshot.conversations) {
+        if (!summary || typeof summary.id !== "string") throw new Error("malformed snapshot element");
+        if (!Object.prototype.hasOwnProperty.call(summary, "session_outcome")) {
+            everyRowHasSessionOutcome = false;
+        } else if (!hasValidSessionOutcome(summary.session_outcome)) {
+            throw new Error("malformed session_outcome in snapshot element");
+        }
+    }
+    return everyRowHasSessionOutcome;
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
@@ -115,11 +128,8 @@ export class JournalDatabase {
     }
 
     public async backfillParentLinks(snapshot: SnapshotResponse): Promise<void> {
-        if (!snapshot || !Array.isArray(snapshot.conversations)) throw new Error("malformed snapshot");
+        const everyRowHasSessionOutcome = validateSnapshotRows(snapshot);
         const summaries = snapshot.conversations;
-        for (const summary of summaries) {
-            if (!summary || typeof summary.id !== "string") throw new Error("malformed snapshot element");
-        }
 
         // A malformed freshness field (null/NaN/non-number last_seq) makes the terminal-state merge
         // for THAT row unassessable. We must NOT reject the whole snapshot (that would block valid
@@ -160,7 +170,7 @@ export class JournalDatabase {
             if (!deferredForMalformedFreshness) {
                 const meta = transaction.objectStore("meta");
                 meta.put(true, BACKFILL_KEY);
-                if (snapshotSupportsSessionOutcome(snapshot)) meta.put(true, OUTCOME_BACKFILL_KEY);
+                if (everyRowHasSessionOutcome) meta.put(true, OUTCOME_BACKFILL_KEY);
             }
             await transactionDone(transaction);
         } catch (error) {
@@ -178,10 +188,11 @@ export class JournalDatabase {
     }
 
     public async markBackfillDone(snapshot: SnapshotResponse): Promise<void> {
+        const everyRowHasSessionOutcome = validateSnapshotRows(snapshot);
         const transaction = this.database.transaction("meta", "readwrite");
         const meta = transaction.objectStore("meta");
         meta.put(true, BACKFILL_KEY);
-        if (snapshotSupportsSessionOutcome(snapshot)) meta.put(true, OUTCOME_BACKFILL_KEY);
+        if (everyRowHasSessionOutcome) meta.put(true, OUTCOME_BACKFILL_KEY);
         await transactionDone(transaction);
     }
 
@@ -201,6 +212,7 @@ export class JournalDatabase {
     }
 
     public async replaceWithSnapshot(snapshot: SnapshotResponse): Promise<void> {
+        validateSnapshotRows(snapshot);
         const transaction = this.database.transaction(["meta", "conversations", "events", "outbox"], "readwrite");
         const conversations = transaction.objectStore("conversations");
         const existingParents = new Map(

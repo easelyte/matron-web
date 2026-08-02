@@ -38,6 +38,7 @@ const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
 const HISTORY_PAGE_SIZE = 80;
 const RPC_CREATE_WATCHDOG_MS = 10_000;
+const BACKFILL_SNAPSHOT_TIMEOUT_MS = 10_000;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 const MARK_ALL_READ_ERROR = "Some conversations couldn't be updated — device storage is full or unavailable.";
 export const PREFERENCES_UNAVAILABLE_ERROR = "Couldn't load saved preferences — device storage unavailable.";
@@ -1209,7 +1210,18 @@ export class MatronJournalClient {
             if (freshInstall && initialSnapshot && typeof this.database.markBackfillDone === "function") {
                 await this.database.markBackfillDone(initialSnapshot);
             } else if (typeof this.database.backfillDone === "function" && !(await this.database.backfillDone())) {
-                await this.database.backfillParentLinks(await this.api.snapshot());
+                let timeoutTimer: number;
+                const timeout = new Promise<never>((_resolve, reject) => {
+                    timeoutTimer = window.setTimeout(
+                        () => reject(new Error("snapshot backfill timeout")),
+                        BACKFILL_SNAPSHOT_TIMEOUT_MS,
+                    );
+                });
+                try {
+                    await this.database.backfillParentLinks(await Promise.race([this.api.snapshot(), timeout]));
+                } finally {
+                    window.clearTimeout(timeoutTimer!);
+                }
             }
         } catch (error) {
             const permanent = error instanceof Error && error.message.startsWith("malformed");
