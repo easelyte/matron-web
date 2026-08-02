@@ -125,6 +125,36 @@ describe("JournalApi uploadMedia", () => {
     });
 });
 
+describe("JournalApi snapshot", () => {
+    beforeEach(() => {
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    it("forwards cancellation to the browser transport", async () => {
+        let transportSignal: AbortSignal | undefined;
+        fetchMock.mockImplementation(
+            (_url: string, init: RequestInit) =>
+                new Promise((_resolve, reject) => {
+                    transportSignal = init.signal ?? undefined;
+                    init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+                        once: true,
+                    });
+                }),
+        );
+        const api = new JournalApi("https://journal.example", "token");
+        const controller = new AbortController();
+
+        const snapshot = api.snapshot(controller.signal);
+        controller.abort();
+
+        await expect(snapshot).rejects.toMatchObject({ message: "aborted" });
+        expect(transportSignal).toBe(controller.signal);
+        expect(transportSignal?.aborted).toBe(true);
+    });
+});
+
 describe("JournalApi devices", () => {
     beforeAll(() => {
         globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;

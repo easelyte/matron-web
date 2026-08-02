@@ -142,8 +142,8 @@ export class JournalApi {
         });
     }
 
-    public snapshot(): Promise<SnapshotResponse> {
-        return this.json<SnapshotResponse>("/snapshot");
+    public snapshot(signal?: AbortSignal): Promise<SnapshotResponse> {
+        return this.json<SnapshotResponse>("/snapshot", { signal });
     }
 
     public async devices(): Promise<DevicesResponse> {

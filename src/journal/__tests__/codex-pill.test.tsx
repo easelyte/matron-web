@@ -148,6 +148,9 @@ describe("Codex and Claude worker pills", () => {
             conversation("room:codex:review-1", {
                 parent_convo_id: "room",
             }),
+            conversation("room:sub:review-2", {
+                parent_convo_id: "room",
+            }),
         ];
         const client = signedInClient(runningConversations, "room");
 
@@ -166,15 +169,20 @@ describe("Codex and Claude worker pills", () => {
                     session_state: "done",
                     session_outcome: "interrupted",
                 }),
+                conversation("room:sub:review-2", {
+                    parent_convo_id: "room",
+                    session_state: "done",
+                    session_outcome: "failed",
+                }),
             ],
             "room",
         );
         await act(async () => rendered?.root.render(<MatronApp client={finishedClient} />));
 
         expect(rendered.container.querySelector(".mj_RoomListItem_sub")).toBeNull();
-        expect(rendered.container.querySelector(".mj_SubagentOutcomeStatus")?.textContent).toBe(
-            "room:codex:review-1, interrupted",
-        );
+        const liveRegions = rendered.container.querySelectorAll(".mj_SubagentOutcomeStatus");
+        expect(liveRegions).toHaveLength(1);
+        expect(liveRegions[0]?.textContent).toBe("room:sub:review-2, failed");
         expect(rendered.container.querySelector(".mj_SubagentPill")?.getAttribute("aria-label")).toBe(
             "Open subagent room:codex:review-1, interrupted",
         );

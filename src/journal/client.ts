@@ -1210,15 +1210,18 @@ export class MatronJournalClient {
             if (freshInstall && initialSnapshot && typeof this.database.markBackfillDone === "function") {
                 await this.database.markBackfillDone(initialSnapshot);
             } else if (typeof this.database.backfillDone === "function" && !(await this.database.backfillDone())) {
+                const snapshotController = new AbortController();
                 let timeoutTimer: number;
                 const timeout = new Promise<never>((_resolve, reject) => {
-                    timeoutTimer = window.setTimeout(
-                        () => reject(new Error("snapshot backfill timeout")),
-                        BACKFILL_SNAPSHOT_TIMEOUT_MS,
-                    );
+                    timeoutTimer = window.setTimeout(() => {
+                        snapshotController.abort();
+                        reject(new Error("snapshot backfill timeout"));
+                    }, BACKFILL_SNAPSHOT_TIMEOUT_MS);
                 });
                 try {
-                    await this.database.backfillParentLinks(await Promise.race([this.api.snapshot(), timeout]));
+                    await this.database.backfillParentLinks(
+                        await Promise.race([this.api.snapshot(snapshotController.signal), timeout]),
+                    );
                 } finally {
                     window.clearTimeout(timeoutTimer!);
                 }

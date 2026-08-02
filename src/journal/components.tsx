@@ -800,7 +800,31 @@ function ConversationList({
         () => undefined,
     );
     const longPressControllerRef = useRef<LongPressController | undefined>(undefined);
+    const childOutcomesRef = useRef(
+        new Map(
+            state.conversations
+                .filter(isSubChat)
+                .map((conversation) => [conversation.id, classifyOutcome(conversation)] as const),
+        ),
+    );
+    const [outcomeAnnouncement, setOutcomeAnnouncement] = useState<string>();
     const [, forceDayTick] = useReducer((n) => n + 1, 0);
+
+    useEffect(() => {
+        const nextOutcomes = new Map<string, OutcomeClassification>();
+        let latestChange: string | undefined;
+        for (const conversation of state.conversations) {
+            if (!isSubChat(conversation)) continue;
+            const outcome = classifyOutcome(conversation);
+            nextOutcomes.set(conversation.id, outcome);
+            const previous = childOutcomesRef.current.get(conversation.id);
+            if (previous !== undefined && previous !== outcome) {
+                latestChange = `${conversationTitle(conversation)}, ${accessibleOutcome(outcome)}`;
+            }
+        }
+        childOutcomesRef.current = nextOutcomes;
+        if (latestChange !== undefined) setOutcomeAnnouncement(latestChange);
+    }, [state.conversations]);
 
     useEffect(() => {
         const now = new Date();
@@ -1280,17 +1304,16 @@ function ConversationList({
                                         {state.controlError}
                                     </div>
                                 )}
-                                {state.conversations.filter(isSubChat).map((conversation) => (
+                                {outcomeAnnouncement && (
                                     <span
-                                        key={`outcome-status:${conversation.id}`}
                                         className="mj_ScreenReaderOnly mj_SubagentOutcomeStatus"
                                         role="status"
                                         aria-live="polite"
                                         aria-atomic="true"
                                     >
-                                        {`${conversationTitle(conversation)}, ${accessibleOutcome(classifyOutcome(conversation))}`}
+                                        {outcomeAnnouncement}
                                     </span>
-                                ))}
+                                )}
                                 <div
                                     className="mj_RoomList"
                                     data-testid="room-list"
