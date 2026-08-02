@@ -57,6 +57,7 @@ export interface Conversation {
     id: string;
     title: string;
     session_state: string;
+    session_outcome?: "completed" | "interrupted" | "failed" | null;
     last_seq: number;
     unread_count: number;
     snippet: string;

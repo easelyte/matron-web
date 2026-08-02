@@ -41,6 +41,7 @@ function emptyConversation(id: string, timestamp: number): Conversation {
         id,
         title: "",
         session_state: "running",
+        session_outcome: null,
         last_seq: 0,
         unread_count: 0,
         snippet: "",
@@ -114,11 +115,11 @@ export class JournalDatabase {
             if (!summary || typeof summary.id !== "string") throw new Error("malformed snapshot element");
         }
 
-        // A malformed freshness field (null/NaN/non-number last_seq) makes the session_state merge
+        // A malformed freshness field (null/NaN/non-number last_seq) makes the terminal-state merge
         // for THAT row unassessable. We must NOT reject the whole snapshot (that would block valid
         // parent-link repair for every other row — ship-review major 1; the "parent-link backfill
         // unchanged" contract). Instead: repair parent links for all rows, skip only the unassessable
-        // session_state write, and DEFER sealing the completion key so the reconcile retries rather
+        // session_state/session_outcome write, and DEFER sealing the completion key so the reconcile retries rather
         // than sealing a possibly-stale state (phase-1 review — P3 Fail Visible / V6 Classify Errors).
         let deferredForMalformedFreshness = false;
         const transaction = this.database.transaction(["conversations", "meta"], "readwrite");
@@ -132,12 +133,18 @@ export class JournalDatabase {
                 let link = coerceParentId(existing.parent_convo_id) ?? coerceParentId(summary.parent_convo_id);
                 if (link === summary.id) link = null;
                 existing.parent_convo_id = link;
-                if (typeof summary.session_state === "string") {
+                if (typeof summary.session_state === "string" || summary.session_outcome !== undefined) {
                     if (typeof summary.last_seq === "number" && Number.isFinite(summary.last_seq)) {
-                        // Preserve a locally-newer session_state (cross-tab shared-IndexedDB stale-snapshot guard).
-                        if (summary.last_seq >= existing.last_seq) existing.session_state = summary.session_state;
+                        // Preserve locally-newer terminal state (cross-tab shared-IndexedDB stale-snapshot guard).
+                        if (summary.last_seq >= existing.last_seq) {
+                            if (typeof summary.session_state === "string")
+                                existing.session_state = summary.session_state;
+                            if (summary.session_outcome !== undefined) {
+                                existing.session_outcome = summary.session_outcome;
+                            }
+                        }
                     } else {
-                        deferredForMalformedFreshness = true; // skip this row's state; defer sealing below.
+                        deferredForMalformedFreshness = true; // skip this row's state/outcome; defer sealing below.
                     }
                 }
                 conversations.put(existing);
@@ -156,7 +163,7 @@ export class JournalDatabase {
         }
         if (deferredForMalformedFreshness) {
             // Durable evidence of the degraded reconcile (P3 Fail Visible); the unset key drives the retry.
-            await this.recordBackfillError("malformed last_seq in snapshot — session_state merge deferred for retry");
+            await this.recordBackfillError("malformed last_seq in snapshot — terminal-state merge deferred for retry");
         }
     }
 
@@ -281,6 +288,13 @@ export class JournalDatabase {
             }
         } else if (event.type === "session_status" && typeof event.payload.state === "string") {
             conversation.session_state = event.payload.state;
+            if (
+                event.payload.session_outcome === "completed" ||
+                event.payload.session_outcome === "interrupted" ||
+                event.payload.session_outcome === "failed"
+            ) {
+                conversation.session_outcome = event.payload.session_outcome;
+            }
         } else if (MESSAGE_EVENT_TYPES.has(event.type)) {
             conversation.snippet = eventSnippet(event.type, event.payload);
             if (!event.sender.startsWith("user:")) conversation.unread_count += 1;

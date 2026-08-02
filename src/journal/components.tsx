@@ -26,12 +26,14 @@ import {
     errorMessage,
     type MatronJournalClient,
     PREFERENCES_UNAVAILABLE_ERROR,
+    workerKind,
 } from "./client";
 import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
 import {
+    AnthropicMark,
     ArchiveIcon,
     AttachmentIcon,
     CheckIcon,
@@ -45,8 +47,10 @@ import {
     ArchiveFileIcon,
     AudioFileIcon,
     FileEditIcon,
+    FailedIcon,
     FileIcon,
     ImageFileIcon,
+    InterruptedIcon,
     KebabIcon,
     PdfFileIcon,
     TextFileIcon,
@@ -56,6 +60,7 @@ import {
     MarkReadIcon,
     MarkUnreadIcon,
     MicOnIcon,
+    OpenAIMark,
     PinIcon,
     SearchIcon,
     SendIcon,
@@ -716,6 +721,40 @@ export function NewSessionSheet({
     );
 }
 
+function WorkerMark({
+    conversation,
+    className,
+}: {
+    conversation: Conversation;
+    className: string;
+}): React.ReactElement | null {
+    const kind = workerKind(conversation);
+    if (kind === "codex") return <OpenAIMark className={`${className} mj_OpenAIMark`} />;
+    if (kind === "claude") return <AnthropicMark className={`${className} mj_AnthropicMark`} />;
+    return null;
+}
+
+function OutcomeGlyph({
+    conversation,
+    className,
+    spinnerClassName,
+}: {
+    conversation: Conversation;
+    className: string;
+    spinnerClassName?: string;
+}): React.ReactElement {
+    if (conversation.session_state === "running") {
+        return <span className={`mj_Spinner${spinnerClassName ? ` ${spinnerClassName}` : ""}`} aria-hidden="true" />;
+    }
+    if (conversation.session_outcome === "interrupted") {
+        return <InterruptedIcon className={`${className} mj_InterruptedGlyph`} />;
+    }
+    if (conversation.session_outcome === "failed") {
+        return <FailedIcon className={`${className} mj_FailedGlyph`} />;
+    }
+    return <CheckIcon className={`${className} mj_CompletedGlyph`} aria-hidden="true" />;
+}
+
 function ConversationList({
     client,
     state,
@@ -949,7 +988,6 @@ function ConversationList({
         const overrideUnread = state.unreadOverrideIds.has(conversation.id) && conversation.unread_count === 0;
         const unread = effectiveUnread(conversation, state.unreadOverrideIds);
         const name = conversationTitle(conversation);
-        const running = conversation.session_state === "running";
         const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
         // #541: when this parent's subagent rows are collapsed, surface a subtle count of the
         // hidden child rows so the collapse is discoverable on the row itself. Gate on the
@@ -1017,15 +1055,18 @@ function ConversationList({
                         if (event.pointerType === "touch") cancelLongPress();
                     }}
                 >
-                    {/* §118 leading-glyph precedence. Subagent rows: spinner while running,
-                        else an idle dot (they aren't pinned/favourited). Parent rows keep the
-                        shipped pin-or-status behaviour (star renders separately before the meta). */}
+                    {/* §118 leading-glyph precedence. Subagent rows identify the worker and its
+                        live/terminal outcome. Parent rows keep the shipped pin-or-status behaviour
+                        (star renders separately before the meta). */}
                     {isSubagent ? (
-                        running ? (
-                            <span className="mj_Spinner mj_RoomListSubSpinner" aria-hidden="true" />
-                        ) : (
-                            <span className="mj_RoomListStatus mj_RoomListStatus_idle" aria-hidden="true" />
-                        )
+                        <span className="mj_RoomListWorkerGlyphs" aria-hidden="true">
+                            <WorkerMark conversation={conversation} className="mj_WorkerMark mj_RoomListWorkerMark" />
+                            <OutcomeGlyph
+                                conversation={conversation}
+                                className="mj_RoomListOutcomeGlyph"
+                                spinnerClassName="mj_RoomListSubSpinner"
+                            />
+                        </span>
                     ) : state.pinnedIds.has(conversation.id) ? (
                         <span className="mj_RoomListPinGlyph">
                             <PinIcon aria-hidden />
@@ -4930,11 +4971,8 @@ export function SubagentStrip({
                                     disabled={isCurrent}
                                     onClick={() => void client.selectConversation(child.id)}
                                 >
-                                    {isRunning ? (
-                                        <span className="mj_Spinner" aria-hidden="true" />
-                                    ) : (
-                                        <CheckIcon className="mj_SubagentPill_icon" aria-hidden="true" />
-                                    )}
+                                    <WorkerMark conversation={child} className="mj_WorkerMark mj_SubagentPill_icon" />
+                                    <OutcomeGlyph conversation={child} className="mj_SubagentPill_icon" />
                                     <span className="mj_SubagentPill_name">{conversationTitle(child)}</span>
                                 </button>
                             </div>

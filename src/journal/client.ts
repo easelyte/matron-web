@@ -95,6 +95,13 @@ export type StartOutcome =
     | { kind: "error"; message: string }
     | { kind: "uncertain" };
 
+export type WorkerKind = "claude" | "codex";
+
+export function workerKind(conversation: Conversation): WorkerKind | null {
+    if (!isSubChat(conversation)) return null;
+    return /:codex:[^:]+$/.test(conversation.id) ? "codex" : "claude";
+}
+
 function deviceName(): string {
     if ((window as Window & { electron?: unknown }).electron) {
         const platform = navigator.platform || "computer";
