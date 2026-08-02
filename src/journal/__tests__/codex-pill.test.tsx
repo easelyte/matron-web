@@ -107,6 +107,9 @@ describe("Codex and Claude worker pills", () => {
                 session_state: "done",
                 session_outcome: null,
             }),
+            conversation("room:codex:waiting", { parent_convo_id: "room", session_state: "waiting" }),
+            conversation("room:sub:archived", { parent_convo_id: "room", session_state: "archived" }),
+            conversation("room:codex:unknown", { parent_convo_id: "room", session_state: "future-state" }),
         ];
         const client = signedInClient(conversations, "room");
 
@@ -125,26 +128,55 @@ describe("Codex and Claude worker pills", () => {
         expect(pills.get("room:codex:interrupted")?.querySelector(".mj_InterruptedGlyph")).not.toBeNull();
         expect(pills.get("room:sub:failed")?.querySelector(".mj_FailedGlyph")).not.toBeNull();
         expect(pills.get("room:codex:legacy")?.querySelector(".mj_CompletedGlyph")).not.toBeNull();
+        for (const name of ["room:codex:waiting", "room:sub:archived", "room:codex:unknown"]) {
+            expect(pills.get(name)?.querySelector(".mj_InactiveOutcomeGlyph")).not.toBeNull();
+            expect(pills.get(name)?.querySelector(".mj_CompletedGlyph")).toBeNull();
+            expect(pills.get(name)?.getAttribute("aria-label")).toBe(`Open subagent ${name}, status unknown`);
+        }
+        expect(pills.get("room:codex:running")?.getAttribute("aria-label")).toContain(", running");
+        expect(pills.get("room:sub:completed")?.getAttribute("aria-label")).toContain(", completed");
+        expect(pills.get("room:codex:interrupted")?.getAttribute("aria-label")).toContain(", interrupted");
+        expect(pills.get("room:sub:failed")?.getAttribute("aria-label")).toContain(", failed");
         for (const mark of rendered.container.querySelectorAll<SVGSVGElement>(".mj_WorkerMark")) {
             expect(mark.getAttribute("fill")).toBe("currentColor");
         }
     });
 
-    it("renders the mark and terminal glyph in a sidebar subagent row", async () => {
-        const conversations = [
+    it("labels sidebar state and announces a terminal transition after its row leaves", async () => {
+        const runningConversations = [
             conversation("room"),
             conversation("room:codex:review-1", {
                 parent_convo_id: "room",
-                session_state: "done",
-                session_outcome: "interrupted",
             }),
         ];
-        const client = signedInClient(conversations, "room");
+        const client = signedInClient(runningConversations, "room");
 
         rendered = await render(<MatronApp client={client} />);
 
         const row = rendered.container.querySelector(".mj_RoomListItem_sub");
         expect(row?.querySelector(".mj_OpenAIMark")).not.toBeNull();
-        expect(row?.querySelector(".mj_InterruptedGlyph")).not.toBeNull();
+        expect(row?.querySelector(".mj_Spinner")).not.toBeNull();
+        expect(row?.getAttribute("aria-label")).toContain(", running,");
+
+        const finishedClient = signedInClient(
+            [
+                conversation("room"),
+                conversation("room:codex:review-1", {
+                    parent_convo_id: "room",
+                    session_state: "done",
+                    session_outcome: "interrupted",
+                }),
+            ],
+            "room",
+        );
+        await act(async () => rendered?.root.render(<MatronApp client={finishedClient} />));
+
+        expect(rendered.container.querySelector(".mj_RoomListItem_sub")).toBeNull();
+        expect(rendered.container.querySelector(".mj_SubagentOutcomeStatus")?.textContent).toBe(
+            "room:codex:review-1, interrupted",
+        );
+        expect(rendered.container.querySelector(".mj_SubagentPill")?.getAttribute("aria-label")).toBe(
+            "Open subagent room:codex:review-1, interrupted",
+        );
     });
 });

@@ -118,6 +118,15 @@ export function CheckIcon(props: IconProps): React.ReactElement {
     );
 }
 
+export function InactiveIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <circle cx="12" cy="12" r="7" />
+            <path d="M9 12h6" />
+        </Icon>
+    );
+}
+
 export function AnthropicMark(props: IconProps): React.ReactElement {
     return (
         <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" aria-hidden="true" {...props}>

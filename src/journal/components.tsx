@@ -50,6 +50,7 @@ import {
     FailedIcon,
     FileIcon,
     ImageFileIcon,
+    InactiveIcon,
     InterruptedIcon,
     KebabIcon,
     PdfFileIcon,
@@ -734,6 +735,21 @@ function WorkerMark({
     return null;
 }
 
+type OutcomeClassification = "running" | "completed" | "interrupted" | "failed" | "inactive";
+
+function classifyOutcome(conversation: Conversation): OutcomeClassification {
+    if (conversation.session_state === "running") return "running";
+    if (conversation.session_state !== "done") return "inactive";
+    if (conversation.session_outcome === "interrupted") return "interrupted";
+    if (conversation.session_outcome === "failed") return "failed";
+    if (conversation.session_outcome === "completed" || conversation.session_outcome == null) return "completed";
+    return "inactive";
+}
+
+function accessibleOutcome(classification: OutcomeClassification): string {
+    return classification === "inactive" ? "status unknown" : classification;
+}
+
 function OutcomeGlyph({
     conversation,
     className,
@@ -743,16 +759,20 @@ function OutcomeGlyph({
     className: string;
     spinnerClassName?: string;
 }): React.ReactElement {
-    if (conversation.session_state === "running") {
+    const classification = classifyOutcome(conversation);
+    if (classification === "running") {
         return <span className={`mj_Spinner${spinnerClassName ? ` ${spinnerClassName}` : ""}`} aria-hidden="true" />;
     }
-    if (conversation.session_outcome === "interrupted") {
+    if (classification === "interrupted") {
         return <InterruptedIcon className={`${className} mj_InterruptedGlyph`} />;
     }
-    if (conversation.session_outcome === "failed") {
+    if (classification === "failed") {
         return <FailedIcon className={`${className} mj_FailedGlyph`} />;
     }
-    return <CheckIcon className={`${className} mj_CompletedGlyph`} aria-hidden="true" />;
+    if (classification === "completed") {
+        return <CheckIcon className={`${className} mj_CompletedGlyph`} aria-hidden="true" />;
+    }
+    return <InactiveIcon className={`${className} mj_InactiveOutcomeGlyph`} />;
 }
 
 function ConversationList({
@@ -988,6 +1008,7 @@ function ConversationList({
         const overrideUnread = state.unreadOverrideIds.has(conversation.id) && conversation.unread_count === 0;
         const unread = effectiveUnread(conversation, state.unreadOverrideIds);
         const name = conversationTitle(conversation);
+        const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
         const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
         // #541: when this parent's subagent rows are collapsed, surface a subtle count of the
         // hidden child rows so the collapse is discoverable on the row itself. Gate on the
@@ -1011,7 +1032,7 @@ function ConversationList({
                     className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${isSubagent ? " mj_RoomListItem_sub" : ""}`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}`}
+                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}`}
                     onClick={(event) => {
                         if (longPressFiredRef.current) {
                             longPressFiredRef.current = false;
@@ -1259,6 +1280,17 @@ function ConversationList({
                                         {state.controlError}
                                     </div>
                                 )}
+                                {state.conversations.filter(isSubChat).map((conversation) => (
+                                    <span
+                                        key={`outcome-status:${conversation.id}`}
+                                        className="mj_ScreenReaderOnly mj_SubagentOutcomeStatus"
+                                        role="status"
+                                        aria-live="polite"
+                                        aria-atomic="true"
+                                    >
+                                        {`${conversationTitle(conversation)}, ${accessibleOutcome(classifyOutcome(conversation))}`}
+                                    </span>
+                                ))}
                                 <div
                                     className="mj_RoomList"
                                     data-testid="room-list"
@@ -4955,6 +4987,7 @@ export function SubagentStrip({
                     {ordered.map((child) => {
                         const isCurrent = mode === "child" && child.id === state.selectedConversationId;
                         const isRunning = child.session_state === "running";
+                        const outcomeStatus = accessibleOutcome(classifyOutcome(child));
                         const className = [
                             "mj_SubagentPill",
                             !isRunning && "mj_SubagentPill_finished",
@@ -4966,7 +4999,7 @@ export function SubagentStrip({
                             <div key={child.id} role="listitem" className="mj_SubagentPill_wrapper">
                                 <button
                                     className={className}
-                                    aria-label={`Open subagent ${conversationTitle(child)}`}
+                                    aria-label={`Open subagent ${conversationTitle(child)}, ${outcomeStatus}`}
                                     aria-current={isCurrent ? "true" : undefined}
                                     disabled={isCurrent}
                                     onClick={() => void client.selectConversation(child.id)}

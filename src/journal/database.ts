@@ -21,6 +21,11 @@ const CURSOR_KEY = "cursor";
 const BACKFILL_KEY = "subchat_backfill_v1";
 const OUTCOME_BACKFILL_KEY = "session_outcome_backfill_v1";
 const BACKFILL_ERROR_KEY = "subchat_backfill_error";
+const SESSION_OUTCOME_CAPABILITY = "session_outcome";
+
+function snapshotSupportsSessionOutcome(snapshot: SnapshotResponse): boolean {
+    return Array.isArray(snapshot.capabilities) && snapshot.capabilities.includes(SESSION_OUTCOME_CAPABILITY);
+}
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -155,7 +160,7 @@ export class JournalDatabase {
             if (!deferredForMalformedFreshness) {
                 const meta = transaction.objectStore("meta");
                 meta.put(true, BACKFILL_KEY);
-                meta.put(true, OUTCOME_BACKFILL_KEY);
+                if (snapshotSupportsSessionOutcome(snapshot)) meta.put(true, OUTCOME_BACKFILL_KEY);
             }
             await transactionDone(transaction);
         } catch (error) {
@@ -172,11 +177,11 @@ export class JournalDatabase {
         }
     }
 
-    public async markBackfillDone(): Promise<void> {
+    public async markBackfillDone(snapshot: SnapshotResponse): Promise<void> {
         const transaction = this.database.transaction("meta", "readwrite");
         const meta = transaction.objectStore("meta");
         meta.put(true, BACKFILL_KEY);
-        meta.put(true, OUTCOME_BACKFILL_KEY);
+        if (snapshotSupportsSessionOutcome(snapshot)) meta.put(true, OUTCOME_BACKFILL_KEY);
         await transactionDone(transaction);
     }
 

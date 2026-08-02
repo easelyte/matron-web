@@ -70,6 +70,7 @@ export interface Conversation {
 export interface SnapshotResponse {
     conversations: Array<Omit<Conversation, "read_up_to_seq"> & { read_up_to_seq?: number }>;
     seq: number;
+    capabilities?: string[];
 }
 
 export type EventPayload = Record<string, unknown>;

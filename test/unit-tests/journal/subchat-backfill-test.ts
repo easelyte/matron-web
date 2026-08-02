@@ -97,6 +97,7 @@ describe("subchat existing-client backfill", () => {
     it("marks a fresh snapshot complete so the next startup does not backfill", async () => {
         const snapshotRequest = jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue({
             seq: 5,
+            capabilities: ["session_outcome"],
             conversations: [conversation("c1")],
         });
         const client = new MatronJournalClient();
@@ -115,6 +116,7 @@ describe("subchat existing-client backfill", () => {
         const database = await seedExistingClient();
         const snapshot = {
             seq: 99,
+            capabilities: ["session_outcome"],
             conversations: [conversation("c1", { parent_convo_id: "p1", session_state: "done" })],
         };
         const snapshotRequest = jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue(snapshot);
@@ -140,6 +142,7 @@ describe("subchat existing-client backfill", () => {
         await sealLegacyBackfill();
         const snapshotRequest = jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue({
             seq: 5,
+            capabilities: ["session_outcome"],
             conversations: [conversation("c1", { session_state: "done", session_outcome: "interrupted" })],
         });
         const client = new MatronJournalClient();
@@ -169,6 +172,26 @@ describe("subchat existing-client backfill", () => {
         expect(await database.backfillDone()).toBe(false);
         internals(client).connection?.stop();
         internals(client).database?.close();
+        database.close();
+    });
+
+    it("does not seal outcome reconciliation until a snapshot explicitly advertises support", async () => {
+        const database = await seedExistingClient({ session_state: "done", session_outcome: null });
+
+        await database.backfillParentLinks({
+            seq: 6,
+            conversations: [conversation("c1", { session_state: "done" })],
+        });
+        expect(await database.backfillDone()).toBe(false);
+        expect((await database.conversations())[0]).toMatchObject({ session_outcome: null });
+
+        await database.backfillParentLinks({
+            seq: 7,
+            capabilities: ["session_outcome"],
+            conversations: [conversation("c1", { last_seq: 6, session_state: "done", session_outcome: "interrupted" })],
+        });
+        expect(await database.backfillDone()).toBe(true);
+        expect((await database.conversations())[0]).toMatchObject({ session_outcome: "interrupted" });
         database.close();
     });
 
@@ -221,6 +244,7 @@ describe("subchat existing-client backfill", () => {
 
         await database.backfillParentLinks({
             seq: 6,
+            capabilities: ["session_outcome"],
             conversations: [conversation("c1", { parent_convo_id: "p2", session_state: "done" })],
         });
 
@@ -280,6 +304,7 @@ describe("subchat existing-client backfill", () => {
         // (rather than sealing a possibly-stale state). No throw.
         await database.backfillParentLinks({
             seq: 11,
+            capabilities: ["session_outcome"],
             conversations: [
                 conversation("c1", {
                     last_seq: lastSeq as unknown as number,

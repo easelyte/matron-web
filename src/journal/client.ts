@@ -27,6 +27,7 @@ import {
     type RpcReply,
     type ServerFrame,
     type Session,
+    type SnapshotResponse,
     trimUtf8Prefix,
     type ToolStreamState,
     utf8Length,
@@ -1198,14 +1199,15 @@ export class MatronJournalClient {
 
         let cursor = await this.database.cursor();
         const freshInstall = cursor === undefined;
+        let initialSnapshot: SnapshotResponse | undefined;
         if (freshInstall) {
-            const snapshot = await this.api.snapshot();
-            await this.database.replaceWithSnapshot(snapshot);
-            cursor = snapshot.seq;
+            initialSnapshot = await this.api.snapshot();
+            await this.database.replaceWithSnapshot(initialSnapshot);
+            cursor = initialSnapshot.seq;
         }
         try {
-            if (freshInstall && typeof this.database.markBackfillDone === "function") {
-                await this.database.markBackfillDone();
+            if (freshInstall && initialSnapshot && typeof this.database.markBackfillDone === "function") {
+                await this.database.markBackfillDone(initialSnapshot);
             } else if (typeof this.database.backfillDone === "function" && !(await this.database.backfillDone())) {
                 await this.database.backfillParentLinks(await this.api.snapshot());
             }
