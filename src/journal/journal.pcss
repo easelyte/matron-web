@@ -940,7 +940,7 @@ textarea {
     box-sizing: border-box;
     border: 1px solid var(--cpd-color-border-disabled);
     border-radius: 9999px;
-    background: var(--cpd-color-bg-subtle-secondary);
+    background: var(--cpd-state-selected);
     color: var(--cpd-color-text-primary);
     cursor: pointer;
     padding: var(--cpd-space-1x) var(--cpd-space-3x);
@@ -1009,10 +1009,16 @@ textarea {
 
 .mj_SubagentPill:not(.mj_SubagentPill_finished) .mj_Spinner {
     border-top-color: var(--cpd-color-bg-accent);
+    border-right-color: var(--cpd-color-bg-accent);
+    border-bottom-color: var(--cpd-color-bg-accent);
+    border-left-color: var(--cpd-color-bg-accent);
 }
 
 [data-theme="dark"] .mj_SubagentPill:not(.mj_SubagentPill_finished) .mj_Spinner {
     border-top-color: var(--cpd-color-text-action-accent);
+    border-right-color: var(--cpd-color-text-action-accent);
+    border-bottom-color: var(--cpd-color-text-action-accent);
+    border-left-color: var(--cpd-color-text-action-accent);
 }
 
 .mj_AccountMenu {
