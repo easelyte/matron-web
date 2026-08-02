@@ -80,6 +80,7 @@ describe("Codex and Claude worker pills", () => {
         expect(workerKind(conversation("room"))).toBeNull();
         expect(workerKind(conversation("room:codex:review-1", { parent_convo_id: "room" }))).toBe("codex");
         expect(workerKind(conversation("room:sub:agent-1", { parent_convo_id: "room" }))).toBe("claude");
+        expect(workerKind(conversation("room:future:agent-1", { parent_convo_id: "room" }))).toBeNull();
     });
 
     it("renders the worker mark and outcome glyph for every supported state", async () => {

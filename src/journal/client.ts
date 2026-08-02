@@ -99,7 +99,9 @@ export type WorkerKind = "claude" | "codex";
 
 export function workerKind(conversation: Conversation): WorkerKind | null {
     if (!isSubChat(conversation)) return null;
-    return /:codex:[^:]+$/.test(conversation.id) ? "codex" : "claude";
+    if (/:codex:[^:]+$/.test(conversation.id)) return "codex";
+    if (/:sub:[^:]+$/.test(conversation.id)) return "claude";
+    return null;
 }
 
 function deviceName(): string {

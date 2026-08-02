@@ -64,6 +64,23 @@ async function seedExistingClient(extra: Partial<Conversation> = {}): Promise<Jo
     return database;
 }
 
+async function sealLegacyBackfill(): Promise<void> {
+    const name = `matron-journal:${SESSION.serverUrl}:${SESSION.userId}`;
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(name, 1);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error ?? new Error("Could not open legacy cache"));
+    });
+    const transaction = database.transaction("meta", "readwrite");
+    transaction.objectStore("meta").put(true, "subchat_backfill_v1");
+    await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error ?? new Error("Could not seal legacy backfill"));
+        transaction.onabort = () => reject(transaction.error ?? new Error("Legacy backfill transaction aborted"));
+    });
+    database.close();
+}
+
 describe("subchat existing-client backfill", () => {
     beforeEach(() => {
         globalThis.indexedDB = new IDBFactory();
@@ -108,6 +125,28 @@ describe("subchat existing-client backfill", () => {
         expect((await database.conversations())[0]).toMatchObject({ parent_convo_id: "p1", session_state: "done" });
         expect(await database.events("c1")).toEqual([event()]);
         expect(await database.cursor()).toBe(5);
+        expect(await database.backfillDone()).toBe(true);
+
+        await internals(client).startSession(SESSION);
+        expect(snapshotRequest).toHaveBeenCalledTimes(1);
+
+        internals(client).connection?.stop();
+        internals(client).database?.close();
+        database.close();
+    });
+
+    it("reconciles outcomes once when only the legacy parent-link backfill is sealed", async () => {
+        const database = await seedExistingClient({ session_state: "done" });
+        await sealLegacyBackfill();
+        const snapshotRequest = jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue({
+            seq: 5,
+            conversations: [conversation("c1", { session_state: "done", session_outcome: "interrupted" })],
+        });
+        const client = new MatronJournalClient();
+
+        await internals(client).startSession(SESSION);
+
+        expect((await database.conversations())[0]).toMatchObject({ session_outcome: "interrupted" });
         expect(await database.backfillDone()).toBe(true);
 
         await internals(client).startSession(SESSION);

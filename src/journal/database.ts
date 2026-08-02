@@ -19,6 +19,7 @@ import {
 const DATABASE_VERSION = 1;
 const CURSOR_KEY = "cursor";
 const BACKFILL_KEY = "subchat_backfill_v1";
+const OUTCOME_BACKFILL_KEY = "session_outcome_backfill_v1";
 const BACKFILL_ERROR_KEY = "subchat_backfill_error";
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
@@ -150,8 +151,12 @@ export class JournalDatabase {
                 conversations.put(existing);
             }
             // Seal completion only on a fully-assessable run. If any row had a malformed freshness field,
-            // leave BACKFILL_KEY unset so startup retries (the parent-link puts already committed are idempotent).
-            if (!deferredForMalformedFreshness) transaction.objectStore("meta").put(true, BACKFILL_KEY);
+            // leave the outcome key unset so startup retries (the puts already committed are idempotent).
+            if (!deferredForMalformedFreshness) {
+                const meta = transaction.objectStore("meta");
+                meta.put(true, BACKFILL_KEY);
+                meta.put(true, OUTCOME_BACKFILL_KEY);
+            }
             await transactionDone(transaction);
         } catch (error) {
             try {
@@ -169,13 +174,17 @@ export class JournalDatabase {
 
     public async markBackfillDone(): Promise<void> {
         const transaction = this.database.transaction("meta", "readwrite");
-        transaction.objectStore("meta").put(true, BACKFILL_KEY);
+        const meta = transaction.objectStore("meta");
+        meta.put(true, BACKFILL_KEY);
+        meta.put(true, OUTCOME_BACKFILL_KEY);
         await transactionDone(transaction);
     }
 
     public async backfillDone(): Promise<boolean> {
         const transaction = this.database.transaction("meta", "readonly");
-        const done = Boolean(await requestResult(transaction.objectStore("meta").get(BACKFILL_KEY)));
+        // Installs sealed by the parent-link-only migration intentionally lack this newer key and
+        // must reconcile once more to recover session_outcome values missed by an older client.
+        const done = Boolean(await requestResult(transaction.objectStore("meta").get(OUTCOME_BACKFILL_KEY)));
         await transactionDone(transaction);
         return done;
     }
