@@ -99,6 +99,7 @@ describe("subchat existing-client backfill", () => {
     it("marks a fresh snapshot complete so the next startup does not backfill", async () => {
         const snapshotRequest = jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue({
             seq: 5,
+            capabilities: ["session_outcome"],
             conversations: [conversation("c1")],
         });
         const client = new MatronJournalClient();
@@ -117,6 +118,7 @@ describe("subchat existing-client backfill", () => {
         const database = await seedExistingClient();
         const snapshot = {
             seq: 99,
+            capabilities: ["session_outcome"],
             conversations: [conversation("c1", { parent_convo_id: "p1", session_state: "done" })],
         };
         const snapshotRequest = jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue(snapshot);
@@ -192,16 +194,35 @@ describe("subchat existing-client backfill", () => {
         database.close();
     });
 
-    it("continues signed-in startup when an outcome-incapable snapshot omits the field", async () => {
+    it("does not permanently seal an incapable response and later reconciles capability support", async () => {
         const database = await seedExistingClient({ session_state: "done", session_outcome: null });
         const rowWithoutOutcome = conversation("c1", { session_state: "done" });
         delete rowWithoutOutcome.session_outcome;
-        jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue({ seq: 6, conversations: [rowWithoutOutcome] });
+        const now = jest.spyOn(Date, "now").mockReturnValue(1_000);
+        const snapshotRequest = jest
+            .spyOn(JournalApi.prototype, "snapshot")
+            .mockResolvedValue({ seq: 6, conversations: [rowWithoutOutcome] });
         const client = new MatronJournalClient();
 
         await expect(internals(client).startSession(SESSION)).resolves.toBeUndefined();
 
         expect(client.getSnapshot().phase).toBe("signed-in");
+        expect(await database.backfillDone()).toBe(false);
+
+        // The durable attempt marker suppresses repeated legacy snapshots during the retry window.
+        await expect(internals(client).startSession(SESSION)).resolves.toBeUndefined();
+        expect(snapshotRequest).toHaveBeenCalledTimes(1);
+
+        now.mockReturnValue(24 * 60 * 60 * 1_000 + 1_001);
+        snapshotRequest.mockResolvedValue({
+            seq: 7,
+            capabilities: ["session_outcome"],
+            conversations: [conversation("c1", { last_seq: 6, session_state: "done", session_outcome: "interrupted" })],
+        });
+        await expect(internals(client).startSession(SESSION)).resolves.toBeUndefined();
+
+        expect(snapshotRequest).toHaveBeenCalledTimes(2);
+        expect((await database.conversations())[0]).toMatchObject({ session_outcome: "interrupted" });
         expect(await database.backfillDone()).toBe(true);
         internals(client).connection?.stop();
         internals(client).database?.close();
@@ -216,7 +237,7 @@ describe("subchat existing-client backfill", () => {
         await database.backfillParentLinks({
             seq: 6,
             capabilities: ["some_other_capability"],
-            conversations: [conversation("c1", { session_outcome: "completed" }), rowWithoutOutcome],
+            conversations: [conversation("c1", { session_outcome: null }), rowWithoutOutcome],
         });
 
         expect(await database.backfillDone()).toBe(false);
@@ -356,6 +377,7 @@ describe("subchat existing-client backfill", () => {
 
         await database.backfillParentLinks({
             seq: 6,
+            capabilities: ["session_outcome"],
             conversations: [conversation("c1", { parent_convo_id: "p2", session_state: "done" })],
         });
 

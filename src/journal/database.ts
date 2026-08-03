@@ -20,6 +20,9 @@ const DATABASE_VERSION = 1;
 const CURSOR_KEY = "cursor";
 const BACKFILL_KEY = "subchat_backfill_v1";
 const OUTCOME_BACKFILL_KEY = "session_outcome_backfill_v1";
+const OUTCOME_BACKFILL_ATTEMPT_KEY = "session_outcome_backfill_attempt_v1";
+const OUTCOME_BACKFILL_ATTEMPT_VERSION = 1;
+const OUTCOME_BACKFILL_RETRY_MS = 24 * 60 * 60 * 1_000;
 const BACKFILL_ERROR_KEY = "subchat_backfill_error";
 
 function hasValidSessionOutcome(value: unknown): value is Conversation["session_outcome"] {
@@ -40,7 +43,22 @@ function validateSnapshotRows(snapshot: SnapshotResponse): void {
 }
 
 function sealsOutcomeBackfill(snapshot: SnapshotResponse): boolean {
-    return snapshot.capabilities === undefined || snapshot.capabilities.includes("session_outcome");
+    return (
+        snapshot.capabilities?.includes("session_outcome") === true ||
+        snapshot.conversations.some((summary) => summary.session_outcome != null)
+    );
+}
+
+function recordOutcomeBackfillResult(meta: IDBObjectStore, snapshot: SnapshotResponse): void {
+    if (sealsOutcomeBackfill(snapshot)) {
+        meta.put(true, OUTCOME_BACKFILL_KEY);
+        meta.delete(OUTCOME_BACKFILL_ATTEMPT_KEY);
+    } else {
+        // An outcome-incapable server must not permanently seal the migration. Remember this
+        // versioned attempt so startup does not fetch the same legacy snapshot on every launch,
+        // then retry periodically (or immediately after a future migration-version bump).
+        meta.put({ version: OUTCOME_BACKFILL_ATTEMPT_VERSION, attemptedAt: Date.now() }, OUTCOME_BACKFILL_ATTEMPT_KEY);
+    }
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
@@ -173,7 +191,7 @@ export class JournalDatabase {
             if (!deferredForMalformedFreshness) {
                 const meta = transaction.objectStore("meta");
                 meta.put(true, BACKFILL_KEY);
-                if (sealsOutcomeBackfill(snapshot)) meta.put(true, OUTCOME_BACKFILL_KEY);
+                recordOutcomeBackfillResult(meta, snapshot);
             }
             await transactionDone(transaction);
         } catch (error) {
@@ -195,7 +213,7 @@ export class JournalDatabase {
         const transaction = this.database.transaction("meta", "readwrite");
         const meta = transaction.objectStore("meta");
         meta.put(true, BACKFILL_KEY);
-        if (sealsOutcomeBackfill(snapshot)) meta.put(true, OUTCOME_BACKFILL_KEY);
+        recordOutcomeBackfillResult(meta, snapshot);
         await transactionDone(transaction);
     }
 
@@ -206,6 +224,26 @@ export class JournalDatabase {
         const done = Boolean(await requestResult(transaction.objectStore("meta").get(OUTCOME_BACKFILL_KEY)));
         await transactionDone(transaction);
         return done;
+    }
+
+    public async outcomeBackfillDue(): Promise<boolean> {
+        const transaction = this.database.transaction("meta", "readonly");
+        const meta = transaction.objectStore("meta");
+        const [done, attempt] = await Promise.all([
+            requestResult(meta.get(OUTCOME_BACKFILL_KEY)),
+            requestResult(meta.get(OUTCOME_BACKFILL_ATTEMPT_KEY)),
+        ]);
+        await transactionDone(transaction);
+        if (done) return false;
+        if (
+            !attempt ||
+            typeof attempt !== "object" ||
+            (attempt as { version?: unknown }).version !== OUTCOME_BACKFILL_ATTEMPT_VERSION ||
+            typeof (attempt as { attemptedAt?: unknown }).attemptedAt !== "number"
+        ) {
+            return true;
+        }
+        return Date.now() - (attempt as { attemptedAt: number }).attemptedAt >= OUTCOME_BACKFILL_RETRY_MS;
     }
 
     public async recordBackfillError(reason: string): Promise<void> {
@@ -317,11 +355,7 @@ export class JournalDatabase {
             }
         } else if (event.type === "session_status" && typeof event.payload.state === "string") {
             conversation.session_state = event.payload.state;
-            if (
-                event.payload.session_outcome === "completed" ||
-                event.payload.session_outcome === "interrupted" ||
-                event.payload.session_outcome === "failed"
-            ) {
+            if (hasValidSessionOutcome(event.payload.session_outcome)) {
                 conversation.session_outcome = event.payload.session_outcome;
             }
         } else if (MESSAGE_EVENT_TYPES.has(event.type)) {

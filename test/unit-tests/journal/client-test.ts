@@ -73,6 +73,7 @@ interface FakeDatabase {
     reconcileOwnMessage: (event: JournalEvent) => Promise<string | null>;
     reconcilePersistedOwnMessages: () => Promise<string[]>;
     backfillDone?: () => Promise<boolean>;
+    outcomeBackfillDue?: () => Promise<boolean>;
     backfillParentLinks?: (snapshot: { seq: number; conversations: Conversation[] }) => Promise<void>;
 }
 

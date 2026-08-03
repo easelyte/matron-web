@@ -61,7 +61,7 @@ describe("Codex outcome live apply and cache", () => {
         globalThis.indexedDB = new IDBFactory();
     });
 
-    it("applies a live session_status outcome and preserves it across IndexedDB reopen", async () => {
+    it("round-trips an unknown live session_status outcome and renders it as unknown", async () => {
         const database = await JournalDatabase.open(SESSION.serverUrl, SESSION.userId, SESSION.username);
         await database.replaceWithSnapshot({
             seq: 0,
@@ -88,14 +88,17 @@ describe("Codex outcome live apply and cache", () => {
 
         await act(async () => {
             await (client as unknown as { handleJournal(event: JournalEvent): Promise<void> }).handleJournal(
-                sessionStatus(1, "interrupted"),
+                sessionStatus(1, "cancelled"),
             );
         });
-        expect(container.querySelector(".mj_SubagentPill .mj_InterruptedGlyph")).not.toBeNull();
+        const pill = container.querySelector<HTMLButtonElement>(".mj_SubagentPill");
+        expect(pill?.getAttribute("aria-label")).toContain("status unknown");
+        expect(pill?.querySelector(".mj_InactiveOutcomeGlyph")).not.toBeNull();
+        expect(pill?.querySelector(".mj_CompletedGlyph")).toBeNull();
         expect((await database.conversations())[0]).toMatchObject({
             id: "room:codex:review-1",
             session_state: "done",
-            session_outcome: "interrupted",
+            session_outcome: "cancelled",
         });
         await act(async () => root.unmount());
         container.remove();
@@ -103,7 +106,7 @@ describe("Codex outcome live apply and cache", () => {
 
         const reopened = await JournalDatabase.open(SESSION.serverUrl, SESSION.userId, SESSION.username);
         expect(await reopened.conversations()).toContainEqual(
-            expect.objectContaining({ id: "room:codex:review-1", session_outcome: "interrupted" }),
+            expect.objectContaining({ id: "room:codex:review-1", session_outcome: "cancelled" }),
         );
         reopened.close();
     });

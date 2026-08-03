@@ -1209,7 +1209,11 @@ export class MatronJournalClient {
         try {
             if (freshInstall && initialSnapshot && typeof this.database.markBackfillDone === "function") {
                 await this.database.markBackfillDone(initialSnapshot);
-            } else if (typeof this.database.backfillDone === "function" && !(await this.database.backfillDone())) {
+            } else if (
+                typeof this.database.backfillDone === "function" &&
+                !(await this.database.backfillDone()) &&
+                (typeof this.database.outcomeBackfillDue !== "function" || (await this.database.outcomeBackfillDue()))
+            ) {
                 const snapshotController = new AbortController();
                 let timeoutTimer: number;
                 const timeout = new Promise<never>((_resolve, reject) => {
