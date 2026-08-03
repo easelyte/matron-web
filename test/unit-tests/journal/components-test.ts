@@ -1567,6 +1567,25 @@ describe("attachment composer", () => {
         expect(client.getSnapshot().stagedUploads!.total).toBe(2);
     });
 
+    it("the modal's document paste listener ignores an already-consumed (defaultPrevented) paste", async () => {
+        // Root-cause guard for the double-stage: on the first paste the composer stages + calls
+        // preventDefault() (opening the modal); React 19 mounts the modal synchronously so its
+        // document paste listener is registered within the same dispatch and can receive the SAME
+        // paste. It must skip a paste whose default was already prevented, or the file stages twice.
+        const client = signedInClient();
+        rendered = await renderClient(client);
+        await act(async () => client.stageFiles([new File(["a"], "a.txt", { type: "text/plain" })]));
+        const stageFiles = jest.spyOn(client, "stageFiles");
+
+        const consumed = Object.assign(new Event("paste", { bubbles: true, cancelable: true }), {
+            clipboardData: { files: [new File(["p"], "p.png", { type: "image/png" })] },
+        });
+        consumed.preventDefault();
+        expect(consumed.defaultPrevented).toBe(true);
+        await act(async () => document.dispatchEvent(consumed));
+        expect(stageFiles).not.toHaveBeenCalled();
+    });
+
     it("file drop while the modal is open prevents navigation and stages nothing extra", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
