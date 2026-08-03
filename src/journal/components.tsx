@@ -4374,6 +4374,11 @@ function Composer({
                                         if (state.stagedUploads) return;
                                         const files = [...event.clipboardData.files];
                                         if (files.length > 0) {
+                                            // preventDefault() marks this paste as consumed. Staging opens the
+                                            // upload modal, whose document-level paste listener is mounted
+                                            // synchronously by React 19 within this same paste dispatch; that
+                                            // listener checks event.defaultPrevented and skips the paste, so the
+                                            // file stages exactly once rather than "1 of 2".
                                             event.preventDefault();
                                             client.stageFiles(files);
                                         }
@@ -4587,6 +4592,14 @@ function UploadConfirmDialog({
 }): React.ReactElement {
     useEffect(() => {
         const onPaste = (event: ClipboardEvent): void => {
+            // Ignore the bootstrap paste the composer already consumed. On the first paste
+            // (modal closed) the composer stages the file and calls preventDefault(), which
+            // opens this modal; React 19 flushes that mount synchronously, so this listener is
+            // registered within the same paste dispatch and would otherwise stage the file a
+            // second time ("1 of 2"). defaultPrevented is timing-independent — it holds
+            // regardless of propagation order. Once the modal is open the composer is inert
+            // (no preventDefault), so subsequent pastes append here.
+            if (event.defaultPrevented) return;
             const files = [...(event.clipboardData?.files ?? [])];
             if (files.length > 0) {
                 event.preventDefault();
