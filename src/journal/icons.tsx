@@ -118,6 +118,55 @@ export function CheckIcon(props: IconProps): React.ReactElement {
     );
 }
 
+export function InactiveIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <circle cx="12" cy="12" r="7" />
+            <path d="M9 12h6" />
+        </Icon>
+    );
+}
+
+export function AnthropicMark(props: IconProps): React.ReactElement {
+    return (
+        <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" aria-hidden="true" {...props}>
+            <path d="M13.7 3h3.1L22 21h-3.5l-1.4-5h-6.7l1-3h4.9l-2-7.1L9.4 21H6L12.2 3h1.5ZM5.6 8.2 9.9 21H6.5L2 8.2h3.6Z" />
+        </svg>
+    );
+}
+
+export function OpenAIMark(props: IconProps): React.ReactElement {
+    return (
+        <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" aria-hidden="true" {...props}>
+            <path
+                fillRule="evenodd"
+                d="M12 2.1a5 5 0 0 1 4.8 3.5 5 5 0 0 1 3.5 7.9 5 5 0 0 1-4.8 6.4A5 5 0 0 1 7.2 18a5 5 0 0 1-3.5-7.9A5 5 0 0 1 8.5 3.7 5 5 0 0 1 12 2.1Zm0 3.1-3.5 2v4l3.5 2 3.5-2v-4l-3.5-2Zm-1.3 3.6L12 8l1.3.8v1.5l-1.3.8-1.3-.8V8.8Z"
+                clipRule="evenodd"
+            />
+        </svg>
+    );
+}
+
+export function InterruptedIcon(props: IconProps): React.ReactElement {
+    return (
+        <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" aria-hidden="true" {...props}>
+            <path d="M4 5.5h5V8H4zM11 5.5h2V8h-2zM15 5.5h5V8h-5zM4 10.75h3.5v2.5H4zM9.5 10.75H14v2.5H9.5zM16 10.75h4v2.5h-4zM4 16h5v2.5H4zM11 16h2v2.5h-2zM15 16h5v2.5h-5z" />
+        </svg>
+    );
+}
+
+export function FailedIcon(props: IconProps): React.ReactElement {
+    return (
+        <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" aria-hidden="true" {...props}>
+            <path
+                fillRule="evenodd"
+                d="M10.3 3a2 2 0 0 1 3.4 0l8 14A2 2 0 0 1 20 20H4a2 2 0 0 1-1.7-3l8-14ZM12 7a1 1 0 0 0-1 1v5a1 1 0 1 0 2 0V8a1 1 0 0 0-1-1Zm0 8.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Z"
+                clipRule="evenodd"
+            />
+        </svg>
+    );
+}
+
 export function PinIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>

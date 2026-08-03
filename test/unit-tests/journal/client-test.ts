@@ -72,6 +72,9 @@ interface FakeDatabase {
     applyJournal: (event: JournalEvent) => Promise<boolean>;
     reconcileOwnMessage: (event: JournalEvent) => Promise<string | null>;
     reconcilePersistedOwnMessages: () => Promise<string[]>;
+    backfillDone?: () => Promise<boolean>;
+    outcomeBackfillDue?: () => Promise<boolean>;
+    backfillParentLinks?: (snapshot: { seq: number; conversations: Conversation[] }) => Promise<void>;
 }
 
 interface ClientInternals {
@@ -79,7 +82,7 @@ interface ClientInternals {
     database?: FakeDatabase;
     api?: {
         messages: () => Promise<{ events: [] }>;
-        snapshot?: () => Promise<{ seq: number; conversations: Conversation[] }>;
+        snapshot?: (signal?: AbortSignal) => Promise<{ seq: number; conversations: Conversation[] }>;
         uploadMedia?: (bytes: ArrayBuffer, contentType: string, signal?: AbortSignal) => Promise<{ media_id: string }>;
     };
     connection?: {
@@ -223,6 +226,41 @@ describe("MatronJournalClient state handling", () => {
         expect(state.readHighWater.size).toBe(0);
         expect(state.readTimers.size).toBe(0);
         expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it("aborts the snapshot transport when the startup backfill watchdog expires", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const database = fakeDatabase({
+            backfillDone: jest.fn().mockResolvedValue(false),
+            backfillParentLinks: jest.fn().mockResolvedValue(undefined),
+        });
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        jest.spyOn(JournalApi.prototype, "messages").mockResolvedValue({ events: [] });
+        let transportSignal: AbortSignal | undefined;
+        jest.spyOn(JournalApi.prototype, "snapshot").mockImplementation(
+            (signal) =>
+                new Promise((_resolve, reject) => {
+                    transportSignal = signal;
+                    signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+                        once: true,
+                    });
+                }),
+        );
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+        const starting = internals(client).startSession(SESSION);
+        await jest.advanceTimersByTimeAsync(0);
+        expect(transportSignal?.aborted).toBe(false);
+
+        await jest.advanceTimersByTimeAsync(10_000);
+        await expect(starting).resolves.toBeUndefined();
+        expect(transportSignal?.aborted).toBe(true);
+        expect(database.backfillParentLinks).not.toHaveBeenCalled();
+
+        await client.logout();
+        jest.restoreAllMocks();
     });
 
     it("flushes a read marker even after another conversation is selected", async () => {

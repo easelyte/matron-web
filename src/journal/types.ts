@@ -57,6 +57,7 @@ export interface Conversation {
     id: string;
     title: string;
     session_state: string;
+    session_outcome?: string | null;
     last_seq: number;
     unread_count: number;
     snippet: string;
@@ -69,6 +70,7 @@ export interface Conversation {
 export interface SnapshotResponse {
     conversations: Array<Omit<Conversation, "read_up_to_seq"> & { read_up_to_seq?: number }>;
     seq: number;
+    capabilities?: string[];
 }
 
 export type EventPayload = Record<string, unknown>;

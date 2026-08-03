@@ -19,7 +19,47 @@ import {
 const DATABASE_VERSION = 1;
 const CURSOR_KEY = "cursor";
 const BACKFILL_KEY = "subchat_backfill_v1";
+const OUTCOME_BACKFILL_KEY = "session_outcome_backfill_v1";
+const OUTCOME_BACKFILL_ATTEMPT_KEY = "session_outcome_backfill_attempt_v1";
+const OUTCOME_BACKFILL_ATTEMPT_VERSION = 1;
+const OUTCOME_BACKFILL_RETRY_MS = 24 * 60 * 60 * 1_000;
 const BACKFILL_ERROR_KEY = "subchat_backfill_error";
+
+function hasValidSessionOutcome(value: unknown): value is Conversation["session_outcome"] {
+    return value === null || typeof value === "string";
+}
+
+function validateSnapshotRows(snapshot: SnapshotResponse): void {
+    if (!snapshot || !Array.isArray(snapshot.conversations)) throw new Error("malformed snapshot");
+    for (const summary of snapshot.conversations) {
+        if (!summary || typeof summary.id !== "string") throw new Error("malformed snapshot element");
+        if (
+            Object.prototype.hasOwnProperty.call(summary, "session_outcome") &&
+            !hasValidSessionOutcome(summary.session_outcome)
+        ) {
+            throw new Error("malformed session_outcome in snapshot element");
+        }
+    }
+}
+
+function sealsOutcomeBackfill(snapshot: SnapshotResponse): boolean {
+    return (
+        snapshot.capabilities?.includes("session_outcome") === true ||
+        snapshot.conversations.some((summary) => summary.session_outcome != null)
+    );
+}
+
+function recordOutcomeBackfillResult(meta: IDBObjectStore, snapshot: SnapshotResponse): void {
+    if (sealsOutcomeBackfill(snapshot)) {
+        meta.put(true, OUTCOME_BACKFILL_KEY);
+        meta.delete(OUTCOME_BACKFILL_ATTEMPT_KEY);
+    } else {
+        // An outcome-incapable server must not permanently seal the migration. Remember this
+        // versioned attempt so startup does not fetch the same legacy snapshot on every launch,
+        // then retry periodically (or immediately after a future migration-version bump).
+        meta.put({ version: OUTCOME_BACKFILL_ATTEMPT_VERSION, attemptedAt: Date.now() }, OUTCOME_BACKFILL_ATTEMPT_KEY);
+    }
+}
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -41,6 +81,7 @@ function emptyConversation(id: string, timestamp: number): Conversation {
         id,
         title: "",
         session_state: "running",
+        session_outcome: null,
         last_seq: 0,
         unread_count: 0,
         snippet: "",
@@ -108,17 +149,14 @@ export class JournalDatabase {
     }
 
     public async backfillParentLinks(snapshot: SnapshotResponse): Promise<void> {
-        if (!snapshot || !Array.isArray(snapshot.conversations)) throw new Error("malformed snapshot");
+        validateSnapshotRows(snapshot);
         const summaries = snapshot.conversations;
-        for (const summary of summaries) {
-            if (!summary || typeof summary.id !== "string") throw new Error("malformed snapshot element");
-        }
 
-        // A malformed freshness field (null/NaN/non-number last_seq) makes the session_state merge
+        // A malformed freshness field (null/NaN/non-number last_seq) makes the terminal-state merge
         // for THAT row unassessable. We must NOT reject the whole snapshot (that would block valid
         // parent-link repair for every other row — ship-review major 1; the "parent-link backfill
         // unchanged" contract). Instead: repair parent links for all rows, skip only the unassessable
-        // session_state write, and DEFER sealing the completion key so the reconcile retries rather
+        // session_state/session_outcome write, and DEFER sealing the completion key so the reconcile retries rather
         // than sealing a possibly-stale state (phase-1 review — P3 Fail Visible / V6 Classify Errors).
         let deferredForMalformedFreshness = false;
         const transaction = this.database.transaction(["conversations", "meta"], "readwrite");
@@ -132,19 +170,29 @@ export class JournalDatabase {
                 let link = coerceParentId(existing.parent_convo_id) ?? coerceParentId(summary.parent_convo_id);
                 if (link === summary.id) link = null;
                 existing.parent_convo_id = link;
-                if (typeof summary.session_state === "string") {
+                if (typeof summary.session_state === "string" || summary.session_outcome !== undefined) {
                     if (typeof summary.last_seq === "number" && Number.isFinite(summary.last_seq)) {
-                        // Preserve a locally-newer session_state (cross-tab shared-IndexedDB stale-snapshot guard).
-                        if (summary.last_seq >= existing.last_seq) existing.session_state = summary.session_state;
+                        // Preserve locally-newer terminal state (cross-tab shared-IndexedDB stale-snapshot guard).
+                        if (summary.last_seq >= existing.last_seq) {
+                            if (typeof summary.session_state === "string")
+                                existing.session_state = summary.session_state;
+                            if (summary.session_outcome !== undefined) {
+                                existing.session_outcome = summary.session_outcome;
+                            }
+                        }
                     } else {
-                        deferredForMalformedFreshness = true; // skip this row's state; defer sealing below.
+                        deferredForMalformedFreshness = true; // skip this row's state/outcome; defer sealing below.
                     }
                 }
                 conversations.put(existing);
             }
             // Seal completion only on a fully-assessable run. If any row had a malformed freshness field,
-            // leave BACKFILL_KEY unset so startup retries (the parent-link puts already committed are idempotent).
-            if (!deferredForMalformedFreshness) transaction.objectStore("meta").put(true, BACKFILL_KEY);
+            // leave the outcome key unset so startup retries (the puts already committed are idempotent).
+            if (!deferredForMalformedFreshness) {
+                const meta = transaction.objectStore("meta");
+                meta.put(true, BACKFILL_KEY);
+                recordOutcomeBackfillResult(meta, snapshot);
+            }
             await transactionDone(transaction);
         } catch (error) {
             try {
@@ -156,21 +204,46 @@ export class JournalDatabase {
         }
         if (deferredForMalformedFreshness) {
             // Durable evidence of the degraded reconcile (P3 Fail Visible); the unset key drives the retry.
-            await this.recordBackfillError("malformed last_seq in snapshot — session_state merge deferred for retry");
+            await this.recordBackfillError("malformed last_seq in snapshot — terminal-state merge deferred for retry");
         }
     }
 
-    public async markBackfillDone(): Promise<void> {
+    public async markBackfillDone(snapshot: SnapshotResponse): Promise<void> {
+        validateSnapshotRows(snapshot);
         const transaction = this.database.transaction("meta", "readwrite");
-        transaction.objectStore("meta").put(true, BACKFILL_KEY);
+        const meta = transaction.objectStore("meta");
+        meta.put(true, BACKFILL_KEY);
+        recordOutcomeBackfillResult(meta, snapshot);
         await transactionDone(transaction);
     }
 
     public async backfillDone(): Promise<boolean> {
         const transaction = this.database.transaction("meta", "readonly");
-        const done = Boolean(await requestResult(transaction.objectStore("meta").get(BACKFILL_KEY)));
+        // Installs sealed by the parent-link-only migration intentionally lack this newer key and
+        // must reconcile once more to recover session_outcome values missed by an older client.
+        const done = Boolean(await requestResult(transaction.objectStore("meta").get(OUTCOME_BACKFILL_KEY)));
         await transactionDone(transaction);
         return done;
+    }
+
+    public async outcomeBackfillDue(): Promise<boolean> {
+        const transaction = this.database.transaction("meta", "readonly");
+        const meta = transaction.objectStore("meta");
+        const [done, attempt] = await Promise.all([
+            requestResult(meta.get(OUTCOME_BACKFILL_KEY)),
+            requestResult(meta.get(OUTCOME_BACKFILL_ATTEMPT_KEY)),
+        ]);
+        await transactionDone(transaction);
+        if (done) return false;
+        if (
+            !attempt ||
+            typeof attempt !== "object" ||
+            (attempt as { version?: unknown }).version !== OUTCOME_BACKFILL_ATTEMPT_VERSION ||
+            typeof (attempt as { attemptedAt?: unknown }).attemptedAt !== "number"
+        ) {
+            return true;
+        }
+        return Date.now() - (attempt as { attemptedAt: number }).attemptedAt >= OUTCOME_BACKFILL_RETRY_MS;
     }
 
     public async recordBackfillError(reason: string): Promise<void> {
@@ -180,6 +253,7 @@ export class JournalDatabase {
     }
 
     public async replaceWithSnapshot(snapshot: SnapshotResponse): Promise<void> {
+        validateSnapshotRows(snapshot);
         const transaction = this.database.transaction(["meta", "conversations", "events", "outbox"], "readwrite");
         const conversations = transaction.objectStore("conversations");
         const existingParents = new Map(
@@ -281,6 +355,9 @@ export class JournalDatabase {
             }
         } else if (event.type === "session_status" && typeof event.payload.state === "string") {
             conversation.session_state = event.payload.state;
+            if (hasValidSessionOutcome(event.payload.session_outcome)) {
+                conversation.session_outcome = event.payload.session_outcome;
+            }
         } else if (MESSAGE_EVENT_TYPES.has(event.type)) {
             conversation.snippet = eventSnippet(event.type, event.payload);
             if (!event.sender.startsWith("user:")) conversation.unread_count += 1;
