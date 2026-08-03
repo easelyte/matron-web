@@ -110,6 +110,11 @@ describe("Codex and Claude worker pills", () => {
             conversation("room:codex:waiting", { parent_convo_id: "room", session_state: "waiting" }),
             conversation("room:sub:archived", { parent_convo_id: "room", session_state: "archived" }),
             conversation("room:codex:unknown", { parent_convo_id: "room", session_state: "future-state" }),
+            conversation("room:sub:unknown-outcome", {
+                parent_convo_id: "room",
+                session_state: "done",
+                session_outcome: "cancelled",
+            }),
         ];
         const client = signedInClient(conversations, "room");
 
@@ -128,7 +133,12 @@ describe("Codex and Claude worker pills", () => {
         expect(pills.get("room:codex:interrupted")?.querySelector(".mj_InterruptedGlyph")).not.toBeNull();
         expect(pills.get("room:sub:failed")?.querySelector(".mj_FailedGlyph")).not.toBeNull();
         expect(pills.get("room:codex:legacy")?.querySelector(".mj_CompletedGlyph")).not.toBeNull();
-        for (const name of ["room:codex:waiting", "room:sub:archived", "room:codex:unknown"]) {
+        for (const name of [
+            "room:codex:waiting",
+            "room:sub:archived",
+            "room:codex:unknown",
+            "room:sub:unknown-outcome",
+        ]) {
             expect(pills.get(name)?.querySelector(".mj_InactiveOutcomeGlyph")).not.toBeNull();
             expect(pills.get(name)?.querySelector(".mj_CompletedGlyph")).toBeNull();
             expect(pills.get(name)?.getAttribute("aria-label")).toBe(`Open subagent ${name}, status unknown`);
@@ -182,7 +192,7 @@ describe("Codex and Claude worker pills", () => {
         expect(rendered.container.querySelector(".mj_RoomListItem_sub")).toBeNull();
         const liveRegions = rendered.container.querySelectorAll(".mj_SubagentOutcomeStatus");
         expect(liveRegions).toHaveLength(1);
-        expect(liveRegions[0]?.textContent).toBe("room:sub:review-2, failed");
+        expect(liveRegions[0]?.textContent).toBe("room:codex:review-1, interrupted; room:sub:review-2, failed");
         expect(rendered.container.querySelector(".mj_SubagentPill")?.getAttribute("aria-label")).toBe(
             "Open subagent room:codex:review-1, interrupted",
         );

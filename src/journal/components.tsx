@@ -812,18 +812,18 @@ function ConversationList({
 
     useEffect(() => {
         const nextOutcomes = new Map<string, OutcomeClassification>();
-        let latestChange: string | undefined;
+        const changes: string[] = [];
         for (const conversation of state.conversations) {
             if (!isSubChat(conversation)) continue;
             const outcome = classifyOutcome(conversation);
             nextOutcomes.set(conversation.id, outcome);
             const previous = childOutcomesRef.current.get(conversation.id);
             if (previous !== undefined && previous !== outcome) {
-                latestChange = `${conversationTitle(conversation)}, ${accessibleOutcome(outcome)}`;
+                changes.push(`${conversationTitle(conversation)}, ${accessibleOutcome(outcome)}`);
             }
         }
         childOutcomesRef.current = nextOutcomes;
-        if (latestChange !== undefined) setOutcomeAnnouncement(latestChange);
+        if (changes.length > 0) setOutcomeAnnouncement(changes.join("; "));
     }, [state.conversations]);
 
     useEffect(() => {

@@ -23,21 +23,24 @@ const OUTCOME_BACKFILL_KEY = "session_outcome_backfill_v1";
 const BACKFILL_ERROR_KEY = "subchat_backfill_error";
 
 function hasValidSessionOutcome(value: unknown): value is Conversation["session_outcome"] {
-    return value === null || value === "completed" || value === "interrupted" || value === "failed";
+    return value === null || typeof value === "string";
 }
 
-function validateSnapshotRows(snapshot: SnapshotResponse): boolean {
+function validateSnapshotRows(snapshot: SnapshotResponse): void {
     if (!snapshot || !Array.isArray(snapshot.conversations)) throw new Error("malformed snapshot");
-    let everyRowHasSessionOutcome = true;
     for (const summary of snapshot.conversations) {
         if (!summary || typeof summary.id !== "string") throw new Error("malformed snapshot element");
-        if (!Object.prototype.hasOwnProperty.call(summary, "session_outcome")) {
-            everyRowHasSessionOutcome = false;
-        } else if (!hasValidSessionOutcome(summary.session_outcome)) {
+        if (
+            Object.prototype.hasOwnProperty.call(summary, "session_outcome") &&
+            !hasValidSessionOutcome(summary.session_outcome)
+        ) {
             throw new Error("malformed session_outcome in snapshot element");
         }
     }
-    return everyRowHasSessionOutcome;
+}
+
+function sealsOutcomeBackfill(snapshot: SnapshotResponse): boolean {
+    return snapshot.capabilities === undefined || snapshot.capabilities.includes("session_outcome");
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
@@ -128,7 +131,7 @@ export class JournalDatabase {
     }
 
     public async backfillParentLinks(snapshot: SnapshotResponse): Promise<void> {
-        const everyRowHasSessionOutcome = validateSnapshotRows(snapshot);
+        validateSnapshotRows(snapshot);
         const summaries = snapshot.conversations;
 
         // A malformed freshness field (null/NaN/non-number last_seq) makes the terminal-state merge
@@ -170,7 +173,7 @@ export class JournalDatabase {
             if (!deferredForMalformedFreshness) {
                 const meta = transaction.objectStore("meta");
                 meta.put(true, BACKFILL_KEY);
-                if (everyRowHasSessionOutcome) meta.put(true, OUTCOME_BACKFILL_KEY);
+                if (sealsOutcomeBackfill(snapshot)) meta.put(true, OUTCOME_BACKFILL_KEY);
             }
             await transactionDone(transaction);
         } catch (error) {
@@ -188,11 +191,11 @@ export class JournalDatabase {
     }
 
     public async markBackfillDone(snapshot: SnapshotResponse): Promise<void> {
-        const everyRowHasSessionOutcome = validateSnapshotRows(snapshot);
+        validateSnapshotRows(snapshot);
         const transaction = this.database.transaction("meta", "readwrite");
         const meta = transaction.objectStore("meta");
         meta.put(true, BACKFILL_KEY);
-        if (everyRowHasSessionOutcome) meta.put(true, OUTCOME_BACKFILL_KEY);
+        if (sealsOutcomeBackfill(snapshot)) meta.put(true, OUTCOME_BACKFILL_KEY);
         await transactionDone(transaction);
     }
 
