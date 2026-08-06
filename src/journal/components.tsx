@@ -3163,6 +3163,7 @@ export function EventContent({
             }
             return (
                 <PromptCard
+                    key={`${event.convo_id}:${event.seq}`}
                     client={client}
                     event={event}
                     answered={answeredPrompts.has(event.seq)}
@@ -3172,6 +3173,7 @@ export function EventContent({
         case "permission_request":
             return (
                 <PromptCard
+                    key={`${event.convo_id}:${event.seq}`}
                     client={client}
                     event={event}
                     answered={answeredPrompts.has(event.seq)}

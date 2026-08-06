@@ -329,6 +329,86 @@ describe("permission request cards", () => {
         expect(card?.querySelector(".mj_Answered")?.textContent).not.toBe("Answered");
     });
 
+    it("resets its local answer when reused for a different event identity", async () => {
+        const client = signedInClient();
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        rendered = { container, root };
+        const firstRequest = permissionRequest();
+
+        await act(async () => {
+            root.render(
+                React.createElement(EventContent, {
+                    client,
+                    event: firstRequest,
+                    answeredPrompts: new Set<number>(),
+                }),
+            );
+        });
+        await act(async () => {
+            [...container.querySelectorAll<HTMLButtonElement>("button")]
+                .find((candidate) => candidate.textContent === "Allow")
+                ?.click();
+        });
+        expect(container.querySelector(".mj_PromptResolved_allowed")?.textContent).toBe("Allowed");
+
+        const nextRequest: JournalEvent = {
+            ...permissionRequest(),
+            seq: 43,
+            payload: {
+                ...firstRequest.payload,
+                description: "Allow a different tool?",
+            },
+        };
+        await act(async () => {
+            root.render(
+                React.createElement(EventContent, {
+                    client,
+                    event: nextRequest,
+                    answeredPrompts: new Set<number>(),
+                }),
+            );
+        });
+
+        const card = container.querySelector(".mj_PromptCard_permission");
+        expect(card?.textContent).toContain("Allow a different tool?");
+        expect(card?.querySelector(".mj_PromptResolved")).toBeNull();
+        expect([...card!.querySelectorAll("button")].map((candidate) => candidate.textContent)).toEqual([
+            "Allow",
+            "Deny",
+        ]);
+        expect(sendPromptReply).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            [...card!.querySelectorAll<HTMLButtonElement>("button")]
+                .find((candidate) => candidate.textContent === "Deny")
+                ?.click();
+        });
+        expect(card?.querySelector(".mj_PromptResolved_denied")?.textContent).toBe("Denied");
+
+        await act(async () => {
+            root.render(
+                React.createElement(EventContent, {
+                    client,
+                    event: {
+                        ...nextRequest,
+                        convo_id: "c2",
+                        payload: { ...nextRequest.payload, description: "Allow a tool in another conversation?" },
+                    },
+                    answeredPrompts: new Set<number>(),
+                }),
+            );
+        });
+
+        const conversationCard = container.querySelector(".mj_PromptCard_permission");
+        expect(conversationCard?.textContent).toContain("Allow a tool in another conversation?");
+        expect(conversationCard?.querySelector(".mj_PromptResolved")).toBeNull();
+        expect(conversationCard?.querySelectorAll("button")).toHaveLength(2);
+        expect(sendPromptReply).toHaveBeenCalledTimes(2);
+    });
+
     it("keeps the generic resolved line when the permission was answered remotely", async () => {
         const request = permissionRequest();
         const reply: JournalEvent = {
@@ -354,6 +434,8 @@ describe("permission request cards", () => {
 
         const card = rendered.container.querySelector(".mj_PromptCard_permission");
         expect(card?.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("Expired");
+        expect(card?.querySelector(".mj_Expired")?.textContent).toBe("Expired");
+        expect(card?.querySelector(".mj_PromptResolved_allowed, .mj_PromptResolved_denied")).toBeNull();
         expect(card?.querySelectorAll("button")).toHaveLength(0);
         expect(sendPromptReply).not.toHaveBeenCalled();
     });
