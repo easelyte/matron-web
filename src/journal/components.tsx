@@ -2488,18 +2488,19 @@ function PromptCard({
     client,
     event,
     answered,
+    answeredChoice,
     permission = false,
     isReadOnly = false,
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
     answered: boolean;
+    answeredChoice?: string;
     permission?: boolean;
     isReadOnly?: boolean;
 }): React.ReactElement {
     const [freeText, setFreeText] = useState("");
     const [locallyAnswered, setLocallyAnswered] = useState(false);
-    const [chosenValue, setChosenValue] = useState<string>();
     const [nowMs, setNowMs] = useState(() => Date.now());
     const question = permission
         ? asString(event.payload.description, "Permission request")
@@ -2518,27 +2519,29 @@ function PromptCard({
         }
         return { label: String(option), value: String(option) };
     });
-    const resolved = answered || locallyAnswered;
+    const resolved = answered || (!permission && locallyAnswered);
     const expiresAt =
         typeof event.payload.expires_at === "number" && Number.isFinite(event.payload.expires_at)
             ? event.payload.expires_at
             : undefined;
+    // Client expiry is advisory because browser and bridge clocks can differ; the bridge's
+    // own timer and durable prompt_reply remain the canonical authorization decision.
     const expired = permission && !resolved && expiresAt !== undefined && nowMs >= expiresAt;
-    const disabled = resolved || expired;
+    const pending = permission && locallyAnswered && !resolved && !expired;
+    const disabled = resolved || pending || expired;
     const answer = (choice?: string, text?: string): void => {
-        if (expired) return;
+        if (disabled) return;
         if (permission && expiresAt !== undefined && Date.now() >= expiresAt) {
             setNowMs(Date.now());
             return;
         }
         if (client.sendPromptReply(event.seq, choice, text)) {
-            setChosenValue(choice);
             setLocallyAnswered(true);
         }
     };
-    const normalizedChoice = chosenValue?.trim().toLocaleLowerCase();
-    const locallyAllowed = permission && normalizedChoice === "allow";
-    const locallyDenied = permission && normalizedChoice === "deny";
+    const normalizedAnsweredChoice = answeredChoice?.trim().toLocaleLowerCase();
+    const durablyAllowed = permission && normalizedAnsweredChoice === "allow";
+    const durablyDenied = permission && normalizedAnsweredChoice === "deny";
 
     useEffect(() => {
         if (!permission || resolved || expiresAt === undefined || expired) return;
@@ -2582,7 +2585,7 @@ function PromptCard({
                         <button
                             key={`${option.label}:${option.value}`}
                             className={index === affirmativeIndex ? "mj_PromptOption_affirmative" : undefined}
-                            disabled={expired}
+                            disabled={pending || expired}
                             onClick={() => answer(option.value)}
                         >
                             {option.label}
@@ -2608,34 +2611,40 @@ function PromptCard({
                     </button>
                 </form>
             )}
+            {pending && (
+                <div className="mj_PromptResolved mj_PromptResolved_pending">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Muted">Sending…</span>
+                </div>
+            )}
             {resolved && (
                 <div
-                    className={`mj_PromptResolved${locallyAllowed ? " mj_PromptResolved_allowed" : ""}${locallyDenied ? " mj_PromptResolved_denied" : ""}`}
+                    className={`mj_PromptResolved${durablyAllowed ? " mj_PromptResolved_allowed" : ""}${durablyDenied ? " mj_PromptResolved_denied" : ""}`}
                 >
                     <span
                         className="mj_PromptGlyph mj_PromptGlyph_ok"
                         aria-hidden="true"
                         style={
-                            locallyDenied
+                            durablyDenied
                                 ? { color: "var(--cpd-color-text-critical-primary)" }
-                                : locallyAllowed
+                                : durablyAllowed
                                   ? { color: "var(--cpd-color-usage-low)" }
                                   : undefined
                         }
                     >
-                        {locallyDenied ? <PromptDeniedGlyph /> : <PromptCheckGlyph />}
+                        {durablyDenied ? <PromptDeniedGlyph /> : <PromptCheckGlyph />}
                     </span>
                     <span
                         className="mj_Answered"
                         style={
-                            locallyDenied
+                            durablyDenied
                                 ? { color: "var(--cpd-color-text-critical-primary)" }
-                                : locallyAllowed
+                                : durablyAllowed
                                   ? { color: "var(--cpd-color-usage-low)" }
                                   : undefined
                         }
                     >
-                        {locallyDenied ? "Denied" : locallyAllowed ? "Allowed" : "Answered"}
+                        {durablyDenied ? "Denied" : durablyAllowed ? "Allowed" : "Answered"}
                     </span>
                 </div>
             )}
@@ -3135,16 +3144,17 @@ export function isQueuedReleaseReply(
 export function EventContent({
     client,
     event,
-    answeredPrompts,
+    answeredPromptReplies,
     isReadOnly = false,
     resolvedAction,
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
-    answeredPrompts: Set<number>;
+    answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     isReadOnly?: boolean;
     resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
 }): React.ReactElement {
+    const answer = answeredPromptReplies.get(`${event.convo_id}:${event.seq}`);
     switch (event.type) {
         case "text":
             return (
@@ -3168,7 +3178,8 @@ export function EventContent({
                     key={`${event.convo_id}:${event.seq}`}
                     client={client}
                     event={event}
-                    answered={answeredPrompts.has(event.seq)}
+                    answered={answer !== undefined}
+                    answeredChoice={answer?.choice}
                     isReadOnly={isReadOnly}
                 />
             );
@@ -3178,7 +3189,8 @@ export function EventContent({
                     key={`${event.convo_id}:${event.seq}`}
                     client={client}
                     event={event}
-                    answered={answeredPrompts.has(event.seq)}
+                    answered={answer !== undefined}
+                    answeredChoice={answer?.choice}
                     permission
                     isReadOnly={isReadOnly}
                 />
@@ -3245,7 +3257,7 @@ export function EventContent({
 function EventRow({
     client,
     event,
-    answeredPrompts,
+    answeredPromptReplies,
     isReadOnly = false,
     resolvedAction,
     continuation = false,
@@ -3254,7 +3266,7 @@ function EventRow({
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
-    answeredPrompts: Set<number>;
+    answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     isReadOnly?: boolean;
     resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
     continuation?: boolean;
@@ -3311,7 +3323,7 @@ function EventRow({
                         <EventContent
                             client={client}
                             event={event}
-                            answeredPrompts={answeredPrompts}
+                            answeredPromptReplies={answeredPromptReplies}
                             isReadOnly={isReadOnly}
                             resolvedAction={resolvedAction}
                         />
@@ -3526,16 +3538,17 @@ function Timeline({
             ].sort((left, right) => left.timestamp - right.timestamp),
         [visibleEvents, state.pendingMessages],
     );
-    const answeredPrompts = useMemo(
-        () =>
-            new Set(
-                state.events
-                    .filter((event) => event.type === "prompt_reply")
-                    .map((event) => asNumber(event.payload.target_seq))
-                    .filter(Boolean),
-            ),
-        [state.events],
-    );
+    const answeredPromptReplies = useMemo(() => {
+        const replies = new Map<string, { choice?: string }>();
+        for (const event of state.events) {
+            if (event.type !== "prompt_reply") continue;
+            const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
+            if (!Number.isSafeInteger(targetSeq) || targetSeq < 0) continue;
+            const choice = asString(event.payload.choice, asString(event.payload.label)) || undefined;
+            replies.set(`${event.convo_id}:${targetSeq}`, { choice });
+        }
+        return replies;
+    }, [state.events]);
     const releasedActions = useMemo(() => {
         const actions = new Map<string, "send" | "cancel">();
         for (const event of state.events) {
@@ -3680,7 +3693,7 @@ function Timeline({
                                         <EventRow
                                             client={client}
                                             event={item.event}
-                                            answeredPrompts={answeredPrompts}
+                                            answeredPromptReplies={answeredPromptReplies}
                                             isReadOnly={isReadOnly}
                                             resolvedAction={resolvedAction}
                                             continuation={

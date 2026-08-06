@@ -292,7 +292,7 @@ describe("permission request cards", () => {
         jest.restoreAllMocks();
     });
 
-    it("renders the bridge payload and records an allowed local reply", async () => {
+    it("renders the bridge payload and keeps an enqueued Allow reply pending", async () => {
         const client = signedInClient({ events: [permissionRequest()] });
         const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
         rendered = await renderClient(client);
@@ -310,23 +310,74 @@ describe("permission request cards", () => {
         await act(async () => allow?.click());
 
         expect(sendPromptReply.mock.calls[0]?.slice(0, 2)).toEqual([42, "allow"]);
-        expect(card?.querySelector(".mj_PromptResolved_allowed")?.textContent).toBe("Allowed");
+        expect(card?.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+        expect(card?.querySelector(".mj_PromptResolved_allowed, .mj_PromptResolved_denied")).toBeNull();
+        expect([...card!.querySelectorAll<HTMLButtonElement>("button")].every((candidate) => candidate.disabled)).toBe(
+            true,
+        );
     });
 
-    it("renders a denied treatment after a successful Deny reply", async () => {
-        const client = signedInClient({ events: [permissionRequest()] });
-        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
-        rendered = await renderClient(client);
+    it.each([
+        ["allow", "allowed", "Allowed"],
+        ["deny", "denied", "Denied"],
+    ])("renders a durable %s reply with the %s treatment", async (choice, treatment, label) => {
+        const request = permissionRequest();
+        const reply: JournalEvent = {
+            seq: 43,
+            convo_id: "c1",
+            ts: 2,
+            sender: "user:dan",
+            type: "prompt_reply",
+            payload: { choice, target_seq: request.seq },
+        };
+        rendered = await renderClient(signedInClient({ events: [request, reply] }));
+
         const card = rendered.container.querySelector(".mj_PromptCard_permission");
+        expect(card?.querySelector(`.mj_PromptResolved_${treatment}`)?.textContent).toBe(label);
+        expect(card?.querySelector(".mj_Answered")?.textContent).toBe(label);
+    });
 
-        const deny = [...card!.querySelectorAll<HTMLButtonElement>("button")].find(
-            (candidate) => candidate.textContent === "Deny",
-        );
-        await act(async () => deny?.click());
+    it("resolves a pending local tap only when its durable reply arrives", async () => {
+        const client = signedInClient();
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        rendered = { container, root };
+        const request = permissionRequest();
 
-        expect(sendPromptReply.mock.calls[0]?.slice(0, 2)).toEqual([42, "deny"]);
+        await act(async () => {
+            root.render(
+                React.createElement(EventContent, {
+                    client,
+                    event: request,
+                    answeredPromptReplies: new Map<string, { choice?: string }>(),
+                }),
+            );
+        });
+        const card = container.querySelector(".mj_PromptCard_permission");
+        await act(async () => {
+            [...card!.querySelectorAll<HTMLButtonElement>("button")]
+                .find((candidate) => candidate.textContent === "Allow")
+                ?.click();
+        });
+
+        expect(sendPromptReply).toHaveBeenCalledWith(request.seq, "allow", undefined);
+        expect(card?.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+        expect(card?.querySelector(".mj_PromptResolved_allowed, .mj_PromptResolved_denied")).toBeNull();
+
+        await act(async () => {
+            root.render(
+                React.createElement(EventContent, {
+                    client,
+                    event: request,
+                    answeredPromptReplies: new Map([[`${request.convo_id}:${request.seq}`, { choice: "deny" }]]),
+                }),
+            );
+        });
+
+        expect(card?.querySelector(".mj_PromptResolved_pending")).toBeNull();
         expect(card?.querySelector(".mj_PromptResolved_denied")?.textContent).toBe("Denied");
-        expect(card?.querySelector(".mj_Answered")?.textContent).not.toBe("Answered");
     });
 
     it("resets its local answer when reused for a different event identity", async () => {
@@ -343,7 +394,7 @@ describe("permission request cards", () => {
                 React.createElement(EventContent, {
                     client,
                     event: firstRequest,
-                    answeredPrompts: new Set<number>(),
+                    answeredPromptReplies: new Map<string, { choice?: string }>(),
                 }),
             );
         });
@@ -352,7 +403,7 @@ describe("permission request cards", () => {
                 .find((candidate) => candidate.textContent === "Allow")
                 ?.click();
         });
-        expect(container.querySelector(".mj_PromptResolved_allowed")?.textContent).toBe("Allowed");
+        expect(container.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
 
         const nextRequest: JournalEvent = {
             ...permissionRequest(),
@@ -367,7 +418,7 @@ describe("permission request cards", () => {
                 React.createElement(EventContent, {
                     client,
                     event: nextRequest,
-                    answeredPrompts: new Set<number>(),
+                    answeredPromptReplies: new Map<string, { choice?: string }>(),
                 }),
             );
         });
@@ -386,7 +437,7 @@ describe("permission request cards", () => {
                 .find((candidate) => candidate.textContent === "Deny")
                 ?.click();
         });
-        expect(card?.querySelector(".mj_PromptResolved_denied")?.textContent).toBe("Denied");
+        expect(card?.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
 
         await act(async () => {
             root.render(
@@ -397,7 +448,7 @@ describe("permission request cards", () => {
                         convo_id: "c2",
                         payload: { ...nextRequest.payload, description: "Allow a tool in another conversation?" },
                     },
-                    answeredPrompts: new Set<number>(),
+                    answeredPromptReplies: new Map<string, { choice?: string }>(),
                 }),
             );
         });
@@ -409,8 +460,15 @@ describe("permission request cards", () => {
         expect(sendPromptReply).toHaveBeenCalledTimes(2);
     });
 
-    it("keeps the generic resolved line when the permission was answered remotely", async () => {
-        const request = permissionRequest();
+    it("keeps the generic resolved line for a non-permission prompt", async () => {
+        const request: JournalEvent = {
+            ...permissionRequest(),
+            type: "prompt",
+            payload: {
+                question: "Choose a direction",
+                options: ["Left", "Right"],
+            },
+        };
         const reply: JournalEvent = {
             seq: 43,
             convo_id: "c1",
@@ -421,7 +479,7 @@ describe("permission request cards", () => {
         };
         rendered = await renderClient(signedInClient({ events: [request, reply] }));
 
-        const resolved = rendered.container.querySelector(".mj_PromptCard_permission .mj_PromptResolved");
+        const resolved = rendered.container.querySelector(".mj_PromptCard .mj_PromptResolved");
         expect(resolved?.textContent).toBe("Answered");
         expect(resolved?.classList.contains("mj_PromptResolved_allowed")).toBe(false);
         expect(resolved?.classList.contains("mj_PromptResolved_denied")).toBe(false);
@@ -443,16 +501,23 @@ describe("permission request cards", () => {
         expect(sendPromptReply).not.toHaveBeenCalled();
     });
 
-    it("expires an unresolved permission when its client-side deadline passes", async () => {
+    it("expires a pending permission when its advisory client deadline passes", async () => {
         jest.useFakeTimers();
         jest.setSystemTime(new Date("2026-08-06T12:00:00.000Z"));
         const client = signedInClient({ events: [permissionRequest(Date.now() + 1_000)] });
+        jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
         rendered = await renderClient(client);
         const card = rendered.container.querySelector(".mj_PromptCard_permission");
 
-        expect(card?.querySelectorAll("button")).toHaveLength(2);
+        const allow = [...card!.querySelectorAll<HTMLButtonElement>("button")].find(
+            (candidate) => candidate.textContent === "Allow",
+        );
+        await act(async () => allow?.click());
+        expect(card?.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+
         await act(async () => jest.advanceTimersByTime(1_000));
 
+        expect(card?.querySelector(".mj_PromptResolved_pending")).toBeNull();
         expect(card?.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("Expired");
         const buttons = [...card!.querySelectorAll<HTMLButtonElement>("button")];
         expect(buttons).toHaveLength(2);
@@ -514,11 +579,15 @@ describe("markdown render-site integration", () => {
                 React.createElement(
                     React.Fragment,
                     null,
-                    React.createElement(EventContent, { client, event: text, answeredPrompts: new Set<number>() }),
+                    React.createElement(EventContent, {
+                        client,
+                        event: text,
+                        answeredPromptReplies: new Map<string, { choice?: string }>(),
+                    }),
                     React.createElement(EventContent, {
                         client,
                         event: promptReply,
-                        answeredPrompts: new Set<number>(),
+                        answeredPromptReplies: new Map<string, { choice?: string }>(),
                     }),
                 ),
             );
