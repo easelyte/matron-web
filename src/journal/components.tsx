@@ -2484,6 +2484,8 @@ export function QueuedReleaseCard({
     );
 }
 
+const PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS = 10_000;
+
 function PromptCard({
     client,
     event,
@@ -2501,6 +2503,7 @@ function PromptCard({
 }): React.ReactElement {
     const [freeText, setFreeText] = useState("");
     const [locallyAnswered, setLocallyAnswered] = useState(false);
+    const [confirmationTimedOut, setConfirmationTimedOut] = useState(false);
     const [nowMs, setNowMs] = useState(() => Date.now());
     const question = permission
         ? asString(event.payload.description, "Permission request")
@@ -2526,17 +2529,15 @@ function PromptCard({
             : undefined;
     // Client expiry is advisory because browser and bridge clocks can differ; the bridge's
     // own timer and durable prompt_reply remain the canonical authorization decision.
-    const expired = permission && !resolved && expiresAt !== undefined && nowMs >= expiresAt;
-    const pending = permission && locallyAnswered && !resolved && !expired;
-    const disabled = resolved || pending || expired;
+    const advisoryExpired = permission && !resolved && expiresAt !== undefined && nowMs >= expiresAt;
+    const pending = permission && locallyAnswered && !resolved && !confirmationTimedOut;
+    const retryable = permission && locallyAnswered && !resolved && confirmationTimedOut;
+    const disabled = resolved || pending;
     const answer = (choice?: string, text?: string): void => {
         if (disabled) return;
-        if (permission && expiresAt !== undefined && Date.now() >= expiresAt) {
-            setNowMs(Date.now());
-            return;
-        }
         if (client.sendPromptReply(event.seq, choice, text)) {
             setLocallyAnswered(true);
+            setConfirmationTimedOut(false);
         }
     };
     const normalizedAnsweredChoice = answeredChoice?.trim().toLocaleLowerCase();
@@ -2544,7 +2545,7 @@ function PromptCard({
     const durablyDenied = permission && normalizedAnsweredChoice === "deny";
 
     useEffect(() => {
-        if (!permission || resolved || expiresAt === undefined || expired) return;
+        if (!permission || resolved || expiresAt === undefined || advisoryExpired) return;
 
         const updateNow = (): void => setNowMs(Date.now());
         const msLeft = expiresAt - Date.now();
@@ -2555,7 +2556,14 @@ function PromptCard({
 
         const timer = setTimeout(updateNow, Math.min(msLeft, MAX_TIMEOUT_MS));
         return (): void => clearTimeout(timer);
-    }, [permission, resolved, expiresAt, expired, nowMs]);
+    }, [permission, resolved, expiresAt, advisoryExpired, nowMs]);
+
+    useEffect(() => {
+        if (!pending) return;
+
+        const timer = setTimeout(() => setConfirmationTimedOut(true), PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS);
+        return (): void => clearTimeout(timer);
+    }, [pending]);
 
     // §10.5 one primary per surface: exactly one filled affirmative. For permission it's
     // "Allow"; for a generic question the first option whose label reads affirmative
@@ -2585,7 +2593,7 @@ function PromptCard({
                         <button
                             key={`${option.label}:${option.value}`}
                             className={index === affirmativeIndex ? "mj_PromptOption_affirmative" : undefined}
-                            disabled={pending || expired}
+                            disabled={pending}
                             onClick={() => answer(option.value)}
                         >
                             {option.label}
@@ -2615,6 +2623,12 @@ function PromptCard({
                 <div className="mj_PromptResolved mj_PromptResolved_pending">
                     <span className="mj_PromptGlyph" aria-hidden="true" />
                     <span className="mj_Muted">Sending…</span>
+                </div>
+            )}
+            {retryable && (
+                <div className="mj_PromptResolved mj_PromptResolved_retryable">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Muted">Reply not confirmed — tap to retry</span>
                 </div>
             )}
             {resolved && (
@@ -2648,10 +2662,10 @@ function PromptCard({
                     </span>
                 </div>
             )}
-            {expired && (
+            {advisoryExpired && (
                 <div className="mj_PromptResolved mj_PromptResolved_expired">
                     <span className="mj_PromptGlyph" aria-hidden="true" />
-                    <span className="mj_Expired">Expired</span>
+                    <span className="mj_Expired">May have expired</span>
                 </div>
             )}
         </div>

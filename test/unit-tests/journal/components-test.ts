@@ -485,23 +485,26 @@ describe("permission request cards", () => {
         expect(resolved?.classList.contains("mj_PromptResolved_denied")).toBe(false);
     });
 
-    it("renders an already-expired permission as non-actionable", async () => {
+    it.each([
+        ["Allow", "allow"],
+        ["Deny", "deny"],
+    ])("still sends %s when the advisory client deadline has passed", async (label, choice) => {
         const client = signedInClient({ events: [permissionRequest(Date.now() - 1)] });
         const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
         rendered = await renderClient(client);
 
         const card = rendered.container.querySelector(".mj_PromptCard_permission");
-        expect(card?.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("Expired");
-        expect(card?.querySelector(".mj_Expired")?.textContent).toBe("Expired");
+        expect(card?.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("May have expired");
+        expect(card?.querySelector(".mj_Expired")?.textContent).toBe("May have expired");
         expect(card?.querySelector(".mj_PromptResolved_allowed, .mj_PromptResolved_denied")).toBeNull();
         const buttons = [...card!.querySelectorAll<HTMLButtonElement>("button")];
         expect(buttons.map((button) => button.textContent)).toEqual(["Allow", "Deny"]);
-        expect(buttons.every((button) => button.disabled)).toBe(true);
-        await act(async () => buttons[0]?.click());
-        expect(sendPromptReply).not.toHaveBeenCalled();
+        expect(buttons.every((button) => !button.disabled)).toBe(true);
+        await act(async () => buttons.find((button) => button.textContent === label)?.click());
+        expect(sendPromptReply).toHaveBeenCalledWith(42, choice, undefined);
     });
 
-    it("expires a pending permission when its advisory client deadline passes", async () => {
+    it("keeps a reply pending when only its advisory client deadline passes", async () => {
         jest.useFakeTimers();
         jest.setSystemTime(new Date("2026-08-06T12:00:00.000Z"));
         const client = signedInClient({ events: [permissionRequest(Date.now() + 1_000)] });
@@ -517,14 +520,14 @@ describe("permission request cards", () => {
 
         await act(async () => jest.advanceTimersByTime(1_000));
 
-        expect(card?.querySelector(".mj_PromptResolved_pending")).toBeNull();
-        expect(card?.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("Expired");
+        expect(card?.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+        expect(card?.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("May have expired");
         const buttons = [...card!.querySelectorAll<HTMLButtonElement>("button")];
         expect(buttons).toHaveLength(2);
         expect(buttons.every((button) => button.disabled)).toBe(true);
     });
 
-    it("rejects a late tap before a throttled expiry timer can re-render", async () => {
+    it("sends a late tap before a throttled advisory expiry timer can re-render", async () => {
         jest.useFakeTimers();
         jest.setSystemTime(new Date("2026-08-06T12:00:00.000Z"));
         const client = signedInClient({ events: [permissionRequest(Date.now() + 1_000)] });
@@ -538,11 +541,39 @@ describe("permission request cards", () => {
         jest.setSystemTime(new Date("2026-08-06T12:00:01.000Z"));
         await act(async () => allow?.click());
 
-        expect(sendPromptReply).not.toHaveBeenCalled();
-        expect(card?.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("Expired");
+        expect(sendPromptReply).toHaveBeenCalledWith(42, "allow", undefined);
+        expect(card?.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
         const buttons = [...card!.querySelectorAll<HTMLButtonElement>("button")];
         expect(buttons).toHaveLength(2);
         expect(buttons.every((button) => button.disabled)).toBe(true);
+    });
+
+    it("makes an unconfirmed reply without expires_at retryable after the confirmation window", async () => {
+        jest.useFakeTimers();
+        const request = permissionRequest();
+        delete request.payload.expires_at;
+        const client = signedInClient({ events: [request] });
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard_permission");
+        const allow = [...card!.querySelectorAll<HTMLButtonElement>("button")].find(
+            (candidate) => candidate.textContent === "Allow",
+        );
+
+        await act(async () => allow?.click());
+        expect(card?.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+
+        await act(async () => jest.advanceTimersByTime(10_000));
+
+        expect(card?.querySelector(".mj_PromptResolved_pending")).toBeNull();
+        expect(card?.querySelector(".mj_PromptResolved_retryable")?.textContent).toBe(
+            "Reply not confirmed — tap to retry",
+        );
+        expect([...card!.querySelectorAll<HTMLButtonElement>("button")].every((button) => !button.disabled)).toBe(true);
+
+        await act(async () => allow?.click());
+        expect(sendPromptReply).toHaveBeenCalledTimes(2);
+        expect(card?.querySelector(".mj_PromptResolved_pending")?.textContent).toBe("Sending…");
     });
 });
 
