@@ -2541,8 +2541,8 @@ function PromptCard({
         }
     };
     const normalizedAnsweredChoice = answeredChoice?.trim().toLocaleLowerCase();
-    const durablyAllowed = permission && normalizedAnsweredChoice === "allow";
-    const durablyDenied = permission && normalizedAnsweredChoice === "deny";
+    const durablyDenied = permission && resolved && normalizedAnsweredChoice === "deny";
+    const durablyAllowed = permission && resolved && !durablyDenied;
 
     useEffect(() => {
         if (!permission || resolved || expiresAt === undefined || advisoryExpired) return;

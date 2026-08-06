@@ -320,6 +320,7 @@ describe("permission request cards", () => {
     it.each([
         ["allow", "allowed", "Allowed"],
         ["deny", "denied", "Denied"],
+        ["always allow", "allowed", "Allowed"],
     ])("renders a durable %s reply with the %s treatment", async (choice, treatment, label) => {
         const request = permissionRequest();
         const reply: JournalEvent = {
