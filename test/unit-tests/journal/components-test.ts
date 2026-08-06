@@ -256,6 +256,142 @@ describe("usage limit accessibility", () => {
     });
 });
 
+describe("permission request cards", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    const permissionRequest = (expiresAt = Date.now() + 60_000): JournalEvent => ({
+        seq: 42,
+        convo_id: "c1",
+        ts: 1,
+        sender: "agent:claude",
+        type: "permission_request",
+        payload: {
+            kind: "permission",
+            tool_use_id: "toolu_123",
+            description: 'Allow vercel tool "deploy_to_vercel"?',
+            options: [
+                { id: "allow", label: "Allow" },
+                { id: "deny", label: "Deny" },
+            ],
+            expires_at: expiresAt,
+            nonce: "nonce-123",
+        },
+    });
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.useRealTimers();
+        jest.restoreAllMocks();
+    });
+
+    it("renders the bridge payload and records an allowed local reply", async () => {
+        const client = signedInClient({ events: [permissionRequest()] });
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        rendered = await renderClient(client);
+
+        const card = rendered.container.querySelector(".mj_PromptCard_permission");
+        expect(card?.textContent).toContain('Allow vercel tool "deploy_to_vercel"?');
+        expect([...card!.querySelectorAll("button")].map((candidate) => candidate.textContent)).toEqual([
+            "Allow",
+            "Deny",
+        ]);
+
+        const allow = [...card!.querySelectorAll<HTMLButtonElement>("button")].find(
+            (candidate) => candidate.textContent === "Allow",
+        );
+        await act(async () => allow?.click());
+
+        expect(sendPromptReply.mock.calls[0]?.slice(0, 2)).toEqual([42, "allow"]);
+        expect(card?.querySelector(".mj_PromptResolved_allowed")?.textContent).toBe("Allowed");
+    });
+
+    it("renders a denied treatment after a successful Deny reply", async () => {
+        const client = signedInClient({ events: [permissionRequest()] });
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard_permission");
+
+        const deny = [...card!.querySelectorAll<HTMLButtonElement>("button")].find(
+            (candidate) => candidate.textContent === "Deny",
+        );
+        await act(async () => deny?.click());
+
+        expect(sendPromptReply.mock.calls[0]?.slice(0, 2)).toEqual([42, "deny"]);
+        expect(card?.querySelector(".mj_PromptResolved_denied")?.textContent).toBe("Denied");
+        expect(card?.querySelector(".mj_Answered")?.textContent).not.toBe("Answered");
+    });
+
+    it("keeps the generic resolved line when the permission was answered remotely", async () => {
+        const request = permissionRequest();
+        const reply: JournalEvent = {
+            seq: 43,
+            convo_id: "c1",
+            ts: 2,
+            sender: "user:dan",
+            type: "prompt_reply",
+            payload: { choice: "deny", target_seq: request.seq },
+        };
+        rendered = await renderClient(signedInClient({ events: [request, reply] }));
+
+        const resolved = rendered.container.querySelector(".mj_PromptCard_permission .mj_PromptResolved");
+        expect(resolved?.textContent).toBe("Answered");
+        expect(resolved?.classList.contains("mj_PromptResolved_allowed")).toBe(false);
+        expect(resolved?.classList.contains("mj_PromptResolved_denied")).toBe(false);
+    });
+
+    it("renders an already-expired permission as non-actionable", async () => {
+        const client = signedInClient({ events: [permissionRequest(Date.now() - 1)] });
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        rendered = await renderClient(client);
+
+        const card = rendered.container.querySelector(".mj_PromptCard_permission");
+        expect(card?.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("Expired");
+        expect(card?.querySelectorAll("button")).toHaveLength(0);
+        expect(sendPromptReply).not.toHaveBeenCalled();
+    });
+
+    it("expires an unresolved permission when its client-side deadline passes", async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date("2026-08-06T12:00:00.000Z"));
+        const client = signedInClient({ events: [permissionRequest(Date.now() + 1_000)] });
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard_permission");
+
+        expect(card?.querySelectorAll("button")).toHaveLength(2);
+        await act(async () => jest.advanceTimersByTime(1_000));
+
+        expect(card?.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("Expired");
+        expect(card?.querySelectorAll("button")).toHaveLength(0);
+    });
+
+    it("rejects a late tap before a throttled expiry timer can re-render", async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date("2026-08-06T12:00:00.000Z"));
+        const client = signedInClient({ events: [permissionRequest(Date.now() + 1_000)] });
+        const sendPromptReply = jest.spyOn(client, "sendPromptReply").mockReturnValue(true);
+        rendered = await renderClient(client);
+        const card = rendered.container.querySelector(".mj_PromptCard_permission");
+        const allow = [...card!.querySelectorAll<HTMLButtonElement>("button")].find(
+            (candidate) => candidate.textContent === "Allow",
+        );
+
+        jest.setSystemTime(new Date("2026-08-06T12:00:01.000Z"));
+        await act(async () => allow?.click());
+
+        expect(sendPromptReply).not.toHaveBeenCalled();
+        expect(card?.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("Expired");
+        expect(card?.querySelectorAll("button")).toHaveLength(0);
+    });
+});
+
 describe("markdown render-site integration", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 

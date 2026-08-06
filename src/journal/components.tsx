@@ -2499,6 +2499,8 @@ function PromptCard({
 }): React.ReactElement {
     const [freeText, setFreeText] = useState("");
     const [locallyAnswered, setLocallyAnswered] = useState(false);
+    const [chosenValue, setChosenValue] = useState<string>();
+    const [nowMs, setNowMs] = useState(() => Date.now());
     const question = permission
         ? asString(event.payload.description, "Permission request")
         : asString(event.payload.question, "The agent needs your input");
@@ -2516,10 +2518,41 @@ function PromptCard({
         }
         return { label: String(option), value: String(option) };
     });
-    const disabled = answered || locallyAnswered;
+    const resolved = answered || locallyAnswered;
+    const expiresAt =
+        typeof event.payload.expires_at === "number" && Number.isFinite(event.payload.expires_at)
+            ? event.payload.expires_at
+            : undefined;
+    const expired = permission && !resolved && expiresAt !== undefined && nowMs >= expiresAt;
+    const disabled = resolved || expired;
     const answer = (choice?: string, text?: string): void => {
-        if (client.sendPromptReply(event.seq, choice, text)) setLocallyAnswered(true);
+        if (permission && expiresAt !== undefined && Date.now() >= expiresAt) {
+            setNowMs(Date.now());
+            return;
+        }
+        if (client.sendPromptReply(event.seq, choice, text)) {
+            setChosenValue(choice);
+            setLocallyAnswered(true);
+        }
     };
+    const normalizedChoice = chosenValue?.trim().toLocaleLowerCase();
+    const locallyAllowed = permission && normalizedChoice === "allow";
+    const locallyDenied = permission && normalizedChoice === "deny";
+
+    useEffect(() => {
+        if (!permission || resolved || expiresAt === undefined || expired) return;
+
+        const updateNow = (): void => setNowMs(Date.now());
+        const msLeft = expiresAt - Date.now();
+        if (msLeft <= 0) {
+            updateNow();
+            return;
+        }
+
+        const timer = setTimeout(updateNow, Math.min(msLeft, MAX_TIMEOUT_MS));
+        return (): void => clearTimeout(timer);
+    }, [permission, resolved, expiresAt, expired, nowMs]);
+
     // §10.5 one primary per surface: exactly one filled affirmative. For permission it's
     // "Allow"; for a generic question the first option whose label reads affirmative
     // (send/yes/continue/confirm/ok/approve). Chosen by SEMANTICS, not position, so a
@@ -2573,12 +2606,41 @@ function PromptCard({
                     </button>
                 </form>
             )}
-            {disabled && (
-                <div className="mj_PromptResolved">
-                    <span className="mj_PromptGlyph mj_PromptGlyph_ok" aria-hidden="true">
-                        <PromptCheckGlyph />
+            {resolved && (
+                <div
+                    className={`mj_PromptResolved${locallyAllowed ? " mj_PromptResolved_allowed" : ""}${locallyDenied ? " mj_PromptResolved_denied" : ""}`}
+                >
+                    <span
+                        className="mj_PromptGlyph mj_PromptGlyph_ok"
+                        aria-hidden="true"
+                        style={
+                            locallyDenied
+                                ? { color: "var(--cpd-color-text-critical-primary)" }
+                                : locallyAllowed
+                                  ? { color: "var(--cpd-color-usage-low)" }
+                                  : undefined
+                        }
+                    >
+                        {locallyDenied ? <PromptDeniedGlyph /> : <PromptCheckGlyph />}
                     </span>
-                    <span className="mj_Answered">Answered</span>
+                    <span
+                        className="mj_Answered"
+                        style={
+                            locallyDenied
+                                ? { color: "var(--cpd-color-text-critical-primary)" }
+                                : locallyAllowed
+                                  ? { color: "var(--cpd-color-usage-low)" }
+                                  : undefined
+                        }
+                    >
+                        {locallyDenied ? "Denied" : locallyAllowed ? "Allowed" : "Answered"}
+                    </span>
+                </div>
+            )}
+            {expired && (
+                <div className="mj_PromptResolved mj_PromptResolved_expired">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Expired">Expired</span>
                 </div>
             )}
         </div>
@@ -2638,6 +2700,22 @@ function PromptCheckGlyph(): React.ReactElement {
             strokeLinejoin="round"
         >
             <path d="m5 12 4 4 10-10" />
+        </svg>
+    );
+}
+
+function PromptDeniedGlyph(): React.ReactElement {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+        >
+            <path d="m6 6 12 12M18 6 6 18" />
         </svg>
     );
 }
