@@ -2526,6 +2526,7 @@ function PromptCard({
     const expired = permission && !resolved && expiresAt !== undefined && nowMs >= expiresAt;
     const disabled = resolved || expired;
     const answer = (choice?: string, text?: string): void => {
+        if (expired) return;
         if (permission && expiresAt !== undefined && Date.now() >= expiresAt) {
             setNowMs(Date.now());
             return;
@@ -2575,12 +2576,13 @@ function PromptCard({
                 </span>
                 <span className="mj_PromptQuestion">{question}</span>
             </div>
-            {!isReadOnly && !disabled && options.length > 0 && (
+            {!isReadOnly && !resolved && options.length > 0 && (
                 <div className="mj_PromptOptions">
                     {options.map((option, index) => (
                         <button
                             key={`${option.label}:${option.value}`}
                             className={index === affirmativeIndex ? "mj_PromptOption_affirmative" : undefined}
+                            disabled={expired}
                             onClick={() => answer(option.value)}
                         >
                             {option.label}

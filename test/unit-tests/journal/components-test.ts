@@ -436,7 +436,10 @@ describe("permission request cards", () => {
         expect(card?.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("Expired");
         expect(card?.querySelector(".mj_Expired")?.textContent).toBe("Expired");
         expect(card?.querySelector(".mj_PromptResolved_allowed, .mj_PromptResolved_denied")).toBeNull();
-        expect(card?.querySelectorAll("button")).toHaveLength(0);
+        const buttons = [...card!.querySelectorAll<HTMLButtonElement>("button")];
+        expect(buttons.map((button) => button.textContent)).toEqual(["Allow", "Deny"]);
+        expect(buttons.every((button) => button.disabled)).toBe(true);
+        await act(async () => buttons[0]?.click());
         expect(sendPromptReply).not.toHaveBeenCalled();
     });
 
@@ -451,7 +454,9 @@ describe("permission request cards", () => {
         await act(async () => jest.advanceTimersByTime(1_000));
 
         expect(card?.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("Expired");
-        expect(card?.querySelectorAll("button")).toHaveLength(0);
+        const buttons = [...card!.querySelectorAll<HTMLButtonElement>("button")];
+        expect(buttons).toHaveLength(2);
+        expect(buttons.every((button) => button.disabled)).toBe(true);
     });
 
     it("rejects a late tap before a throttled expiry timer can re-render", async () => {
@@ -470,7 +475,9 @@ describe("permission request cards", () => {
 
         expect(sendPromptReply).not.toHaveBeenCalled();
         expect(card?.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("Expired");
-        expect(card?.querySelectorAll("button")).toHaveLength(0);
+        const buttons = [...card!.querySelectorAll<HTMLButtonElement>("button")];
+        expect(buttons).toHaveLength(2);
+        expect(buttons.every((button) => button.disabled)).toBe(true);
     });
 });
 
