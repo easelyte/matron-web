@@ -3352,4 +3352,38 @@ describe("session creation orchestration", () => {
         expect(state.textStreams.get("c2")).toEqual({ ref: "partial" });
         expect(state.toolStreams.get("c2")).toEqual({ ref: { content: "partial" } });
     });
+
+    it("prunes a stale activity when refreshConversations sees the conversation is no longer running", async () => {
+        // The turn-end 'idle' activity ephemeral is fire-and-forget and never replayed; a dropped
+        // one would otherwise strand a stale "Thinking". session_state is the durable, replayed
+        // signal, so a conversation that is no longer running must have its activity reconciled off.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase({
+            conversations: jest.fn().mockResolvedValue([
+                { ...CONVERSATIONS[0], session_state: "done" }, // c1 finished
+                { ...CONVERSATIONS[1], session_state: "running" }, // c2 still running
+            ]),
+        });
+        state.state = signedInState(client);
+        state.database = database;
+        state.api = { messages: jest.fn().mockResolvedValue({ events: [] }) };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        // Both stuck on 'thinking' because their turn-end 'idle' frames were dropped.
+        state.activities.set("c1", { state: "thinking" });
+        state.activities.set("c2", { state: "thinking" });
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 30,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "system",
+            type: "session_status",
+            payload: { state: "done" },
+        });
+
+        expect(state.activities.has("c1")).toBe(false); // finished → pruned
+        expect(state.activities.get("c2")).toEqual({ state: "thinking" }); // still running → kept
+    });
 });

@@ -1774,7 +1774,15 @@ export class MatronJournalClient {
 
     private async refreshConversations(): Promise<void> {
         if (!this.database) return;
-        this.patch({ conversations: await this.database.conversations() });
+        const conversations = await this.database.conversations();
+        // Reconcile the fire-and-forget activity indicator against the durable run-state.
+        // The turn-end 'idle' activity ephemeral is never replayed, so a dropped one would
+        // strand a stale "Thinking" in this.activities. session_state is the persisted,
+        // replayed signal — a conversation that is no longer running has no live activity.
+        for (const conversation of conversations) {
+            if (conversation.session_state !== "running") this.activities.delete(conversation.id);
+        }
+        this.patch({ conversations });
     }
 
     private async refreshSelectedConversation(

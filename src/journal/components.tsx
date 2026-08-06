@@ -3562,6 +3562,12 @@ function Timeline({
         void client.loadOlderHistory();
     };
 
+    // The activity indicator ('Thinking' / 'Running …') rides a fire-and-forget ephemeral
+    // whose turn-end 'idle' frame is never replayed (lib/journal-publisher.js publishActivity),
+    // so a dropped final 'idle' would otherwise strand a stale "Thinking" until the next turn.
+    // Gate on the durable, replayed run-state: only show it while the session is actually running.
+    const sessionRunning = client.selectedConversation()?.session_state === "running";
+
     return (
         <main className="mx_RoomView_timeline" data-testid="timeline">
             <div className="mx_RoomView_messagePanel mx_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
@@ -3663,7 +3669,7 @@ function Timeline({
                         {Object.values(state.toolStreams).map((stream) => (
                             <ToolStream key={stream.messageRef} stream={stream} />
                         ))}
-                        {state.activity && state.activity.state !== "idle" && (
+                        {state.activity && state.activity.state !== "idle" && sessionRunning && (
                             <li className="mx_WhoIsTypingTile mj_Activity">
                                 <span />
                                 <span />
