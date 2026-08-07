@@ -46,7 +46,7 @@ async function mountEvent(event: JournalEvent): Promise<MountedComponent> {
             React.createElement(EventContent, {
                 client: new MatronJournalClient(),
                 event,
-                answeredPrompts: new Set<number>(),
+                answeredPromptReplies: new Map<string, { choice?: string }>(),
             }),
         );
     });
