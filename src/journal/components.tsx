@@ -2361,7 +2361,7 @@ export function QueuedReleaseCard({
     client: MatronJournalClient;
     event: JournalEvent;
     isReadOnly?: boolean;
-    resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
+    resolvedAction?: (itemId: string) => "send" | "cancel" | "expired" | undefined;
 }): React.ReactElement {
     const items = (Array.isArray(event.payload.items) ? event.payload.items : []).flatMap((item) => {
         if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
@@ -2472,12 +2472,22 @@ export function QueuedReleaseCard({
                     })}
                 </div>
             )}
-            {resolution !== undefined && (
+            {resolution !== undefined && resolution !== "expired" && (
                 <div className="mj_PromptResolved">
                     <span className="mj_PromptGlyph mj_PromptGlyph_ok" aria-hidden="true">
                         <PromptCheckGlyph />
                     </span>
                     <span className="mj_Answered">{resolution === "send" ? "Sent" : "Cancelled"}</span>
+                </div>
+            )}
+            {resolution === "expired" && (
+                // Terminal abandoned state (loop #536, spec §6): the bridge has
+                // authoritatively expired this card (restart/crash abandoned the
+                // live queue). Both buttons are already removed (gated on
+                // `resolution === undefined` above); render a muted terminal
+                // note distinct from the Sent/Cancelled resolution.
+                <div className="mj_PromptResolved mj_PromptResolved_expired">
+                    <span className="mj_Answered mj_Expired">Expired — no longer actionable</span>
                 </div>
             )}
         </div>
@@ -3166,7 +3176,7 @@ export function EventContent({
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     isReadOnly?: boolean;
-    resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
+    resolvedAction?: (itemId: string) => "send" | "cancel" | "expired" | undefined;
 }): React.ReactElement {
     const answer = answeredPromptReplies.get(`${event.convo_id}:${event.seq}`);
     switch (event.type) {
@@ -3282,7 +3292,7 @@ function EventRow({
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     isReadOnly?: boolean;
-    resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
+    resolvedAction: (itemId: string) => "send" | "cancel" | "expired" | undefined;
     continuation?: boolean;
     lastInSection?: boolean;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
@@ -3564,7 +3574,7 @@ function Timeline({
         return replies;
     }, [state.events]);
     const releasedActions = useMemo(() => {
-        const actions = new Map<string, "send" | "cancel">();
+        const actions = new Map<string, "send" | "cancel" | "expired">();
         for (const event of state.events) {
             if (
                 event.type !== "prompt_reply" ||
@@ -3573,16 +3583,28 @@ function Timeline({
             )
                 continue;
             const action = asString(event.payload.action);
-            if (action !== "send" && action !== "cancel") continue;
+            if (action !== "send" && action !== "cancel" && action !== "expired") continue;
             for (const releasedId of event.payload.released) {
                 const itemId = asString(releasedId);
-                if (itemId) actions.set(itemId, action);
+                if (!itemId) continue;
+                // Terminal precedence: a real resolution (send/cancel) is FINAL
+                // and outranks a later — or earlier — `expired` release for the
+                // same item (loop #536, spec §6). This neutralizes the bridge's
+                // narrow disk-fail-then-restart re-expiry: even if the bridge
+                // re-emits `expired` for a release it already committed as
+                // sent/cancelled, the card keeps showing the true result.
+                // Precedence: send = cancel > expired. Order-independent.
+                if (action === "expired") {
+                    const prev = actions.get(itemId);
+                    if (prev === "send" || prev === "cancel") continue; // never downgrade
+                }
+                actions.set(itemId, action);
             }
         }
         return actions;
     }, [state.events]);
     const resolvedAction = useCallback(
-        (itemId: string): "send" | "cancel" | undefined => releasedActions.get(itemId),
+        (itemId: string): "send" | "cancel" | "expired" | undefined => releasedActions.get(itemId),
         [releasedActions],
     );
     const scrollToBottom = useCallback((): void => {
