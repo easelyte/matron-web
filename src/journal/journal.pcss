@@ -260,7 +260,7 @@ textarea {
 
 .mj_HeaderModel,
 .mj_HeaderContext,
-.mj_HeaderWorkdir {
+.mj_HeaderLimitsReset {
     display: block;
     overflow: hidden;
     color: inherit;
@@ -269,9 +269,10 @@ textarea {
     white-space: nowrap;
 }
 
-/* v5 subtitle: workdir is the flexible, first-to-truncate segment so the short,
-   meaningful model + run-state stay legible when the pane narrows. */
-.mj_HeaderWorkdir {
+/* Loop #628: the subtitle's second segment is the usage-window reset countdown
+   ("limits reset in 3h05"), replacing the old workdir path. Flexible so it is the
+   first-to-truncate segment, keeping the short model + run-state legible when narrow. */
+.mj_HeaderLimitsReset {
     flex: 1 1 auto;
 }
 
@@ -316,6 +317,15 @@ textarea {
 .mj_CompactButton:hover {
     background: var(--cpd-state-hover);
     color: var(--cpd-color-text-primary);
+}
+
+/* Loop #627: indeterminate in-flight state. /compact emits no incremental progress, so
+   the pill pulses (opacity oscillation) until the post-compact status frame lands — never
+   a fake 0→100% fill. Disabled while compacting, so no hover affordance. */
+.mj_CompactButton_compacting {
+    color: var(--cpd-color-text-primary);
+    cursor: default;
+    animation: mj-pulse 1.2s ease-in-out infinite;
 }
 
 /* 1px divider separating the usage grid from the Compact pill (mock). */
@@ -3346,7 +3356,8 @@ button.mj_File {
     .mj_VoiceRecording_dot,
     .mj_VoiceRecording_waveformFallback,
     .mj_HeaderStatusDot_running,
-    .mj_RoomListStatus_running {
+    .mj_RoomListStatus_running,
+    .mj_CompactButton_compacting {
         animation: none;
     }
 }

@@ -2193,6 +2193,104 @@ function HeaderOverflowMenu({
     );
 }
 
+// Backstop for the compact in-flight pulse (loop #627). Compaction emits no incremental
+// progress signal, so the pulse is cleared by the post-compact status frame (context
+// tokens drop below the pre-send baseline). This timeout is the fallback for when that
+// never arrives — e.g. snap-compact declines because pressure is <50%, or already
+// compacted this session — so the indeterminate state can never stick on forever.
+const COMPACT_PULSE_TIMEOUT_MS = 180_000;
+
+// The header Compact pill. Sends /snap-compact — the guided safe-compact flow that
+// pre-checks pressure and assembles preserve instructions — rather than a raw /compact,
+// and shows an INDETERMINATE "Compacting…" pulse while the compaction is in flight (NOT a
+// percentage fill; /compact reports no incremental progress). The pulse clears when the
+// next status frame reports fewer context tokens than the pre-send baseline, or on the
+// timeout backstop above.
+function CompactButton({
+    client,
+    contextTokens,
+}: {
+    client: MatronJournalClient;
+    contextTokens: number;
+}): React.ReactElement {
+    const [compacting, setCompacting] = useState(false);
+    const baselineRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        if (!compacting) return;
+        // Compaction landed: the fresh status frame reports a smaller context than the
+        // token count captured at send time → clear the pulse.
+        if (baselineRef.current != null && contextTokens < baselineRef.current) {
+            setCompacting(false);
+            return;
+        }
+        const timeout = window.setTimeout(() => setCompacting(false), COMPACT_PULSE_TIMEOUT_MS);
+        return () => window.clearTimeout(timeout);
+    }, [compacting, contextTokens]);
+
+    const onClick = useCallback(() => {
+        baselineRef.current = contextTokens;
+        setCompacting(true);
+        void client.sendMessage("/snap-compact").catch((error) => {
+            console.warn("Snap-compact command failed to send:", error);
+            setCompacting(false);
+        });
+    }, [client, contextTokens]);
+
+    return (
+        <button
+            className={`mj_CompactButton${compacting ? " mj_CompactButton_compacting" : ""}`}
+            type="button"
+            aria-label="Compact conversation"
+            aria-busy={compacting}
+            title="Compact the conversation — sends /snap-compact"
+            disabled={compacting}
+            onClick={onClick}
+        >
+            <CompactIcon />
+            <span>{compacting ? "Compacting…" : "Compact"}</span>
+        </button>
+    );
+}
+
+// True when a limit carries any reset timestamp the countdown can render.
+function hasResetTime(limit: NonNullable<SessionStatus["limits"]>[number]): boolean {
+    return limit.resets_at_ms != null || limit.resets_at != null || Boolean(limit.resets);
+}
+
+// The usage-window limit whose reset time the header countdown tracks (loop #628): the
+// 5-hour session window first, falling back to the soonest listed rate limit that carries
+// a reset (excluding the synthetic context bar and the host cpu/ram meters, which have no
+// meaningful reset). Reuses the reset data already flowing to the pressure bars — no new
+// data source or request.
+function pickResetLimit(
+    limits: NonNullable<SessionStatus["limits"]>,
+): NonNullable<SessionStatus["limits"]>[number] | undefined {
+    const session = limits.find((limit) => limit.id === "session_5h" && hasResetTime(limit));
+    if (session) return session;
+    return limits.find(
+        (limit) => limit.id !== "context" && limit.id !== "host_cpu" && limit.id !== "host_ram" && hasResetTime(limit),
+    );
+}
+
+// Header subtitle countdown that replaces the workdir path (loop #628): "limits reset in
+// 3h05". Renders nothing when no usage-window reset is available (e.g. a bridge frame that
+// carries no rate limits) rather than showing an empty segment.
+function LimitsResetIndicator({ limits }: { limits: SessionStatus["limits"] }): React.ReactElement | null {
+    const now = useMinuteClock();
+    const limit = limits ? pickResetLimit(limits) : undefined;
+    const value = limit ? resetDisplay(limit.resets_at, limit.resets, now, limit.resets_at_ms) : "";
+    if (!value) return null;
+    // resetDisplay yields a relative token ("3h05", "45m") or an absolute one ("Wed 5pm",
+    // "now"); only the relative digit-leading form reads well with the "in" preposition.
+    const label = /^\d/.test(value) ? `limits reset in ${value}` : `limits reset ${value}`;
+    return (
+        <span className="mj_HeaderLimitsReset" title="Usage-window limits reset">
+            {label}
+        </span>
+    );
+}
+
 function ChatHeader({
     client,
     state,
@@ -2219,7 +2317,7 @@ function ChatHeader({
             subtitle={
                 <>
                     {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
-                    {status?.workdir && <span className="mj_HeaderWorkdir">{status.workdir}</span>}
+                    <LimitsResetIndicator limits={limits} />
                     {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runState}</span>}
                 </>
             }
@@ -2235,24 +2333,7 @@ function ChatHeader({
                 )
             }
             hasSubtitle={hasSubtitle}
-            rightControls={
-                status?.context && (
-                    <button
-                        className="mj_CompactButton"
-                        type="button"
-                        aria-label="Compact conversation"
-                        title="Compact the conversation — sends /compact"
-                        onClick={() =>
-                            void client
-                                .sendMessage("/compact")
-                                .catch((error) => console.warn("Compact command failed to send:", error))
-                        }
-                    >
-                        <CompactIcon />
-                        <span>Compact</span>
-                    </button>
-                )
-            }
+            rightControls={status?.context && <CompactButton client={client} contextTokens={status.context.tokens} />}
             persistentControls={
                 // Keyed by conversation id so a selection change while the menu is open
                 // remounts (and closes) it, instead of silently retargeting the actions.
