@@ -158,6 +158,77 @@ describe("session-control banners", () => {
     });
 });
 
+describe("header compact + limits-reset (fork features)", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    it("compact button sends /snap-compact and shows an indeterminate in-flight pulse", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: { context: { tokens: 120_000, window: 200_000, pct: 60 } },
+        };
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+
+        rendered = await renderClient(client);
+
+        const compact = button(rendered.container, "Compact conversation");
+        expect(compact.textContent).toContain("Compact");
+        expect(compact.className).not.toContain("mj_CompactButton_compacting");
+
+        await act(async () => compact.click());
+
+        // Guided safe-compact flow, not a raw /compact.
+        expect(sendMessage).toHaveBeenCalledWith("/snap-compact");
+        // Indeterminate in-flight feedback — pulse class + busy state, no % fill. The mock
+        // resolve does not shrink context, so the pulse stays on (cleared only by a smaller
+        // post-compact context frame or the timeout backstop).
+        const busy = button(rendered.container, "Compact conversation");
+        expect(busy.className).toContain("mj_CompactButton_compacting");
+        expect(busy.getAttribute("aria-busy")).toBe("true");
+        expect(busy.disabled).toBe(true);
+        expect(busy.textContent).toContain("Compacting");
+    });
+
+    it("header shows the usage-window reset countdown instead of the workdir path", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: {
+                model: "claude-opus-4-8",
+                workdir: "/some/workspace/path",
+                limits: [
+                    {
+                        id: "session_5h",
+                        label: "Session",
+                        percent: 20,
+                        resets_at_ms: Date.now() + 3 * 60 * 60_000,
+                    },
+                ],
+            },
+        };
+
+        rendered = await renderClient(client);
+
+        const reset = rendered.container.querySelector(".mj_HeaderLimitsReset");
+        expect(reset?.textContent).toContain("limits reset");
+        // The old workdir segment is gone — path never rendered.
+        expect(rendered.container.querySelector(".mj_HeaderWorkdir")).toBeNull();
+        expect(rendered.container.textContent).not.toContain("/some/workspace/path");
+    });
+});
+
 describe("usage limit accessibility", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
