@@ -806,6 +806,68 @@ describe("markdown render-site integration", () => {
         expect(strayCard?.querySelector(".mj_Answered")).toBeNull();
         expect(strayCard?.querySelector("button")?.textContent).toBe("Send");
     });
+
+    function queuedPrompt(seq: number, itemId: string): JournalEvent {
+        return {
+            ...textEvent(seq, "unused"),
+            type: "prompt",
+            payload: {
+                kind: "queued_release",
+                items: [{ id: itemId, text: "Queued item" }],
+                actions: [
+                    { id: "send", label: "Send", intent: "primary" },
+                    { id: "cancel", label: "Cancel", intent: "neutral" },
+                ],
+            },
+        };
+    }
+    function release(seq: number, action: string, itemId: string): JournalEvent {
+        return {
+            ...textEvent(seq, "unused"),
+            type: "prompt_reply",
+            payload: { kind: "queued_release", action, released: [itemId] },
+        };
+    }
+
+    it("renders a terminal expired card (distinct label, no buttons) for an expired release (spec §6)", async () => {
+        const prompt = queuedPrompt(200, "pr_exp::0");
+        const expired = release(201, "expired", "pr_exp::0");
+        rendered = await renderClient(signedInClient({ events: [prompt, expired] }));
+
+        const card = rendered.container.querySelector(`[data-event-id="${prompt.seq}"]`);
+        expect(card?.querySelector(".mj_PromptResolved_expired")).not.toBeNull();
+        expect(card?.querySelector(".mj_Expired")?.textContent).toBe("Expired — no longer actionable");
+        // Distinct from a real resolution — no "Sent"/"Cancelled" check row.
+        expect(card?.querySelector(".mj_PromptGlyph_ok")).toBeNull();
+        // Both buttons removed (not merely disabled) — terminal, non-actionable.
+        expect(card?.querySelector("button")).toBeNull();
+        // The expired release itself does not render as a literal thread bubble.
+        expect(rendered.container.querySelector(`[data-event-id="${expired.seq}"]`)).toBeNull();
+    });
+
+    it("terminal precedence: a real resolution outranks expired in BOTH arrival orders (spec §6)", async () => {
+        // (a) send THEN expired -> Sent
+        const promptA = queuedPrompt(210, "pr_a::0");
+        rendered = await renderClient(
+            signedInClient({ events: [promptA, release(211, "send", "pr_a::0"), release(212, "expired", "pr_a::0")] }),
+        );
+        let card = rendered.container.querySelector(`[data-event-id="${promptA.seq}"]`);
+        expect(card?.querySelector(".mj_Answered")?.textContent).toBe("Sent");
+        expect(card?.querySelector(".mj_PromptResolved_expired")).toBeNull();
+        await act(async () => rendered?.root.unmount());
+        rendered.container.remove();
+
+        // (b) expired THEN cancel -> Cancelled (never downgraded to expired)
+        const promptB = queuedPrompt(213, "pr_b::0");
+        rendered = await renderClient(
+            signedInClient({
+                events: [promptB, release(214, "expired", "pr_b::0"), release(215, "cancel", "pr_b::0")],
+            }),
+        );
+        card = rendered.container.querySelector(`[data-event-id="${promptB.seq}"]`);
+        expect(card?.querySelector(".mj_Answered")?.textContent).toBe("Cancelled");
+        expect(card?.querySelector(".mj_PromptResolved_expired")).toBeNull();
+    });
 });
 
 describe("isQueuedReleaseReply (queue-prompt provenance suppression)", () => {
