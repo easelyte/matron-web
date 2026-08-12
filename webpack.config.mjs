@@ -97,7 +97,7 @@ export default (_environment, arguments_) => {
                 patterns: [
                     { from: "res/.well-known", to: ".well-known", noErrorOnMissing: true },
                     { from: "res/manifest.json", noErrorOnMissing: true },
-                    { from: "res/vector-icons", to: "vector-icons", noErrorOnMissing: true },
+                    { from: "res/icons", to: "icons", noErrorOnMissing: true },
                     { from: "res/opengraph.png", noErrorOnMissing: true },
                     { from: "config.json", noErrorOnMissing: true },
                 ],

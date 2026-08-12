@@ -2,20 +2,18 @@
 title: "Web journal client — rich diff cards (implementation plan)"
 spec: docs/superpowers/specs/2026-07-20-web-diff-cards-design.md
 date: 2026-07-20
-loop: 455
-owner: easelyte
 risk: low  # render-only component; no auth, row-security, payment, or destructive-write surface
-base: upstream/main (cf7646f)  # D is the independent leaf; PRs clean to Matronhq:main
-constraint: "components.tsx + client.ts NOT split (upstream alignment). New code lands inline."
+base: main (cf7646f)
+constraint: "components.tsx + client.ts NOT split (they stay single files). New code lands inline."
 ---
 
 # Web journal client — rich diff cards (implementation plan)
 
-Implements `docs/superpowers/specs/2026-07-20-web-diff-cards-design.md`: port apple's `DiffCard` to render structured `diff` journal events in matron-web (linked filename → `viewer_url`, prefix-colored diff, counts, new-file badge, collapse-to-12). Single component + parse helper, inline in `components.tsx`; styles in `journal.pcss`; one icon in `icons.tsx`; one new test file. All work in the worktree `/opt/matron/web-journal-wt-diff-cards` (branch `feat/diff-cards`, on `upstream/main`).
+Implements `docs/superpowers/specs/2026-07-20-web-diff-cards-design.md`: port apple's `DiffCard` to render structured `diff` journal events in matron-web (linked filename → `viewer_url`, prefix-colored diff, counts, new-file badge, collapse-to-12). Single component + parse helper, inline in `components.tsx`; styles in `journal.pcss`; one icon in `icons.tsx`; one new test file. All work lands on the `feat/diff-cards` branch, based on `main`.
 
-**Test convention** (memory `reference_matron_web_jest_convention`): `test/unit-tests/journal/<name>-test.ts` — `journal/` subdir + **hyphen** `-test.ts` + `.ts` even for `.tsx`; import depth `../../../src/journal/...`; run `node_modules/.bin/jest <path>` (NOT `pnpm exec jest`). A fresh worktree needs `corepack pnpm install` first (~5s).
+**Test convention:** `test/unit-tests/journal/<name>-test.ts` — `journal/` subdir + **hyphen** `-test.ts` + `.ts` even for `.tsx`; import depth `../../../src/journal/...`; run `node_modules/.bin/jest <path>` (NOT `pnpm exec jest`). A fresh worktree needs `corepack pnpm install` first (~5s).
 
-**Render-test harness (NO new dependency).** The upstream base has no `@testing-library`, and `@babel/preset-typescript` does NOT parse JSX in a `.ts` file (`<DiffCard/>` would be read as a TS type-assertion and syntax-error). So component render tests use **`React.createElement` (no JSX syntax)** mounted via `createRoot`:
+**Render-test harness (NO new dependency).** The base has no `@testing-library`, and `@babel/preset-typescript` does NOT parse JSX in a `.ts` file (`<DiffCard/>` would be read as a TS type-assertion and syntax-error). So component render tests use **`React.createElement` (no JSX syntax)** mounted via `createRoot`:
 ```ts
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -29,7 +27,7 @@ await act(async () => { root.render(React.createElement(DiffCard, { data })); })
 // query: container.querySelector(...); drive interactions with AWAITED act: await act(async () => el.click());
 // teardown (AWAITED): await act(async () => root.unmount());
 ```
-react/react-dom `^19.2`, `@babel/preset-react`, and `jest-environment-jsdom` are already deps on the upstream base. This mirrors the fork's `components-test.ts` verbatim (its proven pattern — same `IS_REACT_ACT_ENVIRONMENT=true` + awaited `act`/`unmount`) — the upstream base's own `test/` has no prior component-render test; this port introduces the first, using that pattern.
+react/react-dom `^19.2`, `@babel/preset-react`, and `jest-environment-jsdom` are already deps on the base. The base's own `test/` has no prior component-render test — this port introduces the first, using this proven pattern (same `IS_REACT_ACT_ENVIRONMENT=true` + awaited `act`/`unmount`).
 
 ## Dependency graph
 
@@ -45,7 +43,7 @@ T-1.4 (styles) ────────────┴────────�
 - **T-1.5** needs T-1.1, T-1.2, T-1.4.
 - **T-2.1** needs all of Phase 1.
 
-**Execution topology:** run via `/execute-slim` in this single `feat/diff-cards` worktree — already isolated from the main checkout, so no per-task sub-worktree is needed (R100's isolation is satisfied at the worktree level). <!-- heavy-signal:docs --> The parallelizable tasks touch DISJOINT files (T-1.1 `components.tsx`, T-1.3 `icons.tsx`, T-1.4 `journal.pcss`), so sequential or concurrent execution in the one worktree is conflict-free; T-1.2/T-1.5 are strictly ordered after their deps.
+**Execution topology:** all tasks run on the single `feat/diff-cards` branch. The parallelizable tasks touch DISJOINT files (T-1.1 `components.tsx`, T-1.3 `icons.tsx`, T-1.4 `journal.pcss`), so sequential or concurrent execution in the one worktree is conflict-free; T-1.2/T-1.5 are strictly ordered after their deps.
 
 ## Spec-coverage map
 
@@ -57,7 +55,7 @@ T-1.4 (styles) ────────────┴────────�
 | §5.4 `FileEditIcon` | T-1.3 |
 | §5.2 wire `case "diff"` | T-1.5 |
 | §6 tests (parse + render matrix) | T-1.1 (parse), T-1.2 (render) |
-| §8 accepted limitations L1/L2/L3 | no code (documented; L2/L3 are follow-up loops #472/#473) |
+| §8 accepted limitations L1/L2/L3 | no code (documented; L2/L3 are candidate follow-ups) |
 | §9 acceptance 1-7 | T-2.1 (checklist) |
 
 ---
@@ -66,12 +64,12 @@ T-1.4 (styles) ────────────┴────────�
 
 ### T-1.1: `parseDiffPayload` + `DiffCardData` (exported) + parse unit tests
 
-Add, in `components.tsx` beside `EventContent` (upstream base `components.tsx:663`):
+Add, in `components.tsx` beside `EventContent` (base `components.tsx:663`):
 - `interface DiffCardData` per spec §5.1 (`diff: string`; optional `displayPath`/`filePath`/`viewerUrl`/`tool`/`label`; optional `added`/`removed`; `truncated`/`newFile` booleans).
 - `export function parseDiffPayload(payload: EventPayload): DiffCardData` with the exact coercion from §5.1:
-  - `diff` = the **nested** form `asString(payload.diff, asString(payload.patch, JSON.stringify(payload, null, 2)))` — byte-identical to the current renderer (`components.tsx:687`). NOT an OR-chain: a present-but-empty `payload.diff === ""` is preserved as `""` (matching current code + the `??` interface comment), never falling through to patch/JSON. P3 fail-visible — never a silent blank.
-  - Optional strings (`displayPath`/`filePath`/`tool`/`label`): `typeof payload.x === "string" && payload.x ? payload.x : undefined` (NOT `asString`; must yield `undefined`, not `""`, or `?? filePath` breaks — P8).
-  - `viewerUrl`: `try { const u = new URL(str); return u.protocol === "https:" ? str : undefined } catch { return undefined }` — only when `payload.viewer_url` is a non-empty string; blocks `javascript:`/`data:`/relative and the `new URL()` throw (P1/P15).
+  - `diff` = the **nested** form `asString(payload.diff, asString(payload.patch, JSON.stringify(payload, null, 2)))` — byte-identical to the current renderer (`components.tsx:687`). NOT an OR-chain: a present-but-empty `payload.diff === ""` is preserved as `""` (matching current code + the `??` interface comment), never falling through to patch/JSON. Fail-visible — never a silent blank.
+  - Optional strings (`displayPath`/`filePath`/`tool`/`label`): `typeof payload.x === "string" && payload.x ? payload.x : undefined` (NOT `asString`; must yield `undefined`, not `""`, or `?? filePath` breaks).
+  - `viewerUrl`: `try { const u = new URL(str); return u.protocol === "https:" ? str : undefined } catch { return undefined }` — only when `payload.viewer_url` is a non-empty string; blocks `javascript:`/`data:`/relative and the `new URL()` throw.
   - `added`/`removed`: set only when `typeof payload.x === "number"`.
   - `truncated`/`newFile`: strict `payload.x === true`.
 
@@ -121,7 +119,7 @@ Add an inline-SVG `FileEditIcon(props: IconProps)` (16px, matching the `IconProp
 ### T-1.4: `mj_DiffCard*` styles in `journal.pcss` (replace `.mj_Diff`)
 
 Add the classes from §5.3, reusing the existing CSS-var tokens (`--cpd-color-*` / `--cpd-space-*`; the repo has **no separate dark selector** — Compound tokens theme themselves, so there is NO light/dark work here):
-- `mj_DiffCard` (code-bg surface, rounded, **`min-width: 0`** so it can shrink inside the flex timeline), `mj_DiffCard_header` (flex row, gap, wrap), `mj_DiffCard_filename` + `mj_DiffCard_link` (accent color, hover underline, `:focus-visible` ring), `mj_DiffCard_label` (dimmed), `mj_DiffCard_badge` (pill), `mj_DiffCard_added` (green) / `_removed` (red), `mj_DiffCard_body` (**`white-space: pre;`** + monospace + **`max-width: min(720px, 62vw)`** + **`overflow-x: auto`** — reproduces the desktop bound the old `.mj_Diff` gave, so a long unbroken line SCROLLS rather than overflowing the card; P3/P13), `mj_DiffLine_add`/`_del`/`_hunk`/`_ctx` (**distinct** prefix `color:` tints — add≠del≠hunk), `mj_DiffCard_more` (dimmed button) / `_truncated` (dimmed).
+- `mj_DiffCard` (code-bg surface, rounded, **`min-width: 0`** so it can shrink inside the flex timeline), `mj_DiffCard_header` (flex row, gap, wrap), `mj_DiffCard_filename` + `mj_DiffCard_link` (accent color, hover underline, `:focus-visible` ring), `mj_DiffCard_label` (dimmed), `mj_DiffCard_badge` (pill), `mj_DiffCard_added` (green) / `_removed` (red), `mj_DiffCard_body` (**`white-space: pre;`** + monospace + **`max-width: min(720px, 62vw)`** + **`overflow-x: auto`** — reproduces the desktop bound the old `.mj_Diff` gave, so a long unbroken line SCROLLS rather than overflowing the card), `mj_DiffLine_add`/`_del`/`_hunk`/`_ctx` (**distinct** prefix `color:` tints — add≠del≠hunk), `mj_DiffCard_more` (dimmed button) / `_truncated` (dimmed).
 
 **Do NOT delete the `.mj_Diff` rules** — `.mj_Diff` is one selector in two SHARED comma-groups; deleting the blocks would strip styling from unrelated components. Splice out only the `.mj_Diff,` line:
 - **Light group** (`journal.pcss:399-403`, `.mj_Diff,` at :402, shared with `.mj_ToolCommand`, `.mj_ToolCard pre`, `.mj_LiveTool pre`, `.mj_Unknown pre`): remove the `.mj_Diff,` selector line, leave the other four + the whole rule body intact.
@@ -162,16 +160,10 @@ React.createElement(EventContent, {
 - `corepack pnpm install` (if not already); `node_modules/.bin/jest` (whole suite — `diff-card-test.ts` green, any pre-existing tests unaffected); `corepack pnpm exec tsc --noEmit`; `corepack pnpm build`.
 - Walk §9 acceptance 1-7 and confirm each: rich card renders (linked filename/counts/badge/collapse/truncated); `viewer_url:null` → plain filename; legacy `{diff}`/`{patch}`/diagnostic-JSON render; non-https/relative viewer_url → plain filename; whitespace preserved + no phantom "+1 more"; suite green; `components.tsx`/`client.ts` not split.
 
-**Acceptance:** jest + tsc + build all green; §9 items 1-7 satisfied; `grep -rn "mj_Diff\b" src/` returns zero matches (the old bare `.mj_Diff` / `className="mj_Diff"` fully removed after T-1.5) — one-time grep (deliberate P17 exception: a permanent CI lint banning one CSS class name is disproportionate for a single downstream-fork feature; the migration is verified here, not ratcheted); `git diff --stat` shows only `components.tsx`, `journal.pcss`, `icons.tsx`, `diff-card-test.ts` (+ this plan/spec) touched — no split of the monoliths.
+**Acceptance:** jest + tsc + build all green; §9 items 1-7 satisfied; `grep -rn "mj_Diff\b" src/` returns zero matches (the old bare `.mj_Diff` / `className="mj_Diff"` fully removed after T-1.5) — one-time grep (a permanent CI lint banning one CSS class name would be disproportionate for a single feature; the migration is verified here, not ratcheted); `git diff --stat` shows only `components.tsx`, `journal.pcss`, `icons.tsx`, `diff-card-test.ts` (+ this plan/spec) touched — no split of the monoliths.
 **Deps:** all Phase 1.
 
 ---
-
-> **For agentic workers:** REQUIRED SUB-SKILL — pick by plan signals (frontmatter + scope):
-> - **Typical plan** (no `risk: high`, no auth/RLS/payments/data-loss surfaces): `/execute-slim` — implementer per task, Codex review per phase boundary, /ship-slim at end.
-> - **Heavy plan** (R100, `risk: high`, auth/RLS/payments/data-loss): `/execute-heavy-codex` — per-task implementer + spec-compliance + quality + fix-mode chain via Codex, Sonnet only at every 5th phase + end-of-plan.
->
-> Steps use checkbox (`- [ ]`) syntax for tracking.
 
 ## Appendix: Verified Claims (research pass 2026-07-20)
 
@@ -179,4 +171,4 @@ No unresolved external claims — the plan commits only to textbook JS/DOM seman
 
 ✓ `new URL(str)` with no base throws `TypeError` on a relative/invalid string (e.g. `new URL("/view?token=x")`). Verified in spec-review round 2 (Node 20 direct test) — this is why T-1.1's `viewerUrl` parse is try/catch-wrapped. (MDN URL() constructor.)
 ✓ `String.prototype.replace(/\n+$/, "")` strips all trailing newlines (non-global anchored `$` with `+`). Standard regex semantics.
-✓ Component render tests run in a `.ts` file via `React.createElement` (NO JSX — `@babel/preset-typescript` won't parse JSX in `.ts`) + `createRoot` + `act` + `container.querySelector`. react/react-dom `^19.2`, `@babel/preset-react`, and `jest-environment-jsdom` are already deps on the upstream base — **no new dependency needed**. Verified against the fork's `test/unit-tests/journal/components-test.ts`, which uses exactly this harness (`import React, { act } from "react"` + `createRoot`). CORRECTION to the earlier draft: the upstream base's own `test/` has NO prior component-render test — this port introduces the first, using the fork-proven no-dep pattern (not "the suite already renders components this way").
+✓ Component render tests run in a `.ts` file via `React.createElement` (NO JSX — `@babel/preset-typescript` won't parse JSX in `.ts`) + `createRoot` + `act` + `container.querySelector`. react/react-dom `^19.2`, `@babel/preset-react`, and `jest-environment-jsdom` are already deps on the base — **no new dependency needed**. This harness (`import React, { act } from "react"` + `createRoot`) is proven in prior downstream use. CORRECTION to the earlier draft: the base's own `test/` has NO prior component-render test — this port introduces the first, using that no-dep pattern (not "the suite already renders components this way").

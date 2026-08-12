@@ -375,7 +375,9 @@ export class MatronJournalClient {
         this.api = undefined;
         for (const url of this.mediaUrls.values()) URL.revokeObjectURL(url);
         this.mediaUrls.clear();
-        // Per spec §3.1, retain this per-device preference so re-login can restore it without a null storage event.
+        // The archived-conversations key is deliberately left in place: it is a per-device
+        // preference that re-login should restore. Clearing it here would also go unnoticed
+        // by this tab, since storage events only fire in other tabs.
         localStorage.removeItem(SESSION_KEY);
         this.state = {
             ...blankState(),

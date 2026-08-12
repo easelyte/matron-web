@@ -263,6 +263,45 @@ describe("archiving conversations", () => {
     });
 });
 
+describe("desktop badge count", () => {
+    const badgeSend = jest.fn();
+
+    beforeEach(() => {
+        localStorage.clear();
+        badgeSend.mockClear();
+        (window as Window & { electron?: { send: jest.Mock } }).electron = { send: badgeSend };
+    });
+
+    afterEach(() => {
+        delete (window as Window & { electron?: unknown }).electron;
+        jest.restoreAllMocks();
+    });
+
+    function lastBadgeCount(): number | undefined {
+        const badgeCalls = badgeSend.mock.calls.filter(([channel]) => channel === "setBadgeCount");
+        return badgeCalls.at(-1)?.[1];
+    }
+
+    it("excludes archived unread conversations and counts them again once unarchived", () => {
+        const client = new MatronJournalClient();
+        const unreadConversations = CONVERSATIONS.map((conversation) => ({
+            ...conversation,
+            unread_count: conversation.id === "c1" ? 3 : 2,
+        }));
+        internals(client).state = { ...signedInState(client), conversations: unreadConversations };
+
+        client.archiveConversation("c1");
+
+        expect(client.getSnapshot().archivedIds).toEqual(new Set(["c1"]));
+        expect(lastBadgeCount()).toBe(2);
+
+        client.unarchiveConversation("c1");
+
+        expect(client.getSnapshot().archivedIds).toEqual(new Set());
+        expect(lastBadgeCount()).toBe(5);
+    });
+});
+
 describe("archive hydration, selection, and cross-tab synchronization", () => {
     const startedClients: MatronJournalClient[] = [];
 

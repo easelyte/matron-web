@@ -3150,6 +3150,7 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
                 {expandable && (
                     <button
                         type="button"
+                        className="mj_DiffCard_chevron"
                         aria-expanded={expanded}
                         aria-label={expanded ? "Collapse diff" : "Expand diff"}
                         onClick={toggleExpanded}
