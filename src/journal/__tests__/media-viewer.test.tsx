@@ -16,6 +16,7 @@ import {
     type MediaItem,
     MediaViewer,
     mediaRenderKind,
+    viewerRetypeMime,
 } from "../media-viewer";
 import type { JournalEvent } from "../types";
 
@@ -78,6 +79,20 @@ describe("media render classification (pure)", () => {
         expect(isRenderableInViewer("video/webm")).toBe(true);
         expect(isRenderableInViewer("text/html")).toBe(false);
         expect(isRenderableInViewer("application/zip")).toBe(false);
+    });
+
+    it("viewerRetypeMime re-types svg/video (bridge serves them octet-stream), leaves raster/pdf alone", () => {
+        // SVG/video blobs arrive as application/octet-stream — an <img>/<video> can't render
+        // those, so the viewer re-wraps them with a real MIME. Raster is already image/*, and
+        // pdf.js reads raw bytes, so both pass through untouched.
+        expect(viewerRetypeMime({ kind: "svg", filename: "d.svg" })).toBe("image/svg+xml");
+        expect(viewerRetypeMime({ kind: "video", filename: "c.mp4" })).toBe("video/mp4");
+        expect(viewerRetypeMime({ kind: "video", filename: "c.webm" })).toBe("video/webm");
+        expect(viewerRetypeMime({ kind: "video", filename: "c.mov" })).toBe("video/quicktime");
+        expect(viewerRetypeMime({ kind: "video", filename: undefined })).toBe("video/mp4");
+        expect(viewerRetypeMime({ kind: "raster", filename: "a.png" })).toBeUndefined();
+        expect(viewerRetypeMime({ kind: "pdf", filename: "b.pdf" })).toBeUndefined();
+        expect(viewerRetypeMime({ kind: "download", filename: "x.gz" })).toBeUndefined();
     });
 
     it("formatMediaSize renders machine size strings", () => {

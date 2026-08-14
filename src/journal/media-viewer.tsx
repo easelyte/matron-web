@@ -180,6 +180,68 @@ function useObjectUrl(client: MatronJournalClient, mediaId: string): ObjectUrlSt
     return { ...state, retry };
 }
 
+// The bridge serves non-raster media as application/octet-stream (SVG is deliberately never
+// given image/svg+xml — iOS UIImage can't decode it and inline SVG is script-capable; other
+// types simply aren't in its MIME map). An <img>/<video> cannot render an octet-stream blob,
+// so for the types the viewer paints natively we must re-wrap the cached bytes in a correctly
+// typed Blob. pdf.js reads raw bytes and never needs this; raster arrives as image/* already.
+export function viewerRetypeMime(item: Pick<MediaItem, "kind" | "filename">): string | undefined {
+    if (item.kind === "svg") return "image/svg+xml";
+    if (item.kind === "video") {
+        const ext = item.filename?.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+        if (ext === "webm") return "video/webm";
+        if (ext === "ogv" || ext === "ogg") return "video/ogg";
+        if (ext === "mov") return "video/quicktime";
+        return "video/mp4";
+    }
+    return undefined;
+}
+
+// Like useObjectUrl, but re-wraps the cached bytes in a correctly-typed Blob for svg/video
+// (whose source blob is octet-stream) so the <img>/<video> can render them. Transparent
+// pass-through for types that already carry a usable content-type (raster).
+function useRenderableObjectUrl(client: MatronJournalClient, item: MediaItem): ObjectUrlState & { retry: () => void } {
+    const base = useObjectUrl(client, item.mediaId);
+    const targetMime = viewerRetypeMime(item);
+    const [typed, setTyped] = useState<ObjectUrlState>({ loading: true });
+    useEffect(() => {
+        if (!targetMime) return; // raster: `base` is used directly below.
+        if (base.error) {
+            setTyped({ loading: false, error: base.error });
+            return;
+        }
+        if (!base.url) {
+            setTyped({ loading: true });
+            return;
+        }
+        // Environments without blob fetch / object URLs (e.g. jsdom in tests) can't re-wrap —
+        // fall through to the base URL rather than hanging on a fetch that can't resolve.
+        if (typeof fetch !== "function" || typeof URL.createObjectURL !== "function") {
+            setTyped({ url: base.url, loading: false });
+            return;
+        }
+        let cancelled = false;
+        let created: string | undefined;
+        setTyped({ loading: true });
+        fetch(base.url)
+            .then((response) => response.blob())
+            .then((blob) => {
+                if (cancelled) return;
+                const retyped = blob.type === targetMime ? blob : new Blob([blob], { type: targetMime });
+                created = URL.createObjectURL(retyped);
+                setTyped({ url: created, loading: false });
+            })
+            .catch((error: unknown) => {
+                if (!cancelled) setTyped({ loading: false, error: errorText(error) });
+            });
+        return () => {
+            cancelled = true;
+            if (created) URL.revokeObjectURL(created);
+        };
+    }, [base.url, base.error, targetMime]);
+    return targetMime ? { ...typed, retry: base.retry } : base;
+}
+
 // ---------------------------------------------------------------------------------------
 // Zoom / pan — shared by raster, svg, and pdf bodies.
 // ---------------------------------------------------------------------------------------
@@ -362,7 +424,7 @@ interface PageApi {
 // image — the browser rasterises it and its scripts / external fetches stay inert. There is
 // deliberately no <iframe>/<object>/<embed>/innerHTML path here (guardrail, AC1).
 function ImageBody({ client, item, registerZoom, announce }: BodyProps): React.ReactElement {
-    const { url, loading, error, retry } = useObjectUrl(client, item.mediaId);
+    const { url, loading, error, retry } = useRenderableObjectUrl(client, item);
     const [imgError, setImgError] = useState(false);
     const zoom = useZoomPan(registerZoom);
     const imgRef = useRef<HTMLImageElement>(null);
@@ -422,7 +484,7 @@ function ImageBody({ client, item, registerZoom, announce }: BodyProps): React.R
 }
 
 function VideoBody({ client, item }: BodyProps): React.ReactElement {
-    const { url, loading, error, retry } = useObjectUrl(client, item.mediaId);
+    const { url, loading, error, retry } = useRenderableObjectUrl(client, item);
     if (error) {
         return (
             <div className="mj_MediaViewer_body mj_MediaViewer_center">
