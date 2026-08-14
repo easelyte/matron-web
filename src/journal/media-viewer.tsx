@@ -73,10 +73,15 @@ export function mediaRenderKind(isImageEvent: boolean, contentType?: string, fil
     if (isImageEvent) return "raster";
     const mime = (contentType ?? "").trim().toLowerCase();
     const ext = extensionOf(filename);
-    if (mime === "image/svg+xml" || (!mime && ext === "svg")) return "svg";
-    if (mime === "application/pdf" || (!mime && ext === "pdf")) return "pdf";
-    if (mime.startsWith("video/") || (!mime && VIDEO_EXTENSIONS.has(ext))) return "video";
-    if (mime.startsWith("image/") || (!mime && RASTER_EXTENSIONS.has(ext))) return "raster";
+    // The bridge/journal serve every non-raster file as application/octet-stream (svg is
+    // deliberately un-typed; other types simply aren't mapped), so a generic/absent MIME must
+    // fall back to the filename extension — otherwise svg/pdf/video would all be misclassified
+    // as plain downloads and never reach their render bodies.
+    const generic = mime === "" || mime === "application/octet-stream" || mime === "binary/octet-stream";
+    if (mime === "image/svg+xml" || (generic && ext === "svg")) return "svg";
+    if (mime === "application/pdf" || (generic && ext === "pdf")) return "pdf";
+    if (mime.startsWith("video/") || (generic && VIDEO_EXTENSIONS.has(ext))) return "video";
+    if (mime.startsWith("image/") || (generic && RASTER_EXTENSIONS.has(ext))) return "raster";
     return "download";
 }
 

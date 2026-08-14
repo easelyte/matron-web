@@ -71,6 +71,13 @@ describe("media render classification (pure)", () => {
         expect(mediaRenderKind(false, "text/html")).toBe("download");
         expect(mediaRenderKind(false, "application/octet-stream")).toBe("download");
         expect(mediaRenderKind(false, undefined, "archive.gz")).toBe("download");
+        // REAL WORLD: the bridge/journal serve non-raster media as application/octet-stream,
+        // so the extension must still route them — the original bug shipped svg/pdf/video as
+        // downloads because octet-stream is non-empty and the ext fallback only ran on "".
+        expect(mediaRenderKind(false, "application/octet-stream", "diagram.svg")).toBe("svg");
+        expect(mediaRenderKind(false, "application/octet-stream", "report.pdf")).toBe("pdf");
+        expect(mediaRenderKind(false, "application/octet-stream", "clip.mp4")).toBe("video");
+        expect(mediaRenderKind(false, "application/octet-stream", "photo.png")).toBe("raster");
     });
 
     it("isRenderableInViewer is true only for inline-renderable types", () => {
@@ -112,7 +119,7 @@ describe("buildMediaCorpus (pure)", () => {
         const corpus = buildMediaCorpus([
             event(1, "text", { body: "hi" }),
             event(2, "image", { blob_ref: "img-1", content_type: "image/png", caption: "shot" }),
-            event(3, "file", { blob_ref: "svg-1", content_type: "image/svg+xml", filename: "d.svg" }),
+            event(3, "file", { blob_ref: "svg-1", content_type: "application/octet-stream", filename: "d.svg" }),
             event(4, "file", { blob_ref: "", content_type: "application/pdf" }), // dropped: no blob_ref
             event(5, "file", { blob_ref: "html-1", content_type: "text/html", filename: "page.html" }),
         ]);
