@@ -222,10 +222,45 @@ describe("header compact + limits-reset (fork features)", () => {
         rendered = await renderClient(client);
 
         const reset = rendered.container.querySelector(".mj_HeaderLimitsReset");
-        expect(reset?.textContent).toContain("limits reset");
+        // Only the 5-hour window is present → a single value, no "/" divider.
+        expect(reset?.textContent).toContain("resets");
+        expect(reset?.textContent).toMatch(/resets\s+\d+h\d\d/); // "resets 3h00"
+        expect(reset?.textContent).not.toContain("/");
         // The old workdir segment is gone — path never rendered.
         expect(rendered.container.querySelector(".mj_HeaderWorkdir")).toBeNull();
         expect(rendered.container.textContent).not.toContain("/some/workspace/path");
+    });
+
+    it("header shows both the 5-hour and weekly reset windows when present", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: {
+                model: "claude-opus-4-8",
+                limits: [
+                    {
+                        id: "session_5h",
+                        label: "Session",
+                        percent: 20,
+                        resets_at_ms: Date.now() + 3 * 60 * 60_000,
+                    },
+                    {
+                        id: "week_all",
+                        label: "Week (all)",
+                        percent: 40,
+                        resets_at_ms: Date.now() + 4 * 24 * 60 * 60_000,
+                    },
+                ],
+            },
+        };
+
+        rendered = await renderClient(client);
+
+        const reset = rendered.container.querySelector(".mj_HeaderLimitsReset");
+        // Both windows → "resets <5h token> / <weekly token>" (bare values, "/" divider).
+        expect(reset?.textContent).toContain("resets");
+        expect(reset?.textContent).toContain("/");
+        expect(reset?.textContent).toMatch(/resets\s+\d+h\d\d\s+\//); // 5h countdown leads
     });
 });
 

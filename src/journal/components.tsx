@@ -2273,13 +2273,52 @@ function pickResetLimit(
     );
 }
 
-// Header subtitle countdown that replaces the workdir path (loop #628): "limits reset in
-// 3h05". Renders nothing when no usage-window reset is available (e.g. a bridge frame that
-// carries no rate limits) rather than showing an empty segment.
+// The weekly usage-window limit whose reset the header shows alongside the 5-hour one:
+// week_all ("weekly, all models") first, else the soonest listed week_<slug> that carries a
+// reset. Same data as the pressure bars — no new source or request.
+function pickWeekResetLimit(
+    limits: NonNullable<SessionStatus["limits"]>,
+): NonNullable<SessionStatus["limits"]>[number] | undefined {
+    const all = limits.find((limit) => limit.id === "week_all" && hasResetTime(limit));
+    if (all) return all;
+    return limits.find((limit) => typeof limit.id === "string" && /^week_/.test(limit.id) && hasResetTime(limit));
+}
+
+// The 5-hour session limit specifically (strict — no fallback), so its countdown is never
+// mislabelled as "5h" when the frame only carries other windows.
+function pick5hResetLimit(
+    limits: NonNullable<SessionStatus["limits"]>,
+): NonNullable<SessionStatus["limits"]>[number] | undefined {
+    return limits.find((limit) => limit.id === "session_5h" && hasResetTime(limit));
+}
+
+// Header subtitle countdown that replaces the workdir path (loop #628): shows BOTH usage
+// windows when present — "resets 5h 3h05 / wk Wed 5pm" — the 5-hour session limit and the
+// weekly (all-models) limit. Shows a single segment when only one window carries a reset,
+// and falls back to the prior soonest-reset chip for frames with neither (a bare rate
+// limit). Renders nothing when no usage-window reset is available. Same reset data as the
+// pressure bars — no new source.
 function LimitsResetIndicator({ limits }: { limits: SessionStatus["limits"] }): React.ReactElement | null {
     const now = useMinuteClock();
-    const limit = limits ? pickResetLimit(limits) : undefined;
-    const value = limit ? resetDisplay(limit.resets_at, limit.resets, now, limit.resets_at_ms) : "";
+    const fiveHLimit = limits ? pick5hResetLimit(limits) : undefined;
+    const weekLimit = limits ? pickWeekResetLimit(limits) : undefined;
+    const fiveH = fiveHLimit ? resetDisplay(fiveHLimit.resets_at, fiveHLimit.resets, now, fiveHLimit.resets_at_ms) : "";
+    const week = weekLimit ? resetDisplay(weekLimit.resets_at, weekLimit.resets, now, weekLimit.resets_at_ms) : "";
+    if (fiveH || week) {
+        // Compact: bare values, no inline "5h"/"wk" labels — the short countdown reads as the
+        // 5-hour window and the weekday/absolute token as the weekly one. The tooltip carries
+        // the semantics. Order is always 5h then weekly.
+        const value = [fiveH, week].filter(Boolean).join(" / ");
+        return (
+            <span className="mj_HeaderLimitsReset" title="Usage-window limits reset — 5-hour / weekly">
+                {`resets ${value}`}
+            </span>
+        );
+    }
+    // Neither the 5h nor a weekly window is in this frame — preserve the prior single chip
+    // (the soonest listed reset, e.g. a bare model/fbl rate limit).
+    const fallback = limits ? pickResetLimit(limits) : undefined;
+    const value = fallback ? resetDisplay(fallback.resets_at, fallback.resets, now, fallback.resets_at_ms) : "";
     if (!value) return null;
     // resetDisplay yields a relative token ("3h05", "45m") or an absolute one ("Wed 5pm",
     // "now"); only the relative digit-leading form reads well with the "in" preposition.
