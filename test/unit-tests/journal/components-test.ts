@@ -2181,6 +2181,86 @@ describe("attachment composer", () => {
         expect(rendered.container.querySelector(".mj_AttachmentChip")).toBeNull();
     });
 
+    it("opens the media viewer when an inline image is clicked, and closes on Escape (#568)", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "image",
+                    payload: { blob_ref: "img-a", content_type: "image/png" },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: "pdf-a", filename: "spec.pdf", content_type: "application/pdf" },
+                },
+            ],
+        });
+        jest.spyOn(client, "mediaUrl").mockResolvedValue("blob:https://journal.example/img-a");
+        rendered = await renderClient(client);
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        // The viewer is not mounted until a media item is clicked.
+        expect(rendered.container.querySelector(".mj_MediaViewer_scrim")).toBeNull();
+        const image = rendered.container.querySelector<HTMLImageElement>(".mj_ImageFrame img");
+        expect(image).not.toBeNull();
+        await act(async () => image?.click());
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        // Viewer opens; corpus = both media events (image + pdf), so the index reads "1 / 2".
+        expect(rendered.container.querySelector(".mj_MediaViewer_scrim")).not.toBeNull();
+        expect(rendered.container.querySelector(".mj_MediaViewer_count")?.textContent).toBe("1 / 2");
+
+        await act(async () => {
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        });
+        expect(rendered.container.querySelector(".mj_MediaViewer_scrim")).toBeNull();
+    });
+
+    it("renders a renderable file (pdf) as a preview button, a non-renderable file as a download chip (#568)", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 1,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: "pdf-b", filename: "runbook.pdf", content_type: "application/pdf" },
+                },
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 2,
+                    sender: "agent:1",
+                    type: "file",
+                    payload: { blob_ref: "bin-b", filename: "blob.bin" },
+                },
+            ],
+        });
+        rendered = await renderClient(client);
+
+        const pdfTile = rendered.container.querySelector("[data-event-id] .mj_File_preview");
+        expect(pdfTile?.tagName).toBe("BUTTON");
+        expect(pdfTile?.textContent).toContain("runbook.pdf");
+        const binTile = [...rendered.container.querySelectorAll("[data-event-id] .mj_File")].find(
+            (tile) => !tile.classList.contains("mj_File_preview"),
+        );
+        expect(binTile?.textContent).toContain("blob.bin");
+    });
+
     it("reserves an aspect-ratio box for an image event that carries bridge dims (§6)", async () => {
         const client = signedInClient({
             events: [

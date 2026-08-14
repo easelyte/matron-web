@@ -423,3 +423,61 @@ export function CodeBracketsIcon(props: IconProps): React.ReactElement {
         </Icon>
     );
 }
+
+// Media-viewer glyphs (loop #568). Chevron-right mirrors ChevronLeftIcon; the rest are the
+// zoom + download affordances the lightbox needs.
+export function ChevronRightIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="m9 18 6-6-6-6" />
+        </Icon>
+    );
+}
+
+export function DownloadIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M12 3v12" />
+            <path d="m7 11 5 4 5-4" />
+            <path d="M5 20h14" />
+        </Icon>
+    );
+}
+
+export function ZoomInIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M6 12h12" />
+            <path d="M12 6v12" />
+        </Icon>
+    );
+}
+
+export function ZoomOutIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M6 12h12" />
+        </Icon>
+    );
+}
+
+// Fit ↔ 100% toggle — four corner arrows folding inward.
+export function FitIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M9 4H5a1 1 0 0 0-1 1v4" />
+            <path d="M15 4h4a1 1 0 0 1 1 1v4" />
+            <path d="M9 20H5a1 1 0 0 1-1-1v-4" />
+            <path d="M15 20h4a1 1 0 0 0 1-1v-4" />
+        </Icon>
+    );
+}
+
+export function ResetIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M4 12a8 8 0 1 1 2.34 5.66" />
+            <path d="M4 20v-4h4" />
+        </Icon>
+    );
+}

@@ -24,6 +24,7 @@
         "@fontsource/inter": "^5.2.8",
         "hast-util-to-string": "^3",
         "highlight.js": "~11.11.0",
+        "pdfjs-dist": "^6.2.108",
         "react": "^19.2.4",
         "react-dom": "^19.2.4",
         "react-markdown": "^9",

@@ -3419,3 +3419,556 @@ button.mj_File {
         max-width: 76vw;
     }
 }
+
+/* =====================================================================================
+   Media viewer / lightbox (loop #568). Modal scrim + dialog card + per-type body +
+   bottom ThumbStrip. Radii: dialog 14, images/wells 6, thumbs/buttons 8. Accent teal for
+   active/selected; active thumb = 2px accent border (not a fill). Focus = 2px accent
+   outline at +2px offset. Motion: 120ms colour/bg, 180ms surface, --cpd-ease; all off
+   under prefers-reduced-motion. No entrance animation.
+   ===================================================================================== */
+
+/* Inline image becomes a zoom-in affordance once the viewer context is available. */
+.mj_Image_zoomable {
+    cursor: zoom-in;
+}
+
+.mj_Image_zoomable:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+/* Renderable file chip that opens the viewer instead of downloading — same look as .mj_File
+   (which is styled elsewhere) but a button, so reset button chrome. */
+.mj_File_preview {
+    cursor: pointer;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    background: var(--cpd-color-bg-canvas-raised);
+    font: inherit;
+    color: inherit;
+}
+
+.mj_MediaViewer_scrim {
+    position: fixed;
+    z-index: 60; /* above the upload/source modals at 50 — the viewer is the topmost layer */
+    display: flex;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    background: var(--mj-scrim-modal);
+    padding: var(--cpd-space-4x);
+}
+
+.mj_MediaViewer {
+    display: flex;
+    width: min(1100px, 96vw);
+    height: min(90vh, 900px);
+    flex-direction: column;
+    box-sizing: border-box;
+    overflow: hidden;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: 14px;
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-lg);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_MediaViewer_header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+}
+
+/* "4 / 8" index — machine string, Fira Code, tertiary ink. */
+.mj_MediaViewer_count {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+    font-family: "Fira Code", monospace;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Filename — machine string, Fira Code, truncates. */
+.mj_MediaViewer_name {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+    font-family: "Fira Code", monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_MediaViewer_meta {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-xs-regular);
+    font-family: "Fira Code", monospace;
+    white-space: nowrap;
+}
+
+.mj_MediaViewer_headerSpacer {
+    flex: 1 1 auto;
+}
+
+.mj_MediaViewer_download {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+    text-decoration: none;
+    cursor: pointer;
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        border-color var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_MediaViewer_download svg {
+    width: 15px;
+    height: 15px;
+}
+
+.mj_MediaViewer_download:hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_MediaViewer_download:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.mj_MediaViewer_download:focus-visible,
+.mj_MediaViewer_close:focus-visible,
+.mj_MediaViewer_nav:focus-visible,
+.mj_MediaViewer_zoomBtn:focus-visible,
+.mj_MediaViewer_thumb:focus-visible,
+.mj_MediaViewer_pageThumb:focus-visible,
+.mj_MediaViewer_retry:focus-visible,
+.mj_MediaViewer_downloadBtn:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_MediaViewer_close {
+    display: inline-flex;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    color: var(--cpd-color-icon-secondary);
+    cursor: pointer;
+    transition: background var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_MediaViewer_close:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_MediaViewer_close svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* Stage row: prev chevron · body · next chevron. */
+.mj_MediaViewer_main {
+    position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    align-items: stretch;
+    min-height: 0;
+}
+
+.mj_MediaViewer_nav {
+    position: absolute;
+    top: 50%;
+    z-index: 2;
+    display: inline-flex;
+    width: 40px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    transform: translateY(-50%);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        opacity var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_MediaViewer_nav:hover:not(:disabled) {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_MediaViewer_nav:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+.mj_MediaViewer_nav svg {
+    width: 18px;
+    height: 18px;
+}
+
+.mj_MediaViewer_nav_prev {
+    left: var(--cpd-space-3x);
+}
+
+.mj_MediaViewer_nav_next {
+    right: var(--cpd-space-3x);
+}
+
+.mj_MediaViewer_body {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+}
+
+.mj_MediaViewer_center {
+    align-items: center;
+    justify-content: center;
+}
+
+/* Zoom/pan stage — clips the transformed content, centres it. */
+.mj_MediaViewer_stage {
+    position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--cpd-color-bg-canvas-raised);
+    touch-action: none;
+}
+
+.mj_MediaViewer_stage[data-zoomed="true"] {
+    cursor: grab;
+}
+
+.mj_MediaViewer_img,
+.mj_MediaViewer_canvas {
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: var(--cpd-radius-sm);
+    object-fit: contain;
+    transform-origin: center center;
+    user-select: none;
+    /* No transform transition — zoom/pan is driven directly by pointer + wheel, so an
+       animated transform would make dragging feel laggy. Discrete surface motion lives on
+       the chrome (buttons, chevrons), not the panned content. */
+}
+
+.mj_MediaViewer_video {
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: var(--cpd-radius-sm);
+    background: #000;
+}
+
+.mj_MediaViewer_note {
+    color: var(--cpd-color-text-tertiary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+/* Errors: bare critical ink, no box, no icon. */
+.mj_MediaViewer_error {
+    color: var(--cpd-color-text-critical-primary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_MediaViewer_errorGroup {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+}
+
+.mj_MediaViewer_retry {
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+    padding: var(--cpd-space-1x) var(--cpd-space-4x);
+    cursor: pointer;
+}
+
+.mj_MediaViewer_retry:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+/* Floating zoom controls, bottom-centre over the stage. */
+.mj_MediaViewer_zoom {
+    position: absolute;
+    bottom: var(--cpd-space-4x);
+    left: 50%;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    transform: translateX(-50%);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-lg);
+    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+}
+
+.mj_MediaViewer_zoomBtn {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    color: var(--cpd-color-icon-secondary);
+    cursor: pointer;
+    transition: background var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_MediaViewer_zoomBtn:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_MediaViewer_zoomBtn svg {
+    width: 15px;
+    height: 15px;
+}
+
+.mj_MediaViewer_zoomPct {
+    min-width: 46px;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-xs-regular);
+    font-family: "Fira Code", monospace;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+.mj_MediaViewer_zoomSep {
+    width: 1px;
+    height: 18px;
+    background: var(--cpd-color-border-subtle);
+}
+
+/* PDF body: vertical page rail + stage. */
+.mj_MediaViewer_pdf {
+    flex-direction: row;
+}
+
+.mj_MediaViewer_pageRail {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: var(--cpd-space-1x);
+    width: 56px;
+    box-sizing: border-box;
+    overflow-y: auto;
+    border-right: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-default);
+    padding: var(--cpd-space-2x);
+    scrollbar-width: thin;
+    scrollbar-color: var(--mj-scrollbar) transparent;
+}
+
+.mj_MediaViewer_pageThumb {
+    flex: 0 0 auto;
+    height: 34px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-xs-regular);
+    font-family: "Fira Code", monospace;
+    cursor: pointer;
+}
+
+.mj_MediaViewer_pageThumb[aria-current="true"] {
+    border: 2px solid var(--cpd-color-text-action-accent);
+    color: var(--cpd-color-text-primary);
+}
+
+/* Download-only card (HTML / unknown types — never inline). */
+.mj_MediaViewer_downloadCard {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    box-sizing: border-box;
+    max-width: 420px;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-raised);
+    padding: var(--cpd-space-8x) var(--cpd-space-6x);
+    text-align: center;
+}
+
+.mj_MediaViewer_downloadGlyph {
+    width: 40px;
+    height: 40px;
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_MediaViewer_downloadName {
+    max-width: 100%;
+    overflow: hidden;
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+    font-family: "Fira Code", monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_MediaViewer_downloadMeta {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-xs-regular);
+    font-family: "Fira Code", monospace;
+}
+
+.mj_MediaViewer_downloadNote {
+    color: var(--cpd-color-text-tertiary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_MediaViewer_downloadBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    margin-top: var(--cpd-space-2x);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+    padding: var(--cpd-space-2x) var(--cpd-space-5x);
+    text-decoration: none;
+}
+
+.mj_MediaViewer_downloadBtn svg {
+    width: 15px;
+    height: 15px;
+}
+
+.mj_MediaViewer_downloadBtn:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_MediaViewer_caption {
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+}
+
+/* Bottom ThumbStrip — scrolls, never wraps. Active = 2px accent border, not a fill. */
+.mj_MediaViewer_thumbs {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    box-sizing: border-box;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    scrollbar-width: thin;
+    scrollbar-color: var(--mj-scrollbar) transparent;
+}
+
+.mj_MediaViewer_thumb {
+    display: inline-flex;
+    width: 38px;
+    height: 38px;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    overflow: hidden;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-icon-secondary);
+    padding: 0;
+    cursor: pointer;
+    transition: border-color var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_MediaViewer_thumb svg {
+    width: 16px;
+    height: 16px;
+}
+
+.mj_MediaViewer_thumb_active {
+    border: 2px solid var(--cpd-color-text-action-accent);
+}
+
+.mj_MediaViewer_thumbImg {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* Visually-hidden live region for item/page announcements. */
+.mj_MediaViewer_live {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mj_MediaViewer_img,
+    .mj_MediaViewer_canvas,
+    .mj_MediaViewer_download,
+    .mj_MediaViewer_close,
+    .mj_MediaViewer_nav,
+    .mj_MediaViewer_zoomBtn,
+    .mj_MediaViewer_thumb {
+        transition: none;
+    }
+}
+
+@media (max-width: 700px) {
+    .mj_MediaViewer_scrim {
+        padding: 0;
+    }
+
+    .mj_MediaViewer {
+        width: 100vw;
+        height: 100vh;
+        border: 0;
+        border-radius: 0;
+    }
+
+    .mj_MediaViewer_meta {
+        display: none;
+    }
+}
