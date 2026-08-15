@@ -19,7 +19,12 @@ import {
     unreadStore,
 } from "../../../src/journal/client";
 import { makeDraftStore } from "../../../src/journal/composer-drafts";
-import { EventContent, isQueuedReleaseReply, MatronApp } from "../../../src/journal/components";
+import {
+    EventContent,
+    isPermissionDecisionReply,
+    isQueuedReleaseReply,
+    MatronApp,
+} from "../../../src/journal/components";
 import { makeRecentFoldersStore } from "../../../src/journal/slash-palette";
 import type { ClientState, Conversation, JournalEvent, PendingMessage, Session } from "../../../src/journal/types";
 
@@ -1059,6 +1064,35 @@ describe("isQueuedReleaseReply (queue-prompt provenance suppression)", () => {
         expect(isQueuedReleaseReply(reply({ choice: "send" }), queuedReleasePromptSeqs, legacyQueuePromptSeqs)).toBe(
             false,
         );
+    });
+});
+
+describe("isPermissionDecisionReply (permission-card provenance suppression, #643)", () => {
+    const reply = (payload: JournalEvent["payload"]): JournalEvent => ({
+        seq: 2,
+        convo_id: "c1",
+        ts: 1,
+        sender: "user:fantin",
+        type: "prompt_reply",
+        payload,
+    });
+    const permissionRequestSeqs = new Set([20]);
+
+    it("hides a decision reply targeting a permission_request seq (rendered inline on the card instead)", () => {
+        expect(isPermissionDecisionReply(reply({ choice: "Allow", target_seq: 20 }), permissionRequestSeqs)).toBe(true);
+        expect(isPermissionDecisionReply(reply({ choice: "Deny", target_seq: 20 }), permissionRequestSeqs)).toBe(true);
+    });
+
+    it("keeps an ordinary question reply (target seq is not a permission request)", () => {
+        expect(isPermissionDecisionReply(reply({ choice: "Allow", target_seq: 21 }), permissionRequestSeqs)).toBe(
+            false,
+        );
+    });
+
+    it("keeps non-replies and replies without a numeric target seq", () => {
+        const permReq: JournalEvent = { ...reply({}), type: "permission_request", payload: {} };
+        expect(isPermissionDecisionReply(permReq, permissionRequestSeqs)).toBe(false);
+        expect(isPermissionDecisionReply(reply({ choice: "Allow" }), permissionRequestSeqs)).toBe(false);
     });
 });
 
