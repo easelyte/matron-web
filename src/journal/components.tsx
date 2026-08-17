@@ -4264,6 +4264,17 @@ function Composer({
             clearTimeout(watchdogTimer.current);
             watchdogTimer.current = null;
         }
+        // Detach handlers on final release: after finalize the recorder object
+        // can still emit a late onerror (e.g. during track teardown), which
+        // would otherwise flip a finalized/sent note to a false error state
+        // (#511 edge 2). finalizedRef guards the onerror body too; detaching is
+        // belt-and-suspenders and also drops the reference for GC.
+        const recorder = mediaRecorder.current;
+        if (recorder) {
+            recorder.ondataavailable = null;
+            recorder.onstop = null;
+            recorder.onerror = null;
+        }
         mediaRecorder.current = null;
     }, [releaseMedia]);
 
@@ -4419,7 +4430,12 @@ function Composer({
                     finalizeVoice(rid, localChunks);
                 };
                 recorder.onerror = () => {
-                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current) return;
+                    // finalizedRef: a late error after the note was already
+                    // finalized+sent (notably via the onstop-absent watchdog)
+                    // must not overwrite the sent/idle state with a false error
+                    // (#511 edge 2).
+                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current || finalizedRef.current)
+                        return;
                     releaseMedia();
                     errorMsg.current = "Recording stopped unexpectedly.";
                     setVoiceState("error");
@@ -4482,6 +4498,14 @@ function Composer({
     const acquireVoice = useCallback((): void => {
         if (!navigator.mediaDevices?.getUserMedia || typeof window.MediaRecorder === "undefined") return;
         const gen = ++genRef.current;
+        // Bind mic acquisition to the session generation at REQUEST time
+        // (finalize/send are already session-bound via recordingSessionGenRef).
+        // A getUserMedia pending across a logout / session replacement must not
+        // be adopted by the replacement session (#511 edge 1): recordingSessionGenRef
+        // is set at resolve time inside startRecording, so without this guard a
+        // request that resolves after the session changed would bind to the NEW
+        // gen and let the note send under the wrong session.
+        const acquireSessionGen = client.sessionGeneration;
         setVoiceState("requesting");
         capConvoRef.current = convoIdRef.current;
         errorMsg.current = null;
@@ -4498,7 +4522,7 @@ function Composer({
             (stream) => {
                 clearTimeout(localTimer);
                 if (acquireTimer.current === localTimer) acquireTimer.current = null;
-                if (gen !== genRef.current || !mountedRef.current) {
+                if (gen !== genRef.current || !mountedRef.current || client.sessionGeneration !== acquireSessionGen) {
                     stream.getTracks().forEach((track) => track.stop());
                     return;
                 }
@@ -4521,7 +4545,7 @@ function Composer({
                 setVoiceState("error");
             },
         );
-    }, [setVoiceState, startRecording]);
+    }, [client, setVoiceState, startRecording]);
 
     const commitVoiceStop = useCallback(
         (disposition: "send" | "discard"): void => {
