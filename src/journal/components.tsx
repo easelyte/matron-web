@@ -3329,6 +3329,19 @@ export function isQueuedReleaseReply(
     return legacyQueuePromptSeqs.has(targetSeq) && (choice === "interrupt" || /^cancel:\d+$/.test(choice));
 }
 
+// A permission-decision reply is a prompt_reply targeting a permission_request
+// card. The card already renders the decision inline (answered/allowed/denied
+// via answeredPromptReplies), so its reply must NOT also render as a standalone
+// chat bubble — that duplicate reads as if the operator typed "Allow"/"Deny"
+// into the thread (loop #643). Identified by target-seq provenance, mirroring
+// isQueuedReleaseReply: prompt_reply carries no self-identifying kind, so a
+// permission reply is only distinguishable by the permission_request it targets.
+export function isPermissionDecisionReply(event: JournalEvent, permissionRequestSeqs: ReadonlySet<number>): boolean {
+    if (event.type !== "prompt_reply") return false;
+    const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
+    return permissionRequestSeqs.has(targetSeq);
+}
+
 export function EventContent({
     client,
     event,
@@ -3706,24 +3719,30 @@ function Timeline({
         | undefined
     >(undefined);
     const historyScrollRestored = useRef(false);
-    const { queuedReleasePromptSeqs, legacyQueuePromptSeqs } = useMemo(() => {
+    const { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs } = useMemo(() => {
         const queuedReleasePromptSeqs = new Set<number>();
         const legacyQueuePromptSeqs = new Set<number>();
+        const permissionRequestSeqs = new Set<number>();
         for (const event of state.events) {
+            if (event.type === "permission_request") {
+                permissionRequestSeqs.add(event.seq);
+                continue;
+            }
             if (event.type !== "prompt") continue;
             if (asString(event.payload.kind) === "queued_release") queuedReleasePromptSeqs.add(event.seq);
             else if (isLegacyQueuePrompt(event)) legacyQueuePromptSeqs.add(event.seq);
         }
-        return { queuedReleasePromptSeqs, legacyQueuePromptSeqs };
+        return { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs };
     }, [state.events]);
     const visibleEvents = useMemo(
         () =>
             state.events.filter(
                 (event) =>
                     !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
-                    !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs),
+                    !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs) &&
+                    !isPermissionDecisionReply(event, permissionRequestSeqs),
             ),
-        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs],
+        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs],
     );
     const timeline = useMemo(
         () =>
