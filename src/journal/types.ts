@@ -65,6 +65,7 @@ export interface Conversation {
     parent_convo_id?: string | null; // null/undefined = top-level; set once at child creation, immutable
     last_ts?: number;
     read_up_to_seq: number;
+    agent_kind?: string | null; // which backend runs this conversation ('claude' | 'codex'); null/undefined = unknown, no marker
 }
 
 export interface SnapshotResponse {

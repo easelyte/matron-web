@@ -89,6 +89,7 @@ function emptyConversation(id: string, timestamp: number): Conversation {
         parent_convo_id: null,
         last_ts: timestamp,
         read_up_to_seq: 0,
+        agent_kind: null,
     };
 }
 
@@ -352,6 +353,13 @@ export class JournalDatabase {
             if (incomingParent === conversation.id) incomingParent = null;
             if (conversation.parent_convo_id == null && incomingParent) {
                 conversation.parent_convo_id = incomingParent;
+            }
+            // agent_kind rides convo_meta so a live-created codex/claude row is
+            // marked immediately (loop #619). Mutable last-write-wins (a
+            // claude<->codex switch re-emits it); an omitted/blank value leaves
+            // the recorded kind untouched.
+            if (typeof event.payload.agent_kind === "string" && event.payload.agent_kind) {
+                conversation.agent_kind = event.payload.agent_kind;
             }
         } else if (event.type === "session_status" && typeof event.payload.state === "string") {
             conversation.session_state = event.payload.state;
