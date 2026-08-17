@@ -100,9 +100,17 @@ export type StartOutcome =
 export type WorkerKind = "claude" | "codex";
 
 export function workerKind(conversation: Conversation): WorkerKind | null {
-    if (!isSubChat(conversation)) return null;
-    if (/:codex:[^:]+$/.test(conversation.id)) return "codex";
-    if (/:sub:[^:]+$/.test(conversation.id)) return "claude";
+    // Sub-chats resolve their kind from the convo-id infix: children go through
+    // a separate mint path and carry no agent_kind field.
+    if (isSubChat(conversation)) {
+        if (/:codex:[^:]+$/.test(conversation.id)) return "codex";
+        if (/:sub:[^:]+$/.test(conversation.id)) return "claude";
+        return null;
+    }
+    // Top-level rows use the server-recorded agent_kind (loop #619) — their ids
+    // are bare UUIDs with no infix. An absent/unknown value renders no marker.
+    if (conversation.agent_kind === "codex") return "codex";
+    if (conversation.agent_kind === "claude") return "claude";
     return null;
 }
 
