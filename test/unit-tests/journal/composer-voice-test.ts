@@ -505,6 +505,48 @@ describe("Composer voice recording", () => {
         expect(voiceError(container)).toBe("Recording stopped unexpectedly.");
     });
 
+    it("drops a mic acquisition that resolves after the client session changed (#511 edge 1)", async () => {
+        const request = deferred<MediaStream>();
+        const staleStream = harness.stream() as unknown as MockStream;
+        harness.getUserMedia.mockReturnValueOnce(request.promise);
+        const client = makeClient();
+        const { container } = await renderComposer(false, client);
+
+        await click(container, "Record voice message");
+        expect(button(container, "Requesting microphone access").disabled).toBe(true);
+        internals(client).sessionGen += 1; // logout / session replacement while the mic request is pending
+        await act(async () => request.resolve(staleStream as unknown as MediaStream));
+
+        // The late stream is released and no recorder is adopted by the replacement session,
+        // so the note cannot send under the wrong session generation.
+        expect(staleStream.track.stop).toHaveBeenCalledTimes(1);
+        expect(harness.instances).toHaveLength(0);
+    });
+
+    it("ignores a late recorder error after the watchdog already sent the note (#511 edge 2)", async () => {
+        harness.queue({ autoStopEvents: false, finalChunk: "UNUSED" });
+        const client = makeClient();
+        const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { container } = await renderComposer(false, client);
+        const recorder = await startRecording(container);
+        recorder.emitData("PARTIAL", "audio/webm");
+
+        await click(container, "Stop and send voice message");
+        await advance(3000); // watchdog finalizes + sends (onstop absent)
+        expect(sendVoiceNote).toHaveBeenCalledTimes(1);
+        expect(voiceError(container)).toBeNull();
+
+        // A late error after finalize must not flip the sent note to a false error.
+        await act(async () => recorder.emitError());
+        expect(voiceError(container)).toBeNull();
+        expect(sendVoiceNote).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith(
+            "voice: onstop absent — watchdog finalizing",
+            expect.objectContaining({ rid: 1 }),
+        );
+    });
+
     it("shows an error when a committed recording finalizes without audio", async () => {
         harness.queue({ finalChunk: "" });
         const sendVoiceNote = jest.spyOn(MatronJournalClient.prototype, "sendVoiceNote").mockResolvedValue("sent");
