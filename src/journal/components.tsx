@@ -131,10 +131,13 @@ import {
     isNearBottom,
     type MediaDims,
     parseMediaDims,
+    PEER_BODY_CAP,
+    PEER_NAME_CAP,
     type JournalEvent,
     type PendingMessage,
     type RecentFolder,
     rendersAsTopLevelRow,
+    sanitizePeerText,
     isSubChat,
     type SessionStatus,
     type StagedUploadItem,
@@ -3346,18 +3349,6 @@ export function isPermissionDecisionReply(event: JournalEvent, permissionRequest
     return permissionRequestSeqs.has(targetSeq);
 }
 
-const PEER_BODY_CAP = 2000;
-const PEER_NAME_CAP = 80;
-
-function sanitizePeerText(value: unknown, max: number): string {
-    if (value == null) return "";
-    return String(value)
-        .replace(/[\u0000-\u001f\u007f\u200b-\u200d\u2060\ufeff]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, max);
-}
-
 function PeerMessage({ event }: { event: JournalEvent }): React.ReactElement {
     const rawFromKind = asString(event.payload.from_kind);
     const fromKind = rawFromKind === "claude" || rawFromKind === "codex" ? rawFromKind : null;
@@ -3386,10 +3377,12 @@ function PeerMessage({ event }: { event: JournalEvent }): React.ReactElement {
             >
                 {mark ?? <InactiveIcon className="mj_PeerMessage_mark mj_PeerMessage_mark_neutral" />}
                 <span className="mj_PeerMessage_label">
-                    {fromKind === null && "peer agent · "}from «{fromName}»
+                    {fromKind === null && "peer agent · "}from «<bdi>{fromName}</bdi>»
                 </span>
             </span>
-            <div className="mj_MessageText">{body}</div>
+            <div className="mj_MessageText">
+                <bdi>{body}</bdi>
+            </div>
         </div>
     );
 }

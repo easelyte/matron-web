@@ -87,7 +87,7 @@ describe("JournalDatabase", () => {
         hydrated.close();
     });
 
-    it("does not bump unread for a peer message in the actively viewed conversation", async () => {
+    it("keeps peer message unread durable until it is locally marked read", async () => {
         const database = await JournalDatabase.open("https://peer-active.example", 12, "dan");
         await database.replaceWithSnapshot({
             seq: 0,
@@ -106,13 +106,14 @@ describe("JournalDatabase", () => {
 
         await database.applyJournal(
             event(1, "agent:peer-device", "peer_message", { body: "Coordinate the deploy window" }),
-            "c1",
         );
 
         expect((await database.conversations())[0]).toMatchObject({
-            unread_count: 0,
+            unread_count: 1,
             snippet: "Coordinate the deploy window",
         });
+        await database.markLocallyRead("c1", 1);
+        expect((await database.conversations())[0]).toMatchObject({ unread_count: 0, read_up_to_seq: 1 });
         database.close();
     });
 

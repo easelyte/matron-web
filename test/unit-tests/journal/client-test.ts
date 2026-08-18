@@ -69,7 +69,7 @@ interface FakeDatabase {
     addToOutbox: (message: PendingMessage) => Promise<void>;
     deleteOutboxRow: (localId: string) => Promise<void>;
     cursor: () => Promise<number | undefined>;
-    applyJournal: (event: JournalEvent, viewedConversationId?: string) => Promise<boolean>;
+    applyJournal: (event: JournalEvent) => Promise<boolean>;
     reconcileOwnMessage: (event: JournalEvent) => Promise<string | null>;
     reconcilePersistedOwnMessages: () => Promise<string[]>;
     backfillDone?: () => Promise<boolean>;
@@ -156,17 +156,14 @@ function peerUnreadDatabase(): FakeDatabase {
     let conversations = CONVERSATIONS.map((conversation) => ({ ...conversation }));
     const storedEvents: JournalEvent[] = [];
     const database = fakeDatabase();
-    database.applyJournal = jest.fn(async (journalEvent: JournalEvent, viewedConversationId?: string) => {
+    database.applyJournal = jest.fn(async (journalEvent: JournalEvent) => {
         storedEvents.push(journalEvent);
         conversations = conversations.map((conversation) =>
             conversation.id === journalEvent.convo_id
                 ? {
                       ...conversation,
                       last_seq: journalEvent.seq,
-                      unread_count:
-                          journalEvent.convo_id === viewedConversationId
-                              ? conversation.unread_count
-                              : conversation.unread_count + 1,
+                      unread_count: conversation.unread_count + 1,
                   }
                 : conversation,
         );
@@ -409,7 +406,7 @@ describe("MatronJournalClient state handling", () => {
         expect(database.markLocallyRead).toHaveBeenCalledWith("c1", 10);
     });
 
-    it("suppresses a peer message unread count when its conversation is actively viewed", async () => {
+    it("clears a durable peer message unread count after its read marker is sent", async () => {
         jest.useFakeTimers();
         const client = new MatronJournalClient();
         const state = internals(client);
@@ -433,8 +430,48 @@ describe("MatronJournalClient state handling", () => {
             .filter(([channel]) => channel === "setBadgeCount")
             .map(([, count]) => count);
         expect(badgeCounts.length).toBeGreaterThan(0);
-        expect(badgeCounts.every((count) => count === 0)).toBe(true);
+        expect(badgeCounts).toContain(1);
         expect(badgeSend).toHaveBeenLastCalledWith("setBadgeCount", 0);
+    });
+
+    it("keeps unread durable when selection changes while journal persistence is pending", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = peerUnreadDatabase();
+        const applyStarted = deferred<void>();
+        const releaseApply = deferred<void>();
+        const applyJournal = database.applyJournal;
+        database.applyJournal = jest.fn(async (journalEvent: JournalEvent) => {
+            applyStarted.resolve();
+            await releaseApply.promise;
+            return applyJournal(journalEvent);
+        });
+        const send = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client, "c1");
+        state.database = database;
+        state.connection = { send };
+
+        const handling = state.handleJournal(peerMessage("c1", 11));
+        await applyStarted.promise;
+        state.state = { ...state.state, selectedConversationId: "c2" };
+        releaseApply.resolve();
+        await handling;
+        await jest.runAllTimersAsync();
+
+        expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "read_marker", convo_id: "c1" }));
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")?.unread_count).toBe(
+            1,
+        );
+
+        await client.selectConversation("c1");
+        await jest.runAllTimersAsync();
+
+        expect(send).toHaveBeenCalledWith({ op: "read_marker", convo_id: "c1", up_to_seq: 11 });
+        expect(database.markLocallyRead).toHaveBeenCalledWith("c1", 11);
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")?.unread_count).toBe(
+            0,
+        );
     });
 
     it("keeps a peer message unread badge when a different conversation is actively viewed", async () => {

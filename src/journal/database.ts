@@ -323,8 +323,8 @@ export class JournalDatabase {
         await transactionDone(transaction);
     }
 
-    /** Applies one strictly ordered row atomically; the viewed conversation stays locally unread-free. */
-    public async applyJournal(incomingEvent: JournalEvent, viewedConversationId?: string): Promise<boolean> {
+    /** Applies one strictly ordered row atomically; read markers clear durable unread state separately. */
+    public async applyJournal(incomingEvent: JournalEvent): Promise<boolean> {
         const event = enforceToolLogTtl(incomingEvent);
         const transaction = this.database.transaction(["meta", "conversations", "events"], "readwrite");
         const meta = transaction.objectStore("meta");
@@ -368,7 +368,7 @@ export class JournalDatabase {
             }
         } else if (MESSAGE_EVENT_TYPES.has(event.type)) {
             conversation.snippet = eventSnippet(event.type, event.payload);
-            if (!event.sender.startsWith("user:") && event.convo_id !== viewedConversationId) {
+            if (!event.sender.startsWith("user:")) {
                 conversation.unread_count += 1;
             }
         } else if (event.type === "read_marker") {

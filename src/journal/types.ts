@@ -534,9 +534,19 @@ export function conversationTitle(conversation: Conversation): string {
     return conversation.title.trim() || conversation.id;
 }
 
+export const PEER_BODY_CAP = 2000;
+export const PEER_NAME_CAP = 80;
+
+const PEER_CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/gu;
+
+export function sanitizePeerText(value: unknown, max = PEER_BODY_CAP): string {
+    if (value == null) return "";
+    return String(value).replace(PEER_CONTROL_OR_FORMAT, " ").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
 export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "text") return asString(payload.body).slice(0, 120);
-    if (type === "peer_message") return asString(payload.body).slice(0, 120);
+    if (type === "peer_message") return sanitizePeerText(payload.body, 120);
     if (type === "file") return `📎 ${asString(payload.caption) || asString(payload.filename, "File")}`.slice(0, 120);
     if (type === "image") return `🖼 ${asString(payload.caption) || asString(payload.filename, "Image")}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;

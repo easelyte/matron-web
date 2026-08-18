@@ -1651,7 +1651,7 @@ export class MatronJournalClient {
 
     private async handleJournal(event: JournalEvent): Promise<void> {
         if (!this.database) return;
-        const applied = await this.database.applyJournal(event, this.state.selectedConversationId);
+        const applied = await this.database.applyJournal(event);
         this.clearRpcCreateWatchdog(event.convo_id);
         const removed = await this.database.reconcileOwnMessage(event);
         if (removed) {

@@ -84,4 +84,22 @@ describe("peer_message fixture and rendering", () => {
         expect(mounted.container.querySelector(".mj_PeerMessage_label")?.textContent).toBe("from «Claude Session»");
         expect(mounted.container.querySelector(".mj_MessageText")?.textContent).toBe("Coordinate on release.");
     });
+
+    it("strips bidi format controls from every peer-message text sink", async () => {
+        const event: JournalEvent = {
+            ...fixture.event,
+            payload: {
+                ...fixture.event.payload,
+                from_name: "Release\u202eAgent\u202c",
+                body: "Deploy\u2067later\u2069 now",
+            },
+        };
+        const mounted = await mountEvent(event);
+        mountedEvents.push(mounted);
+
+        expect(mounted.container.querySelector(".mj_PeerMessage_label bdi")?.textContent).toBe("Release Agent");
+        expect(mounted.container.querySelector(".mj_MessageText bdi")?.textContent).toBe("Deploy later now");
+        expect(eventSnippet(event.type, event.payload)).toBe("Deploy later now");
+        expect(mounted.container.textContent).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+    });
 });
