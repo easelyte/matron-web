@@ -731,6 +731,13 @@ export function NewSessionSheet({
     );
 }
 
+export function markForKind(kind: string | null | undefined, className?: string): React.ReactElement | null {
+    const classes = [className, kind === "codex" ? "mj_OpenAIMark" : "mj_AnthropicMark"].filter(Boolean).join(" ");
+    if (kind === "codex") return <OpenAIMark className={classes} />;
+    if (kind === "claude") return <AnthropicMark className={classes} />;
+    return null;
+}
+
 function WorkerMark({
     conversation,
     className,
@@ -738,10 +745,7 @@ function WorkerMark({
     conversation: Conversation;
     className: string;
 }): React.ReactElement | null {
-    const kind = workerKind(conversation);
-    if (kind === "codex") return <OpenAIMark className={`${className} mj_OpenAIMark`} />;
-    if (kind === "claude") return <AnthropicMark className={`${className} mj_AnthropicMark`} />;
-    return null;
+    return markForKind(workerKind(conversation), className);
 }
 
 type OutcomeClassification = "running" | "completed" | "interrupted" | "failed" | "inactive";
