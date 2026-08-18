@@ -329,3 +329,67 @@ describe("JournalApi devices", () => {
         expect(response.devices[0]).toMatchObject({ device_id: 7, kind: "agent", connected: false });
     });
 });
+
+describe("JournalApi answerAgentSpawn", () => {
+    beforeAll(() => {
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    beforeEach(() => {
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    it("POSTs to /agent-spawn/answer with exactly request_id and decision — never always_allow", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await api.answerAgentSpawn("spawn-1", "approve");
+
+        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/agent-spawn/answer");
+        expect(fetchMock.mock.calls[0][1]).toEqual(
+            expect.objectContaining({
+                method: "POST",
+                headers: expect.objectContaining({
+                    Authorization: "Bearer token",
+                    "Content-Type": "application/json",
+                }),
+            }),
+        );
+        const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+        expect(Object.keys(body).sort()).toEqual(["decision", "request_id"]);
+        expect(body).toEqual({ request_id: "spawn-1", decision: "approve" });
+    });
+
+    it("sends deny verbatim as the decision", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await api.answerAgentSpawn("spawn-2", "deny");
+
+        const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+        expect(body).toEqual({ request_id: "spawn-2", decision: "deny" });
+    });
+
+    it("rejects with a typed 409 when the request was already resolved", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ error: "already_resolved" }, 409));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.answerAgentSpawn("spawn-1", "approve")).rejects.toMatchObject({ status: 409 });
+    });
+
+    it("rejects with a typed 404 when the request row is gone", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ error: "not_found" }, 404));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.answerAgentSpawn("spawn-1", "approve")).rejects.toMatchObject({ status: 404 });
+    });
+
+    it("rejects with a typed transport error when the network is unreachable", async () => {
+        fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.answerAgentSpawn("spawn-1", "approve")).rejects.toMatchObject({ status: 0 });
+    });
+});

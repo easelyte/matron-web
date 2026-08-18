@@ -424,7 +424,7 @@ export function CodeBracketsIcon(props: IconProps): React.ReactElement {
     );
 }
 
-// Media-viewer glyphs (loop #568). Chevron-right mirrors ChevronLeftIcon; the rest are the
+// Media-viewer glyphs. Chevron-right mirrors ChevronLeftIcon; the rest are the
 // zoom + download affordances the lightbox needs.
 export function ChevronRightIcon(props: IconProps): React.ReactElement {
     return (

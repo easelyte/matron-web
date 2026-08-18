@@ -14,6 +14,7 @@ export const MESSAGE_EVENT_TYPES = new Set([
     "permission_request",
     "file",
     "image",
+    "spawn_outcome",
 ]);
 
 export interface MatronConfig {
@@ -506,6 +507,28 @@ export function parseMediaDims(value: unknown): MediaDims | undefined {
     return width > 0 && height > 0 ? { width, height } : undefined;
 }
 
+// Single authoritative source for the image-frame height cap. Emitted at runtime as the
+// `--mj-image-frame-max-height` CSS custom property on the `.mj_Image` figure (see AuthenticatedMedia),
+// which BOTH `.mj_ImageFrame_sized` and `.mj_Image img` consume via `var(...)` in journal.pcss — so
+// the JS cap and the CSS caps cannot drift. A non-replaced <div> sized by CSS `aspect-ratio` does not
+// back-shrink its width when the computed height hits `max-height` (that ratio-preserving
+// back-propagation only happens for replaced elements like a bare <img>), so the cap is also baked
+// into the seeded width in JS — see imageFrameStyle.
+export const IMAGE_FRAME_MAX_HEIGHT_PX = 520;
+
+// Inline style that reserves an image's box before the blob decodes, so the thread doesn't reflow
+// on load. `aspectRatio` holds the shape; `width` seeds the intrinsic size (further capped by the
+// CSS max-width for the column). The width is pre-shrunk so that when the ratio-derived height
+// would exceed IMAGE_FRAME_MAX_HEIGHT_PX the box shrinks in BOTH dimensions — replicating replaced-
+// element sizing. Without this, portrait/square images get an over-wide frame and the inner
+// object-fit:contain <img> letterboxes with dead margins.
+export function imageFrameStyle(dims: MediaDims): { aspectRatio: string; width: number } {
+    return {
+        aspectRatio: `${dims.width} / ${dims.height}`,
+        width: Math.min(dims.width, dims.width * (IMAGE_FRAME_MAX_HEIGHT_PX / dims.height)),
+    };
+}
+
 // Coarse file buckets used to pick a file-tile affordance from a MIME type. A few sensible
 // buckets + a generic fallback — deliberately NOT an exhaustive icon library.
 export type FileKind = "image" | "pdf" | "text" | "audio" | "video" | "archive" | "generic";
@@ -544,13 +567,69 @@ export function sanitizePeerText(value: unknown, max = PEER_BODY_CAP): string {
     return String(value).replace(PEER_CONTROL_OR_FORMAT, " ").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+export type SpawnOutcomeKind = "started" | "declined" | "expired" | "failed" | "unknown";
+
+/** Classifies a journaled `spawn_outcome` payload; unrecognised values collapse to "unknown"
+    so a future outcome (or bridge bug) never crashes the timeline (see spawnOutcomeSnippet). */
+export function spawnOutcomeKind(payload: EventPayload): SpawnOutcomeKind {
+    const outcome = asString(payload.outcome);
+    if (outcome === "started" || outcome === "declined" || outcome === "expired" || outcome === "failed") {
+        return outcome;
+    }
+    return "unknown";
+}
+
+export function spawnOutcomeSnippet(payload: EventPayload): string {
+    switch (spawnOutcomeKind(payload)) {
+        case "started":
+            return "🚀 Spawned session started";
+        case "declined":
+            return "🚫 Spawn declined";
+        case "expired":
+            return "⌛ Spawn request expired";
+        case "failed": {
+            const errorCode = asString(payload.error_code);
+            return errorCode ? `❌ Spawn failed — ${errorCode}` : "❌ Spawn failed";
+        }
+        default:
+            return "Spawn request resolved";
+    }
+}
+
 export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "text") return asString(payload.body).slice(0, 120);
     if (type === "peer_message") return sanitizePeerText(payload.body, 120);
     if (type === "file") return `📎 ${asString(payload.caption) || asString(payload.filename, "File")}`.slice(0, 120);
     if (type === "image") return `🖼 ${asString(payload.caption) || asString(payload.filename, "Image")}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;
-    if (type === "permission_request") return `Permission: ${asString(payload.description).slice(0, 100)}`;
+    if (type === "permission_request") {
+        // agent_spawn payloads carry no `description` (that's a generic-permission field) — the
+        // sidebar row would otherwise read the empty "Permission: " (Task 1 review finding).
+        // Fixed copy, not derived from topic/task: the server mints this same literal string
+        // into the snapshot snippet, and the two must be byte-exact or the sidebar row
+        // flip-flops across a resume (same ruling just applied to the Android client).
+        if (asString(payload.kind) === "agent_spawn") return "🤝 Agent spawn request";
+        return `Permission: ${asString(payload.description).slice(0, 100)}`;
+    }
+    if (type === "spawn_outcome") {
+        // Byte-exact with the server's own snapshot snippet strings — bare, no error-code
+        // suffix, and a terse bracketed fallback for an unrecognised outcome. Deliberately NOT
+        // spawnOutcomeSnippet: that richer copy (error code suffix, "Spawn request resolved")
+        // is for the timeline row only, where local judgement calls don't need to match the
+        // server's minted string.
+        switch (spawnOutcomeKind(payload)) {
+            case "started":
+                return "🚀 Spawned session started";
+            case "declined":
+                return "🚫 Spawn declined";
+            case "expired":
+                return "⌛ Spawn request expired";
+            case "failed":
+                return "❌ Spawn failed";
+            default:
+                return "[spawn_outcome]";
+        }
+    }
     if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);
     if (type === "tool_output" && typeof payload.command === "string") return `$ ${payload.command}`.slice(0, 120);
     return `[${type}]`;

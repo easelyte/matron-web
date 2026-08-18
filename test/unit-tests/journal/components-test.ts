@@ -2215,7 +2215,7 @@ describe("attachment composer", () => {
         expect(rendered.container.querySelector(".mj_AttachmentChip")).toBeNull();
     });
 
-    it("opens the media viewer when an inline image is clicked, and closes on Escape (#568)", async () => {
+    it("opens the media viewer when an inline image is clicked, and closes on Escape", async () => {
         const client = signedInClient({
             events: [
                 {
@@ -2263,7 +2263,7 @@ describe("attachment composer", () => {
         expect(rendered.container.querySelector(".mj_MediaViewer_scrim")).toBeNull();
     });
 
-    it("renders a renderable file (pdf) as a preview button, a non-renderable file as a download chip (#568)", async () => {
+    it("renders a renderable file (pdf) as a preview button, a non-renderable file as a download chip", async () => {
         const client = signedInClient({
             events: [
                 {
@@ -2295,7 +2295,7 @@ describe("attachment composer", () => {
         expect(binTile?.textContent).toContain("blob.bin");
     });
 
-    it("reserves an aspect-ratio box for an image event that carries bridge dims (§6)", async () => {
+    it("reserves an aspect-ratio box for an image event that carries bridge dims", async () => {
         const client = signedInClient({
             events: [
                 {
@@ -2315,9 +2315,11 @@ describe("attachment composer", () => {
         expect(frame).not.toBeNull();
         expect(frame?.classList.contains("mj_ImageFrame_sized")).toBe(true);
         // The reserved box is the inline aspect-ratio + width; this is what holds height
-        // before the blob decodes so the thread doesn't reflow.
+        // before the blob decodes so the thread doesn't reflow. The width is pre-shrunk so the
+        // 520px max-height cap preserves the ratio (1200×800 → 780×520), since a non-replaced
+        // <div> won't back-shrink its width on its own.
         expect(frame?.style.aspectRatio).toBe("1200 / 800");
-        expect(frame?.style.width).toBe("1200px");
+        expect(frame?.style.width).toBe("780px");
         expect(frame?.getAttribute("data-dims")).toBe("1200x800");
     });
 

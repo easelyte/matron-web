@@ -49,7 +49,10 @@ describe("subchat derivations", () => {
 
     describe("buildSidebarIndex placement resolution (#536)", () => {
         const placementOf = (convos: Conversation[], archived: Set<string>, id: string): string =>
-            childSidebarPlacement(convos.find((c) => c.id === id)!, buildSidebarIndex(convos, archived));
+            childSidebarPlacement(
+                convos.find((c) => c.id === id)!,
+                buildSidebarIndex(convos, archived),
+            );
 
         it("resolves a running grandchild rooted at an ARCHIVED parent to top-level (never lost)", () => {
             // archived A → done child B → running grandchild C. B is 'hidden', so it is NOT a

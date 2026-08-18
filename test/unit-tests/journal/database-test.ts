@@ -117,6 +117,34 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("counts a journaled spawn_outcome as a message event — bumps unread and sets the snippet", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 10, "dan");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+
+        await database.applyJournal(
+            event(1, "journal", "spawn_outcome", { request_id: "spawn-1", outcome: "started", room_id: "r1" }),
+        );
+
+        expect((await database.conversations())[0]).toMatchObject({
+            unread_count: 1,
+            snippet: "🚀 Spawned session started",
+        });
+        database.close();
+    });
+
     it("keeps own messages unread-free and converges read markers", async () => {
         const database = await JournalDatabase.open("https://journal.example", 2, "dan");
         await database.replaceWithSnapshot({

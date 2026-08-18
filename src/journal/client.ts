@@ -88,14 +88,10 @@ interface AttachmentOwner {
 }
 
 type PersistPendingAttachmentOutcome =
-    | { kind: "persisted-uploadable" }
-    | { kind: "persisted-terminal" }
-    | { kind: "persist-failed" };
+    { kind: "persisted-uploadable" } | { kind: "persisted-terminal" } | { kind: "persist-failed" };
 
 export type StartOutcome =
-    | { kind: "created"; convoId: string }
-    | { kind: "error"; message: string }
-    | { kind: "uncertain" };
+    { kind: "created"; convoId: string } | { kind: "error"; message: string } | { kind: "uncertain" };
 
 export type WorkerKind = "claude" | "codex";
 
@@ -251,6 +247,7 @@ export class MatronJournalClient {
     private readonly toolStreams = new Map<string, Record<string, ToolStreamState>>();
     private readonly retiredStreamRefs = new Set<string>();
     private readonly mediaUrls = new Map<string, string>();
+    private readonly mediaUrlRequests = new Map<string, Promise<string>>();
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
@@ -482,9 +479,14 @@ export class MatronJournalClient {
 
     public async selectConversation(
         conversationId: string,
-        opts?: { clearUnread?: boolean; fromRpcCreate?: boolean },
+        opts?: { clearUnread?: boolean; fromRpcCreate?: boolean; suppressNotFound?: boolean },
     ): Promise<void> {
         if (!this.database || !this.state.session) return;
+        // fromRpcCreate is for a room created milliseconds ago by this client's own RPC: it arms
+        // the sync watchdog (frames must follow shortly) AND tolerates a young room's 404 on
+        // history. suppressNotFound wants only the latter — opening a spawn-created room long
+        // after the fact must not arm a watchdog that only an incoming frame can clear, or an
+        // idle session reports "not syncing" as an error.
         if (opts?.fromRpcCreate) this.armRpcCreateWatchdog(conversationId);
         if (opts?.clearUnread ?? true) this.clearUnreadOverride(conversationId);
         storeSelectedConversation(this.state.session, conversationId);
@@ -507,7 +509,7 @@ export class MatronJournalClient {
         if (conversation?.unread_count) this.scheduleRead(conversationId, conversation.last_seq, 0);
 
         if (!this.history.get(conversationId)?.initialized) {
-            await this.loadOlderHistory({ suppressNotFound: opts?.fromRpcCreate });
+            await this.loadOlderHistory({ suppressNotFound: opts?.fromRpcCreate || opts?.suppressNotFound });
         }
     }
 
@@ -1163,14 +1165,47 @@ export class MatronJournalClient {
         return sent;
     }
 
-    public async mediaUrl(mediaId: string): Promise<string> {
+    // House pattern: components talk to the client, not JournalApi directly. Errors (notably
+    // JournalApiError with `.status` 409/404) are rethrown unchanged for the card's state machine.
+    public async answerAgentSpawn(
+        requestId: string,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<void> {
+        if (!this.api) throw new Error("Not signed in.");
+        await this.api.answerAgentSpawn(requestId, decision, signal);
+    }
+
+    // Concurrent callers for the same id (the viewer body and its DownloadLink mount in the
+    // same commit) share one in-flight request: without the dedupe map each miss fetched the
+    // blob again and the loser's object URL was overwritten in the cache — never revoked, a
+    // permanent leak of the whole blob.
+    public mediaUrl(mediaId: string): Promise<string> {
         const cached = this.mediaUrls.get(mediaId);
-        if (cached) return cached;
-        if (!this.api) throw new Error("Not signed in");
-        const blob = await this.api.media(mediaId);
-        const url = URL.createObjectURL(blob);
-        this.mediaUrls.set(mediaId, url);
-        return url;
+        if (cached) return Promise.resolve(cached);
+        const inflight = this.mediaUrlRequests.get(mediaId);
+        if (inflight) return inflight;
+        const api = this.api;
+        if (!api) return Promise.reject(new Error("Not signed in"));
+        const gen = this.sessionGen;
+        const request = (async (): Promise<string> => {
+            try {
+                const blob = await api.media(mediaId);
+                const url = URL.createObjectURL(blob);
+                if (this.sessionGen !== gen) {
+                    // Signed out mid-fetch: the teardown that revokes cached URLs already ran,
+                    // so caching now would leak this one into the next session.
+                    URL.revokeObjectURL(url);
+                    throw new Error("Not signed in");
+                }
+                this.mediaUrls.set(mediaId, url);
+                return url;
+            } finally {
+                this.mediaUrlRequests.delete(mediaId);
+            }
+        })();
+        this.mediaUrlRequests.set(mediaId, request);
+        return request;
     }
 
     public selectedConversation(): Conversation | undefined {

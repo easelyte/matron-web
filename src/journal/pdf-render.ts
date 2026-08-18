@@ -5,14 +5,14 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-// Lazy pdf.js boundary (loop #568, item 2 — safe PDF rendering).
+// Lazy pdf.js boundary (safe PDF rendering).
 //
 // This module is reached ONLY via `await import("./pdf-render")` from the media viewer's
 // PDF body, so pdf.js + its worker land in a lazy webpack chunk that never touches the main
 // entry. It is also the single place that references `import.meta.url` (worker asset URL),
 // which keeps that ESM-only token out of the jsdom/jest parse path — tests mock this module.
 //
-// Security posture (P74 — harden the serve boundary): pdf.js parses the PDF in a worker and
+// Security posture (harden the serve boundary): pdf.js parses the PDF in a worker and
 // paints pages to <canvas>. The bytes are NEVER handed to a document/plugin context, so no
 // JS-in-PDF, form actions, or external fetches execute. We additionally pin:
 //   - enableScripting is left at its default (false) → PDF-embedded JS never runs

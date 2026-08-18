@@ -2530,6 +2530,119 @@ li.mj_AttachmentChip_error {
     border-color: rgb(13 148 136 / 25%);
 }
 
+/* agent_spawn consent card — same .mj_PromptCard chrome, violet accent distinguishes a
+   spawn ask from a tool permission. Adds a truncated headline, From/Target/Folder detail
+   rows, and a verbatim monospace task block (the text shown is the text that runs). */
+.mj_PromptCard_spawn {
+    border-color: rgb(124 58 237 / 25%);
+}
+
+.mj_PromptCard_spawn .mj_PromptLabel {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_SpawnHeadline {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    overflow: hidden;
+    font:
+        600 13.5px/20px Inter,
+        sans-serif;
+}
+
+.mj_SpawnDetails {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.mj_SpawnDetail {
+    display: flex;
+    gap: 8px;
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_SpawnDetail_label {
+    flex: 0 0 52px;
+    color: var(--cpd-color-text-secondary);
+    font-weight: 600;
+}
+
+.mj_SpawnDetail_value {
+    min-width: 0;
+    overflow-wrap: break-word;
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_SpawnTask {
+    margin: 0;
+    max-height: 220px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-radius: 8px;
+    background: var(--cpd-color-bg-subtle-secondary);
+    padding: 10px 12px;
+    font:
+        400 12px/18px ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        monospace;
+}
+
+/* The resolved row grows a trailing Open button for the started outcome, so it drops the
+   base family's fixed 2-column glyph grid in favour of a flex row that can accommodate it. */
+.mj_PromptCard_spawn .mj_PromptResolved {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.mj_PromptCard_spawn .mj_PromptResolved .mj_Answered {
+    flex: 1;
+    min-width: 0;
+}
+
+/* The base family's fixed 24px glyph column comes from CSS grid (.mj_PromptBody /
+   .mj_PromptResolved), which this flex override drops. An empty .mj_PromptGlyph span (no
+   icon glyph is drawn on this row) then collapses to its intrinsic ~0 width in a flex row,
+   pulling the "Started"/"Denied"/etc. text left of the base family's grid alignment. Pin it
+   back to the same 24px the grid would have given it. */
+.mj_PromptCard_spawn .mj_PromptResolved .mj_PromptGlyph {
+    flex: 0 0 24px;
+}
+
+.mj_SpawnOpenButton {
+    flex: 0 0 auto;
+    min-height: 30px;
+    box-sizing: border-box;
+    border: 0;
+    border-radius: 8px;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+    cursor: pointer;
+    padding: 0 14px;
+    font:
+        600 12.5px/16px Inter,
+        sans-serif;
+}
+
+.mj_SpawnOpenButton:hover {
+    filter: brightness(1.08);
+}
+
+/* Standalone timeline row for the durable spawn_outcome event once the card has scrolled
+   away — a single status line, no card chrome. */
+.mj_SpawnOutcomeRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
 .mj_PromptHeader {
     display: flex;
     align-items: baseline;
@@ -3421,7 +3534,7 @@ button.mj_File {
 }
 
 /* =====================================================================================
-   Media viewer / lightbox (loop #568). Modal scrim + dialog card + per-type body +
+   Media viewer / lightbox. Modal scrim + dialog card + per-type body +
    bottom ThumbStrip. Radii: dialog 14, images/wells 6, thumbs/buttons 8. Accent teal for
    active/selected; active thumb = 2px accent border (not a fill). Focus = 2px accent
    outline at +2px offset. Motion: 120ms colour/bg, 180ms surface, --cpd-ease; all off
@@ -3926,6 +4039,15 @@ button.mj_File {
 
 .mj_MediaViewer_thumb_active {
     border: 2px solid var(--cpd-color-text-action-accent);
+}
+
+/* Sized wrapper so the lazily-mounted thumbImg still fills the 38px tile. */
+.mj_MediaViewer_thumbHolder {
+    display: inline-flex;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
 }
 
 .mj_MediaViewer_thumbImg {
