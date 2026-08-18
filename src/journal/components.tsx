@@ -131,10 +131,13 @@ import {
     isNearBottom,
     type MediaDims,
     parseMediaDims,
+    PEER_BODY_CAP,
+    PEER_NAME_CAP,
     type JournalEvent,
     type PendingMessage,
     type RecentFolder,
     rendersAsTopLevelRow,
+    sanitizePeerText,
     isSubChat,
     type SessionStatus,
     type StagedUploadItem,
@@ -731,6 +734,13 @@ export function NewSessionSheet({
     );
 }
 
+export function markForKind(kind: string | null | undefined, className?: string): React.ReactElement | null {
+    const classes = [className, kind === "codex" ? "mj_OpenAIMark" : "mj_AnthropicMark"].filter(Boolean).join(" ");
+    if (kind === "codex") return <OpenAIMark className={classes} />;
+    if (kind === "claude") return <AnthropicMark className={classes} />;
+    return null;
+}
+
 function WorkerMark({
     conversation,
     className,
@@ -738,10 +748,7 @@ function WorkerMark({
     conversation: Conversation;
     className: string;
 }): React.ReactElement | null {
-    const kind = workerKind(conversation);
-    if (kind === "codex") return <OpenAIMark className={`${className} mj_OpenAIMark`} />;
-    if (kind === "claude") return <AnthropicMark className={`${className} mj_AnthropicMark`} />;
-    return null;
+    return markForKind(workerKind(conversation), className);
 }
 
 type OutcomeClassification = "running" | "completed" | "interrupted" | "failed" | "inactive";
@@ -3342,6 +3349,44 @@ export function isPermissionDecisionReply(event: JournalEvent, permissionRequest
     return permissionRequestSeqs.has(targetSeq);
 }
 
+function PeerMessage({ event }: { event: JournalEvent }): React.ReactElement {
+    const rawFromKind = asString(event.payload.from_kind);
+    const fromKind = rawFromKind === "claude" || rawFromKind === "codex" ? rawFromKind : null;
+    const fromName = sanitizePeerText(event.payload.from_name, PEER_NAME_CAP) || "peer agent";
+    const body = sanitizePeerText(event.payload.body, PEER_BODY_CAP);
+    const mark = markForKind(fromKind, "mj_PeerMessage_mark");
+
+    return (
+        <div className="mj_PeerMessage">
+            <span
+                className="mj_PeerMessage_badge"
+                aria-label={fromKind === null ? `Peer agent from ${fromName}` : `Peer message from ${fromName}`}
+                style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "var(--cpd-space-1x)",
+                    marginBottom: "var(--cpd-space-2x)",
+                    padding: "var(--cpd-space-1x) var(--cpd-space-2x)",
+                    border: "1px solid var(--cpd-color-border-interactive-secondary)",
+                    borderRadius: "var(--cpd-radius-pill)",
+                    background: "var(--cpd-state-selected)",
+                    color: "var(--cpd-color-text-secondary)",
+                    fontSize: "var(--cpd-font-size-xs)",
+                    lineHeight: "16px",
+                }}
+            >
+                {mark ?? <InactiveIcon className="mj_PeerMessage_mark mj_PeerMessage_mark_neutral" />}
+                <span className="mj_PeerMessage_label">
+                    {fromKind === null && "peer agent · "}from «<bdi>{fromName}</bdi>»
+                </span>
+            </span>
+            <div className="mj_MessageText">
+                <bdi>{body}</bdi>
+            </div>
+        </div>
+    );
+}
+
 export function EventContent({
     client,
     event,
@@ -3363,6 +3408,8 @@ export function EventContent({
                     <MarkdownBody text={asString(event.payload.body)} label={String(event.seq)} />
                 </div>
             );
+        case "peer_message":
+            return <PeerMessage event={event} />;
         case "prompt":
             if (asString(event.payload.kind) === "queued_release") {
                 return (
@@ -3474,13 +3521,22 @@ function EventRow({
     lastInSection?: boolean;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
-    const own = event.sender.startsWith("user:");
+    const peer = event.type === "peer_message";
+    const own = !peer && event.sender.startsWith("user:");
     const liRef = useRef<HTMLLIElement>(null);
     const handlers = rowHandlers(event, () => liRef.current);
     return (
         <li
             ref={liRef}
-            className={`mx_EventTile${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}`}
+            className={`mx_EventTile${peer ? " mx_EventTile_peer" : ""}${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}`}
+            style={
+                peer
+                    ? {
+                          borderInlineStart: "3px solid var(--cpd-color-text-action-accent)",
+                          paddingInlineStart: "var(--cpd-space-3x)",
+                      }
+                    : undefined
+            }
             tabIndex={-1}
             aria-live="polite"
             aria-atomic="true"

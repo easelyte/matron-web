@@ -79,6 +79,18 @@ describe("matron-journal wire helpers", () => {
 });
 
 describe("eventSnippet captions", () => {
+    it("uses the peer message body instead of a type placeholder", () => {
+        expect(eventSnippet("peer_message", { body: "Coordinate the deploy window" })).toBe(
+            "Coordinate the deploy window",
+        );
+    });
+
+    it("removes control and bidi format characters from peer message snippets", () => {
+        const snippet = eventSnippet("peer_message", { body: "safe\ntext\u202elive\u202cend\u2067now\u2069" });
+        expect(snippet).toBe("safe text live end now");
+        expect(snippet).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+    });
+
     it("prefers the caption over the filename for image and file snippets", () => {
         expect(eventSnippet("image", { filename: "shot.png", caption: "what is wrong here?" })).toBe(
             "🖼 what is wrong here?",

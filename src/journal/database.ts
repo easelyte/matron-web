@@ -323,7 +323,7 @@ export class JournalDatabase {
         await transactionDone(transaction);
     }
 
-    /** Applies one strictly ordered replay/live row and advances the durable cursor atomically. */
+    /** Applies one strictly ordered row atomically; read markers clear durable unread state separately. */
     public async applyJournal(incomingEvent: JournalEvent): Promise<boolean> {
         const event = enforceToolLogTtl(incomingEvent);
         const transaction = this.database.transaction(["meta", "conversations", "events"], "readwrite");
@@ -368,7 +368,9 @@ export class JournalDatabase {
             }
         } else if (MESSAGE_EVENT_TYPES.has(event.type)) {
             conversation.snippet = eventSnippet(event.type, event.payload);
-            if (!event.sender.startsWith("user:")) conversation.unread_count += 1;
+            if (!event.sender.startsWith("user:")) {
+                conversation.unread_count += 1;
+            }
         } else if (event.type === "read_marker") {
             const upToSeq = typeof event.payload.up_to_seq === "number" ? event.payload.up_to_seq : 0;
             conversation.read_up_to_seq = Math.max(conversation.read_up_to_seq, upToSeq);

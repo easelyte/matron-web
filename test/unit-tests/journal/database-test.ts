@@ -50,6 +50,73 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("hydrates peer message payloads intact and counts them unread in an inactive conversation", async () => {
+        const serverUrl = "https://peer-hydration.example";
+        const database = await JournalDatabase.open(serverUrl, 11, "dan");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+        const payload = {
+            from_convo: "sender-convo",
+            from_name: "Release Agent",
+            from_kind: "codex",
+            body: "Coordinate the deploy window",
+        };
+
+        await database.applyJournal(event(1, "agent:peer-device", "peer_message", payload));
+
+        expect((await database.conversations())[0]).toMatchObject({
+            unread_count: 1,
+            snippet: payload.body,
+        });
+        database.close();
+
+        const hydrated = await JournalDatabase.open(serverUrl, 11, "dan");
+        expect(await hydrated.events("c1")).toEqual([expect.objectContaining({ type: "peer_message", payload })]);
+        hydrated.close();
+    });
+
+    it("keeps peer message unread durable until it is locally marked read", async () => {
+        const database = await JournalDatabase.open("https://peer-active.example", 12, "dan");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+
+        await database.applyJournal(
+            event(1, "agent:peer-device", "peer_message", { body: "Coordinate the deploy window" }),
+        );
+
+        expect((await database.conversations())[0]).toMatchObject({
+            unread_count: 1,
+            snippet: "Coordinate the deploy window",
+        });
+        await database.markLocallyRead("c1", 1);
+        expect((await database.conversations())[0]).toMatchObject({ unread_count: 0, read_up_to_seq: 1 });
+        database.close();
+    });
+
     it("keeps own messages unread-free and converges read markers", async () => {
         const database = await JournalDatabase.open("https://journal.example", 2, "dan");
         await database.replaceWithSnapshot({
