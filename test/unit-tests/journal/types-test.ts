@@ -79,6 +79,12 @@ describe("matron-journal wire helpers", () => {
 });
 
 describe("eventSnippet captions", () => {
+    it("uses the peer message body instead of a type placeholder", () => {
+        expect(eventSnippet("peer_message", { body: "Coordinate the deploy window" })).toBe(
+            "Coordinate the deploy window",
+        );
+    });
+
     it("prefers the caption over the filename for image and file snippets", () => {
         expect(eventSnippet("image", { filename: "shot.png", caption: "what is wrong here?" })).toBe(
             "🖼 what is wrong here?",

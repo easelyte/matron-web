@@ -7,6 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 export const MESSAGE_EVENT_TYPES = new Set([
     "text",
+    "peer_message",
     "tool_output",
     "diff",
     "prompt",
@@ -535,6 +536,7 @@ export function conversationTitle(conversation: Conversation): string {
 
 export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "text") return asString(payload.body).slice(0, 120);
+    if (type === "peer_message") return asString(payload.body).slice(0, 120);
     if (type === "file") return `📎 ${asString(payload.caption) || asString(payload.filename, "File")}`.slice(0, 120);
     if (type === "image") return `🖼 ${asString(payload.caption) || asString(payload.filename, "Image")}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;

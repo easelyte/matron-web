@@ -69,7 +69,7 @@ interface FakeDatabase {
     addToOutbox: (message: PendingMessage) => Promise<void>;
     deleteOutboxRow: (localId: string) => Promise<void>;
     cursor: () => Promise<number | undefined>;
-    applyJournal: (event: JournalEvent) => Promise<boolean>;
+    applyJournal: (event: JournalEvent, viewedConversationId?: string) => Promise<boolean>;
     reconcileOwnMessage: (event: JournalEvent) => Promise<string | null>;
     reconcilePersistedOwnMessages: () => Promise<string[]>;
     backfillDone?: () => Promise<boolean>;
@@ -152,6 +152,57 @@ function fakeDatabase(overrides: Partial<FakeDatabase> = {}): FakeDatabase {
     };
 }
 
+function peerUnreadDatabase(): FakeDatabase {
+    let conversations = CONVERSATIONS.map((conversation) => ({ ...conversation }));
+    const storedEvents: JournalEvent[] = [];
+    const database = fakeDatabase();
+    database.applyJournal = jest.fn(async (journalEvent: JournalEvent, viewedConversationId?: string) => {
+        storedEvents.push(journalEvent);
+        conversations = conversations.map((conversation) =>
+            conversation.id === journalEvent.convo_id
+                ? {
+                      ...conversation,
+                      last_seq: journalEvent.seq,
+                      unread_count:
+                          journalEvent.convo_id === viewedConversationId
+                              ? conversation.unread_count
+                              : conversation.unread_count + 1,
+                  }
+                : conversation,
+        );
+        return true;
+    });
+    database.conversations = jest.fn(async () => conversations.map((conversation) => ({ ...conversation })));
+    database.events = jest.fn(async (conversationId: string) =>
+        storedEvents.filter((journalEvent) => journalEvent.convo_id === conversationId),
+    ) as unknown as FakeDatabase["events"];
+    database.markLocallyRead = jest.fn(async (conversationId: string, upToSeq: number) => {
+        conversations = conversations.map((conversation) =>
+            conversation.id === conversationId
+                ? { ...conversation, unread_count: 0, read_up_to_seq: upToSeq }
+                : conversation,
+        );
+    });
+    return database;
+}
+
+function peerMessage(conversationId: string, seq: number): JournalEvent {
+    return {
+        kind: "journal",
+        seq,
+        convo_id: conversationId,
+        ts: seq * 1_000,
+        sender: "agent:peer-device",
+        type: "peer_message",
+        payload: {
+            from_convo: "sender-convo",
+            from_name: "Release Agent",
+            from_kind: "codex",
+            body: "Coordinate the deploy window",
+        },
+    };
+}
+
 function attachmentDatabase(): {
     database: FakeDatabase;
     rows: Map<string, PendingMessage>;
@@ -209,6 +260,7 @@ describe("MatronJournalClient state handling", () => {
 
     afterEach(() => {
         jest.useRealTimers();
+        delete (window as Window & { electron?: unknown }).electron;
     });
 
     it("clears pending acknowledgements and every conversation read timer on logout", async () => {
@@ -355,6 +407,57 @@ describe("MatronJournalClient state handling", () => {
 
         expect(send).toHaveBeenCalledWith({ op: "read_marker", convo_id: "c1", up_to_seq: 10 });
         expect(database.markLocallyRead).toHaveBeenCalledWith("c1", 10);
+    });
+
+    it("suppresses a peer message unread count when its conversation is actively viewed", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = peerUnreadDatabase();
+        const send = jest.fn().mockReturnValue(true);
+        const badgeSend = jest.fn();
+        (window as Window & { electron?: { send: jest.Mock } }).electron = { send: badgeSend };
+        state.state = signedInState(client, "c1");
+        state.database = database;
+        state.connection = { send };
+
+        await state.handleJournal(peerMessage("c1", 11));
+        await jest.runAllTimersAsync();
+
+        expect(send).toHaveBeenCalledWith({ op: "read_marker", convo_id: "c1", up_to_seq: 11 });
+        expect(database.markLocallyRead).toHaveBeenCalledWith("c1", 11);
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")?.unread_count).toBe(
+            0,
+        );
+        const badgeCounts = badgeSend.mock.calls
+            .filter(([channel]) => channel === "setBadgeCount")
+            .map(([, count]) => count);
+        expect(badgeCounts.length).toBeGreaterThan(0);
+        expect(badgeCounts.every((count) => count === 0)).toBe(true);
+        expect(badgeSend).toHaveBeenLastCalledWith("setBadgeCount", 0);
+    });
+
+    it("keeps a peer message unread badge when a different conversation is actively viewed", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = peerUnreadDatabase();
+        const send = jest.fn().mockReturnValue(true);
+        const badgeSend = jest.fn();
+        (window as Window & { electron?: { send: jest.Mock } }).electron = { send: badgeSend };
+        state.state = signedInState(client, "c1");
+        state.database = database;
+        state.connection = { send };
+
+        await state.handleJournal(peerMessage("c2", 21));
+        await jest.runAllTimersAsync();
+
+        expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "read_marker", convo_id: "c2" }));
+        expect(database.markLocallyRead).not.toHaveBeenCalled();
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c2")?.unread_count).toBe(
+            1,
+        );
+        expect(badgeSend).toHaveBeenLastCalledWith("setBadgeCount", 1);
     });
 
     it("stores the open conversation and clears it when returning to the list", async () => {
