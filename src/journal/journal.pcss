@@ -1031,6 +1031,182 @@ textarea {
     border-left-color: var(--cpd-color-bg-accent-emphasis);
 }
 
+/* ============================================================================
+   Surface A — Pinned conversation summary (net-new, design 2026-08).
+   A collapsible digest strip pinned between the SubagentStrip and the Timeline.
+   The bar IS the expand control (aria-expanded/-controls); the body is
+   aria-live=polite so a server refresh is announced without stealing focus.
+   See GENERATIVE-SYSTEM.md · Surface A.
+   ============================================================================ */
+.mj_PinnedSummary {
+    margin: 8px 20px 12px 20px;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--mj-summary-raise);
+    box-shadow: var(--cpd-shadow-sm);
+    overflow: hidden;
+}
+
+.mj_PinnedSummary_bar {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 9px 12px;
+    text-align: left;
+    color: inherit;
+    cursor: pointer;
+    transition: background var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_PinnedSummary_bar:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_PinnedSummary_bar:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: -2px;
+}
+
+.mj_PinnedSummary_pin {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_PinnedSummary_label {
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_PinnedSummary_lead {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--cpd-color-text-secondary);
+    font-size: 13px;
+    line-height: 18px;
+}
+
+.mj_PinnedSummary_meta {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-tertiary);
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.mj_PinnedSummary_chev {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    color: var(--cpd-color-text-tertiary);
+    transition: transform var(--cpd-dur-med) var(--cpd-ease);
+}
+
+.mj_PinnedSummary[data-collapsed="true"] .mj_PinnedSummary_chev {
+    transform: rotate(-90deg);
+}
+
+.mj_PinnedSummary_body {
+    padding: 2px 14px 12px 32px;
+}
+
+.mj_PinnedSummary_list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.mj_PinnedSummary_item {
+    position: relative;
+    padding-left: 16px;
+    font-size: 14px;
+    line-height: 21px;
+    color: var(--cpd-color-text-primary);
+    text-wrap: pretty;
+}
+
+.mj_PinnedSummary_item::before {
+    content: "•";
+    position: absolute;
+    left: 2px;
+    top: 0;
+    color: var(--cpd-color-text-action-accent);
+}
+
+/* A single over-long bullet clamps to 2 lines with an in-place Expand control. */
+.mj_PinnedSummary_item_clamp {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* The 20-bullet cap scrolls the body, not the strip — the timeline stays reachable. */
+.mj_PinnedSummary_scroll {
+    max-height: 214px;
+    overflow-y: auto;
+    padding-right: 6px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--mj-scrollbar) transparent;
+}
+
+.mj_PinnedSummary_empty {
+    padding: 10px 14px 12px 32px;
+    color: var(--cpd-color-text-tertiary);
+    font-size: 13px;
+    line-height: 19px;
+}
+
+.mj_PinnedSummary_updating .mj_PinnedSummary_item {
+    opacity: 0.5;
+}
+
+.mj_PinnedSummary_shimmer {
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--cpd-color-text-action-accent), transparent);
+    background-size: 180px 100%;
+    animation: mj-shimmer 1.1s linear infinite;
+}
+
+.mj_PinnedSummary_status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--cpd-color-text-action-accent);
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.mj_PinnedSummary_more {
+    margin-top: 4px;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-action-accent);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 2px 0;
+    cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mj_PinnedSummary_shimmer {
+        animation: none;
+    }
+}
+
 .mj_AccountMenu {
     top: 44px;
     right: 8px;
@@ -2634,13 +2810,264 @@ li.mj_AttachmentChip_error {
 
 /* Standalone timeline row for the durable spawn_outcome event once the card has scrolled
    away — a single status line, no card chrome. */
+/* Surface C restyle (design 2026-08): the durable spawn-outcome row reads as a STRUCTURAL
+   event, not a normal message — a coloured kind-rail (teal started / critical failed) +
+   an uppercase "Subagent · {kind}" eyebrow. Kept accessible text = spawnOutcomeSnippet. */
 .mj_SpawnOutcomeRow {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 10px;
+    margin: 6px 0;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-raised);
     color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 19px;
+}
+
+.mj_SpawnOutcomeRow_rail {
+    width: 3px;
+    align-self: stretch;
+    flex: 0 0 auto;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-icon-secondary);
+}
+
+.mj_SpawnOutcomeRow_started .mj_SpawnOutcomeRow_rail {
+    background: var(--cpd-color-text-action-accent);
+}
+
+.mj_SpawnOutcomeRow_failed .mj_SpawnOutcomeRow_rail {
+    background: var(--cpd-color-text-critical-primary);
+}
+
+.mj_SpawnOutcomeRow_kindMark {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+}
+
+.mj_SpawnOutcomeRow_glyph {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+}
+
+.mj_SpawnOutcomeRow_text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.mj_SpawnOutcomeRow_text b {
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+}
+
+.mj_SpawnOutcomeRow_eyebrow {
+    display: block;
+    margin-bottom: 1px;
+    color: var(--cpd-color-text-tertiary);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+/* The "started" outcome keeps the jump-to-child button; failed has no child room. */
+.mj_SpawnOpenButton {
+    flex: 0 0 auto;
+    min-height: 30px;
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+    cursor: pointer;
+    padding: 0 14px;
+    font:
+        600 12.5px/16px Inter,
+        sans-serif;
+}
+
+.mj_SpawnOpenButton:hover {
+    filter: brightness(1.08);
+}
+
+.mj_SpawnOpenButton:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+/* ============================================================================
+   Surface B — Peer message (design 2026-08): migrated OFF inline styles to a
+   durable block, so continuation grouping, the priority variant, and both themes
+   are expressible. A left-aligned raised card with a coloured left edge, worker
+   mark, session name + muted `peer` tag — reads as "another AI is speaking into
+   your thread" without masquerading as your own (right, teal) or the primary
+   agent (left, no card). See GENERATIVE-SYSTEM.md · Surface B.
+   ============================================================================ */
+.mj_PeerMessage {
+    position: relative;
+    display: block;
+    width: 100%;
+    max-width: 640px;
+    margin: 6px 0;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-left: 2px solid var(--cpd-color-icon-secondary);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-raised);
+    box-shadow: var(--cpd-shadow-sm);
+    padding: 10px 12px 10px 13px;
+}
+
+.mj_PeerMessage_head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 5px;
+}
+
+.mj_PeerMessage_mark {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_PeerMessage_mark_neutral {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_PeerMessage_name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--cpd-color-text-primary);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.mj_PeerMessage_tag {
+    flex: 0 0 auto;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-tertiary);
+    padding: 1px 7px;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.mj_PeerMessage_time {
+    flex: 0 0 auto;
+    margin-left: auto;
+    color: var(--cpd-color-text-tertiary);
+    font-size: 10px;
+}
+
+.mj_PeerMessage_body {
+    color: var(--cpd-color-text-primary);
+    font-size: 14px;
+    line-height: 21px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+/* PEER_BODY_CAP is enforced in JS (ellipsis at the tail); this is the visual guard. */
+.mj_PeerMessage_body_clamp {
+    display: -webkit-box;
+    -webkit-line-clamp: 12;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Continuation (consecutive peer messages from the same session): drop the header,
+   tighten the top so the run reads as one voice. */
+.mj_PeerMessage_continuation {
+    margin-top: 1px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+
+.mj_PeerMessage_continuation .mj_PeerMessage_head {
+    display: none;
+}
+
+.mj_PeerMessage:hover {
+    border-left-color: var(--cpd-color-border-interactive-primary);
+}
+
+.mj_PeerMessage:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+/* Priority variant (net-new, loop #688): medium loudness at rest — a 3px accent edge +
+   selected-tint surface + a PRIORITY badge. The interaction rule (never a focus steal /
+   modal / composer injection) lives in the component, not the CSS. */
+.mj_PeerMessage_priority {
+    border-left: 3px solid var(--mj-priority-accent);
+    border-color: rgb(13 148 136 / 28%);
+    background: var(--cpd-state-selected);
+}
+
+[data-theme="dark"] .mj_PeerMessage_priority {
+    border-color: rgb(45 212 191 / 30%);
+}
+
+.mj_PeerMessage_priority:hover {
+    filter: brightness(1.02);
+}
+
+.mj_PeerMessage_priorityBadge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex: 0 0 auto;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-accent-emphasis);
+    color: var(--cpd-color-text-on-accent);
+    padding: 1px 7px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+[data-theme="dark"] .mj_PeerMessage_priority .mj_PeerMessage_priorityBadge {
+    color: #06231f;
+}
+
+/* Non-stealing jump chip: shown just above the composer when a priority peer message
+   arrives while the timeline is scrolled up. Clicking scrolls to it; focus/text untouched. */
+.mj_PeerJump {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid rgb(13 148 136 / 30%);
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-md);
+    color: var(--cpd-color-text-action-accent);
+    cursor: pointer;
+    padding: 7px 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.mj_PeerJump_dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--mj-priority-accent);
+}
+
+.mj_PeerJump svg {
+    width: 13px;
+    height: 13px;
 }
 
 .mj_PromptHeader {
@@ -3470,6 +3897,17 @@ button.mj_File {
 @keyframes mj-spin {
     to {
         transform: rotate(360deg);
+    }
+}
+
+/* Surface A pinned-summary refresh shimmer (a 2px accent sweep under the bar). */
+@keyframes mj-shimmer {
+    0% {
+        background-position: -180px 0;
+    }
+
+    100% {
+        background-position: 180px 0;
     }
 }
 

@@ -90,21 +90,76 @@ health_matches_release() {
     fi
 }
 
-# Callers must hold the shared fd-9 deployment lock.
-rollback_to() {
+resolve_release() {
     local requested_target=${1-}
     local releases_root
     local target
-    local current_target
 
     releases_root=$(readlink -f -- "$WEB/releases" 2>/dev/null || true)
-    target=$(readlink -f -- "$requested_target" 2>/dev/null || true)
+    target=$(readlink -e -- "$requested_target" 2>/dev/null || true)
 
-    if [[ -z $releases_root || -z $target || $(dirname -- "$target") != "$releases_root" ]]; then
-        echo "rollback target must be a release under $WEB/releases" >&2
+    if [[ -z $releases_root || -z $target ||
+        $(dirname -- "$target") != "$releases_root" ||
+        $(basename -- "$target") != release-* || ! -d $target ]]; then
         return 1
     fi
-    if [[ ! -d $target || ! -f $target/.healthy ]]; then
+
+    printf '%s\n' "$target"
+}
+
+resolve_healthy_release() {
+    local requested_target=${1-}
+    local target
+
+    if ! target=$(resolve_release "$requested_target") ||
+        [[ ! -f $target/.healthy ]]; then
+        return 1
+    fi
+
+    printf '%s\n' "$target"
+}
+
+release_has_referenced_bundles() {
+    local asset_path
+    local asset_target
+    local attribute
+    local value
+
+    while IFS= read -r attribute; do
+        value=${attribute#*=}
+        value=${value#"${value%%[![:space:]]*}"}
+        if [[ $value == \"*\" || $value == \'*\' ]]; then
+            value=${value:1:${#value}-2}
+        fi
+
+        asset_path=${value%%\#*}
+        asset_path=${asset_path%%\?*}
+        asset_path=${asset_path#/}
+        asset_path=${asset_path#./}
+        if [[ $asset_path != assets/* ]] ||
+            [[ $asset_path != *.js && $asset_path != *.css ]]; then
+            continue
+        fi
+
+        asset_target=$(readlink -f -- "$REL/$asset_path" 2>/dev/null || true)
+        if [[ -z $asset_target || $asset_target != "$REL/assets/"* ||
+            ! -f $asset_target ]]; then
+            echo "release is missing referenced bundle: $value" >&2
+            return 1
+        fi
+    done < <(
+        grep -Eoi '(src|href)[[:space:]]*=[[:space:]]*("[^"]*"|'\''[^'\'']*'\''|[^[:space:]">]+)' \
+            "$REL/index.html" || true
+    )
+}
+
+# Callers must hold the shared fd-9 deployment lock.
+rollback_to() {
+    local requested_target=${1-}
+    local target
+    local current_target
+
+    if ! target=$(resolve_healthy_release "$requested_target"); then
         echo "rollback target is not a healthy release: $target" >&2
         return 1
     fi
@@ -126,19 +181,90 @@ rollback_to() {
 }
 
 # Callers must hold the shared fd-9 deployment lock.
+stage_rollback_intent() {
+    local target=$1
+    local previous=$2
+    local intent=$WEB/.rollback-intent
+    local intent_tmp=$WEB/.rollback-intent.tmp.$$
+
+    if ! mkdir -- "$intent_tmp" ||
+        ! ln -s -- "$target" "$intent_tmp/target" ||
+        ! ln -s -- "$previous" "$intent_tmp/previous" ||
+        ! mv -T -- "$intent_tmp" "$intent"; then
+        rm -f -- "$intent_tmp/target" "$intent_tmp/previous"
+        rmdir -- "$intent_tmp" 2>/dev/null || true
+        echo "failed to persist rollback intent" >&2
+        return 1
+    fi
+}
+
+# Callers must hold the shared fd-9 deployment lock.
+clear_rollback_intent() {
+    local intent=$WEB/.rollback-intent
+
+    if ! rm -f -- "$intent/target" "$intent/previous" ||
+        ! rmdir -- "$intent"; then
+        echo "failed to clear rollback intent" >&2
+        return 1
+    fi
+}
+
+# Callers must hold the shared fd-9 deployment lock.
+install_previous_pointer() {
+    local target=$1
+
+    if ! ln -sfnT "releases/$(basename -- "$target")" "$WEB/previous.tmp"; then
+        echo "failed to stage previous pointer after rollback" >&2
+        return 1
+    fi
+    if ! mv -T -- "$WEB/previous.tmp" "$WEB/previous"; then
+        echo "failed to atomically install previous pointer after rollback" >&2
+        return 1
+    fi
+}
+
+# Callers must hold the shared fd-9 deployment lock.
 rollback_command() {
     local candidate
     local candidate_entry
     local current_target
-    local releases_root
+    local intent=$WEB/.rollback-intent
+    local intent_previous
+    local intent_target
     local target
 
-    releases_root=$(readlink -f -- "$WEB/releases" 2>/dev/null || true)
     current_target=$(readlink -f -- "$WEB/current" 2>/dev/null || true)
-    target=$(readlink -e -- "$WEB/previous" 2>/dev/null || true)
 
-    if [[ -z $target || $(dirname -- "$target") != "$releases_root" ||
-        ! -f $target/.healthy || $target == "$current_target" ]]; then
+    if [[ -e $intent || -L $intent ]]; then
+        if ! intent_target=$(resolve_healthy_release "$intent/target") ||
+            ! intent_previous=$(resolve_release "$intent/previous"); then
+            echo "rollback intent is malformed" >&2
+            log_event fs-assert-fail rollback "" "$current_target"
+            return 1
+        fi
+
+        if [[ $current_target == "$intent_target" ]]; then
+            if ! install_previous_pointer "$intent_previous" ||
+                ! clear_rollback_intent; then
+                log_event fs-assert-fail rollback "$intent_target" "$intent_previous"
+                return 1
+            fi
+            log_event rollback rollback "$intent_target" "$intent_previous"
+            return
+        fi
+        if [[ $current_target != "$intent_previous" ]]; then
+            echo "rollback intent does not match current" >&2
+            log_event fs-assert-fail rollback "$intent_target" "$intent_previous"
+            return 1
+        fi
+        target=$intent_target
+    fi
+
+    if [[ -z ${target:-} ]]; then
+        target=$(resolve_healthy_release "$WEB/previous" 2>/dev/null || true)
+    fi
+
+    if [[ -z $target || $target == "$current_target" ]]; then
         target=""
     fi
 
@@ -161,19 +287,23 @@ rollback_command() {
         return 1
     fi
 
+    if [[ ! -e $intent && ! -L $intent && -n $current_target ]] &&
+        ! stage_rollback_intent "$target" "$current_target"; then
+        log_event fs-assert-fail rollback "$target" "$current_target"
+        return 1
+    fi
+
     if ! rollback_to "$target"; then
         log_event rollback rollback "$target" "$current_target"
         return 1
     fi
 
     if [[ -n $current_target ]]; then
-        if ! ln -sfnT "$current_target" "$WEB/previous.tmp"; then
-            echo "failed to stage previous pointer after rollback" >&2
+        if ! install_previous_pointer "$current_target"; then
             log_event fs-assert-fail rollback "$target" "$current_target"
             return 1
         fi
-        if ! mv -T -- "$WEB/previous.tmp" "$WEB/previous"; then
-            echo "failed to atomically install previous pointer after rollback" >&2
+        if ! clear_rollback_intent; then
             log_event fs-assert-fail rollback "$target" "$current_target"
             return 1
         fi
@@ -257,6 +387,7 @@ prune_command() {
 main() {
     local assume_yes=0
     local command=deploy
+    local current_target
     local git_status
     local releases_device
     local web_device
@@ -302,12 +433,6 @@ main() {
         exit 1
     fi
 
-    if [[ $command == deploy && ! -e $WEB/current && ${DEPLOY_INIT:-0} != 1 ]]; then
-        echo "deploy root has no current release; run the Phase-3 seed/migration first or explicitly set DEPLOY_INIT=1 for an initial deploy" >&2
-        log_event sanity-fail
-        exit 1
-    fi
-
     if ! { exec 9>"$WEB/.deploy.lock"; }; then
         echo "cannot open deployment lock" >&2
         log_event fs-assert-fail
@@ -330,6 +455,20 @@ main() {
         echo "deploy root and releases directory must share a filesystem" >&2
         log_event fs-assert-fail
         exit 1
+    fi
+
+    if [[ $command == deploy ]]; then
+        if [[ ! -e $WEB/current && ! -L $WEB/current ]]; then
+            if [[ ${DEPLOY_INIT:-0} != 1 ]]; then
+                echo "deploy root has no current release; run the Phase-3 seed/migration first or explicitly set DEPLOY_INIT=1 for an initial deploy" >&2
+                log_event sanity-fail
+                exit 1
+            fi
+        elif ! current_target=$(resolve_healthy_release "$WEB/current"); then
+            echo "current must resolve to a direct, healthy release-* child of $WEB/releases" >&2
+            log_event sanity-fail
+            exit 1
+        fi
     fi
 
     case $command in
@@ -380,6 +519,11 @@ main() {
     if [[ ! -f $REL/index.html || ! -d $REL/assets ]] ||
         [[ -z $(find "$REL/assets" -mindepth 1 -print -quit) ]]; then
         echo "release failed the index/assets sanity gate" >&2
+        log_event sanity-fail
+        exit 1
+    fi
+    if ! release_has_referenced_bundles; then
+        echo "release failed the referenced-bundle sanity gate" >&2
         log_event sanity-fail
         exit 1
     fi

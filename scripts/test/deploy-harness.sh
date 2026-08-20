@@ -50,9 +50,22 @@ stub_npm() {
     fi
 
     /usr/bin/mkdir -p -- "$web/webapp/assets"
-    if [[ ${DEPLOY_TEST_BUILD_MODE:-complete} == complete ]]; then
+    if [[ ${DEPLOY_TEST_BUILD_MODE:-complete} != missing-index ]]; then
         if [[ -v DEPLOY_TEST_BUILD_BODY ]]; then
             /usr/bin/printf '%s' "$DEPLOY_TEST_BUILD_BODY" >"$web/webapp/index.html"
+        elif [[ ${DEPLOY_TEST_BUILD_MODE:-complete} == missing-bundle ]]; then
+            /usr/bin/printf '%s\n' \
+                '<script src="/assets/present.js"></script>' \
+                '<link href="assets/missing.css" rel="stylesheet">' \
+                >"$web/webapp/index.html"
+            /usr/bin/printf 'present\n' >"$web/webapp/assets/present.js"
+        elif [[ ${DEPLOY_TEST_BUILD_MODE:-complete} == referenced-bundles ]]; then
+            /usr/bin/printf '%s\n' \
+                '<script src="/assets/present.js"></script>' \
+                "<link href='assets/present.css?version=1' rel='stylesheet'>" \
+                >"$web/webapp/index.html"
+            /usr/bin/printf 'present\n' >"$web/webapp/assets/present.js"
+            /usr/bin/printf 'present\n' >"$web/webapp/assets/present.css"
         else
             /usr/bin/printf 'build-%s\n' "$BASHPID" >"$web/webapp/index.html"
         fi
@@ -135,6 +148,11 @@ stub_mv() {
         $destination == "$DEPLOY_WEB/current" ]]; then
         boundary_wait
         return
+    fi
+    if [[ ${DEPLOY_TEST_INJECT_POINT:-} == fail-previous-mv &&
+        $source == "$DEPLOY_WEB/previous.tmp" &&
+        $destination == "$DEPLOY_WEB/previous" ]]; then
+        return 1
     fi
 
     /usr/bin/mv "$@"
@@ -765,13 +783,48 @@ case_kill_during_rollback() {
     assert_file "$(current_target)/.healthy" "kill during rollback left current unhealthy"
 }
 
+case_rollback_retry() {
+    local release_a
+    local release_b
+    local status=0
+
+    /usr/bin/printf 'case 9: rollback retry after previous-pointer failure\n' >&2
+    new_fixture rollback-retry
+    release_a=$(seed_release release-a 100)
+    release_b=$(seed_release release-b 200)
+    /usr/bin/ln -s -- "$release_b" "$WEB/current"
+    /usr/bin/ln -s -- "$release_a" "$WEB/previous"
+
+    env \
+        DEPLOY_WEB="$WEB" \
+        DEPLOY_SKIP_HEALTH=1 \
+        DEPLOY_TEST_EVENT_LOG="$EVENT_LOG" \
+        DEPLOY_TEST_INJECT_POINT=fail-previous-mv \
+        PATH="$STUB_BIN:$ORIGINAL_PATH" \
+        /usr/bin/timeout 10 "$DEPLOY" --rollback >"$FIXTURE/first.out" 2>&1 || status=$?
+    assert_eq 1 "$status" "injected previous-pointer failure must fail rollback"
+    assert_eq "$release_a" "$(current_target)" \
+        "current flip must commit before the injected previous-pointer failure"
+    assert_eq "$release_a" "$(/usr/bin/readlink -e -- "$WEB/previous")" \
+        "failed previous-pointer update must leave the old target in place"
+    [[ -d $WEB/.rollback-intent ]] || fail "partial rollback must retain its intent"
+
+    run_healthy_deploy --rollback >"$FIXTURE/retry.out" 2>&1
+    assert_eq "$release_a" "$(current_target)" \
+        "rollback retry must not reverse the committed current flip"
+    assert_eq "$release_b" "$(/usr/bin/readlink -e -- "$WEB/previous")" \
+        "rollback retry must repair previous to the pre-rollback current"
+    assert_no_file "$WEB/.rollback-intent" \
+        "successful rollback retry must clear its intent"
+}
+
 case_sanity_gate() {
     local old_target
     local release
     local status=0
     local unhealthy_count=0
 
-    /usr/bin/printf 'case 9: sanity-gate failure\n' >&2
+    /usr/bin/printf 'case 10: sanity-gate failure\n' >&2
     new_fixture sanity-fail
     old_target=$(seed_release release-a 100)
     /usr/bin/ln -s -- "$old_target" "$WEB/current"
@@ -784,6 +837,24 @@ case_sanity_gate() {
     assert_eq 1 "$status" "empty DEPLOY_WEB must fail"
     assert_contains "$FIXTURE/empty-web.out" "DEPLOY_WEB must not be empty" \
         "empty DEPLOY_WEB must fail loudly"
+
+    /usr/bin/mkdir -p -- "$WEB/webapp"
+    /usr/bin/ln -sfn -- webapp "$WEB/current"
+    status=0
+    env \
+        DEPLOY_WEB="$WEB" \
+        DEPLOY_INIT=1 \
+        DEPLOY_SKIP_HEALTH=1 \
+        DEPLOY_TEST_BUILD_STARTED_FILE="$FIXTURE/malformed-build.started" \
+        DEPLOY_TEST_EVENT_LOG="$EVENT_LOG" \
+        PATH="$STUB_BIN:$ORIGINAL_PATH" \
+        /usr/bin/timeout 10 "$DEPLOY" >"$FIXTURE/malformed-current.out" 2>&1 || status=$?
+    assert_eq 1 "$status" "DEPLOY_INIT must not permit an unmanaged current"
+    assert_no_file "$FIXTURE/malformed-build.started" \
+        "unmanaged current must be rejected before building"
+    assert_contains "$FIXTURE/malformed-current.out" "direct, healthy release-* child" \
+        "unmanaged current must fail with the managed-release requirement"
+    /usr/bin/ln -sfn -- "$old_target" "$WEB/current"
 
     status=0
     env -u DEPLOY_WEB \
@@ -829,13 +900,37 @@ case_sanity_gate() {
     done
     assert_eq 1 "$unhealthy_count" "sanity-failed release must remain un-.healthy"
     assert_contains "$EVENT_LOG" '"phase":"sanity-fail"' "missing sanity-fail event"
+
+    status=0
+    env \
+        DEPLOY_WEB="$WEB" \
+        DEPLOY_SKIP_HEALTH=1 \
+        DEPLOY_TEST_BUILD_MODE=missing-bundle \
+        DEPLOY_TEST_EVENT_LOG="$EVENT_LOG" \
+        PATH="$STUB_BIN:$ORIGINAL_PATH" \
+        /usr/bin/timeout 10 "$DEPLOY" >"$FIXTURE/missing-bundle.out" 2>&1 || status=$?
+    assert_eq 1 "$status" "missing referenced bundle must fail the sanity gate"
+    assert_eq "$old_target" "$(current_target)" \
+        "missing referenced bundle must not flip current"
+    assert_contains "$FIXTURE/missing-bundle.out" "missing referenced bundle" \
+        "missing referenced bundle must fail loudly"
+
+    env \
+        DEPLOY_WEB="$WEB" \
+        DEPLOY_SKIP_HEALTH=1 \
+        DEPLOY_TEST_BUILD_MODE=referenced-bundles \
+        DEPLOY_TEST_EVENT_LOG="$EVENT_LOG" \
+        PATH="$STUB_BIN:$ORIGINAL_PATH" \
+        /usr/bin/timeout 10 "$DEPLOY" >"$FIXTURE/complete-bundles.out" 2>&1
+    assert_file "$(current_target)/.healthy" \
+        "release with every referenced bundle must pass the sanity gate"
 }
 
 case_first_health_failure() {
     local release
     local status=0
 
-    /usr/bin/printf 'case 10: first-ever deploy health failure\n' >&2
+    /usr/bin/printf 'case 11: first-ever deploy health failure\n' >&2
     new_fixture first-health-fail
     start_503_server "$FIXTURE/request.txt"
 
@@ -872,6 +967,7 @@ case_failing_health
 case_unhealthy_rollback_skip
 case_prune
 case_kill_during_rollback
+case_rollback_retry
 case_sanity_gate
 case_first_health_failure
 /usr/bin/printf 'all deploy harness cases passed\n' >&2
