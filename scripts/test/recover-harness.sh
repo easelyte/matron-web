@@ -18,6 +18,16 @@ if [[ $(/usr/bin/basename -- "$0") == logger ]]; then
     exit
 fi
 
+if [[ $(/usr/bin/basename -- "$0") == flock ]]; then
+    if [[ -n ${RECOVER_TEST_FLOCK_REACHED_FILE:-} ]]; then
+        /usr/bin/touch -- "$RECOVER_TEST_FLOCK_REACHED_FILE"
+    fi
+    if [[ -n ${RECOVER_TEST_FLOCK_STATUS:-} ]]; then
+        exit "$RECOVER_TEST_FLOCK_STATUS"
+    fi
+    exec /usr/bin/flock "$@"
+fi
+
 fail() {
     /usr/bin/printf 'FAIL: %s\n' "$*" >&2
     exit 1
@@ -57,6 +67,7 @@ trap cleanup EXIT
 
 /usr/bin/mkdir -p -- "$STUB_BIN"
 /usr/bin/ln -s -- "$HARNESS_PATH" "$STUB_BIN/logger"
+/usr/bin/ln -s -- "$HARNESS_PATH" "$STUB_BIN/flock"
 
 new_fixture() {
     local name=$1
@@ -93,8 +104,31 @@ run_recover() {
     env \
         DEPLOY_WEB="$WEB" \
         RECOVER_TEST_EVENT_LOG="$EVENT_LOG" \
+        RECOVER_TEST_FLOCK_REACHED_FILE="${RECOVER_TEST_FLOCK_REACHED_FILE:-}" \
+        RECOVER_TEST_FLOCK_STATUS="${RECOVER_TEST_FLOCK_STATUS:-}" \
         PATH="$STUB_BIN:$ORIGINAL_PATH" \
         /usr/bin/timeout 5 "$RECOVER"
+}
+
+wait_for_flock() {
+    local marker=$1
+    local process=$2
+    local output=$3
+    local attempt
+    local status
+
+    for ((attempt = 0; attempt < 500; attempt++)); do
+        [[ -e $marker ]] && return
+        if ! /usr/bin/kill -0 "$process" 2>/dev/null; then
+            set +e
+            wait "$process"
+            status=$?
+            set -e
+            fail "recovery exited $status before attempting the deployment lock; output: $(<"$output")"
+        fi
+        /usr/bin/sleep 0.01
+    done
+    fail "timed out waiting for recovery to attempt the deployment lock"
 }
 
 case_dangling_current() {
@@ -184,21 +218,98 @@ case_already_healthy() {
         "healthy no-op must be observable"
 }
 
+case_reject_unmanaged_healthy_current() {
+    local managed
+    local unmanaged
+
+    /usr/bin/printf 'case 7: reject unmanaged healthy current\n' >&2
+    new_fixture unmanaged-healthy
+    managed=$(seed_release release-a 100)
+    unmanaged=$FIXTURE/release-external
+    /usr/bin/mkdir -p -- "$unmanaged"
+    /usr/bin/touch -- "$unmanaged/.healthy"
+    /usr/bin/ln -s -- "$unmanaged" "$WEB/current"
+
+    run_recover >"$FIXTURE/recover.out" 2>&1
+    assert_eq "$managed" "$(current_target)" \
+        "healthy current outside releases must be replaced by a managed release"
+    assert_contains "$EVENT_LOG" '"phase":"recovered"' \
+        "unmanaged healthy current must take the recovery path"
+
+    new_fixture unnamed-healthy-child
+    managed=$(seed_release release-a 100)
+    unmanaged=$WEB/releases/not-a-release
+    /usr/bin/mkdir -p -- "$unmanaged"
+    /usr/bin/touch -- "$unmanaged/.healthy"
+    /usr/bin/ln -s -- "$unmanaged" "$WEB/current"
+
+    run_recover >"$FIXTURE/recover.out" 2>&1
+    assert_eq "$managed" "$(current_target)" \
+        "healthy current without a release-* name must be replaced"
+}
+
+case_lock_outcomes() {
+    local RECOVER_TEST_FLOCK_STATUS
+    local status=0
+
+    /usr/bin/printf 'case 8: lock timeout and execution error\n' >&2
+    new_fixture lock-timeout
+    seed_release release-a 100 >/dev/null
+    RECOVER_TEST_FLOCK_STATUS=75
+
+    run_recover >"$FIXTURE/recover.out" 2>&1 || status=$?
+    assert_eq 0 "$status" "explicit lock timeout must retain warning-success policy"
+    assert_no_path "$WEB/current" "lock timeout must not change current"
+    assert_contains "$EVENT_LOG" '"phase":"lock-contended"' \
+        "explicit lock timeout must log contention"
+
+    new_fixture lock-error
+    seed_release release-a 100 >/dev/null
+    RECOVER_TEST_FLOCK_STATUS=70
+    status=0
+
+    run_recover >"$FIXTURE/recover.out" 2>&1 || status=$?
+    assert_eq 1 "$status" "non-timeout flock failure must fail recovery"
+    assert_no_path "$WEB/current" "flock failure must not change current"
+    assert_contains "$EVENT_LOG" '"phase":"fs-assert-fail"' \
+        "non-timeout flock failure must log an error"
+}
+
+case_staging_directory() {
+    local status=0
+
+    /usr/bin/printf 'case 9: staging path is a directory\n' >&2
+    new_fixture staging-directory
+    seed_release release-a 100 >/dev/null
+    /usr/bin/mkdir -- "$WEB/current.tmp"
+
+    run_recover >"$FIXTURE/recover.out" 2>&1 || status=$?
+    assert_eq 1 "$status" "recovery must fail when current.tmp is a directory"
+    assert_no_path "$WEB/current" \
+        "staging-directory failure must not install a directory as current"
+    [[ -d $WEB/current.tmp ]] || fail "staging-directory failure must preserve current.tmp"
+    assert_contains "$FIXTURE/recover.out" "failed to stage recovery pointer" \
+        "staging-directory failure must be loud"
+}
+
 case_shared_lock_reread() {
     local current
+    local marker
     local process
     local status=0
 
-    /usr/bin/printf 'case 7: shared lock and state re-read\n' >&2
+    /usr/bin/printf 'case 10: shared lock and state re-read\n' >&2
     new_fixture shared-lock
     current=$(seed_release release-a 100)
+    marker=$FIXTURE/flock.reached
     /usr/bin/ln -s -- releases/missing "$WEB/current"
     exec 8>"$WEB/.deploy.lock"
     /usr/bin/flock -n 8 || fail "fixture could not acquire the deployment lock"
 
+    local RECOVER_TEST_FLOCK_REACHED_FILE=$marker
     run_recover >"$FIXTURE/recover.out" 2>&1 &
     process=$!
-    /usr/bin/sleep 0.1
+    wait_for_flock "$marker" "$process" "$FIXTURE/recover.out"
     [[ -z $(/usr/bin/readlink -e -- "$WEB/current" 2>/dev/null || true) ]] ||
         fail "recovery touched current before acquiring the deployment lock"
 
@@ -222,5 +333,8 @@ case_unhealthy_current
 case_skip_newest_unhealthy
 case_no_healthy_release
 case_already_healthy
+case_reject_unmanaged_healthy_current
+case_lock_outcomes
+case_staging_directory
 case_shared_lock_reread
 /usr/bin/printf 'all recovery harness cases passed\n' >&2

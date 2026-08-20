@@ -115,7 +115,7 @@ rollback_to() {
         return 1
     fi
 
-    if ! ln -sfn "releases/$(basename -- "$target")" "$WEB/current.tmp"; then
+    if ! ln -sfnT "releases/$(basename -- "$target")" "$WEB/current.tmp"; then
         echo "failed to stage rollback pointer" >&2
         return 1
     fi
@@ -167,7 +167,7 @@ rollback_command() {
     fi
 
     if [[ -n $current_target ]]; then
-        if ! ln -sfn "$current_target" "$WEB/previous.tmp"; then
+        if ! ln -sfnT "$current_target" "$WEB/previous.tmp"; then
             echo "failed to stage previous pointer after rollback" >&2
             log_event fs-assert-fail rollback "$target" "$current_target"
             return 1
@@ -390,7 +390,7 @@ main() {
         PREV_TARGET=""
     fi
 
-    if ! ln -sfn "releases/$(basename -- "$REL")" "$WEB/current.tmp"; then
+    if ! ln -sfnT "releases/$(basename -- "$REL")" "$WEB/current.tmp"; then
         echo "failed to stage current pointer" >&2
         log_event fs-assert-fail
         exit 1
@@ -410,7 +410,7 @@ main() {
         fi
 
         if [[ -n $PREV_TARGET ]]; then
-            if ! ln -sfn "$PREV_TARGET" "$WEB/previous.tmp"; then
+            if ! ln -sfnT "$PREV_TARGET" "$WEB/previous.tmp"; then
                 echo "failed to stage previous pointer" >&2
                 log_event fs-assert-fail
                 exit 1

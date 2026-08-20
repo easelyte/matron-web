@@ -51,7 +51,9 @@ main() {
     local candidate
     local candidate_entry
     local current_target
+    local lock_status=0
     local newest_healthy=""
+    local releases_root
 
     if ! WEB=$(realpath -- "$WEB" 2>/dev/null); then
         echo "recovery root does not exist" >&2
@@ -64,14 +66,24 @@ main() {
         log_event fs-assert-fail daemon.err "" "cannot open deployment lock"
         return 1
     fi
-    if ! flock -w 30 9; then
+    flock -E 75 -w 30 9 || lock_status=$?
+    if ((lock_status == 75)); then
         log_event lock-contended daemon.warning "" \
             "deployment lock remained contended after 30 seconds"
         return 0
+    elif ((lock_status != 0)); then
+        echo "failed to acquire deployment lock" >&2
+        log_event fs-assert-fail daemon.err "" \
+            "flock failed while acquiring the deployment lock (exit $lock_status)"
+        return 1
     fi
 
+    releases_root=$(readlink -f -- "$WEB/releases" 2>/dev/null || true)
     current_target=$(readlink -f -- "$WEB/current" 2>/dev/null || true)
-    if [[ -n $current_target && -f $current_target/.healthy ]]; then
+    if [[ -n $releases_root && -n $current_target &&
+        $(dirname -- "$current_target") == "$releases_root" &&
+        $(basename -- "$current_target") == release-* &&
+        -f $current_target/.healthy ]]; then
         log_event already-healthy daemon.info "$current_target" \
             "current already resolves to a healthy release"
         return 0
@@ -96,7 +108,7 @@ main() {
         return 1
     fi
 
-    if ! ln -sfn "releases/$(basename -- "$newest_healthy")" "$WEB/current.tmp"; then
+    if ! ln -sfnT "releases/$(basename -- "$newest_healthy")" "$WEB/current.tmp"; then
         echo "failed to stage recovery pointer" >&2
         log_event fs-assert-fail daemon.err "$newest_healthy" \
             "failed to stage recovery pointer"
