@@ -807,15 +807,12 @@ case_rollback_retry() {
         "current flip must commit before the injected previous-pointer failure"
     assert_eq "$release_a" "$(/usr/bin/readlink -e -- "$WEB/previous")" \
         "failed previous-pointer update must leave the old target in place"
-    [[ -d $WEB/.rollback-intent ]] || fail "partial rollback must retain its intent"
 
     run_healthy_deploy --rollback >"$FIXTURE/retry.out" 2>&1
     assert_eq "$release_a" "$(current_target)" \
         "rollback retry must not reverse the committed current flip"
     assert_eq "$release_b" "$(/usr/bin/readlink -e -- "$WEB/previous")" \
         "rollback retry must repair previous to the pre-rollback current"
-    assert_no_file "$WEB/.rollback-intent" \
-        "successful rollback retry must clear its intent"
 }
 
 case_sanity_gate() {

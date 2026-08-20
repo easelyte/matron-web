@@ -181,35 +181,6 @@ rollback_to() {
 }
 
 # Callers must hold the shared fd-9 deployment lock.
-stage_rollback_intent() {
-    local target=$1
-    local previous=$2
-    local intent=$WEB/.rollback-intent
-    local intent_tmp=$WEB/.rollback-intent.tmp.$$
-
-    if ! mkdir -- "$intent_tmp" ||
-        ! ln -s -- "$target" "$intent_tmp/target" ||
-        ! ln -s -- "$previous" "$intent_tmp/previous" ||
-        ! mv -T -- "$intent_tmp" "$intent"; then
-        rm -f -- "$intent_tmp/target" "$intent_tmp/previous"
-        rmdir -- "$intent_tmp" 2>/dev/null || true
-        echo "failed to persist rollback intent" >&2
-        return 1
-    fi
-}
-
-# Callers must hold the shared fd-9 deployment lock.
-clear_rollback_intent() {
-    local intent=$WEB/.rollback-intent
-
-    if ! rm -f -- "$intent/target" "$intent/previous" ||
-        ! rmdir -- "$intent"; then
-        echo "failed to clear rollback intent" >&2
-        return 1
-    fi
-}
-
-# Callers must hold the shared fd-9 deployment lock.
 install_previous_pointer() {
     local target=$1
 
@@ -228,44 +199,23 @@ rollback_command() {
     local candidate
     local candidate_entry
     local current_target
-    local intent=$WEB/.rollback-intent
-    local intent_previous
-    local intent_target
+    local retry_previous
     local target
 
     current_target=$(readlink -f -- "$WEB/current" 2>/dev/null || true)
+    target=$(resolve_healthy_release "$WEB/previous" 2>/dev/null || true)
 
-    if [[ -e $intent || -L $intent ]]; then
-        if ! intent_target=$(resolve_healthy_release "$intent/target") ||
-            ! intent_previous=$(resolve_release "$intent/previous"); then
-            echo "rollback intent is malformed" >&2
-            log_event fs-assert-fail rollback "" "$current_target"
+    # An immediate retry sees the completed target as both current and previous.
+    # Repair the staged previous pointer without selecting or flipping again.
+    if [[ -n $target && $target == "$current_target" ]]; then
+        retry_previous=$(resolve_healthy_release "$WEB/previous.tmp" 2>/dev/null || true)
+        retry_previous=${retry_previous:-$current_target}
+        if ! install_previous_pointer "$retry_previous"; then
+            log_event fs-assert-fail rollback "$target" "$retry_previous"
             return 1
         fi
-
-        if [[ $current_target == "$intent_target" ]]; then
-            if ! install_previous_pointer "$intent_previous" ||
-                ! clear_rollback_intent; then
-                log_event fs-assert-fail rollback "$intent_target" "$intent_previous"
-                return 1
-            fi
-            log_event rollback rollback "$intent_target" "$intent_previous"
-            return
-        fi
-        if [[ $current_target != "$intent_previous" ]]; then
-            echo "rollback intent does not match current" >&2
-            log_event fs-assert-fail rollback "$intent_target" "$intent_previous"
-            return 1
-        fi
-        target=$intent_target
-    fi
-
-    if [[ -z ${target:-} ]]; then
-        target=$(resolve_healthy_release "$WEB/previous" 2>/dev/null || true)
-    fi
-
-    if [[ -z $target || $target == "$current_target" ]]; then
-        target=""
+        log_event rollback rollback "$target" "$retry_previous"
+        return
     fi
 
     if [[ -z $target ]]; then
@@ -287,23 +237,17 @@ rollback_command() {
         return 1
     fi
 
-    if [[ ! -e $intent && ! -L $intent && -n $current_target ]] &&
-        ! stage_rollback_intent "$target" "$current_target"; then
-        log_event fs-assert-fail rollback "$target" "$current_target"
-        return 1
-    fi
-
     if ! rollback_to "$target"; then
         log_event rollback rollback "$target" "$current_target"
         return 1
     fi
 
     if [[ -n $current_target ]]; then
+        # Accepted bounded residual: a crash/SIGKILL between the current and previous
+        # writes can leave previous one generation stale. current stays .healthy (or
+        # boot recovery selects the newest .healthy after a pre-.healthy deploy crash),
+        # so a later rollback may skip one servable generation, never cause an outage.
         if ! install_previous_pointer "$current_target"; then
-            log_event fs-assert-fail rollback "$target" "$current_target"
-            return 1
-        fi
-        if ! clear_rollback_intent; then
             log_event fs-assert-fail rollback "$target" "$current_target"
             return 1
         fi
@@ -554,6 +498,10 @@ main() {
         fi
 
         if [[ -n $PREV_TARGET ]]; then
+            # Accepted bounded residual: a crash/SIGKILL between the current and previous
+            # writes can leave previous one generation stale. current stays .healthy (or
+            # boot recovery selects the newest .healthy after a pre-.healthy deploy crash),
+            # so a later rollback may skip one servable generation, never cause an outage.
             if ! ln -sfnT "$PREV_TARGET" "$WEB/previous.tmp"; then
                 echo "failed to stage previous pointer" >&2
                 log_event fs-assert-fail
