@@ -5937,7 +5937,7 @@ export function PinnedSummary({ summary }: { summary: ConversationSummary | null
     // Per-bullet Expand is keyed by array index, so a refresh that reorders bullets must clear
     // it, or an unrelated new bullet inherits the old expansion. The call site additionally keys
     // <PinnedSummary> by conversation id, so collapsed/expanded reset on a conversation switch.
-    const bulletsKey = summary?.bullets.join(" ");
+    const bulletsKey = JSON.stringify(summary?.bullets ?? []);
     useEffect(() => {
         setExpanded(new Set<number>());
     }, [bulletsKey]);
