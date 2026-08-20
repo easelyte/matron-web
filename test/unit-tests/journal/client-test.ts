@@ -3753,6 +3753,19 @@ describe("MatronJournalClient searchMessages", () => {
         expect(client.getSnapshot().messageSearch).toBeUndefined();
     });
 
+    it("clears a loading search on a snapshot/session reset so it can't stay stuck Searching", () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = {
+            ...signedInState(client),
+            messageSearch: { query: "q", hits: [], loading: true, failed: false },
+        };
+
+        (client as unknown as { resetTransientSyncState(): void }).resetTransientSyncState();
+
+        expect(client.getSnapshot().messageSearch).toBeUndefined();
+    });
+
     it("aborts a search that never settles once the deadline passes", async () => {
         jest.useFakeTimers();
         try {

@@ -552,10 +552,21 @@ export class MatronJournalClient {
         const seq = ++this.searchSeq;
         const controller = new AbortController();
         this.searchAbort = controller;
-        const timeout = setTimeout(() => controller.abort(), MESSAGE_SEARCH_TIMEOUT_MS);
         this.patch({ messageSearch: { query, hits: [], loading: true, failed: false } });
+        // A request can outlive the deadline on a transport that ignores the abort signal (Electron
+        // journalRequest observes no signal), so the bounded exit comes from a transport-independent
+        // Promise.race — mirroring devices(). The abort still fires to free the browser fetch.
+        const searchCall = this.api.search(query, MESSAGE_SEARCH_LIMIT, controller.signal);
+        void searchCall.catch(() => undefined);
+        let timeoutTimer: ReturnType<typeof setTimeout>;
+        const timeoutReject = new Promise<never>((_resolve, reject) => {
+            timeoutTimer = setTimeout(() => {
+                reject(new Error("timeout"));
+                controller.abort();
+            }, MESSAGE_SEARCH_TIMEOUT_MS);
+        });
         try {
-            const response = await this.api.search(query, MESSAGE_SEARCH_LIMIT, controller.signal);
+            const response = await Promise.race([searchCall, timeoutReject]);
             if (seq !== this.searchSeq) return;
             // Defensive parse: the /search producer is a separate service, so guard against a
             // version-skewed or malformed success (hits not an array, a hit missing fields) rather
@@ -565,7 +576,7 @@ export class MatronJournalClient {
             if (seq !== this.searchSeq) return;
             this.patch({ messageSearch: { query, hits: [], loading: false, failed: true } });
         } finally {
-            clearTimeout(timeout);
+            clearTimeout(timeoutTimer!);
             if (this.searchAbort === controller) this.searchAbort = undefined;
         }
     }
@@ -2082,10 +2093,13 @@ export class MatronJournalClient {
     private resetTransientSyncState(): void {
         this.clearRpcCreateWatchdog();
         // Abort an in-flight message search and bump the guard so any late result is ignored —
-        // covers logout and the snapshot/session transition that also call this.
+        // covers logout and the snapshot/session transition that also call this. Clear the section
+        // too: the aborted request's result is guarded off, so leaving it would strand a "Searching…"
+        // state that never re-fires (the search effect keys on the query, which is unchanged here).
         this.searchAbort?.abort();
         this.searchAbort = undefined;
         this.searchSeq += 1;
+        if (this.state.messageSearch) this.patch({ messageSearch: undefined });
         for (const timer of this.readTimers.values()) window.clearTimeout(timer);
         if (this.ackTimer !== undefined) window.clearTimeout(this.ackTimer);
         this.readTimers.clear();
