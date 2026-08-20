@@ -3245,9 +3245,27 @@ function AgentSpawnCard({
 function SpawnOutcomeRow({ client, event }: { client: MatronJournalClient; event: JournalEvent }): React.ReactElement {
     const kind = spawnOutcomeKind(event.payload);
     const roomId = asString(event.payload.room_id);
+    // Surface C (design 2026-08): read as a STRUCTURAL event, not a normal message — a coloured
+    // kind-rail + an uppercase "Subagent" eyebrow + the child's worker mark when known. The
+    // emoji-prefixed snippet stays as the accessible row text (byte-exact with the server).
+    // Worker kind is derived from the CHILD conversation (where agent_kind actually lands via
+    // convo_meta), not from the spawn_outcome payload — that contract carries no agent_kind, so
+    // reading it there would render no mark for every real event.
+    const childId = asString(event.payload.child_convo_id) || roomId;
+    const childConversation = childId
+        ? client.getSnapshot().conversations.find((conversation) => conversation.id === childId)
+        : undefined;
+    const childKind = childConversation ? workerKind(childConversation) : null;
+    const workerMark = markForKind(childKind, "mj_SpawnOutcomeRow_kindMark");
+    const eyebrow = childKind === "claude" || childKind === "codex" ? `Subagent · ${childKind}` : "Subagent";
     return (
         <div className={`mj_SpawnOutcomeRow mj_SpawnOutcomeRow_${kind}`}>
-            <span className="mj_SpawnOutcomeStatus">{spawnOutcomeSnippet(event.payload)}</span>
+            <span className="mj_SpawnOutcomeRow_rail" aria-hidden />
+            {workerMark}
+            <div className="mj_SpawnOutcomeRow_text">
+                <span className="mj_SpawnOutcomeRow_eyebrow">{eyebrow}</span>
+                <span className="mj_SpawnOutcomeStatus">{spawnOutcomeSnippet(event.payload)}</span>
+            </div>
             {kind === "started" && roomId && (
                 <button
                     type="button"
@@ -3727,38 +3745,39 @@ function PeerMessage({ event }: { event: JournalEvent }): React.ReactElement {
     const fromKind = rawFromKind === "claude" || rawFromKind === "codex" ? rawFromKind : null;
     const fromName = sanitizePeerText(event.payload.from_name, PEER_NAME_CAP) || "peer agent";
     const body = sanitizePeerText(event.payload.body, PEER_BODY_CAP);
+    // Priority is a net-new, not-yet-produced payload key (loop #688) — read defensively so
+    // the louder variant lights up the moment a producer sets it, and stays dormant until then.
+    const priority = event.payload.priority === true || asString(event.payload.priority) === "true";
     const mark = markForKind(fromKind, "mj_PeerMessage_mark");
 
+    // Surface B (design 2026-08): a durable left-edged card — worker mark, session name, and a
+    // muted `peer` tag — reads as "another AI is speaking into your thread" without masquerading
+    // as your own (right, teal) or the primary agent (left, no card). The full header (name +
+    // priority badge) always renders; from_convo-aware continuation grouping is a follow-up (see
+    // journal.pcss note — the timeline's sender-only continuation predicate would misattribute).
     return (
-        <div className="mj_PeerMessage">
-            <span
-                className="mj_PeerMessage_badge"
-                aria-label={fromKind === null ? `Peer agent from ${fromName}` : `Peer message from ${fromName}`}
-                style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "var(--cpd-space-1x)",
-                    marginBottom: "var(--cpd-space-2x)",
-                    padding: "var(--cpd-space-1x) var(--cpd-space-2x)",
-                    border: "1px solid var(--cpd-color-border-interactive-secondary)",
-                    borderRadius: "var(--cpd-radius-pill)",
-                    background: "var(--cpd-state-selected)",
-                    color: "var(--cpd-color-text-secondary)",
-                    fontSize: "var(--cpd-font-size-xs)",
-                    lineHeight: "16px",
-                }}
-            >
+        <div
+            className={`mj_PeerMessage${priority ? " mj_PeerMessage_priority" : ""}`}
+            aria-label={fromKind === null ? `Peer agent from ${fromName}` : `Peer message from ${fromName}`}
+        >
+            <div className="mj_PeerMessage_head">
                 {mark ?? <InactiveIcon className="mj_PeerMessage_mark mj_PeerMessage_mark_neutral" />}
-                <span className="mj_PeerMessage_label">
-                    {fromKind === null && "peer agent · "}from «<bdi>{fromName}</bdi>»
+                <span className="mj_PeerMessage_name">
+                    <bdi>{fromName}</bdi>
                 </span>
-            </span>
-            <div className="mj_MessageText">
+                {priority ? (
+                    <span className="mj_PeerMessage_priorityBadge">Priority</span>
+                ) : (
+                    <span className="mj_PeerMessage_tag">{fromKind === null ? "peer agent" : "peer"}</span>
+                )}
+            </div>
+            <div className="mj_PeerMessage_body">
                 <bdi>{body}</bdi>
             </div>
         </div>
     );
 }
+
 const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
 
 export function EventContent({
@@ -5939,6 +5958,120 @@ export function SubagentStrip({
     );
 }
 
+/**
+ * Surface A — the pinned conversation summary (design 2026-08). A running,
+ * server-generated digest rendered as a bullet list, pinned between the SubagentStrip
+ * and the Timeline. The bar IS the expand control; the body is aria-live="polite" so a
+ * server refresh is announced without stealing the operator's focus. Net-new surface:
+ * the summary feed does not exist yet, so this renders nothing when `summary` is null
+ * (see the call site in SignedInApp). Every state is exercised by the visual fixture.
+ */
+export type ConversationSummary = {
+    /** Condensed bullet lines (each rendered with a • marker). Server-clamped to 20. */
+    bullets: string[];
+    /** "ready" shows the list; "updating" dims it under a refresh shimmer. */
+    state?: "ready" | "updating";
+    /** Epoch-ms of the last server refresh. The relative label is derived client-side
+        (repo wire convention: timestamps are epoch-ms, relative text is recomputed on the
+        client — a server-formatted "Nm ago" string would freeze when the feed does not
+        republish an unchanged summary every minute). */
+    updatedAtMs?: number;
+};
+
+/** Bullets longer than this clamp to 2 lines with an in-place Expand control. */
+const PINNED_SUMMARY_CLAMP_CHARS = 160;
+
+export function PinnedSummary({ summary }: { summary: ConversationSummary | null }): React.ReactElement | null {
+    const bodyId = useId();
+    const [collapsed, setCollapsed] = useState(false);
+    const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set<number>());
+    // Ticks once a minute so the "updated Nm ago" label advances on an idle page instead of
+    // freezing at render time (the label is derived client-side from updatedAtMs).
+    const now = useMinuteClock();
+    // Per-bullet Expand is keyed by array index, so a refresh that reorders bullets must clear
+    // it, or an unrelated new bullet inherits the old expansion. The call site additionally keys
+    // <PinnedSummary> by conversation id, so collapsed/expanded reset on a conversation switch.
+    const bulletsKey = JSON.stringify(summary?.bullets ?? []);
+    useEffect(() => {
+        setExpanded(new Set<number>());
+    }, [bulletsKey]);
+    if (!summary) {
+        return null;
+    }
+    const bullets = summary.bullets;
+    const isEmpty = bullets.length === 0;
+    const isUpdating = summary.state === "updating";
+    const lead = bullets[0] ?? "";
+    const toggleExpanded = (index: number): void => {
+        setExpanded((prev) => {
+            const next = new Set(prev);
+            if (next.has(index)) next.delete(index);
+            else next.add(index);
+            return next;
+        });
+    };
+    return (
+        <div className="mj_PinnedSummary" data-collapsed={collapsed ? "true" : "false"}>
+            <button
+                type="button"
+                className="mj_PinnedSummary_bar"
+                aria-expanded={!collapsed}
+                aria-controls={bodyId}
+                onClick={() => setCollapsed((value) => !value)}
+            >
+                <PinIcon className="mj_PinnedSummary_pin" aria-hidden />
+                <span className="mj_PinnedSummary_label">Summary</span>
+                <span className="mj_PinnedSummary_lead">{collapsed ? lead : ""}</span>
+                {summary.updatedAtMs !== undefined ? (
+                    <span className="mj_PinnedSummary_meta">updated {formatSampleAge(now - summary.updatedAtMs)}</span>
+                ) : null}
+                <ChevronDownIcon className="mj_PinnedSummary_chev" aria-hidden />
+            </button>
+            {!collapsed && (
+                <div className="mj_PinnedSummary_body" id={bodyId} aria-live="polite">
+                    {isEmpty ? (
+                        <div className="mj_PinnedSummary_empty">
+                            No summary yet. It appears once the conversation has enough to digest.
+                        </div>
+                    ) : (
+                        <>
+                            {isUpdating && <div className="mj_PinnedSummary_shimmer" aria-hidden />}
+                            <div className={`mj_PinnedSummary_scroll${isUpdating ? " mj_PinnedSummary_updating" : ""}`}>
+                                <ul className="mj_PinnedSummary_list">
+                                    {bullets.map((text, index) => {
+                                        const clampable = text.length > PINNED_SUMMARY_CLAMP_CHARS;
+                                        const open = expanded.has(index);
+                                        return (
+                                            <li key={index} className="mj_PinnedSummary_item">
+                                                <span
+                                                    className={
+                                                        clampable && !open ? "mj_PinnedSummary_item_clamp" : undefined
+                                                    }
+                                                >
+                                                    {text}
+                                                </span>
+                                                {clampable && (
+                                                    <button
+                                                        type="button"
+                                                        className="mj_PinnedSummary_more"
+                                                        onClick={() => toggleExpanded(index)}
+                                                    >
+                                                        {open ? "Show less" : "Expand"}
+                                                    </button>
+                                                )}
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            </div>
+                        </>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const leftPanel = useLeftPanelResize();
     const [dragActive, setDragActive] = useState(state.dragActive);
@@ -6050,6 +6183,12 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                     <ChatHeader client={client} state={state} collapse={collapse} />
                                 )}
                                 <SubagentStrip client={client} state={state} mode={childMode ? "child" : "parent"} />
+                                {/* Surface A — pinned conversation summary. Net-new: the server
+                                    summary feed does not exist yet, so this renders nothing. When a
+                                    data source lands, pass it here (styled + fixture-verified). The
+                                    conversation-id key remounts on a room switch so disclosure state
+                                    never carries across conversations. */}
+                                <PinnedSummary key={state.selectedConversationId ?? "no-convo"} summary={null} />
                                 <Timeline client={client} state={state} isReadOnly={childMode} />
                                 {childMode ? (
                                     <ReadOnlyHint />

@@ -62,8 +62,11 @@ describe("peer_message fixture and rendering", () => {
         expect(peerMessage).not.toBeNull();
         expect(peerMessage?.querySelector(".mj_Markdown")).toBeNull();
         expect(peerMessage?.querySelector(".mj_OpenAIMark.mj_PeerMessage_mark")).not.toBeNull();
-        expect(peerMessage?.querySelector(".mj_PeerMessage_label")?.textContent).toBe("from «Sender Session»");
-        expect(peerMessage?.querySelector(".mj_MessageText")?.textContent).toBe("Coordinate on the release checklist.");
+        expect(peerMessage?.querySelector(".mj_PeerMessage_name")?.textContent).toBe("Sender Session");
+        expect(peerMessage?.querySelector(".mj_PeerMessage_tag")?.textContent).toBe("peer");
+        expect(peerMessage?.querySelector(".mj_PeerMessage_body")?.textContent).toBe(
+            "Coordinate on the release checklist.",
+        );
         expect(eventSnippet(fixture.event.type, fixture.event.payload)).toBe("Coordinate on the release checklist.");
     });
 
@@ -81,8 +84,8 @@ describe("peer_message fixture and rendering", () => {
         mountedEvents.push(mounted);
 
         expect(mounted.container.querySelector(".mj_AnthropicMark.mj_PeerMessage_mark")).not.toBeNull();
-        expect(mounted.container.querySelector(".mj_PeerMessage_label")?.textContent).toBe("from «Claude Session»");
-        expect(mounted.container.querySelector(".mj_MessageText")?.textContent).toBe("Coordinate on release.");
+        expect(mounted.container.querySelector(".mj_PeerMessage_name")?.textContent).toBe("Claude Session");
+        expect(mounted.container.querySelector(".mj_PeerMessage_body")?.textContent).toBe("Coordinate on release.");
     });
 
     it("strips bidi format controls from every peer-message text sink", async () => {
@@ -97,8 +100,8 @@ describe("peer_message fixture and rendering", () => {
         const mounted = await mountEvent(event);
         mountedEvents.push(mounted);
 
-        expect(mounted.container.querySelector(".mj_PeerMessage_label bdi")?.textContent).toBe("Release Agent");
-        expect(mounted.container.querySelector(".mj_MessageText bdi")?.textContent).toBe("Deploy later now");
+        expect(mounted.container.querySelector(".mj_PeerMessage_name bdi")?.textContent).toBe("Release Agent");
+        expect(mounted.container.querySelector(".mj_PeerMessage_body bdi")?.textContent).toBe("Deploy later now");
         expect(eventSnippet(event.type, event.payload)).toBe("Deploy later now");
         expect(mounted.container.textContent).not.toMatch(/[\p{Cc}\p{Cf}]/u);
     });
