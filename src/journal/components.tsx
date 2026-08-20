@@ -847,7 +847,13 @@ export function MessageSearchResults({
                     Search is unavailable right now.
                 </p>
             ) : hits.length === 0 ? (
-                loading ? null : (
+                // Hits are bound to their query, so an empty set while loading means the current
+                // query has no results yet — show a searching state, never a prior query's rows.
+                loading ? (
+                    <p className="mj_RoomListEmpty" role="status">
+                        Searching…
+                    </p>
+                ) : (
                     <p className="mj_RoomListEmpty" role="status">
                         No messages match your search.
                     </p>
@@ -860,7 +866,7 @@ export function MessageSearchResults({
                                 type="button"
                                 className="mj_SearchHit"
                                 onClick={() => onSelect(hit.convo_id)}
-                                aria-label={`Open ${hit.title || "conversation"} at a matching message`}
+                                aria-label={`Open conversation ${hit.title || "Untitled"}`}
                             >
                                 <span className="mj_SearchHit_top">
                                     <span className="mj_SearchHit_title">{hit.title || "Untitled"}</span>
@@ -1481,13 +1487,15 @@ function ConversationList({
                                     {tab === "archived" && archivedTotal > 0 && !visibleRows.length && (
                                         <p className="mj_RoomListEmpty">No archived conversations match your search.</p>
                                     )}
+                                    {/* Inside the room-list scroll container so the Messages section
+                                        scrolls with the chat list — a long hit list stays reachable. */}
+                                    <MessageSearchResults
+                                        query={query}
+                                        search={state.messageSearch}
+                                        now={renderNow}
+                                        onSelect={(conversationId) => void client.selectConversation(conversationId)}
+                                    />
                                 </div>
-                                <MessageSearchResults
-                                    query={query}
-                                    search={state.messageSearch}
-                                    now={renderNow}
-                                    onSelect={(conversationId) => void client.selectConversation(conversationId)}
-                                />
                             </nav>
                         </div>
                     </div>

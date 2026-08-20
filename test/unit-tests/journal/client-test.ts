@@ -3652,4 +3652,64 @@ describe("MatronJournalClient searchMessages", () => {
             failed: false,
         });
     });
+
+    it("does not carry a prior query's hits into a new query's loading state", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        let resolveSecond: (value: { hits: SearchHit[] }) => void = () => {};
+        state.api = {
+            search: jest
+                .fn()
+                .mockResolvedValueOnce({ hits: [hit("c1", "first")] })
+                .mockReturnValueOnce(
+                    new Promise<{ hits: SearchHit[] }>((resolve) => {
+                        resolveSecond = resolve;
+                    }),
+                ),
+        };
+
+        await client.searchMessages("first"); // settles with a hit
+        const second = client.searchMessages("second"); // in-flight
+
+        // While "second" loads, the section must not show "first"'s hit under the "second" label.
+        expect(client.getSnapshot().messageSearch).toEqual({ query: "second", hits: [], loading: true, failed: false });
+        resolveSecond({ hits: [] });
+        await second;
+    });
+
+    it("drops a malformed search response rather than crashing (defensive parse)", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.api = {
+            search: jest.fn().mockResolvedValue({
+                hits: [
+                    hit("c1", "kept"),
+                    { convo_id: "c2" }, // missing required fields → dropped
+                    null,
+                    "garbage",
+                ],
+            }) as unknown as (query: string, limit?: number) => Promise<{ hits: SearchHit[] }>,
+        };
+
+        await client.searchMessages("q");
+
+        const result = client.getSnapshot().messageSearch;
+        expect(result?.failed).toBe(false);
+        expect(result?.hits).toEqual([hit("c1", "kept")]);
+    });
+
+    it("treats a non-array hits payload as no results", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.api = {
+            search: jest.fn().mockResolvedValue({ hits: null } as unknown as { hits: SearchHit[] }),
+        };
+
+        await client.searchMessages("q");
+
+        expect(client.getSnapshot().messageSearch).toEqual({ query: "q", hits: [], loading: false, failed: false });
+    });
 });

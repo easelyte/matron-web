@@ -126,6 +126,20 @@ describe("MessageSearchResults", () => {
         await act(async () => root.unmount());
     });
 
+    it("shows a searching state while loading with no hits yet (never stale rows)", async () => {
+        const { container, root } = await render(
+            React.createElement(MessageSearchResults, {
+                query: "rollout",
+                search: search({ hits: [], loading: true }),
+                now: NOW,
+                onSelect: () => {},
+            }),
+        );
+        expect(container.textContent).toContain("Searching…");
+        expect(container.querySelector(".mj_SearchHit")).toBeNull();
+        await act(async () => root.unmount());
+    });
+
     it("shows a failure message when the search failed", async () => {
         const { container, root } = await render(
             React.createElement(MessageSearchResults, {

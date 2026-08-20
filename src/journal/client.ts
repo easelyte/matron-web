@@ -25,6 +25,7 @@ import {
     type RecentFolder,
     rendersAsTopLevelRow,
     type RpcReply,
+    type SearchHit,
     type ServerFrame,
     type Session,
     type SnapshotResponse,
@@ -39,6 +40,41 @@ const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v
 const HISTORY_PAGE_SIZE = 80;
 // Message-content search hits per query (server caps at 50; 20 keeps the Messages section tight).
 const MESSAGE_SEARCH_LIMIT = 20;
+
+/**
+ * Runtime guard for the GET /search response. The producer is a separate service, so we parse at
+ * the boundary (P33) rather than trusting the compile-time cast: a non-array `hits` or a hit missing
+ * a required field is dropped instead of crashing the render (e.g. `snippet.split` on undefined).
+ */
+function sanitizeSearchHits(response: { hits?: unknown } | null | undefined): SearchHit[] {
+    const raw = response?.hits;
+    if (!Array.isArray(raw)) return [];
+    const hits: SearchHit[] = [];
+    for (const item of raw) {
+        if (!item || typeof item !== "object") continue;
+        const h = item as Record<string, unknown>;
+        if (
+            typeof h.convo_id !== "string" ||
+            typeof h.title !== "string" ||
+            typeof h.seq !== "number" ||
+            typeof h.ts !== "number" ||
+            typeof h.sender !== "string" ||
+            typeof h.snippet !== "string"
+        ) {
+            continue;
+        }
+        hits.push({
+            convo_id: h.convo_id,
+            title: h.title,
+            seq: h.seq,
+            ts: h.ts,
+            sender: h.sender,
+            snippet: h.snippet,
+            live: h.live === true,
+        });
+    }
+    return hits;
+}
 const RPC_CREATE_WATCHDOG_MS = 10_000;
 const BACKFILL_SNAPSHOT_TIMEOUT_MS = 10_000;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
@@ -487,7 +523,9 @@ export class MatronJournalClient {
      * (the search box) debounces; this method owns correctness: an empty/blank query clears the
      * section, and searchSeq ensures only the newest request applies (a slow earlier response is
      * dropped). A server/transport error degrades to an empty failed state, never a throw — the
-     * chat-title filter keeps working regardless. Prior hits stay visible while a new query loads.
+     * chat-title filter keeps working regardless. Hits stay bound to the query that produced them:
+     * a new query starts with an empty result set (loading), so an earlier query's hits are never
+     * shown under a later query's label — a hung request shows a "Searching…" state, not stale rows.
      */
     public async searchMessages(rawQuery: string): Promise<void> {
         const query = rawQuery.trim();
@@ -498,12 +536,14 @@ export class MatronJournalClient {
         }
         if (!this.api) return;
         const seq = ++this.searchSeq;
-        const priorHits = this.state.messageSearch?.hits ?? [];
-        this.patch({ messageSearch: { query, hits: priorHits, loading: true, failed: false } });
+        this.patch({ messageSearch: { query, hits: [], loading: true, failed: false } });
         try {
             const response = await this.api.search(query, MESSAGE_SEARCH_LIMIT);
             if (seq !== this.searchSeq) return;
-            this.patch({ messageSearch: { query, hits: response.hits, loading: false, failed: false } });
+            // Defensive parse: the /search producer is a separate service, so guard against a
+            // version-skewed or malformed success (hits not an array, a hit missing fields) rather
+            // than letting it crash the render. A non-conforming payload degrades to "no results".
+            this.patch({ messageSearch: { query, hits: sanitizeSearchHits(response), loading: false, failed: false } });
         } catch {
             if (seq !== this.searchSeq) return;
             this.patch({ messageSearch: { query, hits: [], loading: false, failed: true } });
