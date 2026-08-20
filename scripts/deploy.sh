@@ -8,6 +8,11 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if [[ -v DEPLOY_WEB && -z $DEPLOY_WEB ]]; then
+    echo "DEPLOY_WEB must not be empty" >&2
+    exit 1
+fi
+
 WEB=${DEPLOY_WEB:-$(cd -- "$SCRIPT_DIR/.." && pwd)}
 HEALTH_URL=${DEPLOY_HEALTH_URL:-http://127.0.0.1:8082/}
 KEEP=${DEPLOY_KEEP:-5}
@@ -42,7 +47,47 @@ log_event() {
         "$(json_escape "$phase")" \
         "$(json_escape "$release")" \
         "$(json_escape "$prev_target")"
-    logger -t matron-web-deploy -- "$payload" || true
+    printf '%s\n' "$payload" >&2
+    if ! logger -t matron-web-deploy -- "$payload"; then
+        echo "failed to send deploy event to the system logger" >&2
+    fi
+}
+
+health_matches_release() {
+    local health_body
+    local http_status
+    local release_hash
+    local served_hash
+
+    if ! health_body=$(mktemp -- "$WEB/.deploy-health.XXXXXX"); then
+        echo "could not create a temporary health response file" >&2
+        return 1
+    fi
+
+    if ! http_status=$(curl -fsS --max-time 10 --connect-timeout 5 \
+        -o "$health_body" -w '%{http_code}' "$HEALTH_URL"); then
+        rm -f -- "$health_body"
+        return 1
+    fi
+    if [[ $http_status != 200 ]]; then
+        echo "health endpoint returned HTTP $http_status instead of 200" >&2
+        rm -f -- "$health_body"
+        return 1
+    fi
+    if ! served_hash=$(sha256sum -- "$health_body") ||
+        ! release_hash=$(sha256sum -- "$REL/index.html"); then
+        echo "could not hash the health response and release index" >&2
+        rm -f -- "$health_body"
+        return 1
+    fi
+    served_hash=${served_hash%% *}
+    release_hash=${release_hash%% *}
+    rm -f -- "$health_body"
+
+    if [[ $served_hash != "$release_hash" ]]; then
+        echo "health response body does not match this release's index.html" >&2
+        return 1
+    fi
 }
 
 # Callers must hold the shared fd-9 deployment lock.
@@ -212,6 +257,7 @@ prune_command() {
 main() {
     local assume_yes=0
     local command=deploy
+    local git_status
     local releases_device
     local web_device
 
@@ -256,6 +302,12 @@ main() {
         exit 1
     fi
 
+    if [[ $command == deploy && ! -e $WEB/current && ${DEPLOY_INIT:-0} != 1 ]]; then
+        echo "deploy root has no current release; run the Phase-3 seed/migration first or explicitly set DEPLOY_INIT=1 for an initial deploy" >&2
+        log_event sanity-fail
+        exit 1
+    fi
+
     if ! { exec 9>"$WEB/.deploy.lock"; }; then
         echo "cannot open deployment lock" >&2
         log_event fs-assert-fail
@@ -290,6 +342,17 @@ main() {
             return
             ;;
     esac
+
+    if ! git_status=$(git -C "$WEB" status --porcelain --untracked-files=no); then
+        echo "could not verify that the deploy root has a clean git working tree" >&2
+        log_event sanity-fail
+        exit 1
+    fi
+    if [[ -n $git_status ]]; then
+        echo "deploy root has uncommitted changes to tracked files" >&2
+        log_event sanity-fail
+        exit 1
+    fi
 
     REL="$WEB/releases/release-$(date -u +%Y%m%dT%H%M%SZ)-$$"
     if [[ -e $REL ]]; then
@@ -339,7 +402,7 @@ main() {
     fi
     log_event flip-ok
 
-    if [[ ${DEPLOY_SKIP_HEALTH:-0} == 1 ]] || curl -fsS -o /dev/null "$HEALTH_URL"; then
+    if [[ ${DEPLOY_SKIP_HEALTH:-0} == 1 ]] || health_matches_release; then
         if ! touch -- "$REL/.healthy"; then
             echo "health passed but the release could not be marked healthy" >&2
             log_event fs-assert-fail

@@ -51,26 +51,61 @@ stub_npm() {
 
     /usr/bin/mkdir -p -- "$web/webapp/assets"
     if [[ ${DEPLOY_TEST_BUILD_MODE:-complete} == complete ]]; then
-        /usr/bin/printf 'build-%s\n' "$BASHPID" >"$web/webapp/index.html"
+        if [[ -v DEPLOY_TEST_BUILD_BODY ]]; then
+            /usr/bin/printf '%s' "$DEPLOY_TEST_BUILD_BODY" >"$web/webapp/index.html"
+        else
+            /usr/bin/printf 'build-%s\n' "$BASHPID" >"$web/webapp/index.html"
+        fi
     fi
     /usr/bin/printf 'asset-%s\n' "$BASHPID" >"$web/webapp/assets/x"
 }
 
 stub_logger() {
+    if [[ ${DEPLOY_TEST_LOGGER_FAIL:-0} == 1 ]]; then
+        return 1
+    fi
     /usr/bin/printf '%s\n' "$*" >>"$DEPLOY_TEST_EVENT_LOG"
 }
 
 stub_curl() {
-    local url=${*: -1}
+    local output=""
+    local -a args=("$@")
+    local index
 
     if [[ -n ${DEPLOY_TEST_CURL_REQUEST_FILE:-} ]]; then
-        /usr/bin/printf '%s\n' "$url" >"$DEPLOY_TEST_CURL_REQUEST_FILE"
+        /usr/bin/printf '%s\n' "$@" >"$DEPLOY_TEST_CURL_REQUEST_FILE"
     fi
     if [[ ${DEPLOY_TEST_CURL_STATUS:-} == 503 ]]; then
         /usr/bin/printf 'curl: simulated HTTP 503 from local fixture\n' >&2
         return 22
     fi
+    if [[ ${DEPLOY_TEST_CURL_HANG:-0} == 1 ]]; then
+        /usr/bin/sleep 10
+        /usr/bin/printf 'curl: simulated health response timeout\n' >&2
+        return 28
+    fi
+    if [[ -v DEPLOY_TEST_CURL_BODY ]]; then
+        for ((index = 0; index < ${#args[@]}; index++)); do
+            if [[ ${args[index]} == -o && $((index + 1)) -lt ${#args[@]} ]]; then
+                output=${args[index + 1]}
+                break
+            fi
+        done
+        [[ -n $output ]] || return 2
+        /usr/bin/printf '%s' "$DEPLOY_TEST_CURL_BODY" >"$output"
+        /usr/bin/printf '200'
+        return
+    fi
     /usr/bin/curl "$@"
+}
+
+stub_git() {
+    if [[ ${DEPLOY_TEST_GIT_ERROR:-0} == 1 ]]; then
+        return 128
+    fi
+    if [[ ${DEPLOY_TEST_GIT_DIRTY:-0} == 1 ]]; then
+        /usr/bin/printf ' M tracked-file\n'
+    fi
 }
 
 stub_date() {
@@ -134,6 +169,10 @@ case $(/usr/bin/basename -- "$0") in
         stub_curl "$@"
         exit
         ;;
+    git)
+        stub_git "$@"
+        exit
+        ;;
     date)
         stub_date "$@"
         exit
@@ -194,7 +233,7 @@ cleanup() {
 trap cleanup EXIT
 
 /usr/bin/mkdir -p -- "$STUB_BIN"
-for command_name in npm logger curl date ln mv touch; do
+for command_name in npm logger curl git date ln mv touch; do
     /usr/bin/ln -s -- "$HARNESS_PATH" "$STUB_BIN/$command_name"
 done
 
@@ -237,8 +276,14 @@ current_target() {
 }
 
 run_healthy_deploy() {
+    local init=0
+
+    if [[ ! -e $WEB/current ]]; then
+        init=1
+    fi
     env \
         DEPLOY_WEB="$WEB" \
+        DEPLOY_INIT="$init" \
         DEPLOY_SKIP_HEALTH=1 \
         DEPLOY_TEST_EVENT_LOG="$EVENT_LOG" \
         PATH="$STUB_BIN:$ORIGINAL_PATH" \
@@ -310,6 +355,24 @@ start_503_server() {
         wait "$SERVER_PID" 2>/dev/null || true
         SERVER_PID=""
         SERVER_CURL_STATUS=503
+    fi
+}
+
+start_hanging_server() {
+    local request_file=$1
+    local port=$((40000 + BASHPID % 10000))
+    local server_state
+
+    /usr/bin/nc -l 127.0.0.1 "$port" >"$request_file" 2>"$request_file.stderr" &
+    SERVER_PID=$!
+    SERVER_URL=http://127.0.0.1:$port/
+    SERVER_CURL_HANG=0
+    /usr/bin/sleep 0.1
+    server_state=$(/usr/bin/ps -o stat= -p "$SERVER_PID" 2>/dev/null || true)
+    if [[ -z $server_state || $server_state == Z* ]]; then
+        wait "$SERVER_PID" 2>/dev/null || true
+        SERVER_PID=""
+        SERVER_CURL_HANG=1
     fi
 }
 
@@ -444,12 +507,30 @@ case_same_second() {
     local first_target
     local second_target
     local release
+    local status=0
 
     /usr/bin/printf 'case 4: same-second collision safety\n' >&2
     new_fixture same-second
 
+    status=0
     env \
         DEPLOY_WEB="$WEB" \
+        DEPLOY_SKIP_HEALTH=1 \
+        DEPLOY_TEST_EVENT_LOG="$EVENT_LOG" \
+        DEPLOY_TEST_LOGGER_FAIL=1 \
+        PATH="$STUB_BIN:$ORIGINAL_PATH" \
+        /usr/bin/timeout 10 "$DEPLOY" >"$FIXTURE/pre-migration.out" 2>&1 || status=$?
+    assert_eq 1 "$status" "deploy without current or DEPLOY_INIT=1 must fail"
+    assert_contains "$FIXTURE/pre-migration.out" "Phase-3 seed/migration" \
+        "pre-migration refusal must direct the operator to Phase 3"
+    assert_contains "$FIXTURE/pre-migration.out" '"phase":"sanity-fail"' \
+        "deploy event JSON must survive a logger failure"
+    assert_contains "$FIXTURE/pre-migration.out" "failed to send deploy event" \
+        "logger delivery failure must be visible"
+
+    env \
+        DEPLOY_WEB="$WEB" \
+        DEPLOY_INIT=1 \
         DEPLOY_SKIP_HEALTH=1 \
         DEPLOY_TEST_FIXED_DATE=1 \
         DEPLOY_TEST_EVENT_LOG="$EVENT_LOG" \
@@ -480,9 +561,11 @@ case_same_second() {
 }
 
 case_failing_health() {
+    local elapsed
     local release_a
     local release_b
     local release
+    local started
     local status=0
     local unhealthy_count=0
 
@@ -508,6 +591,14 @@ case_failing_health() {
     assert_eq 1 "$status" "503 deploy must fail without a nested-lock timeout"
     assert_contains "$FIXTURE/curl-request.txt" "$SERVER_URL" \
         "503 fixture did not receive the deploy health request"
+    assert_contains "$FIXTURE/curl-request.txt" "--max-time" \
+        "health request must have a bounded overall timeout"
+    assert_contains "$FIXTURE/curl-request.txt" "10" \
+        "health request must use the ten-second overall timeout"
+    assert_contains "$FIXTURE/curl-request.txt" "--connect-timeout" \
+        "health request must have a bounded connect timeout"
+    assert_contains "$FIXTURE/curl-request.txt" "5" \
+        "health request must use the five-second connect timeout"
     assert_eq "$release_b" "$(current_target)" "503 deploy must restore current to B"
     assert_eq "$release_a" "$(/usr/bin/readlink -e -- "$WEB/previous")" \
         "503 deploy must leave previous pointing at A"
@@ -519,6 +610,68 @@ case_failing_health() {
     assert_eq 1 "$unhealthy_count" "failed release must remain without .healthy"
     assert_contains "$EVENT_LOG" '"phase":"health-fail-rolledback"' \
         "missing health-fail-rolledback event"
+
+    new_fixture mismatched-health-body
+    release_b=$(seed_release release-b 200)
+    /usr/bin/ln -s -- "$release_b" "$WEB/current"
+    status=0
+    env \
+        DEPLOY_WEB="$WEB" \
+        DEPLOY_SKIP_HEALTH=0 \
+        DEPLOY_HEALTH_URL=http://health.test/ \
+        DEPLOY_TEST_CURL_BODY=stale-release \
+        DEPLOY_TEST_EVENT_LOG="$EVENT_LOG" \
+        PATH="$STUB_BIN:$ORIGINAL_PATH" \
+        /usr/bin/timeout 10 "$DEPLOY" >"$FIXTURE/deploy.out" 2>&1 || status=$?
+    assert_eq 1 "$status" "a 200 response for different content must fail"
+    assert_eq "$release_b" "$(current_target)" \
+        "a mismatched health body must restore the prior release"
+    assert_contains "$FIXTURE/deploy.out" "does not match this release's index.html" \
+        "mismatched health body must fail loudly"
+
+    new_fixture hanging-health
+    release_b=$(seed_release release-b 200)
+    /usr/bin/ln -s -- "$release_b" "$WEB/current"
+    start_hanging_server "$FIXTURE/request.txt"
+    status=0
+    started=$SECONDS
+    env \
+        DEPLOY_WEB="$WEB" \
+        DEPLOY_SKIP_HEALTH=0 \
+        DEPLOY_HEALTH_URL="$SERVER_URL" \
+        DEPLOY_TEST_CURL_HANG="$SERVER_CURL_HANG" \
+        DEPLOY_TEST_CURL_REQUEST_FILE="$FIXTURE/curl-request.txt" \
+        DEPLOY_TEST_EVENT_LOG="$EVENT_LOG" \
+        PATH="$STUB_BIN:$ORIGINAL_PATH" \
+        "$DEPLOY" >"$FIXTURE/deploy.out" 2>&1 || status=$?
+    elapsed=$((SECONDS - started))
+    stop_server
+    assert_eq 1 "$status" "a hanging health endpoint must fail"
+    [[ $elapsed -ge 8 && $elapsed -le 15 ]] ||
+        fail "hanging health check must honor its ten-second bound (elapsed ${elapsed}s)"
+    if [[ $SERVER_CURL_HANG == 1 ]]; then
+        assert_contains "$FIXTURE/curl-request.txt" "$SERVER_URL" \
+            "simulated hanging health fixture did not receive the request"
+    else
+        assert_contains "$FIXTURE/request.txt" "GET / HTTP" \
+            "hanging health fixture did not accept the request"
+    fi
+    assert_eq "$release_b" "$(current_target)" \
+        "a timed-out health check must restore the prior release"
+
+    new_fixture matching-health-body
+    env \
+        DEPLOY_WEB="$WEB" \
+        DEPLOY_INIT=1 \
+        DEPLOY_SKIP_HEALTH=0 \
+        DEPLOY_HEALTH_URL=http://health.test/ \
+        DEPLOY_TEST_BUILD_BODY=matching-release \
+        DEPLOY_TEST_CURL_BODY=matching-release \
+        DEPLOY_TEST_EVENT_LOG="$EVENT_LOG" \
+        PATH="$STUB_BIN:$ORIGINAL_PATH" \
+        /usr/bin/timeout 10 "$DEPLOY" >"$FIXTURE/deploy.out" 2>&1
+    assert_file "$(current_target)/.healthy" \
+        "matching release content must be marked healthy"
 }
 
 case_unhealthy_rollback_skip() {
@@ -624,6 +777,39 @@ case_sanity_gate() {
     /usr/bin/ln -s -- "$old_target" "$WEB/current"
 
     env \
+        DEPLOY_WEB= \
+        DEPLOY_SKIP_HEALTH=1 \
+        PATH="$STUB_BIN:$ORIGINAL_PATH" \
+        /usr/bin/timeout 10 "$DEPLOY" >"$FIXTURE/empty-web.out" 2>&1 || status=$?
+    assert_eq 1 "$status" "empty DEPLOY_WEB must fail"
+    assert_contains "$FIXTURE/empty-web.out" "DEPLOY_WEB must not be empty" \
+        "empty DEPLOY_WEB must fail loudly"
+
+    status=0
+    env -u DEPLOY_WEB \
+        PATH="$STUB_BIN:$ORIGINAL_PATH" \
+        /usr/bin/timeout 10 "$DEPLOY" invalid >"$FIXTURE/unset-web.out" 2>&1 || status=$?
+    assert_eq 2 "$status" "unset DEPLOY_WEB must retain the default"
+    assert_contains "$FIXTURE/unset-web.out" "usage:" \
+        "unset DEPLOY_WEB must reach argument validation"
+
+    status=0
+    env \
+        DEPLOY_WEB="$WEB" \
+        DEPLOY_SKIP_HEALTH=1 \
+        DEPLOY_TEST_GIT_DIRTY=1 \
+        DEPLOY_TEST_BUILD_STARTED_FILE="$FIXTURE/dirty-build.started" \
+        DEPLOY_TEST_EVENT_LOG="$EVENT_LOG" \
+        PATH="$STUB_BIN:$ORIGINAL_PATH" \
+        /usr/bin/timeout 10 "$DEPLOY" >"$FIXTURE/dirty.out" 2>&1 || status=$?
+    assert_eq 1 "$status" "dirty tracked files must block a deploy"
+    assert_no_file "$FIXTURE/dirty-build.started" \
+        "dirty working tree must be rejected before building"
+    assert_contains "$FIXTURE/dirty.out" "uncommitted changes to tracked files" \
+        "dirty working tree must fail loudly"
+
+    status=0
+    env \
         DEPLOY_WEB="$WEB" \
         DEPLOY_SKIP_HEALTH=1 \
         DEPLOY_TEST_BUILD_MODE=missing-index \
@@ -655,6 +841,7 @@ case_first_health_failure() {
 
     env \
         DEPLOY_WEB="$WEB" \
+        DEPLOY_INIT=1 \
         DEPLOY_SKIP_HEALTH=0 \
         DEPLOY_HEALTH_URL="$SERVER_URL" \
         DEPLOY_TEST_CURL_REQUEST_FILE="$FIXTURE/curl-request.txt" \
