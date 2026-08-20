@@ -2985,14 +2985,15 @@ li.mj_AttachmentChip_error {
 }
 
 /* Continuation (consecutive peer messages from the same session): drop the header,
-   tighten the top so the run reads as one voice. */
-.mj_PeerMessage_continuation {
+   tighten the top so the run reads as one voice. Keyed off the timeline's existing
+   .mx_EventTile_continuation wrapper (components.tsx) so no extra prop threading. */
+.mx_EventTile_continuation .mj_PeerMessage {
     margin-top: 1px;
     border-top-left-radius: 4px;
     border-top-right-radius: 4px;
 }
 
-.mj_PeerMessage_continuation .mj_PeerMessage_head {
+.mx_EventTile_continuation .mj_PeerMessage_head {
     display: none;
 }
 
