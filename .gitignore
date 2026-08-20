@@ -10,9 +10,14 @@
 /.nx/
 /packages/
 /src/modules.js
-/webapp/
+/webapp*/
+/releases
+/current
+/previous
+/current.tmp
+/previous.tmp
+/.deploy.lock
 package-lock.json
 .codex-session-tmp/
 .fixtures-dist/
-webapp.bak*/
 memory/
