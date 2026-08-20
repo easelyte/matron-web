@@ -261,6 +261,50 @@ const events: JournalEvent[] = [
         type: "spawn_outcome",
         payload: { request_id: "spawn-fixture-1", outcome: "started", room_id: "s1", child_convo_id: "s1" },
     },
+    {
+        // Surface B — an inline message from another AI session (durable .mj_PeerMessage block).
+        seq: 20,
+        convo_id: "c1",
+        ts: T + 820,
+        sender: "peer:design",
+        type: "peer_message",
+        payload: {
+            from_convo: "peer-design",
+            from_name: "Design Session",
+            from_kind: "claude",
+            body: "Landed the pinned-summary surface — migrating the peer block off inline styles next.",
+        },
+    },
+    {
+        // Same peer session speaking again — each peer message keeps its own full header
+        // (from_convo-aware continuation grouping is a follow-up; see journal.pcss note).
+        seq: 21,
+        convo_id: "c1",
+        ts: T + 840,
+        sender: "peer:design",
+        type: "peer_message",
+        payload: {
+            from_convo: "peer-design",
+            from_name: "Design Session",
+            from_kind: "claude",
+            body: "Continuation line: same session, tightened top, no repeated header.",
+        },
+    },
+    {
+        // Surface B priority variant (loop #688) — louder marker, never a focus steal.
+        seq: 22,
+        convo_id: "c1",
+        ts: T + 860,
+        sender: "peer:release",
+        type: "peer_message",
+        payload: {
+            from_convo: "peer-release",
+            from_name: "Release Bot",
+            from_kind: "codex",
+            body: "Priority: prod error rate crossed 1% — needs a look before the next deploy.",
+            priority: true,
+        },
+    },
 ];
 
 const client = new MatronJournalClient();

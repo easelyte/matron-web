@@ -50,13 +50,15 @@ function internals(client: MatronJournalClient): ClientInternals {
     return client as unknown as ClientInternals;
 }
 
-function signedInClient(options: { events?: JournalEvent[] } = {}): MatronJournalClient {
+function signedInClient(
+    options: { events?: JournalEvent[]; conversations?: Conversation[] } = {},
+): MatronJournalClient {
     const client = new MatronJournalClient();
     internals(client).state = {
         ...client.getSnapshot(),
         phase: "signed-in",
         session: SESSION,
-        conversations: [CONVERSATION],
+        conversations: options.conversations ?? [CONVERSATION],
         selectedConversationId: CONVERSATION.id,
         events: options.events ?? [],
         pendingMessages: [],
@@ -276,7 +278,9 @@ describe("spawn_outcome standalone row", () => {
         );
         const row = rendered.container.querySelector(".mj_SpawnOutcomeRow");
         expect(row).not.toBeNull();
-        expect(row?.textContent).toBe(expected);
+        // The row now carries a decorative "Subagent" eyebrow (Surface C restyle); the
+        // status line itself stays byte-exact in .mj_SpawnOutcomeStatus.
+        expect(row?.querySelector(".mj_SpawnOutcomeStatus")?.textContent).toBe(expected);
     });
 
     it("shows an Open button only for the started outcome", async () => {
@@ -295,6 +299,36 @@ describe("spawn_outcome standalone row", () => {
     it("does not render a raw JSON dump for spawn_outcome events", async () => {
         rendered = await renderClient(signedInClient({ events: [spawnOutcomeEvent("started", { room_id: "r1" })] }));
         expect(rendered.container.querySelector(".mj_Unknown")).toBeNull();
+    });
+
+    it.each([
+        [":sub:", "kid-a", ".mj_AnthropicMark"],
+        [":codex:", "kid-b", ".mj_OpenAIMark"],
+    ])("derives the worker mark from the child conversation (%s)", async (infix, tail, markSelector) => {
+        // Worker kind comes from the CHILD conversation's id infix (workerKind), never from the
+        // spawn_outcome payload — which carries no agent_kind. Use a production-shaped child id.
+        const childId = `${CONVERSATION.id}${infix}${tail}`;
+        const child: Conversation = { ...CONVERSATION, id: childId, parent_convo_id: CONVERSATION.id };
+        rendered = await renderClient(
+            signedInClient({
+                conversations: [CONVERSATION, child],
+                events: [spawnOutcomeEvent("started", { room_id: childId, child_convo_id: childId })],
+            }),
+        );
+        expect(
+            rendered.container.querySelector(`.mj_SpawnOutcomeRow ${markSelector}.mj_SpawnOutcomeRow_kindMark`),
+        ).not.toBeNull();
+    });
+
+    it("renders no worker mark when the child conversation is unknown", async () => {
+        rendered = await renderClient(
+            signedInClient({
+                events: [spawnOutcomeEvent("started", { room_id: "missing", child_convo_id: "missing" })],
+            }),
+        );
+        const row = rendered.container.querySelector(".mj_SpawnOutcomeRow");
+        expect(row).not.toBeNull();
+        expect(row?.querySelector(".mj_SpawnOutcomeRow_kindMark")).toBeNull();
     });
 });
 
