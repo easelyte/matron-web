@@ -12,6 +12,7 @@ import {
     type LoginResponse,
     type MatronConfig,
     type MessagesResponse,
+    type SearchResponse,
     type SnapshotResponse,
 } from "./types";
 
@@ -225,6 +226,16 @@ export class JournalApi {
         const query = new URLSearchParams({ limit: String(limit) });
         if (beforeSeq !== undefined) query.set("before_seq", String(beforeSeq));
         return this.json<MessagesResponse>(`/convo/${encodeURIComponent(conversationId)}/messages?${query.toString()}`);
+    }
+
+    /**
+     * Full-text search over the signed-in user's message content (`GET /search`). The server
+     * caps `limit` at 50 and rejects an empty or over-256-char query with 400; the caller
+     * (client.searchMessages) gates on a trimmed non-empty query and treats a throw as no hits.
+     */
+    public search(query: string, limit = 20, signal?: AbortSignal): Promise<SearchResponse> {
+        const params = new URLSearchParams({ q: query, limit: String(limit) });
+        return this.json<SearchResponse>(`/search?${params.toString()}`, { signal });
     }
 
     public async media(mediaId: string): Promise<Blob> {

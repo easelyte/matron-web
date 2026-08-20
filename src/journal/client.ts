@@ -37,6 +37,8 @@ const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
 const HISTORY_PAGE_SIZE = 80;
+// Message-content search hits per query (server caps at 50; 20 keeps the Messages section tight).
+const MESSAGE_SEARCH_LIMIT = 20;
 const RPC_CREATE_WATCHDOG_MS = 10_000;
 const BACKFILL_SNAPSHOT_TIMEOUT_MS = 10_000;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
@@ -233,6 +235,9 @@ export class MatronJournalClient {
     private state = blankState();
     private readonly listeners = new Set<() => void>();
     private api?: JournalApi;
+    // Monotonic guard so only the latest message-search request writes its results — an earlier
+    // slow response (or a cleared box) can never clobber a newer query's hits. See searchMessages.
+    private searchSeq = 0;
     private database?: JournalDatabase;
     private connection?: JournalConnection;
     private readonly history = new Map<string, ConversationHistoryState>();
@@ -475,6 +480,34 @@ export class MatronJournalClient {
             return { kind: "error", message: "That folder doesn't exist on the box." };
         }
         return { kind: "uncertain" };
+    }
+
+    /**
+     * Full-text search over message content for the Apple-parity "Messages" section. The caller
+     * (the search box) debounces; this method owns correctness: an empty/blank query clears the
+     * section, and searchSeq ensures only the newest request applies (a slow earlier response is
+     * dropped). A server/transport error degrades to an empty failed state, never a throw — the
+     * chat-title filter keeps working regardless. Prior hits stay visible while a new query loads.
+     */
+    public async searchMessages(rawQuery: string): Promise<void> {
+        const query = rawQuery.trim();
+        if (!query) {
+            this.searchSeq += 1; // supersede any in-flight request so its result is ignored
+            if (this.state.messageSearch) this.patch({ messageSearch: undefined });
+            return;
+        }
+        if (!this.api) return;
+        const seq = ++this.searchSeq;
+        const priorHits = this.state.messageSearch?.hits ?? [];
+        this.patch({ messageSearch: { query, hits: priorHits, loading: true, failed: false } });
+        try {
+            const response = await this.api.search(query, MESSAGE_SEARCH_LIMIT);
+            if (seq !== this.searchSeq) return;
+            this.patch({ messageSearch: { query, hits: response.hits, loading: false, failed: false } });
+        } catch {
+            if (seq !== this.searchSeq) return;
+            this.patch({ messageSearch: { query, hits: [], loading: false, failed: true } });
+        }
     }
 
     public async selectConversation(

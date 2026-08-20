@@ -92,6 +92,38 @@ export interface MessagesResponse {
     events: JournalEvent[];
 }
 
+/**
+ * A single full-text search hit over message content, as returned by the server's
+ * `GET /search` endpoint. `snippet` carries `**…**` markers around the matched terms
+ * and `…` for elided context; `live` is true while the hit's conversation is running.
+ */
+export interface SearchHit {
+    convo_id: string;
+    title: string;
+    seq: number;
+    ts: number;
+    sender: string;
+    snippet: string;
+    live: boolean;
+}
+
+export interface SearchResponse {
+    hits: SearchHit[];
+}
+
+/**
+ * Message-content search state (Apple-parity "Messages" section). The room-list search box
+ * filters chat titles in-memory (the "Chats" behaviour); this holds the server-side content
+ * hits for the same query. `query` is the query the current `hits` belong to, so the view can
+ * ignore results that raced in after the box was cleared or retyped.
+ */
+export interface MessageSearchState {
+    query: string;
+    hits: SearchHit[];
+    loading: boolean;
+    failed: boolean;
+}
+
 export interface JournalControlFrame {
     kind: "control";
     op: string;
@@ -302,6 +334,9 @@ export interface ClientState {
     dragActive: boolean;
     stagedUploads?: StagedUploads;
     sendTick: number;
+    // Message-content search hits (Apple-parity "Messages" section). Undefined until the first
+    // search of a session; cleared back to undefined when the search box empties.
+    messageSearch?: MessageSearchState;
 }
 
 export function coerceParentId(x: unknown): string | null {

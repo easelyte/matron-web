@@ -606,6 +606,92 @@ button {
     text-align: center;
 }
 
+/* Message-content search (Apple-parity "Messages" section). Sits below the chat list in the
+   sidebar while the search box holds a query; the box already filters chat titles above it. */
+.mj_SearchResults {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid var(--cpd-color-border-subtle);
+}
+
+.mj_SearchResults_heading {
+    padding: 8px 12px 4px;
+    color: var(--cpd-color-text-tertiary);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.mj_SearchHitList {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.mj_SearchHit {
+    display: flex;
+    width: calc(100% - var(--cpd-space-3x));
+    box-sizing: border-box;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0 var(--cpd-space-2x) 1px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_SearchHit:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_SearchHit_top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.mj_SearchHit_title {
+    overflow: hidden;
+    color: var(--cpd-color-text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 17px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SearchHit_time {
+    flex: 0 0 auto;
+    color: var(--cpd-color-text-tertiary);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 14px;
+    white-space: nowrap;
+}
+
+.mj_SearchHit_snippet {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--cpd-color-text-secondary);
+    font-size: 12px;
+    line-height: 16px;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.mj_SearchHit_mark {
+    background: transparent;
+    color: var(--cpd-color-text-action-accent);
+    font-weight: 600;
+}
+
 .mx_ResizeHandle {
     position: relative;
     z-index: 10;

@@ -120,6 +120,7 @@ import {
     childrenOf,
     childSidebarPlacement,
     type ClientState,
+    type MessageSearchState,
     type Conversation,
     conversationTitle,
     type DeviceDTO,
@@ -797,6 +798,84 @@ function OutcomeGlyph({
     return <InactiveIcon className={`${className} mj_InactiveOutcomeGlyph`} />;
 }
 
+// Debounce keystrokes before firing a message-content search request.
+const MESSAGE_SEARCH_DEBOUNCE_MS = 200;
+
+/**
+ * Render a server search snippet, turning its `**…**` match markers into <mark> highlights.
+ * The snippet is plain text (server-escaped), so we only split on the markers — no HTML is
+ * interpreted. Unbalanced markers degrade to literal text rather than swallowing the rest.
+ */
+export function renderSnippet(snippet: string): React.ReactNode[] {
+    const parts = snippet.split("**");
+    return parts.map((part, index) =>
+        // Odd segments sat between a matched pair of markers → highlight. If the count is even
+        // (a dangling marker), the trailing odd segment is still highlighted, which is harmless.
+        index % 2 === 1 ? (
+            <mark key={index} className="mj_SearchHit_mark">
+                {part}
+            </mark>
+        ) : (
+            <React.Fragment key={index}>{part}</React.Fragment>
+        ),
+    );
+}
+
+export function MessageSearchResults({
+    query,
+    search,
+    now,
+    onSelect,
+}: {
+    query: string;
+    search: MessageSearchState | undefined;
+    now: number;
+    onSelect: (conversationId: string) => void;
+}): React.ReactElement | null {
+    // Only surface the section for a live query. `search` can lag the box by a debounce interval
+    // or a stale query, so gate on the current box being non-empty AND the results being for it.
+    const trimmed = query.trim();
+    if (!trimmed || !search || search.query !== trimmed) return null;
+    const { hits, loading, failed } = search;
+    return (
+        <div className="mj_SearchResults" data-testid="message-search-results">
+            <div className="mj_SearchResults_heading" role="presentation">
+                Messages
+            </div>
+            {failed ? (
+                <p className="mj_RoomListEmpty" role="status">
+                    Search is unavailable right now.
+                </p>
+            ) : hits.length === 0 ? (
+                loading ? null : (
+                    <p className="mj_RoomListEmpty" role="status">
+                        No messages match your search.
+                    </p>
+                )
+            ) : (
+                <ul className="mj_SearchHitList" role="list" aria-label="Message search results">
+                    {hits.map((hit) => (
+                        <li key={`${hit.convo_id}:${hit.seq}`} role="listitem">
+                            <button
+                                type="button"
+                                className="mj_SearchHit"
+                                onClick={() => onSelect(hit.convo_id)}
+                                aria-label={`Open ${hit.title || "conversation"} at a matching message`}
+                            >
+                                <span className="mj_SearchHit_top">
+                                    <span className="mj_SearchHit_title">{hit.title || "Untitled"}</span>
+                                    <span className="mj_SearchHit_time">{formatRelativeDay(hit.ts, now)}</span>
+                                </span>
+                                <span className="mj_SearchHit_snippet">{renderSnippet(hit.snippet)}</span>
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+}
+
 function ConversationList({
     client,
     state,
@@ -862,6 +941,18 @@ function ConversationList({
         const timer = setTimeout(forceDayTick, nextMidnight - now.getTime() + 1000);
         return () => clearTimeout(timer);
     });
+
+    // Message-content search (Apple-parity "Messages" section). The box already filters chat
+    // titles in-memory as you type; here we additionally hit the server's FTS endpoint, debounced
+    // so keystrokes don't each fire a request. Clearing the box drops the section immediately.
+    useEffect(() => {
+        if (!query.trim()) {
+            void client.searchMessages("");
+            return;
+        }
+        const timer = setTimeout(() => void client.searchMessages(query), MESSAGE_SEARCH_DEBOUNCE_MS);
+        return () => clearTimeout(timer);
+    }, [query, client]);
 
     roomMenuRef.current = roomMenu;
     openRoomMenuRef.current = (conversationId, left, top, opener): void => {
@@ -1391,6 +1482,12 @@ function ConversationList({
                                         <p className="mj_RoomListEmpty">No archived conversations match your search.</p>
                                     )}
                                 </div>
+                                <MessageSearchResults
+                                    query={query}
+                                    search={state.messageSearch}
+                                    now={renderNow}
+                                    onSelect={(conversationId) => void client.selectConversation(conversationId)}
+                                />
                             </nav>
                         </div>
                     </div>
