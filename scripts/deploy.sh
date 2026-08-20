@@ -10,7 +10,6 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 WEB=${DEPLOY_WEB:-$(cd -- "$SCRIPT_DIR/.." && pwd)}
 HEALTH_URL=${DEPLOY_HEALTH_URL:-http://127.0.0.1:8082/}
-# shellcheck disable=SC2034 # Used by the --prune command added in T-1.2.
 KEEP=${DEPLOY_KEEP:-5}
 
 REL=""
@@ -81,9 +80,169 @@ rollback_to() {
     fi
 }
 
+# Callers must hold the shared fd-9 deployment lock.
+rollback_command() {
+    local candidate
+    local candidate_entry
+    local current_target
+    local releases_root
+    local target
+
+    releases_root=$(readlink -f -- "$WEB/releases" 2>/dev/null || true)
+    current_target=$(readlink -f -- "$WEB/current" 2>/dev/null || true)
+    target=$(readlink -e -- "$WEB/previous" 2>/dev/null || true)
+
+    if [[ -z $target || $(dirname -- "$target") != "$releases_root" ||
+        ! -f $target/.healthy || $target == "$current_target" ]]; then
+        target=""
+    fi
+
+    if [[ -z $target ]]; then
+        while IFS= read -r -d '' candidate_entry; do
+            candidate=${candidate_entry#* }
+            if [[ -f $candidate/.healthy && $candidate != "$current_target" ]]; then
+                target=$candidate
+                break
+            fi
+        done < <(
+            find "$WEB/releases" -mindepth 1 -maxdepth 1 -type d \
+                -name 'release-*' -printf '%T@ %p\0' | sort -z -nr
+        )
+    fi
+
+    if [[ -z $target ]]; then
+        echo "no servable prior release" >&2
+        log_event rollback rollback "" "$current_target"
+        return 1
+    fi
+
+    if ! rollback_to "$target"; then
+        log_event rollback rollback "$target" "$current_target"
+        return 1
+    fi
+
+    if [[ -n $current_target ]]; then
+        if ! ln -sfn "$current_target" "$WEB/previous.tmp"; then
+            echo "failed to stage previous pointer after rollback" >&2
+            log_event fs-assert-fail rollback "$target" "$current_target"
+            return 1
+        fi
+        if ! mv -T -- "$WEB/previous.tmp" "$WEB/previous"; then
+            echo "failed to atomically install previous pointer after rollback" >&2
+            log_event fs-assert-fail rollback "$target" "$current_target"
+            return 1
+        fi
+    fi
+
+    log_event rollback rollback "$target" "$current_target"
+}
+
+# Callers must hold the shared fd-9 deployment lock.
+prune_command() {
+    local assume_yes=$1
+    local confirmation
+    local current_target
+    local entry
+    local index
+    local keep_count
+    local previous_target
+    local release
+    local -a prune_candidates=()
+    local -a release_entries=()
+    local -A retained=()
+
+    if [[ ! $KEEP =~ ^[0-9]+$ ]]; then
+        echo "DEPLOY_KEEP must be a non-negative integer" >&2
+        log_event sanity-fail
+        return 1
+    fi
+    keep_count=$((10#$KEEP))
+
+    mapfile -d '' -t release_entries < <(
+        find "$WEB/releases" -mindepth 1 -maxdepth 1 -type d \
+            -name 'release-*' -printf '%T@ %p\0' | sort -z -nr
+    )
+
+    for ((index = 0; index < ${#release_entries[@]} && index < keep_count; index++)); do
+        release=${release_entries[index]#* }
+        retained["$release"]=1
+    done
+
+    current_target=$(readlink -f -- "$WEB/current" 2>/dev/null || true)
+    previous_target=$(readlink -f -- "$WEB/previous" 2>/dev/null || true)
+    if [[ -n $current_target ]]; then
+        retained["$current_target"]=1
+    fi
+    if [[ -n $previous_target ]]; then
+        retained["$previous_target"]=1
+    fi
+
+    for entry in "${release_entries[@]}"; do
+        release=${entry#* }
+        if [[ ! -v 'retained[$release]' ]]; then
+            prune_candidates+=("$release")
+        fi
+    done
+
+    if ((${#prune_candidates[@]} == 0)); then
+        log_event prune
+        return 0
+    fi
+
+    if [[ $assume_yes != 1 ]]; then
+        echo "The following release directories will be permanently deleted:" >&2
+        printf '  %s\n' "${prune_candidates[@]}" >&2
+        printf "Type 'yes' to confirm pruning: " >&2
+        if ! IFS= read -r confirmation || [[ $confirmation != yes ]]; then
+            echo "prune cancelled" >&2
+            log_event prune
+            return 1
+        fi
+    fi
+
+    if ! rm -rf -- "${prune_candidates[@]}"; then
+        echo "failed to prune one or more releases" >&2
+        log_event fs-assert-fail
+        return 1
+    fi
+
+    log_event prune
+}
+
 main() {
+    local assume_yes=0
+    local command=deploy
     local releases_device
     local web_device
+
+    case ${1-} in
+        "")
+            if (($# != 0)); then
+                echo "usage: $0 [--rollback | --prune [--yes]]" >&2
+                exit 2
+            fi
+            ;;
+        --rollback)
+            if (($# != 1)); then
+                echo "usage: $0 --rollback" >&2
+                exit 2
+            fi
+            command=rollback
+            ;;
+        --prune)
+            if (($# == 2)) && [[ $2 == --yes ]]; then
+                assume_yes=1
+            elif (($# != 1)); then
+                echo "usage: $0 --prune [--yes]" >&2
+                exit 2
+            fi
+            command=prune
+            ;;
+        *)
+            echo "usage: $0 [--rollback | --prune [--yes]]" >&2
+            exit 2
+            ;;
+    esac
 
     if ! WEB=$(realpath -- "$WEB" 2>/dev/null); then
         echo "deploy root does not exist" >&2
@@ -120,6 +279,17 @@ main() {
         log_event fs-assert-fail
         exit 1
     fi
+
+    case $command in
+        rollback)
+            rollback_command
+            return
+            ;;
+        prune)
+            prune_command "$assume_yes"
+            return
+            ;;
+    esac
 
     REL="$WEB/releases/release-$(date -u +%Y%m%dT%H%M%SZ)-$$"
     if [[ -e $REL ]]; then
