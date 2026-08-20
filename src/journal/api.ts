@@ -222,9 +222,21 @@ export class JournalApi {
         });
     }
 
-    public messages(conversationId: string, beforeSeq?: number, limit = 80): Promise<MessagesResponse> {
+    public messages(
+        conversationId: string,
+        beforeSeq?: number,
+        limit = 80,
+        aroundSeq?: number,
+    ): Promise<MessagesResponse> {
         const query = new URLSearchParams({ limit: String(limit) });
-        if (beforeSeq !== undefined) query.set("before_seq", String(beforeSeq));
+        // The server (GET /convo/:id/messages) treats before_seq and around_seq as mutually
+        // exclusive (400 if both). around_seq returns a window centered on an arbitrary seq —
+        // the deep-link path (jump to a search hit) uses it; normal tail-paging uses before_seq.
+        if (aroundSeq !== undefined) {
+            query.set("around_seq", String(aroundSeq));
+        } else if (beforeSeq !== undefined) {
+            query.set("before_seq", String(beforeSeq));
+        }
         return this.json<MessagesResponse>(`/convo/${encodeURIComponent(conversationId)}/messages?${query.toString()}`);
     }
 

@@ -830,7 +830,7 @@ export function MessageSearchResults({
     query: string;
     search: MessageSearchState | undefined;
     now: number;
-    onSelect: (conversationId: string) => void;
+    onSelect: (conversationId: string, seq: number) => void;
 }): React.ReactElement | null {
     // Only surface the section for a live query. `search` can lag the box by a debounce interval
     // or a stale query, so gate on the current box being non-empty AND the results being for it.
@@ -865,7 +865,7 @@ export function MessageSearchResults({
                             <button
                                 type="button"
                                 className="mj_SearchHit"
-                                onClick={() => onSelect(hit.convo_id)}
+                                onClick={() => onSelect(hit.convo_id, hit.seq)}
                                 aria-label={`Open conversation ${hit.title || "Untitled"}`}
                             >
                                 <span className="mj_SearchHit_top">
@@ -1496,7 +1496,9 @@ function ConversationList({
                                         query={query}
                                         search={state.messageSearch}
                                         now={renderNow}
-                                        onSelect={(conversationId) => void client.selectConversation(conversationId)}
+                                        onSelect={(conversationId, seq) =>
+                                            void client.selectConversationAtSeq(conversationId, seq)
+                                        }
                                     />
                                 </div>
                             </nav>
@@ -3929,6 +3931,7 @@ function EventRow({
     resolvedAction,
     continuation = false,
     lastInSection = true,
+    searchHighlighted = false,
     rowHandlers,
 }: {
     client: MatronJournalClient;
@@ -3939,6 +3942,7 @@ function EventRow({
     resolvedAction: (itemId: string) => "send" | "cancel" | "expired" | undefined;
     continuation?: boolean;
     lastInSection?: boolean;
+    searchHighlighted?: boolean;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
     const peer = event.type === "peer_message";
@@ -3948,7 +3952,7 @@ function EventRow({
     return (
         <li
             ref={liRef}
-            className={`mx_EventTile${peer ? " mx_EventTile_peer" : ""}${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}`}
+            className={`mx_EventTile${peer ? " mx_EventTile_peer" : ""}${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}${searchHighlighted ? " mj_EventRow_searchHighlighted" : ""}`}
             style={
                 peer
                     ? {
@@ -4163,8 +4167,13 @@ function Timeline({
 }): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
     const pendingScrollFrame = useRef<number | undefined>(undefined);
+    const searchHighlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const selectedConversationId = useRef(state.selectedConversationId);
     const [isFollowingTail, setFollow] = useState(true);
+    const [highlightedSearchTarget, setHighlightedSearchTarget] = useState<{
+        conversationId?: string;
+        seq: number;
+    }>();
     const [sourceEvent, setSourceEvent] = useState<JournalEvent>();
     const menu = useRowContextMenu<JournalEvent>();
     const sourceOpenerRef = useRef<HTMLElement | null>(null);
@@ -4225,13 +4234,15 @@ function Timeline({
         () =>
             [
                 ...visibleEvents.map((event) => ({ kind: "event" as const, timestamp: event.ts, event })),
-                ...state.pendingMessages.map((message) => ({
-                    kind: "pending" as const,
-                    timestamp: message.createdAt,
-                    message,
-                })),
+                ...(state.viewingHistoryWindow
+                    ? []
+                    : state.pendingMessages.map((message) => ({
+                          kind: "pending" as const,
+                          timestamp: message.createdAt,
+                          message,
+                      }))),
             ].sort((left, right) => left.timestamp - right.timestamp),
-        [visibleEvents, state.pendingMessages],
+        [visibleEvents, state.pendingMessages, state.viewingHistoryWindow],
     );
     const answeredPromptReplies = useMemo(() => {
         const replies = new Map<string, { choice?: string }>();
@@ -4320,6 +4331,13 @@ function Timeline({
         return cancelPendingScrollFrame;
     }, [state.selectedConversationId, cancelPendingScrollFrame]);
 
+    useEffect(
+        () => () => {
+            if (searchHighlightTimer.current !== undefined) clearTimeout(searchHighlightTimer.current);
+        },
+        [],
+    );
+
     useEffect(() => {
         cancelPendingScrollFrame();
         historyScrollAnchor.current = undefined;
@@ -4366,6 +4384,24 @@ function Timeline({
         state.loadingHistory,
         isFollowingTail,
     ]);
+
+    useLayoutEffect(() => {
+        const targetSeq = state.pendingScrollSeq;
+        if (targetSeq === undefined) return;
+        const target = [...(scrollRef.current?.querySelectorAll<HTMLElement>("[data-event-id]") ?? [])].find(
+            (row) => row.dataset.eventId === String(targetSeq),
+        );
+        if (target) {
+            target.scrollIntoView({ block: "nearest" });
+            setHighlightedSearchTarget({ conversationId: state.selectedConversationId, seq: targetSeq });
+            if (searchHighlightTimer.current !== undefined) clearTimeout(searchHighlightTimer.current);
+            searchHighlightTimer.current = setTimeout(() => {
+                setHighlightedSearchTarget(undefined);
+                searchHighlightTimer.current = undefined;
+            }, 2_000);
+        }
+        client.clearPendingScrollSeq(targetSeq);
+    }, [client, state.pendingScrollSeq, state.selectedConversationId]);
 
     const loadEarlierMessages = (): void => {
         const node = scrollRef.current;
@@ -4418,7 +4454,7 @@ function Timeline({
                                             event={item.event}
                                             answeredPromptReplies={answeredPromptReplies}
                                             spawnOutcomes={spawnOutcomes}
-                                            isReadOnly={isReadOnly}
+                                            isReadOnly={isReadOnly || state.viewingHistoryWindow}
                                             resolvedAction={resolvedAction}
                                             continuation={
                                                 previous?.kind === "event" &&
@@ -4427,6 +4463,11 @@ function Timeline({
                                             }
                                             lastInSection={
                                                 next?.kind !== "event" || next.event.sender !== item.event.sender
+                                            }
+                                            searchHighlighted={
+                                                highlightedSearchTarget?.conversationId ===
+                                                    state.selectedConversationId &&
+                                                highlightedSearchTarget?.seq === item.event.seq
                                             }
                                             rowHandlers={menu.rowHandlers}
                                         />
@@ -4458,7 +4499,7 @@ function Timeline({
                                 </React.Fragment>
                             );
                         })}
-                        {Object.values(state.textStreams).map((text, index) => (
+                        {Object.values(state.viewingHistoryWindow ? {} : state.textStreams).map((text, index) => (
                             <li
                                 className="mx_EventTile mx_EventTile_lastInSection"
                                 key={`text-stream-${index}`}
@@ -4479,10 +4520,10 @@ function Timeline({
                                 </div>
                             </li>
                         ))}
-                        {Object.values(state.toolStreams).map((stream) => (
+                        {Object.values(state.viewingHistoryWindow ? {} : state.toolStreams).map((stream) => (
                             <ToolStream key={stream.messageRef} stream={stream} />
                         ))}
-                        {state.activity && state.activity.state !== "idle" && (
+                        {!state.viewingHistoryWindow && state.activity && state.activity.state !== "idle" && (
                             <li className="mx_WhoIsTypingTile mj_Activity">
                                 <span />
                                 <span />
@@ -4505,6 +4546,11 @@ function Timeline({
                     }}
                 >
                     ↓
+                </button>
+            )}
+            {state.viewingHistoryWindow && (
+                <button className="mj_JumpToLatest" type="button" onClick={() => void client.jumpToLatest()}>
+                    Jump to latest ↓
                 </button>
             )}
             {menu.state && (
@@ -5193,7 +5239,7 @@ function Composer({
     const send = async (): Promise<void> => {
         const cid = convoIdRef.current;
         const submitted = body;
-        if (!cid || !submitted.trim() || sendingConvos.current.has(cid)) return;
+        if (state.viewingHistoryWindow || !cid || !submitted.trim() || sendingConvos.current.has(cid)) return;
         const submittedRevision = draftRevisions.current.get(cid) ?? 0;
         sendingConvos.current.add(cid);
         try {
@@ -5314,8 +5360,9 @@ function Composer({
                             before the textarea; mic + send stay on the right. */}
                         <button
                             className="mx_MessageComposer_button"
-                            title="Attach a file"
+                            title={state.viewingHistoryWindow ? "Jump to latest to send" : "Attach a file"}
                             aria-label="Attach a file"
+                            disabled={state.viewingHistoryWindow}
                             onClick={() => fileInput.current?.click()}
                         >
                             <AttachmentIcon />
@@ -5424,11 +5471,13 @@ function Composer({
                                 ref={micButtonRef}
                                 className="mx_MessageComposer_button"
                                 title={
-                                    voiceSupported
-                                        ? voiceState === "requesting"
-                                            ? "Requesting microphone access…"
-                                            : "Record voice message"
-                                        : "Voice recording isn't supported in this browser."
+                                    state.viewingHistoryWindow
+                                        ? "Jump to latest to send"
+                                        : voiceSupported
+                                          ? voiceState === "requesting"
+                                              ? "Requesting microphone access…"
+                                              : "Record voice message"
+                                          : "Voice recording isn't supported in this browser."
                                 }
                                 aria-label={
                                     voiceState === "requesting"
@@ -5436,8 +5485,10 @@ function Composer({
                                         : "Record voice message"
                                 }
                                 aria-busy={voiceState === "requesting"}
-                                aria-disabled={!voiceSupported || voiceState === "requesting"}
-                                disabled={!voiceSupported || voiceState === "requesting"}
+                                aria-disabled={
+                                    state.viewingHistoryWindow || !voiceSupported || voiceState === "requesting"
+                                }
+                                disabled={state.viewingHistoryWindow || !voiceSupported || voiceState === "requesting"}
                                 onClick={acquireVoice}
                             >
                                 {voiceState === "requesting" ? (
@@ -5450,8 +5501,9 @@ function Composer({
                                 className="mx_MessageComposer_sendMessage"
                                 type="button"
                                 onClick={() => void send()}
-                                disabled={!body.trim()}
+                                disabled={state.viewingHistoryWindow || !body.trim()}
                                 aria-label="Send message"
+                                title={state.viewingHistoryWindow ? "Jump to latest to send" : undefined}
                             >
                                 <SendIcon />
                             </button>
@@ -5459,7 +5511,9 @@ function Composer({
                     </div>
                 )}
                 <div id="mj-composer-hint" className="mj_ComposerHint">
-                    <span className="mj_ComposerHint_keys">/ commands · shift+enter for newline</span>
+                    <span className="mj_ComposerHint_keys">
+                        {state.viewingHistoryWindow ? "Jump to latest to send" : "/ commands · shift+enter for newline"}
+                    </span>
                     {ctxHintPct !== null && (
                         <span className="mj_ComposerHint_live" aria-hidden="true">
                             ctx {ctxHintPct}%

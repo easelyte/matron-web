@@ -55,6 +55,7 @@ interface ClientInternals {
     state: ClientState;
     database?: unknown;
     pendingFiles: Map<string, File>;
+    patch(update: Partial<ClientState>): void;
 }
 
 function internals(client: MatronJournalClient): ClientInternals {
@@ -1228,6 +1229,194 @@ describe("message model DOM contracts", () => {
         expect(avatar?.tagName).toBe("SPAN");
         expect(avatar?.getAttribute("aria-hidden")).toBe("true");
         expect(avatar?.style.maskImage).toContain("matron-logo");
+    });
+});
+
+describe("message search deep links", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    beforeEach(() => {
+        (Element.prototype.scrollIntoView as jest.Mock).mockClear();
+    });
+
+    afterEach(async () => {
+        jest.useRealTimers();
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    it("opens a message-search hit at its conversation and sequence", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            messageSearch: {
+                query: "rollout",
+                hits: [
+                    {
+                        convo_id: "c9",
+                        title: "Deploy notes",
+                        seq: 73,
+                        ts: 1,
+                        sender: "agent",
+                        snippet: "the **rollout** window",
+                        live: false,
+                    },
+                ],
+                loading: false,
+                failed: false,
+            },
+        };
+        jest.spyOn(client, "searchMessages").mockResolvedValue(undefined);
+        const selectAtSeq = jest.spyOn(client, "selectConversationAtSeq").mockResolvedValue(undefined);
+        rendered = await renderClient(client);
+
+        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+            setter?.call(search, "rollout");
+            search.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        await act(async () => rendered?.container.querySelector<HTMLButtonElement>(".mj_SearchHit")?.click());
+
+        expect(selectAtSeq).toHaveBeenCalledWith("c9", 73);
+    });
+
+    it("scrolls to and transiently highlights the pending sequence", async () => {
+        jest.useFakeTimers();
+        const client = signedInClient({ events: [textEvent(41, "before"), textEvent(42, "match")] });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            pendingScrollSeq: 42,
+            viewingHistoryWindow: true,
+        };
+        rendered = await renderClient(client);
+
+        const target = rendered.container.querySelector<HTMLElement>('[data-event-id="42"]')!;
+        const scrollIntoView = Element.prototype.scrollIntoView as jest.Mock;
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+        expect(scrollIntoView.mock.contexts).toContain(target);
+        expect(target.classList.contains("mj_EventRow_searchHighlighted")).toBe(true);
+        expect(client.getSnapshot().pendingScrollSeq).toBeUndefined();
+
+        await act(async () => jest.advanceTimersByTime(2_000));
+        expect(target.classList.contains("mj_EventRow_searchHighlighted")).toBe(false);
+    });
+
+    it("consumes a missing pending sequence without scrolling", async () => {
+        const client = signedInClient({ events: [textEvent(42, "nearest edge")] });
+        internals(client).state = { ...client.getSnapshot(), pendingScrollSeq: 99 };
+
+        rendered = await renderClient(client);
+
+        expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+        expect(client.getSnapshot().pendingScrollSeq).toBeUndefined();
+    });
+
+    it("shows Jump to latest only in a historical window and invokes the client action", async () => {
+        const client = signedInClient();
+        internals(client).state = { ...client.getSnapshot(), viewingHistoryWindow: true };
+        const jumpToLatest = jest.spyOn(client, "jumpToLatest").mockResolvedValue(undefined);
+        rendered = await renderClient(client);
+
+        const jump = rendered.container.querySelector<HTMLButtonElement>(".mj_JumpToLatest")!;
+        expect(jump.textContent).toBe("Jump to latest ↓");
+        await act(async () => jump.click());
+        expect(jumpToLatest).toHaveBeenCalledTimes(1);
+
+        await act(async () => internals(client).patch({ viewingHistoryWindow: false }));
+        expect(rendered.container.querySelector(".mj_JumpToLatest")).toBeNull();
+    });
+
+    it("renders pending prompt and agent-spawn cards read-only until Jump to latest", async () => {
+        const prompt: JournalEvent = {
+            seq: 42,
+            convo_id: "c1",
+            ts: 1,
+            sender: "agent",
+            type: "prompt",
+            payload: { question: "Continue?", options: ["Yes"] },
+        };
+        const spawn: JournalEvent = {
+            seq: 43,
+            convo_id: "c1",
+            ts: 2,
+            sender: "agent",
+            type: "permission_request",
+            payload: {
+                kind: "agent_spawn",
+                request_id: "spawn-1",
+                task: "Run the checks",
+                target_name: "reviewer",
+            },
+        };
+        const client = signedInClient({ events: [prompt, spawn] });
+        internals(client).state = { ...client.getSnapshot(), viewingHistoryWindow: true };
+        jest.spyOn(client, "jumpToLatest").mockImplementation(async () => {
+            internals(client).patch({ viewingHistoryWindow: false });
+        });
+        rendered = await renderClient(client);
+
+        expect(
+            rendered.container.querySelector(".mj_PromptCard:not(.mj_PromptCard_spawn) .mj_PromptOptions"),
+        ).toBeNull();
+        expect(rendered.container.querySelector(".mj_PromptCard_spawn .mj_PromptOptions")).toBeNull();
+
+        await act(async () => rendered?.container.querySelector<HTMLButtonElement>(".mj_JumpToLatest")?.click());
+
+        expect(
+            rendered.container.querySelector(".mj_PromptCard:not(.mj_PromptCard_spawn) .mj_PromptOptions")?.textContent,
+        ).toContain("Yes");
+        expect(rendered.container.querySelector(".mj_PromptCard_spawn .mj_PromptOptions")?.textContent).toContain(
+            "Approve",
+        );
+    });
+
+    it("hides tail-only rows and blocks composer send until Jump to latest", async () => {
+        const pending: PendingMessage = {
+            localId: "pending-tail",
+            convoId: "c1",
+            body: "queued at the tail",
+            createdAt: 10,
+        };
+        const client = signedInClient({ pendingMessages: [pending], events: [textEvent(1, "old history")] });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            viewingHistoryWindow: true,
+            textStreams: { response: "streaming at the tail" },
+            activity: { state: "thinking", detail: "Planning" },
+        };
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        jest.spyOn(client, "jumpToLatest").mockImplementation(async () => {
+            internals(client).patch({ viewingHistoryWindow: false });
+        });
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_SendingLabel")).toBeNull();
+        expect(rendered.container.querySelector(".mj_Cursor")).toBeNull();
+        expect(rendered.container.querySelector(".mj_Activity")).toBeNull();
+        await typeInComposer(rendered.container, "reply from the tail");
+        const sendButton = rendered.container.querySelector<HTMLButtonElement>(".mx_MessageComposer_sendMessage")!;
+        expect(sendButton.disabled).toBe(true);
+        expect(rendered.container.querySelector(".mj_ComposerHint")?.textContent).toContain("Jump to latest to send");
+        await pressEnter(rendered.container);
+        expect(sendMessage).not.toHaveBeenCalled();
+
+        await act(async () => rendered?.container.querySelector<HTMLButtonElement>(".mj_JumpToLatest")?.click());
+
+        expect(rendered.container.querySelector(".mj_SendingLabel")).not.toBeNull();
+        expect(rendered.container.querySelector(".mj_Cursor")).not.toBeNull();
+        expect(rendered.container.querySelector(".mj_Activity")?.textContent).toContain("Thinking");
+        expect(sendButton.disabled).toBe(false);
+        await pressEnter(rendered.container);
+        expect(sendMessage).toHaveBeenCalledWith("reply from the tail", "c1");
     });
 });
 

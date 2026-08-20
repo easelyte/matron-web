@@ -323,6 +323,10 @@ export interface ClientState {
     connectionErrorSeq: number;
     loadingHistory: boolean;
     hasOlderHistory: boolean;
+    /** Sequence to scroll to after loading a message-search deep link. */
+    pendingScrollSeq?: number;
+    /** True while the selected timeline is a bounded historical window rather than the live tail. */
+    viewingHistoryWindow: boolean;
     activity?: JournalEphemeralFrame["activity"];
     sessionStatus?: SessionStatus;
     // Host-global vitals (#529): one host reading (cpu/ram/sample stamp) shared by the whole app,
