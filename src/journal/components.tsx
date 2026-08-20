@@ -5931,6 +5931,16 @@ export function PinnedSummary({ summary }: { summary: ConversationSummary | null
     const bodyId = useId();
     const [collapsed, setCollapsed] = useState(false);
     const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set<number>());
+    // Ticks once a minute so the "updated Nm ago" label advances on an idle page instead of
+    // freezing at render time (the label is derived client-side from updatedAtMs).
+    const now = useMinuteClock();
+    // Per-bullet Expand is keyed by array index, so a refresh that reorders bullets must clear
+    // it, or an unrelated new bullet inherits the old expansion. The call site additionally keys
+    // <PinnedSummary> by conversation id, so collapsed/expanded reset on a conversation switch.
+    const bulletsKey = summary?.bullets.join(" ");
+    useEffect(() => {
+        setExpanded(new Set<number>());
+    }, [bulletsKey]);
     if (!summary) {
         return null;
     }
@@ -5959,9 +5969,7 @@ export function PinnedSummary({ summary }: { summary: ConversationSummary | null
                 <span className="mj_PinnedSummary_label">Summary</span>
                 <span className="mj_PinnedSummary_lead">{collapsed ? lead : ""}</span>
                 {summary.updatedAtMs !== undefined ? (
-                    <span className="mj_PinnedSummary_meta">
-                        updated {formatSampleAge(Date.now() - summary.updatedAtMs)}
-                    </span>
+                    <span className="mj_PinnedSummary_meta">updated {formatSampleAge(now - summary.updatedAtMs)}</span>
                 ) : null}
                 <ChevronDownIcon className="mj_PinnedSummary_chev" aria-hidden />
             </button>
@@ -6123,8 +6131,10 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 <SubagentStrip client={client} state={state} mode={childMode ? "child" : "parent"} />
                                 {/* Surface A — pinned conversation summary. Net-new: the server
                                     summary feed does not exist yet, so this renders nothing. When a
-                                    data source lands, pass it here (styled + fixture-verified). */}
-                                <PinnedSummary summary={null} />
+                                    data source lands, pass it here (styled + fixture-verified). The
+                                    conversation-id key remounts on a room switch so disclosure state
+                                    never carries across conversations. */}
+                                <PinnedSummary key={state.selectedConversationId ?? "no-convo"} summary={null} />
                                 <Timeline client={client} state={state} isReadOnly={childMode} />
                                 {childMode ? (
                                     <ReadOnlyHint />
