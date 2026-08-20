@@ -40,6 +40,11 @@ const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v
 const HISTORY_PAGE_SIZE = 80;
 // Message-content search hits per query (server caps at 50; 20 keeps the Messages section tight).
 const MESSAGE_SEARCH_LIMIT = 20;
+// Max query length the server accepts (over this it returns 400); guard client-side so an
+// over-long query reads as "no results", not a misleading "search unavailable" outage.
+const MESSAGE_SEARCH_MAX_QUERY_LEN = 256;
+// Transport-agnostic deadline: abort a /search that never settles so "Searching…" can't hang.
+const MESSAGE_SEARCH_TIMEOUT_MS = 15_000;
 
 /**
  * Runtime guard for the GET /search response. The producer is a separate service, so we parse at
@@ -274,6 +279,9 @@ export class MatronJournalClient {
     // Monotonic guard so only the latest message-search request writes its results — an earlier
     // slow response (or a cleared box) can never clobber a newer query's hits. See searchMessages.
     private searchSeq = 0;
+    // The in-flight message-search request, so a superseding query / clear / logout can abort it
+    // (bounded exit — a stalled /search never leaves the section stuck "Searching…").
+    private searchAbort?: AbortController;
     private database?: JournalDatabase;
     private connection?: JournalConnection;
     private readonly history = new Map<string, ConversationHistoryState>();
@@ -520,25 +528,34 @@ export class MatronJournalClient {
 
     /**
      * Full-text search over message content for the Apple-parity "Messages" section. The caller
-     * (the search box) debounces; this method owns correctness: an empty/blank query clears the
-     * section, and searchSeq ensures only the newest request applies (a slow earlier response is
-     * dropped). A server/transport error degrades to an empty failed state, never a throw — the
-     * chat-title filter keeps working regardless. Hits stay bound to the query that produced them:
-     * a new query starts with an empty result set (loading), so an earlier query's hits are never
-     * shown under a later query's label — a hung request shows a "Searching…" state, not stale rows.
+     * (the search box) debounces; this method owns correctness:
+     *  - An empty/blank OR over-length (server rejects >256) query clears the section without a
+     *    request, so a giant paste reads as "no results", not a spurious "unavailable" outage.
+     *  - searchSeq ensures only the newest request applies; searchAbort cancels the prior in-flight
+     *    request AND a per-request timeout aborts one that never settles — bounded exit, so the
+     *    section can't hang on "Searching…" and obsolete searches don't pile up.
+     *  - Hits stay bound to the query that produced them: a new query starts empty (loading), so an
+     *    earlier query's hits are never shown under a later query's label.
+     *  - A server/transport/timeout error degrades to a failed empty state, never a throw — the
+     *    chat-title filter keeps working regardless.
      */
     public async searchMessages(rawQuery: string): Promise<void> {
         const query = rawQuery.trim();
-        if (!query) {
+        this.searchAbort?.abort(); // cancel any in-flight request; its stale result is guarded off below
+        this.searchAbort = undefined;
+        if (!query || query.length > MESSAGE_SEARCH_MAX_QUERY_LEN) {
             this.searchSeq += 1; // supersede any in-flight request so its result is ignored
             if (this.state.messageSearch) this.patch({ messageSearch: undefined });
             return;
         }
         if (!this.api) return;
         const seq = ++this.searchSeq;
+        const controller = new AbortController();
+        this.searchAbort = controller;
+        const timeout = setTimeout(() => controller.abort(), MESSAGE_SEARCH_TIMEOUT_MS);
         this.patch({ messageSearch: { query, hits: [], loading: true, failed: false } });
         try {
-            const response = await this.api.search(query, MESSAGE_SEARCH_LIMIT);
+            const response = await this.api.search(query, MESSAGE_SEARCH_LIMIT, controller.signal);
             if (seq !== this.searchSeq) return;
             // Defensive parse: the /search producer is a separate service, so guard against a
             // version-skewed or malformed success (hits not an array, a hit missing fields) rather
@@ -547,6 +564,9 @@ export class MatronJournalClient {
         } catch {
             if (seq !== this.searchSeq) return;
             this.patch({ messageSearch: { query, hits: [], loading: false, failed: true } });
+        } finally {
+            clearTimeout(timeout);
+            if (this.searchAbort === controller) this.searchAbort = undefined;
         }
     }
 
@@ -2061,6 +2081,11 @@ export class MatronJournalClient {
 
     private resetTransientSyncState(): void {
         this.clearRpcCreateWatchdog();
+        // Abort an in-flight message search and bump the guard so any late result is ignored —
+        // covers logout and the snapshot/session transition that also call this.
+        this.searchAbort?.abort();
+        this.searchAbort = undefined;
+        this.searchSeq += 1;
         for (const timer of this.readTimers.values()) window.clearTimeout(timer);
         if (this.ackTimer !== undefined) window.clearTimeout(this.ackTimer);
         this.readTimers.clear();

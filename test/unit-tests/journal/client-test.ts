@@ -3592,7 +3592,7 @@ describe("MatronJournalClient searchMessages", () => {
 
         await client.searchMessages("  rollout ");
 
-        expect(state.api.search).toHaveBeenCalledWith("rollout", 20);
+        expect(state.api.search).toHaveBeenCalledWith("rollout", 20, expect.any(AbortSignal));
         expect(client.getSnapshot().messageSearch).toEqual({
             query: "rollout",
             hits,
@@ -3711,5 +3711,71 @@ describe("MatronJournalClient searchMessages", () => {
         await client.searchMessages("q");
 
         expect(client.getSnapshot().messageSearch).toEqual({ query: "q", hits: [], loading: false, failed: false });
+    });
+
+    it("aborts the previous in-flight request when a new query starts", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        const signals: (AbortSignal | undefined)[] = [];
+        let resolveFirst: (value: { hits: SearchHit[] }) => void = () => {};
+        state.api = {
+            search: jest.fn((_query: string, _limit?: number, signal?: AbortSignal) => {
+                signals.push(signal);
+                if (signals.length === 1) {
+                    return new Promise<{ hits: SearchHit[] }>((resolve) => {
+                        resolveFirst = resolve;
+                    });
+                }
+                return Promise.resolve({ hits: [] });
+            }) as unknown as (query: string, limit?: number, signal?: AbortSignal) => Promise<{ hits: SearchHit[] }>,
+        };
+
+        const first = client.searchMessages("a"); // in-flight
+        await client.searchMessages("b"); // supersedes → aborts "a"
+        expect(signals[0]?.aborted).toBe(true);
+        resolveFirst({ hits: [] });
+        await first;
+    });
+
+    it("does not send an over-length query and clears the section", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = {
+            ...signedInState(client),
+            messageSearch: { query: "old", hits: [hit("c1", "x")], loading: false, failed: false },
+        };
+        state.api = { search: jest.fn() };
+
+        await client.searchMessages("x".repeat(257));
+
+        expect(state.api.search).not.toHaveBeenCalled();
+        expect(client.getSnapshot().messageSearch).toBeUndefined();
+    });
+
+    it("aborts a search that never settles once the deadline passes", async () => {
+        jest.useFakeTimers();
+        try {
+            const client = new MatronJournalClient();
+            const state = internals(client);
+            state.state = signedInState(client);
+            state.api = {
+                search: jest.fn(
+                    (_query: string, _limit?: number, signal?: AbortSignal) =>
+                        new Promise<{ hits: SearchHit[] }>((_resolve, reject) => {
+                            signal?.addEventListener("abort", () => reject(new Error("aborted")));
+                        }),
+                ) as unknown as (query: string, limit?: number, signal?: AbortSignal) => Promise<{ hits: SearchHit[] }>,
+            };
+
+            const pending = client.searchMessages("q");
+            expect(client.getSnapshot().messageSearch).toMatchObject({ query: "q", loading: true });
+            jest.advanceTimersByTime(15_000);
+            await pending;
+
+            expect(client.getSnapshot().messageSearch).toEqual({ query: "q", hits: [], loading: false, failed: true });
+        } finally {
+            jest.useRealTimers();
+        }
     });
 });

@@ -1410,6 +1410,9 @@ function ConversationList({
                                             placeholder="Search"
                                             aria-label="Search"
                                             autoComplete="off"
+                                            // Server rejects message-search queries over 256 chars; cap the shared
+                                            // box so a giant paste can't produce a misleading "unavailable" state.
+                                            maxLength={256}
                                         />
                                     </label>
                                 </div>
