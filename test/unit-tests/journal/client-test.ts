@@ -680,6 +680,109 @@ describe("MatronJournalClient state handling", () => {
         expect(client.getSnapshot()).toMatchObject({ events: secondEvents, pendingScrollSeq: 200 });
     });
 
+    it("discards an older-page response superseded by a completed deep-link selection", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const olderPage = deferred<{ events: JournalEvent[] }>();
+        const deepLinkEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const database = historyWindowDatabase([textEvent("c1", 50)]);
+        const messages = jest.fn((_conversationId: string, _before?: number, _limit?: number, aroundSeq?: number) =>
+            aroundSeq === 100 ? Promise.resolve({ events: deepLinkEvents }) : olderPage.promise,
+        );
+        state.state = { ...signedInState(client), events: [textEvent("c1", 50)] };
+        state.database = database;
+        state.api = { messages };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 50,
+            newestSeq: 50,
+            hasMore: true,
+            hasMoreNewer: false,
+        });
+
+        const stalePaging = client.loadOlderHistory();
+        await client.selectConversationAtSeq("c1", 100);
+        olderPage.resolve({ events: [textEvent("c1", 1)] });
+        await stalePaging;
+
+        expect(database.putHistory).toHaveBeenCalledTimes(1);
+        expect(database.putHistory).toHaveBeenCalledWith(deepLinkEvents);
+        expect(state.history.get("c1")).toMatchObject({
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMoreNewer: true,
+        });
+        expect(client.getSnapshot()).toMatchObject({
+            events: deepLinkEvents,
+            pendingScrollSeq: 100,
+            viewingHistoryWindow: true,
+        });
+    });
+
+    it("falls back to the live tail and shows a focused notice when an around-sequence load fails", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const tailEvents = [textEvent("c1", 198), textEvent("c1", 199), textEvent("c1", 200)];
+        const database = historyWindowDatabase();
+        const messages = jest
+            .fn()
+            .mockRejectedValueOnce(new Error("unsupported around_seq"))
+            .mockResolvedValueOnce({ events: tailEvents });
+        state.state = signedInState(client, "c2");
+        state.database = database;
+        state.api = { messages };
+
+        await client.selectConversationAtSeq("c1", 100);
+
+        expect(messages).toHaveBeenNthCalledWith(1, "c1", undefined, 80, 100);
+        expect(messages).toHaveBeenNthCalledWith(2, "c1", undefined, 80);
+        expect(client.getSnapshot()).toMatchObject({
+            selectedConversationId: "c1",
+            events: tailEvents,
+            pendingScrollSeq: undefined,
+            viewingHistoryWindow: false,
+            connectionError: "Couldn't jump to that message",
+        });
+        expect(state.history.get("c1")?.hasMoreNewer).toBe(false);
+    });
+
+    it("blocks prompt and agent-spawn answers in history and allows them after Jump to latest", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const tailEvents = [textEvent("c1", 198), textEvent("c1", 199), textEvent("c1", 200)];
+        const send = jest.fn().mockReturnValue(true);
+        const answerAgentSpawn = jest.fn().mockResolvedValue(undefined);
+        state.state = { ...signedInState(client), viewingHistoryWindow: true };
+        state.database = historyWindowDatabase();
+        state.api = { messages: jest.fn().mockResolvedValue({ events: tailEvents }), answerAgentSpawn };
+        state.connection = { send };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        expect(client.sendPromptReply(42, "allow")).toBe(false);
+        await expect(client.answerAgentSpawn("spawn-1", "approve")).rejects.toThrow("Jump to latest");
+        expect(send).not.toHaveBeenCalled();
+        expect(answerAgentSpawn).not.toHaveBeenCalled();
+
+        await client.jumpToLatest();
+
+        expect(client.sendPromptReply(42, "allow")).toBe(true);
+        await client.answerAgentSpawn("spawn-1", "approve");
+        expect(send).toHaveBeenCalledWith({
+            op: "prompt_reply",
+            convo_id: "c1",
+            target_seq: 42,
+            choice: "allow",
+            text: null,
+        });
+        expect(answerAgentSpawn).toHaveBeenCalledWith("spawn-1", "approve", undefined);
+    });
+
     it("keeps a live event out of a historical window while retaining its unread update", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);

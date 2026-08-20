@@ -4435,7 +4435,7 @@ function Timeline({
                                             event={item.event}
                                             answeredPromptReplies={answeredPromptReplies}
                                             spawnOutcomes={spawnOutcomes}
-                                            isReadOnly={isReadOnly}
+                                            isReadOnly={isReadOnly || state.viewingHistoryWindow}
                                             resolvedAction={resolvedAction}
                                             continuation={
                                                 previous?.kind === "event" &&

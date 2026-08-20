@@ -1335,6 +1335,50 @@ describe("message search deep links", () => {
         expect(rendered.container.querySelector(".mj_JumpToLatest")).toBeNull();
     });
 
+    it("renders pending prompt and agent-spawn cards read-only until Jump to latest", async () => {
+        const prompt: JournalEvent = {
+            seq: 42,
+            convo_id: "c1",
+            ts: 1,
+            sender: "agent",
+            type: "prompt",
+            payload: { question: "Continue?", options: ["Yes"] },
+        };
+        const spawn: JournalEvent = {
+            seq: 43,
+            convo_id: "c1",
+            ts: 2,
+            sender: "agent",
+            type: "permission_request",
+            payload: {
+                kind: "agent_spawn",
+                request_id: "spawn-1",
+                task: "Run the checks",
+                target_name: "reviewer",
+            },
+        };
+        const client = signedInClient({ events: [prompt, spawn] });
+        internals(client).state = { ...client.getSnapshot(), viewingHistoryWindow: true };
+        jest.spyOn(client, "jumpToLatest").mockImplementation(async () => {
+            internals(client).patch({ viewingHistoryWindow: false });
+        });
+        rendered = await renderClient(client);
+
+        expect(
+            rendered.container.querySelector(".mj_PromptCard:not(.mj_PromptCard_spawn) .mj_PromptOptions"),
+        ).toBeNull();
+        expect(rendered.container.querySelector(".mj_PromptCard_spawn .mj_PromptOptions")).toBeNull();
+
+        await act(async () => rendered?.container.querySelector<HTMLButtonElement>(".mj_JumpToLatest")?.click());
+
+        expect(
+            rendered.container.querySelector(".mj_PromptCard:not(.mj_PromptCard_spawn) .mj_PromptOptions")?.textContent,
+        ).toContain("Yes");
+        expect(rendered.container.querySelector(".mj_PromptCard_spawn .mj_PromptOptions")?.textContent).toContain(
+            "Approve",
+        );
+    });
+
     it("hides tail-only rows and blocks composer send until Jump to latest", async () => {
         const pending: PendingMessage = {
             localId: "pending-tail",

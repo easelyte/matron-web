@@ -615,7 +615,6 @@ export class MatronJournalClient {
         if (!this.history.get(conversationId)?.initialized) {
             await this.loadOlderHistory({
                 suppressNotFound: opts?.fromRpcCreate || opts?.suppressNotFound,
-                selectionEpoch,
             });
         }
     }
@@ -676,9 +675,11 @@ export class MatronJournalClient {
             // consume it during the intermediate empty-timeline render.
             this.patch({ pendingScrollSeq: seq });
             this.clearHistoryError();
-        } catch (error) {
+        } catch {
             if (!ownsSelection()) return;
-            this.historyError = error instanceof Error ? error.message : "Could not load message history";
+            await this.selectConversation(conversationId);
+            if (this.state.selectedConversationId !== conversationId || this.state.viewingHistoryWindow) return;
+            this.historyError = "Couldn't jump to that message";
             this.patch({ connectionError: this.historyError });
         }
     }
@@ -826,18 +827,18 @@ export class MatronJournalClient {
         });
     }
 
-    public async loadOlderHistory(opts?: { suppressNotFound?: boolean; selectionEpoch?: number }): Promise<void> {
+    public async loadOlderHistory(opts?: { suppressNotFound?: boolean }): Promise<void> {
         const conversationId = this.state.selectedConversationId;
         if (!conversationId || !this.database || !this.api || this.state.loadingHistory) return;
         const database = this.database;
         const api = this.api;
         const gen = this.sessionGen;
+        const selectionEpoch = this.selectionEpoch;
         const ownsLoad = (): boolean =>
             this.sessionGen === gen &&
             this.database === database &&
             this.api === api &&
-            this.state.selectedConversationId === conversationId &&
-            (opts?.selectionEpoch === undefined || this.isCurrentSelection(conversationId, opts.selectionEpoch));
+            this.isCurrentSelection(conversationId, selectionEpoch);
         const history = this.history.get(conversationId) ?? {
             initialized: false,
             hasMore: true,
@@ -876,7 +877,7 @@ export class MatronJournalClient {
                 hasMoreNewer: history.hasMoreNewer,
             });
             if (this.state.selectedConversationId === conversationId) {
-                await this.refreshSelectedConversation(conversationId, database, gen, opts?.selectionEpoch);
+                await this.refreshSelectedConversation(conversationId, database, gen, selectionEpoch);
                 if (!ownsLoad()) return;
             }
             this.clearHistoryError();
@@ -1416,9 +1417,10 @@ export class MatronJournalClient {
     }
 
     public sendPromptReply(targetSeq: number, choice?: string, text?: string): boolean {
-        if (this.isChildConvo(this.state.selectedConversationId ?? "")) return false;
         const conversationId = this.state.selectedConversationId;
         if (!conversationId) return false;
+        if (this.state.viewingHistoryWindow || this.isViewingHistoricalWindow(conversationId)) return false;
+        if (this.isChildConvo(conversationId)) return false;
         const sent =
             this.connection?.send({
                 op: "prompt_reply",
@@ -1438,6 +1440,10 @@ export class MatronJournalClient {
         decision: "approve" | "deny",
         signal?: AbortSignal,
     ): Promise<void> {
+        const conversationId = this.state.selectedConversationId;
+        if (conversationId && (this.state.viewingHistoryWindow || this.isViewingHistoricalWindow(conversationId))) {
+            throw new Error("Jump to latest to answer this request.");
+        }
         if (!this.api) throw new Error("Not signed in.");
         await this.api.answerAgentSpawn(requestId, decision, signal);
     }
