@@ -276,7 +276,9 @@ describe("spawn_outcome standalone row", () => {
         );
         const row = rendered.container.querySelector(".mj_SpawnOutcomeRow");
         expect(row).not.toBeNull();
-        expect(row?.textContent).toBe(expected);
+        // The row now carries a decorative "Subagent" eyebrow (Surface C restyle); the
+        // status line itself stays byte-exact in .mj_SpawnOutcomeStatus.
+        expect(row?.querySelector(".mj_SpawnOutcomeStatus")?.textContent).toBe(expected);
     });
 
     it("shows an Open button only for the started outcome", async () => {
