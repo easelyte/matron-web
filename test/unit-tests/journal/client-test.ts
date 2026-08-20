@@ -597,6 +597,89 @@ describe("MatronJournalClient state handling", () => {
         });
     });
 
+    it("preserves unread through a historical deep link and marks it read only after jumping to latest", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const historicalEvents = [textEvent("c1", 4), textEvent("c1", 5), textEvent("c1", 6)];
+        const tailEvents = [textEvent("c1", 8), textEvent("c1", 9), textEvent("c1", 10)];
+        let conversations = CONVERSATIONS.map((conversation) =>
+            conversation.id === "c1" ? { ...conversation, unread_count: 3, read_up_to_seq: 3 } : conversation,
+        );
+        const database = historyWindowDatabase();
+        database.conversations = jest.fn(async () => conversations.map((conversation) => ({ ...conversation })));
+        database.markLocallyRead = jest.fn(async (conversationId: string, upToSeq: number) => {
+            conversations = conversations.map((conversation) =>
+                conversation.id === conversationId
+                    ? { ...conversation, unread_count: 0, read_up_to_seq: upToSeq }
+                    : conversation,
+            );
+        });
+        const messages = jest
+            .fn()
+            .mockResolvedValueOnce({ events: historicalEvents })
+            .mockResolvedValueOnce({ events: tailEvents });
+        const send = jest.fn().mockReturnValue(true);
+        state.state = {
+            ...signedInState(client, "c2"),
+            conversations,
+            unreadOverrideIds: new Set(["c1"]),
+        };
+        state.database = database;
+        state.api = { messages };
+        state.connection = { send };
+
+        await client.selectConversationAtSeq("c1", 5);
+        await jest.runAllTimersAsync();
+
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")).toMatchObject({
+            unread_count: 3,
+            read_up_to_seq: 3,
+        });
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+        expect(state.readHighWater.has("c1")).toBe(false);
+        expect(database.markLocallyRead).not.toHaveBeenCalled();
+        expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "read_marker", convo_id: "c1" }));
+
+        await client.jumpToLatest();
+        await jest.runAllTimersAsync();
+
+        expect(database.markLocallyRead).toHaveBeenCalledWith("c1", 10);
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")).toMatchObject({
+            unread_count: 0,
+            read_up_to_seq: 10,
+        });
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(false);
+    });
+
+    it("discards an earlier deep-link response when a later sequence selection wins", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const first = deferred<{ events: JournalEvent[] }>();
+        const second = deferred<{ events: JournalEvent[] }>();
+        const firstEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const secondEvents = [textEvent("c1", 198), textEvent("c1", 200), textEvent("c1", 202)];
+        const database = historyWindowDatabase();
+        const messages = jest.fn((_conversationId: string, _before?: number, _limit?: number, aroundSeq?: number) =>
+            aroundSeq === 100 ? first.promise : second.promise,
+        );
+        state.state = signedInState(client, "c2");
+        state.database = database;
+        state.api = { messages };
+
+        const firstSelection = client.selectConversationAtSeq("c1", 100);
+        const secondSelection = client.selectConversationAtSeq("c1", 200);
+        second.resolve({ events: secondEvents });
+        await secondSelection;
+        first.resolve({ events: firstEvents });
+        await firstSelection;
+
+        expect(database.putHistory).toHaveBeenCalledTimes(1);
+        expect(database.putHistory).toHaveBeenCalledWith(secondEvents);
+        expect(state.history.get("c1")).toMatchObject({ oldestSeq: 198, newestSeq: 202, hasMoreNewer: true });
+        expect(client.getSnapshot()).toMatchObject({ events: secondEvents, pendingScrollSeq: 200 });
+    });
+
     it("keeps a live event out of a historical window while retaining its unread update", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
@@ -625,6 +708,56 @@ describe("MatronJournalClient state handling", () => {
             1,
         );
         expect(state.readHighWater.has("c1")).toBe(false);
+    });
+
+    it("hides live activity, streams, and pending outbox rows until jumping to latest", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const historicalEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const tailEvents = [textEvent("c1", 198), textEvent("c1", 199), textEvent("c1", 200)];
+        const pending: PendingMessage = {
+            localId: "pending-now",
+            convoId: "c1",
+            body: "queued at the tail",
+            createdAt: 201_000,
+        };
+        const database = historyWindowDatabase();
+        database.outbox = jest.fn().mockResolvedValue([pending]);
+        const messages = jest
+            .fn()
+            .mockResolvedValueOnce({ events: historicalEvents })
+            .mockResolvedValueOnce({ events: tailEvents });
+        state.state = signedInState(client, "c2");
+        state.database = database;
+        state.api = { messages };
+        state.activities.set("c1", { state: "thinking", detail: "before selection" });
+        state.textStreams.set("c1", { response: "stream before selection" });
+
+        await client.selectConversationAtSeq("c1", 100);
+        state.handleEphemeral({
+            kind: "ephemeral",
+            convo_id: "c1",
+            message_ref: "response",
+            replace_text: "stream at the tail",
+            activity: { state: "tool", detail: "tests" },
+        });
+
+        expect(client.getSnapshot()).toMatchObject({
+            activity: undefined,
+            textStreams: {},
+            toolStreams: {},
+            pendingMessages: [],
+            viewingHistoryWindow: true,
+        });
+
+        await client.jumpToLatest();
+
+        expect(client.getSnapshot()).toMatchObject({
+            activity: { state: "tool", detail: "tests" },
+            textStreams: { response: "stream at the tail" },
+            pendingMessages: [pending],
+            viewingHistoryWindow: false,
+        });
     });
 
     it("jumps back to the tail and resumes appending live events", async () => {

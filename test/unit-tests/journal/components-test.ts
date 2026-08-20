@@ -1334,6 +1334,46 @@ describe("message search deep links", () => {
         await act(async () => internals(client).patch({ viewingHistoryWindow: false }));
         expect(rendered.container.querySelector(".mj_JumpToLatest")).toBeNull();
     });
+
+    it("hides tail-only rows and blocks composer send until Jump to latest", async () => {
+        const pending: PendingMessage = {
+            localId: "pending-tail",
+            convoId: "c1",
+            body: "queued at the tail",
+            createdAt: 10,
+        };
+        const client = signedInClient({ pendingMessages: [pending], events: [textEvent(1, "old history")] });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            viewingHistoryWindow: true,
+            textStreams: { response: "streaming at the tail" },
+            activity: { state: "thinking", detail: "Planning" },
+        };
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        jest.spyOn(client, "jumpToLatest").mockImplementation(async () => {
+            internals(client).patch({ viewingHistoryWindow: false });
+        });
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_SendingLabel")).toBeNull();
+        expect(rendered.container.querySelector(".mj_Cursor")).toBeNull();
+        expect(rendered.container.querySelector(".mj_Activity")).toBeNull();
+        await typeInComposer(rendered.container, "reply from the tail");
+        const sendButton = rendered.container.querySelector<HTMLButtonElement>(".mx_MessageComposer_sendMessage")!;
+        expect(sendButton.disabled).toBe(true);
+        expect(rendered.container.querySelector(".mj_ComposerHint")?.textContent).toContain("Jump to latest to send");
+        await pressEnter(rendered.container);
+        expect(sendMessage).not.toHaveBeenCalled();
+
+        await act(async () => rendered?.container.querySelector<HTMLButtonElement>(".mj_JumpToLatest")?.click());
+
+        expect(rendered.container.querySelector(".mj_SendingLabel")).not.toBeNull();
+        expect(rendered.container.querySelector(".mj_Cursor")).not.toBeNull();
+        expect(rendered.container.querySelector(".mj_Activity")?.textContent).toContain("Thinking");
+        expect(sendButton.disabled).toBe(false);
+        await pressEnter(rendered.container);
+        expect(sendMessage).toHaveBeenCalledWith("reply from the tail", "c1");
+    });
 });
 
 async function rightClick(node: Element): Promise<void> {

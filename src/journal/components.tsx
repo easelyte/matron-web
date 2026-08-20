@@ -4215,13 +4215,15 @@ function Timeline({
         () =>
             [
                 ...visibleEvents.map((event) => ({ kind: "event" as const, timestamp: event.ts, event })),
-                ...state.pendingMessages.map((message) => ({
-                    kind: "pending" as const,
-                    timestamp: message.createdAt,
-                    message,
-                })),
+                ...(state.viewingHistoryWindow
+                    ? []
+                    : state.pendingMessages.map((message) => ({
+                          kind: "pending" as const,
+                          timestamp: message.createdAt,
+                          message,
+                      }))),
             ].sort((left, right) => left.timestamp - right.timestamp),
-        [visibleEvents, state.pendingMessages],
+        [visibleEvents, state.pendingMessages, state.viewingHistoryWindow],
     );
     const answeredPromptReplies = useMemo(() => {
         const replies = new Map<string, { choice?: string }>();
@@ -4478,7 +4480,7 @@ function Timeline({
                                 </React.Fragment>
                             );
                         })}
-                        {Object.values(state.textStreams).map((text, index) => (
+                        {Object.values(state.viewingHistoryWindow ? {} : state.textStreams).map((text, index) => (
                             <li
                                 className="mx_EventTile mx_EventTile_lastInSection"
                                 key={`text-stream-${index}`}
@@ -4499,10 +4501,10 @@ function Timeline({
                                 </div>
                             </li>
                         ))}
-                        {Object.values(state.toolStreams).map((stream) => (
+                        {Object.values(state.viewingHistoryWindow ? {} : state.toolStreams).map((stream) => (
                             <ToolStream key={stream.messageRef} stream={stream} />
                         ))}
-                        {state.activity && state.activity.state !== "idle" && (
+                        {!state.viewingHistoryWindow && state.activity && state.activity.state !== "idle" && (
                             <li className="mx_WhoIsTypingTile mj_Activity">
                                 <span />
                                 <span />
@@ -5218,7 +5220,7 @@ function Composer({
     const send = async (): Promise<void> => {
         const cid = convoIdRef.current;
         const submitted = body;
-        if (!cid || !submitted.trim() || sendingConvos.current.has(cid)) return;
+        if (state.viewingHistoryWindow || !cid || !submitted.trim() || sendingConvos.current.has(cid)) return;
         const submittedRevision = draftRevisions.current.get(cid) ?? 0;
         sendingConvos.current.add(cid);
         try {
@@ -5339,8 +5341,9 @@ function Composer({
                             before the textarea; mic + send stay on the right. */}
                         <button
                             className="mx_MessageComposer_button"
-                            title="Attach a file"
+                            title={state.viewingHistoryWindow ? "Jump to latest to send" : "Attach a file"}
                             aria-label="Attach a file"
+                            disabled={state.viewingHistoryWindow}
                             onClick={() => fileInput.current?.click()}
                         >
                             <AttachmentIcon />
@@ -5449,11 +5452,13 @@ function Composer({
                                 ref={micButtonRef}
                                 className="mx_MessageComposer_button"
                                 title={
-                                    voiceSupported
-                                        ? voiceState === "requesting"
-                                            ? "Requesting microphone access…"
-                                            : "Record voice message"
-                                        : "Voice recording isn't supported in this browser."
+                                    state.viewingHistoryWindow
+                                        ? "Jump to latest to send"
+                                        : voiceSupported
+                                          ? voiceState === "requesting"
+                                              ? "Requesting microphone access…"
+                                              : "Record voice message"
+                                          : "Voice recording isn't supported in this browser."
                                 }
                                 aria-label={
                                     voiceState === "requesting"
@@ -5461,8 +5466,10 @@ function Composer({
                                         : "Record voice message"
                                 }
                                 aria-busy={voiceState === "requesting"}
-                                aria-disabled={!voiceSupported || voiceState === "requesting"}
-                                disabled={!voiceSupported || voiceState === "requesting"}
+                                aria-disabled={
+                                    state.viewingHistoryWindow || !voiceSupported || voiceState === "requesting"
+                                }
+                                disabled={state.viewingHistoryWindow || !voiceSupported || voiceState === "requesting"}
                                 onClick={acquireVoice}
                             >
                                 {voiceState === "requesting" ? (
@@ -5475,8 +5482,9 @@ function Composer({
                                 className="mx_MessageComposer_sendMessage"
                                 type="button"
                                 onClick={() => void send()}
-                                disabled={!body.trim()}
+                                disabled={state.viewingHistoryWindow || !body.trim()}
                                 aria-label="Send message"
+                                title={state.viewingHistoryWindow ? "Jump to latest to send" : undefined}
                             >
                                 <SendIcon />
                             </button>
@@ -5484,7 +5492,9 @@ function Composer({
                     </div>
                 )}
                 <div id="mj-composer-hint" className="mj_ComposerHint">
-                    <span className="mj_ComposerHint_keys">/ commands · shift+enter for newline</span>
+                    <span className="mj_ComposerHint_keys">
+                        {state.viewingHistoryWindow ? "Jump to latest to send" : "/ commands · shift+enter for newline"}
+                    </span>
                     {ctxHintPct !== null && (
                         <span className="mj_ComposerHint_live" aria-hidden="true">
                             ctx {ctxHintPct}%

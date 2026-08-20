@@ -313,6 +313,9 @@ export class MatronJournalClient {
     private readonly uploadConvos = new Map<string, string>();
     private readonly issuedRefreshEpochs = new Map<string, number>();
     private readonly appliedRefreshEpochs = new Map<string, number>();
+    // Every explicit conversation selection supersedes all earlier selection work, including a
+    // deep link to another sequence in the same conversation (where an id-only guard is insufficient).
+    private selectionEpoch = 0;
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
@@ -589,6 +592,7 @@ export class MatronJournalClient {
         conversationId: string,
         opts?: { clearUnread?: boolean; fromRpcCreate?: boolean; suppressNotFound?: boolean },
     ): Promise<void> {
+        const selectionEpoch = ++this.selectionEpoch;
         const existingHistory = this.history.get(conversationId);
         const returningFromHistoryWindow = existingHistory?.hasMoreNewer === true;
         if (returningFromHistoryWindow) {
@@ -601,20 +605,32 @@ export class MatronJournalClient {
             });
         }
         if (!this.beginConversationSelection(conversationId, opts, false)) return;
-        if (!returningFromHistoryWindow) await this.refreshSelectedConversation(conversationId);
-        if (this.state.selectedConversationId !== conversationId) return;
+        if (!returningFromHistoryWindow) {
+            await this.refreshSelectedConversation(conversationId, this.database, this.sessionGen, selectionEpoch);
+            if (!this.isCurrentSelection(conversationId, selectionEpoch)) return;
+        }
+        if (!this.isCurrentSelection(conversationId, selectionEpoch)) return;
         this.announceConversationViewing(conversationId);
 
         if (!this.history.get(conversationId)?.initialized) {
-            await this.loadOlderHistory({ suppressNotFound: opts?.fromRpcCreate || opts?.suppressNotFound });
+            await this.loadOlderHistory({
+                suppressNotFound: opts?.fromRpcCreate || opts?.suppressNotFound,
+                selectionEpoch,
+            });
         }
     }
 
     public async selectConversationAtSeq(conversationId: string, seq: number): Promise<void> {
+        const selectionEpoch = ++this.selectionEpoch;
         const database = this.database;
         const api = this.api;
         const gen = this.sessionGen;
         if (!database || !api || !this.state.session) return;
+        const ownsSelection = (): boolean =>
+            this.isCurrentSelection(conversationId, selectionEpoch) &&
+            this.sessionGen === gen &&
+            this.database === database &&
+            this.api === api;
 
         this.history.set(conversationId, {
             initialized: true,
@@ -623,13 +639,17 @@ export class MatronJournalClient {
             hasMore: true,
             hasMoreNewer: true,
         });
-        if (!this.beginConversationSelection(conversationId, undefined, true)) return;
-        this.announceConversationViewing(conversationId);
+        // A historical window does not prove that the unread tail was seen. Preserve both the
+        // local unread override and the durable read position until Jump to latest.
+        if (!this.beginConversationSelection(conversationId, { clearUnread: false }, true)) return;
 
         try {
             const response = await api.messages(conversationId, undefined, HISTORY_PAGE_SIZE, seq);
+            if (!ownsSelection()) return;
             await database.putHistory(response.events);
+            if (!ownsSelection()) return;
             await this.reconcilePersistedOwnMessages(database);
+            if (!ownsSelection()) return;
             const oldestSeq = response.events.reduce<number | undefined>(
                 (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
                 undefined,
@@ -645,32 +665,19 @@ export class MatronJournalClient {
                 hasMore: response.events.length === HISTORY_PAGE_SIZE && oldestSeq !== undefined && oldestSeq > 1,
                 hasMoreNewer: true,
             });
-            if (
-                this.sessionGen !== gen ||
-                this.database !== database ||
-                this.api !== api ||
-                this.state.selectedConversationId !== conversationId
-            ) {
-                return;
-            }
+            if (!ownsSelection()) return;
             this.patch({
                 viewingHistoryWindow: true,
                 hasOlderHistory: this.history.get(conversationId)?.hasMore ?? false,
             });
-            await this.refreshSelectedConversation(conversationId, database, gen);
-            if (
-                this.sessionGen !== gen ||
-                this.database !== database ||
-                this.state.selectedConversationId !== conversationId
-            ) {
-                return;
-            }
+            await this.refreshSelectedConversation(conversationId, database, gen, selectionEpoch);
+            if (!ownsSelection()) return;
             // Publish the target only after the matching rows are in state, so the view cannot
             // consume it during the intermediate empty-timeline render.
             this.patch({ pendingScrollSeq: seq });
             this.clearHistoryError();
         } catch (error) {
-            if (this.sessionGen !== gen || this.state.selectedConversationId !== conversationId) return;
+            if (!ownsSelection()) return;
             this.historyError = error instanceof Error ? error.message : "Could not load message history";
             this.patch({ connectionError: this.historyError });
         }
@@ -708,12 +715,20 @@ export class MatronJournalClient {
             hasOlderHistory: this.history.get(conversationId)?.hasMore ?? true,
             pendingScrollSeq: undefined,
             viewingHistoryWindow,
-            activity: this.activities.get(conversationId),
+            activity: viewingHistoryWindow ? undefined : this.activities.get(conversationId),
             sessionStatus: this.statuses.get(conversationId),
-            textStreams: { ...(this.textStreams.get(conversationId) ?? {}) },
-            toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
+            textStreams: viewingHistoryWindow ? {} : { ...(this.textStreams.get(conversationId) ?? {}) },
+            toolStreams: viewingHistoryWindow ? {} : { ...(this.toolStreams.get(conversationId) ?? {}) },
         });
         return true;
+    }
+
+    private isCurrentSelection(conversationId: string, selectionEpoch: number): boolean {
+        return this.selectionEpoch === selectionEpoch && this.state.selectedConversationId === conversationId;
+    }
+
+    private isViewingHistoricalWindow(conversationId: string): boolean {
+        return this.history.get(conversationId)?.hasMoreNewer === true;
     }
 
     private announceConversationViewing(conversationId: string): void {
@@ -811,9 +826,18 @@ export class MatronJournalClient {
         });
     }
 
-    public async loadOlderHistory(opts?: { suppressNotFound?: boolean }): Promise<void> {
+    public async loadOlderHistory(opts?: { suppressNotFound?: boolean; selectionEpoch?: number }): Promise<void> {
         const conversationId = this.state.selectedConversationId;
         if (!conversationId || !this.database || !this.api || this.state.loadingHistory) return;
+        const database = this.database;
+        const api = this.api;
+        const gen = this.sessionGen;
+        const ownsLoad = (): boolean =>
+            this.sessionGen === gen &&
+            this.database === database &&
+            this.api === api &&
+            this.state.selectedConversationId === conversationId &&
+            (opts?.selectionEpoch === undefined || this.isCurrentSelection(conversationId, opts.selectionEpoch));
         const history = this.history.get(conversationId) ?? {
             initialized: false,
             hasMore: true,
@@ -823,13 +847,16 @@ export class MatronJournalClient {
 
         this.patch({ loadingHistory: true });
         try {
-            const response = await this.api.messages(
+            const response = await api.messages(
                 conversationId,
                 history.initialized ? history.oldestSeq : undefined,
                 HISTORY_PAGE_SIZE,
             );
-            await this.database.putHistory(response.events);
-            await this.reconcilePersistedOwnMessages(this.database);
+            if (!ownsLoad()) return;
+            await database.putHistory(response.events);
+            if (!ownsLoad()) return;
+            await this.reconcilePersistedOwnMessages(database);
+            if (!ownsLoad()) return;
             const minimum = response.events.reduce<number | undefined>(
                 (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
                 history.oldestSeq,
@@ -848,10 +875,13 @@ export class MatronJournalClient {
                 hasMore: emptyInitialPageWithKnownHistory || response.events.length === HISTORY_PAGE_SIZE,
                 hasMoreNewer: history.hasMoreNewer,
             });
-            if (this.state.selectedConversationId === conversationId)
-                await this.refreshSelectedConversation(conversationId);
+            if (this.state.selectedConversationId === conversationId) {
+                await this.refreshSelectedConversation(conversationId, database, gen, opts?.selectionEpoch);
+                if (!ownsLoad()) return;
+            }
             this.clearHistoryError();
         } catch (error) {
+            if (!ownsLoad()) return;
             if (
                 opts?.suppressNotFound &&
                 error instanceof JournalApiError &&
@@ -869,7 +899,7 @@ export class MatronJournalClient {
             this.historyError = error instanceof Error ? error.message : "Could not load message history";
             this.patch({ connectionError: this.historyError });
         } finally {
-            if (this.state.selectedConversationId === conversationId) {
+            if (ownsLoad()) {
                 this.patch({
                     loadingHistory: false,
                     hasOlderHistory: this.history.get(conversationId)?.hasMore ?? false,
@@ -883,6 +913,8 @@ export class MatronJournalClient {
         const body = bodyInput.trim();
         const conversationId = targetConvoId ?? this.state.selectedConversationId;
         if (!body || !conversationId || !this.database) return false;
+        if (this.state.selectedConversationId === conversationId && this.isViewingHistoricalWindow(conversationId))
+            return false;
         if (this.isChildConvo(conversationId)) return false;
         const db = this.database;
         const gen = this.sessionGen;
@@ -978,7 +1010,8 @@ export class MatronJournalClient {
             } catch {
                 if (
                     this.ownsAttachment(owner, message.localId) &&
-                    this.state.selectedConversationId === message.convoId
+                    this.state.selectedConversationId === message.convoId &&
+                    !this.isViewingHistoricalWindow(message.convoId)
                 ) {
                     const pendingMessages = this.state.pendingMessages.filter(
                         (pending) => pending.localId !== message.localId,
@@ -1005,6 +1038,7 @@ export class MatronJournalClient {
         const api = this.api;
         const db = this.database;
         if (!api || !db) return "skipped";
+        if (this.state.selectedConversationId === convoId && this.isViewingHistoricalWindow(convoId)) return "skipped";
         if (this.isChildConvo(convoId)) return "skipped";
         const owner = { gen, api, db };
         const message = this.buildPendingAttachment(file, convoId, caption);
@@ -1249,6 +1283,7 @@ export class MatronJournalClient {
         }
         const convoId = this.state.selectedConversationId;
         if (!convoId) return;
+        if (this.isViewingHistoricalWindow(convoId)) return;
         if (this.isChildConvo(convoId)) return;
         this.patch({
             stagedUploads: {
@@ -2050,11 +2085,12 @@ export class MatronJournalClient {
     }
 
     private refreshEphemeralState(conversationId: string): void {
+        const viewingHistoricalWindow = this.isViewingHistoricalWindow(conversationId);
         this.patch({
-            activity: this.activities.get(conversationId),
+            activity: viewingHistoricalWindow ? undefined : this.activities.get(conversationId),
             sessionStatus: this.statuses.get(conversationId),
-            textStreams: { ...(this.textStreams.get(conversationId) ?? {}) },
-            toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
+            textStreams: viewingHistoricalWindow ? {} : { ...(this.textStreams.get(conversationId) ?? {}) },
+            toolStreams: viewingHistoricalWindow ? {} : { ...(this.toolStreams.get(conversationId) ?? {}) },
         });
     }
 
@@ -2067,6 +2103,7 @@ export class MatronJournalClient {
         expectedId: string,
         db = this.database,
         gen = this.sessionGen,
+        selectionEpoch?: number,
     ): Promise<void> {
         if (!db) return;
         const refreshEpoch = (this.issuedRefreshEpochs.get(expectedId) ?? 0) + 1;
@@ -2076,7 +2113,8 @@ export class MatronJournalClient {
             refreshEpoch < (this.appliedRefreshEpochs.get(expectedId) ?? 0) ||
             this.sessionGen !== gen ||
             this.database !== db ||
-            this.state.selectedConversationId !== expectedId
+            this.state.selectedConversationId !== expectedId ||
+            (selectionEpoch !== undefined && !this.isCurrentSelection(expectedId, selectionEpoch))
         )
             return;
         this.appliedRefreshEpochs.set(expectedId, refreshEpoch);
@@ -2086,9 +2124,12 @@ export class MatronJournalClient {
                 (history?.oldestSeq === undefined || event.seq >= history.oldestSeq) &&
                 (history?.newestSeq === undefined || event.seq <= history.newestSeq),
         );
-        const visiblePending = new Map(pendingMessages.map((message) => [message.localId, message]));
-        for (const message of this.transientAttachmentErrors.values()) {
-            if (message.convoId === expectedId) visiblePending.set(message.localId, message);
+        const visiblePending = new Map<string, PendingMessage>();
+        if (!history?.hasMoreNewer) {
+            for (const message of pendingMessages) visiblePending.set(message.localId, message);
+            for (const message of this.transientAttachmentErrors.values()) {
+                if (message.convoId === expectedId) visiblePending.set(message.localId, message);
+            }
         }
         this.patch({
             events,
@@ -2117,7 +2158,10 @@ export class MatronJournalClient {
                 canRetry: this.pendingFiles.has(message.localId) || Boolean(message.blobRef),
             };
             this.transientAttachmentErrors.set(message.localId, storageError);
-            if (this.state.selectedConversationId === message.convoId) {
+            if (
+                this.state.selectedConversationId === message.convoId &&
+                !this.isViewingHistoricalWindow(message.convoId)
+            ) {
                 const pendingMessages = this.state.pendingMessages.filter(
                     (pending) => pending.localId !== message.localId,
                 );
