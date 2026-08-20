@@ -1934,7 +1934,9 @@ export class MatronJournalClient {
         if (this.state.selectedConversationId) {
             connection.send({ op: "viewing", convo_id: this.state.selectedConversationId });
             const conversation = this.selectedConversation();
-            if (conversation?.unread_count) this.scheduleRead(conversation.id, conversation.last_seq, 0);
+            if (conversation?.unread_count && !this.isViewingHistoricalWindow(conversation.id)) {
+                this.scheduleRead(conversation.id, conversation.last_seq, 0);
+            }
         }
         for (const [conversationId, upToSeq] of this.readHighWater) {
             this.scheduleRead(conversationId, upToSeq, 0);

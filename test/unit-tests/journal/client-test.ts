@@ -597,7 +597,7 @@ describe("MatronJournalClient state handling", () => {
         });
     });
 
-    it("preserves unread through a historical deep link and marks it read only after jumping to latest", async () => {
+    it("preserves unread through a historical deep link and reconnect until jumping to latest", async () => {
         jest.useFakeTimers();
         const client = new MatronJournalClient();
         const state = internals(client);
@@ -639,6 +639,17 @@ describe("MatronJournalClient state handling", () => {
         expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
         expect(state.readHighWater.has("c1")).toBe(false);
         expect(database.markLocallyRead).not.toHaveBeenCalled();
+        expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "read_marker", convo_id: "c1" }));
+
+        await state.handleReady();
+        await jest.runAllTimersAsync();
+
+        expect(state.readHighWater.has("c1")).toBe(false);
+        expect(database.markLocallyRead).not.toHaveBeenCalled();
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")).toMatchObject({
+            unread_count: 3,
+            read_up_to_seq: 3,
+        });
         expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "read_marker", convo_id: "c1" }));
 
         await client.jumpToLatest();
