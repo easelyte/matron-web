@@ -830,7 +830,7 @@ export function MessageSearchResults({
     query: string;
     search: MessageSearchState | undefined;
     now: number;
-    onSelect: (conversationId: string) => void;
+    onSelect: (conversationId: string, seq: number) => void;
 }): React.ReactElement | null {
     // Only surface the section for a live query. `search` can lag the box by a debounce interval
     // or a stale query, so gate on the current box being non-empty AND the results being for it.
@@ -865,7 +865,7 @@ export function MessageSearchResults({
                             <button
                                 type="button"
                                 className="mj_SearchHit"
-                                onClick={() => onSelect(hit.convo_id)}
+                                onClick={() => onSelect(hit.convo_id, hit.seq)}
                                 aria-label={`Open conversation ${hit.title || "Untitled"}`}
                             >
                                 <span className="mj_SearchHit_top">
@@ -1496,7 +1496,9 @@ function ConversationList({
                                         query={query}
                                         search={state.messageSearch}
                                         now={renderNow}
-                                        onSelect={(conversationId) => void client.selectConversation(conversationId)}
+                                        onSelect={(conversationId, seq) =>
+                                            void client.selectConversationAtSeq(conversationId, seq)
+                                        }
                                     />
                                 </div>
                             </nav>
@@ -3910,6 +3912,7 @@ function EventRow({
     resolvedAction,
     continuation = false,
     lastInSection = true,
+    searchHighlighted = false,
     rowHandlers,
 }: {
     client: MatronJournalClient;
@@ -3920,6 +3923,7 @@ function EventRow({
     resolvedAction: (itemId: string) => "send" | "cancel" | "expired" | undefined;
     continuation?: boolean;
     lastInSection?: boolean;
+    searchHighlighted?: boolean;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
     const peer = event.type === "peer_message";
@@ -3929,7 +3933,7 @@ function EventRow({
     return (
         <li
             ref={liRef}
-            className={`mx_EventTile${peer ? " mx_EventTile_peer" : ""}${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}`}
+            className={`mx_EventTile${peer ? " mx_EventTile_peer" : ""}${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}${searchHighlighted ? " mj_EventRow_searchHighlighted" : ""}`}
             style={
                 peer
                     ? {
@@ -4144,8 +4148,13 @@ function Timeline({
 }): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
     const pendingScrollFrame = useRef<number | undefined>(undefined);
+    const searchHighlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const selectedConversationId = useRef(state.selectedConversationId);
     const [isFollowingTail, setFollow] = useState(true);
+    const [highlightedSearchTarget, setHighlightedSearchTarget] = useState<{
+        conversationId?: string;
+        seq: number;
+    }>();
     const [sourceEvent, setSourceEvent] = useState<JournalEvent>();
     const menu = useRowContextMenu<JournalEvent>();
     const sourceOpenerRef = useRef<HTMLElement | null>(null);
@@ -4301,6 +4310,13 @@ function Timeline({
         return cancelPendingScrollFrame;
     }, [state.selectedConversationId, cancelPendingScrollFrame]);
 
+    useEffect(
+        () => () => {
+            if (searchHighlightTimer.current !== undefined) clearTimeout(searchHighlightTimer.current);
+        },
+        [],
+    );
+
     useEffect(() => {
         cancelPendingScrollFrame();
         historyScrollAnchor.current = undefined;
@@ -4347,6 +4363,24 @@ function Timeline({
         state.loadingHistory,
         isFollowingTail,
     ]);
+
+    useLayoutEffect(() => {
+        const targetSeq = state.pendingScrollSeq;
+        if (targetSeq === undefined) return;
+        const target = [...(scrollRef.current?.querySelectorAll<HTMLElement>("[data-event-id]") ?? [])].find(
+            (row) => row.dataset.eventId === String(targetSeq),
+        );
+        if (target) {
+            target.scrollIntoView({ block: "nearest" });
+            setHighlightedSearchTarget({ conversationId: state.selectedConversationId, seq: targetSeq });
+            if (searchHighlightTimer.current !== undefined) clearTimeout(searchHighlightTimer.current);
+            searchHighlightTimer.current = setTimeout(() => {
+                setHighlightedSearchTarget(undefined);
+                searchHighlightTimer.current = undefined;
+            }, 2_000);
+        }
+        client.clearPendingScrollSeq(targetSeq);
+    }, [client, state.pendingScrollSeq, state.selectedConversationId]);
 
     const loadEarlierMessages = (): void => {
         const node = scrollRef.current;
@@ -4408,6 +4442,11 @@ function Timeline({
                                             }
                                             lastInSection={
                                                 next?.kind !== "event" || next.event.sender !== item.event.sender
+                                            }
+                                            searchHighlighted={
+                                                highlightedSearchTarget?.conversationId ===
+                                                    state.selectedConversationId &&
+                                                highlightedSearchTarget?.seq === item.event.seq
                                             }
                                             rowHandlers={menu.rowHandlers}
                                         />
@@ -4486,6 +4525,11 @@ function Timeline({
                     }}
                 >
                     ↓
+                </button>
+            )}
+            {state.viewingHistoryWindow && (
+                <button className="mj_JumpToLatest" type="button" onClick={() => void client.jumpToLatest()}>
+                    Jump to latest ↓
                 </button>
             )}
             {menu.state && (

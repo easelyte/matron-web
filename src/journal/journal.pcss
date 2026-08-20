@@ -1283,6 +1283,35 @@ textarea {
     outline-offset: 2px;
 }
 
+.mj_JumpToLatest {
+    position: absolute;
+    z-index: 2;
+    left: 50%;
+    bottom: var(--cpd-space-4x);
+    transform: translateX(-50%);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: 999px;
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: 0 2px 8px rgb(15 23 42 / 18%);
+    color: var(--cpd-color-text-action-accent);
+    cursor: pointer;
+    font: var(--cpd-font-body-xs-semibold);
+}
+
+.mj_JumpToLatest:hover {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_JumpToLatest:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 2px;
+}
+
+.mj_EventRow_searchHighlighted {
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
 .mx_EventTile[data-layout="bubble"] .mx_EventTile_line > a {
     color: inherit;
     text-decoration: none;
