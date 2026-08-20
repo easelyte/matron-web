@@ -2984,18 +2984,13 @@ li.mj_AttachmentChip_error {
     overflow: hidden;
 }
 
-/* Continuation (consecutive peer messages from the same session): drop the header,
-   tighten the top so the run reads as one voice. Keyed off the timeline's existing
-   .mx_EventTile_continuation wrapper (components.tsx) so no extra prop threading. */
-.mx_EventTile_continuation .mj_PeerMessage {
-    margin-top: 1px;
-    border-top-left-radius: 4px;
-    border-top-right-radius: 4px;
-}
-
-.mx_EventTile_continuation .mj_PeerMessage_head {
-    display: none;
-}
+/* NOTE: peer-message continuation grouping is intentionally NOT implemented here. The
+   timeline's .mx_EventTile_continuation wrapper keys on event.sender only, which for a
+   peer message is the sending DEVICE (agent:<device>), not the source session
+   (payload.from_convo). Hiding the header off that predicate would drop a different peer
+   session's name and Priority badge (false attribution / muted priority). Correct
+   from_convo-aware peer grouping is deferred to the priority-producer follow-up.
+*/
 
 .mj_PeerMessage:hover {
     border-left-color: var(--cpd-color-border-interactive-primary);
@@ -3042,34 +3037,9 @@ li.mj_AttachmentChip_error {
     color: #06231f;
 }
 
-/* Non-stealing jump chip: shown just above the composer when a priority peer message
-   arrives while the timeline is scrolled up. Clicking scrolls to it; focus/text untouched. */
-.mj_PeerJump {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    border: 1px solid rgb(13 148 136 / 30%);
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-canvas-default);
-    box-shadow: var(--cpd-shadow-md);
-    color: var(--cpd-color-text-action-accent);
-    cursor: pointer;
-    padding: 7px 12px;
-    font-size: 12px;
-    font-weight: 500;
-}
-
-.mj_PeerJump_dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--mj-priority-accent);
-}
-
-.mj_PeerJump svg {
-    width: 13px;
-    height: 13px;
-}
+/* NOTE: the priority peer jump chip (.mj_PeerJump) is deferred to the priority-producer
+   follow-up — it needs live scroll-position + priority-arrival wiring in the timeline to be
+   reachable, so it ships there (wired + tested), not as dead style here. */
 
 .mj_PromptHeader {
     display: flex;

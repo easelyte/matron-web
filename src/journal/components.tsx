@@ -3246,9 +3246,16 @@ function SpawnOutcomeRow({ client, event }: { client: MatronJournalClient; event
     // Surface C (design 2026-08): read as a STRUCTURAL event, not a normal message — a coloured
     // kind-rail + an uppercase "Subagent" eyebrow + the child's worker mark when known. The
     // emoji-prefixed snippet stays as the accessible row text (byte-exact with the server).
-    const workerKind = asString(event.payload.agent_kind);
-    const workerMark = markForKind(workerKind || null, "mj_SpawnOutcomeRow_kindMark");
-    const eyebrow = workerKind === "claude" || workerKind === "codex" ? `Subagent · ${workerKind}` : "Subagent";
+    // Worker kind is derived from the CHILD conversation (where agent_kind actually lands via
+    // convo_meta), not from the spawn_outcome payload — that contract carries no agent_kind, so
+    // reading it there would render no mark for every real event.
+    const childId = asString(event.payload.child_convo_id) || roomId;
+    const childConversation = childId
+        ? client.getSnapshot().conversations.find((conversation) => conversation.id === childId)
+        : undefined;
+    const childKind = childConversation ? workerKind(childConversation) : null;
+    const workerMark = markForKind(childKind, "mj_SpawnOutcomeRow_kindMark");
+    const eyebrow = childKind === "claude" || childKind === "codex" ? `Subagent · ${childKind}` : "Subagent";
     return (
         <div className={`mj_SpawnOutcomeRow mj_SpawnOutcomeRow_${kind}`}>
             <span className="mj_SpawnOutcomeRow_rail" aria-hidden />
@@ -3743,8 +3750,9 @@ function PeerMessage({ event }: { event: JournalEvent }): React.ReactElement {
 
     // Surface B (design 2026-08): a durable left-edged card — worker mark, session name, and a
     // muted `peer` tag — reads as "another AI is speaking into your thread" without masquerading
-    // as your own (right, teal) or the primary agent (left, no card). Continuation grouping is
-    // handled by the timeline's .mx_EventTile_continuation wrapper (journal.pcss).
+    // as your own (right, teal) or the primary agent (left, no card). The full header (name +
+    // priority badge) always renders; from_convo-aware continuation grouping is a follow-up (see
+    // journal.pcss note — the timeline's sender-only continuation predicate would misattribute).
     return (
         <div
             className={`mj_PeerMessage${priority ? " mj_PeerMessage_priority" : ""}`}
@@ -3768,23 +3776,6 @@ function PeerMessage({ event }: { event: JournalEvent }): React.ReactElement {
     );
 }
 
-/**
- * Surface B — the non-stealing jump chip (loop #688). Shown just above the composer when a
- * priority peer message arrives while the timeline is scrolled up; clicking scrolls to it.
- * It never steals focus, opens a modal, or touches the composer text — a louder marker in
- * the timeline, nothing more. Wired to a live "priority arrived while scrolled up" signal
- * once the priority feed exists; the visual fixture exercises it today.
- */
-export function PeerJump({ count, onJump }: { count: number; onJump: () => void }): React.ReactElement {
-    const label = count === 1 ? "1 priority message" : `${count} priority messages`;
-    return (
-        <button type="button" className="mj_PeerJump" onClick={onJump}>
-            <span className="mj_PeerJump_dot" aria-hidden />
-            {label}
-            <ChevronDownIcon aria-hidden />
-        </button>
-    );
-}
 const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
 
 export function EventContent({
@@ -5926,8 +5917,11 @@ export type ConversationSummary = {
     bullets: string[];
     /** "ready" shows the list; "updating" dims it under a refresh shimmer. */
     state?: "ready" | "updating";
-    /** Server-owned "updated Nm ago" label; the precision is the server's call. */
-    updatedLabel?: string;
+    /** Epoch-ms of the last server refresh. The relative label is derived client-side
+        (repo wire convention: timestamps are epoch-ms, relative text is recomputed on the
+        client — a server-formatted "Nm ago" string would freeze when the feed does not
+        republish an unchanged summary every minute). */
+    updatedAtMs?: number;
 };
 
 /** Bullets longer than this clamp to 2 lines with an in-place Expand control. */
@@ -5964,7 +5958,11 @@ export function PinnedSummary({ summary }: { summary: ConversationSummary | null
                 <PinIcon className="mj_PinnedSummary_pin" aria-hidden />
                 <span className="mj_PinnedSummary_label">Summary</span>
                 <span className="mj_PinnedSummary_lead">{collapsed ? lead : ""}</span>
-                {summary.updatedLabel ? <span className="mj_PinnedSummary_meta">{summary.updatedLabel}</span> : null}
+                {summary.updatedAtMs !== undefined ? (
+                    <span className="mj_PinnedSummary_meta">
+                        updated {formatSampleAge(Date.now() - summary.updatedAtMs)}
+                    </span>
+                ) : null}
                 <ChevronDownIcon className="mj_PinnedSummary_chev" aria-hidden />
             </button>
             {!collapsed && (

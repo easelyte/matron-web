@@ -276,7 +276,8 @@ const events: JournalEvent[] = [
         },
     },
     {
-        // Same peer session speaking again → continuation (header dropped via the tile wrapper).
+        // Same peer session speaking again — each peer message keeps its own full header
+        // (from_convo-aware continuation grouping is a follow-up; see journal.pcss note).
         seq: 21,
         convo_id: "c1",
         ts: T + 840,
