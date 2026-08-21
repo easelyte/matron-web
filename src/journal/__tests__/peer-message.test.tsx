@@ -12,6 +12,7 @@ import { MatronJournalClient } from "../client";
 import { EventContent } from "../components";
 import { eventSnippet, type JournalEvent } from "../types";
 import fixture from "./peer_message.fixture.json";
+import priorityFixture from "./peer_message.priority.fixture.json";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -104,5 +105,27 @@ describe("peer_message fixture and rendering", () => {
         expect(mounted.container.querySelector(".mj_PeerMessage_body bdi")?.textContent).toBe("Deploy later now");
         expect(eventSnippet(event.type, event.payload)).toBe("Deploy later now");
         expect(mounted.container.textContent).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+    });
+
+    it("renders the priority variant from the canonical priority fixture (5-key payload)", async () => {
+        // Vendored byte-for-byte from the journal (producer-owned). The 5th payload key,
+        // priority:true, must drive the louder .mj_PeerMessage_priority marker + PRIORITY badge.
+        expect(Object.keys(priorityFixture.event.payload).sort()).toEqual([
+            "body",
+            "from_convo",
+            "from_kind",
+            "from_name",
+            "priority",
+        ]);
+        expect(priorityFixture.event.payload.priority).toBe(true);
+
+        const mounted = await mountEvent(priorityFixture.event as JournalEvent);
+        mountedEvents.push(mounted);
+
+        const peerMessage = mounted.container.querySelector(".mj_PeerMessage");
+        expect(peerMessage).not.toBeNull();
+        expect(peerMessage?.classList.contains("mj_PeerMessage_priority")).toBe(true);
+        expect(peerMessage?.querySelector(".mj_PeerMessage_priorityBadge")).not.toBeNull();
+        expect(peerMessage?.querySelector(".mj_PeerMessage_tag")).toBeNull();
     });
 });
