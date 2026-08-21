@@ -43,6 +43,7 @@ import {
     ClipboardIcon,
     CloseIcon,
     CodeBracketsIcon,
+    FolderIcon,
     CompactIcon,
     ComposeIcon,
     ArchiveFileIcon,
@@ -77,6 +78,7 @@ import {
     UnarchiveIcon,
     UploadTrayIcon,
 } from "./icons";
+import { FilesPane } from "./files/FilesPane";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
 import {
@@ -1340,6 +1342,18 @@ function ConversationList({
                                                 <MarkAllReadIcon />
                                             </button>
                                         )}
+                                        <button
+                                            className="mj_IconButton"
+                                            type="button"
+                                            aria-label="Files"
+                                            aria-pressed={state.filesView?.open ? true : undefined}
+                                            title="Browse files"
+                                            onClick={() =>
+                                                state.filesView?.open ? client.closeFilesView() : client.openFilesView()
+                                            }
+                                        >
+                                            <FolderIcon />
+                                        </button>
                                         <button
                                             className="mj_IconButton"
                                             type="button"
@@ -6142,8 +6156,12 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                 >
                     <div />
                 </div>
-                <div className={`mx_RoomView_wrapper ${state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}>
-                    {state.selectedConversationId ? (
+                <div
+                    className={`mx_RoomView_wrapper ${state.filesView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
+                >
+                    {state.filesView?.open ? (
+                        <FilesPane client={client} state={state} />
+                    ) : state.selectedConversationId ? (
                         <div
                             className={`mx_RoomView${dragActive ? " mj_RoomView_dragActive" : ""}`}
                             onDragOver={(event) => {

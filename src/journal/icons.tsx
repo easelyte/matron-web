@@ -394,6 +394,15 @@ export function ArchiveFileIcon(props: IconProps): React.ReactElement {
     );
 }
 
+// Directory affordance for the Files pane (§6): folder rows + the header entry-point button.
+export function FolderIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+        </Icon>
+    );
+}
+
 // Message-context-menu gutter icons (§10.7: every row carries an icon).
 export function ClipboardIcon(props: IconProps): React.ReactElement {
     // Plain "Copy" — a clipboard/overlapping-sheets glyph (design light-message-menu).

@@ -222,10 +222,96 @@ const SHOTS_SPEC = [
         clip: '[data-event-id="17"]',
         setup: async (p) => p.locator('[data-event-id="17"] .mj_File').scrollIntoViewIfNeeded(),
     },
+    // Files pane (Phase 1b): list, each preview kind, and the empty / error / truncated states.
+    // Every shot opens the pane via the __matron hook, then drives selection by clicking a row.
+    {
+        comp: "files",
+        state: "list",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesList");
+        },
+    },
+    {
+        comp: "files",
+        state: "preview-markdown",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "README.md" }).click();
+            await p.waitForSelector(".mj_FilesMarkdown");
+        },
+    },
+    {
+        comp: "files",
+        state: "preview-code",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "client.ts" }).click();
+            await p.waitForSelector(".mj_FilesCode_pre");
+        },
+    },
+    {
+        comp: "files",
+        state: "preview-image",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "diagram.png" }).click();
+            await p.waitForSelector(".mj_FilesImage img");
+        },
+    },
+    {
+        comp: "files",
+        state: "preview-generic",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "archive.zip" }).click();
+            await p.waitForSelector(".mj_FilesGeneric");
+        },
+    },
+    {
+        comp: "files",
+        state: "empty",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "empty-dir" }).click();
+            await p.waitForSelector(".mj_FilesPreview_status_empty");
+        },
+    },
+    {
+        comp: "files",
+        state: "error",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "denied-dir" }).click();
+            await p.waitForSelector(".mj_FilesPreview_status_error");
+        },
+    },
+    {
+        comp: "files",
+        state: "truncated",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "big-dir" }).click();
+            await p.waitForSelector(".mj_FilesPane_truncated");
+        },
+    },
 ];
 
 const THEMES = ["light", "dark"];
 const WIDTH = 1180;
+
+// VF_COMP=files (comma-separated) restricts the run to specific components — useful when iterating
+// on one surface, or when an unrelated shot is broken and would abort the whole run.
+const ONLY = process.env.VF_COMP ? new Set(process.env.VF_COMP.split(",")) : undefined;
+const ACTIVE_SPECS = ONLY ? SHOTS_SPEC.filter((spec) => ONLY.has(spec.comp)) : SHOTS_SPEC;
 
 async function run() {
     const { server, port } = await serve(DIST);
@@ -234,7 +320,7 @@ async function run() {
     const results = [];
 
     for (const theme of THEMES) {
-        for (const spec of SHOTS_SPEC) {
+        for (const spec of ACTIVE_SPECS) {
             const page = await browser.newPage({ viewport: { width: WIDTH, height: 840 }, deviceScaleFactor: 2 });
             await page.goto(`${base}?theme=${theme}`, { waitUntil: "networkidle" });
             await page.evaluate(() => document.fonts.ready);
@@ -329,7 +415,7 @@ async function montageComponent(comp, results) {
 
 const results = await run();
 const sheets = [];
-for (const comp of [...new Set(SHOTS_SPEC.map((s) => s.comp))]) {
+for (const comp of [...new Set(ACTIVE_SPECS.map((s) => s.comp))]) {
     sheets.push(await montageComponent(comp, results));
 }
 console.log("SHEETS", JSON.stringify(sheets));

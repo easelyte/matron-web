@@ -341,6 +341,18 @@ export interface ClientState {
     // Message-content search hits (Apple-parity "Messages" section). Undefined until the first
     // search of a session; cleared back to undefined when the search box empties.
     messageSearch?: MessageSearchState;
+    // Files pane (Matron File Explorer, Phase 1b). Undefined = pane closed (main region shows
+    // the conversation view / HomePage). Present = pane open; `path` is the last-browsed dir so
+    // reopening returns there. This is the SOLE app-global Files state — directory listing,
+    // selection, and preview are FilesPane-local (like the conversation timeline is RoomView-local).
+    // Mirrors how `selectedConversationId` is the only main-region discriminant today.
+    filesView?: FilesViewState;
+}
+
+export interface FilesViewState {
+    open: boolean;
+    /** Last-browsed absolute directory path; seeds FilesPane on (re)open. */
+    path?: string;
 }
 
 export function coerceParentId(x: unknown): string | null {

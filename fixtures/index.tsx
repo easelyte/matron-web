@@ -22,8 +22,10 @@ import "@fontsource/fira-code/latin-400.css";
 import "@fontsource/inter/latin-400.css";
 import "@fontsource/inter/latin-600.css";
 
+import { JournalApiError } from "../src/journal/api";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
+import type { FileEntry, FileListing, FileMeta, FilesApiLike } from "../src/journal/files/filesApi";
 import type { ClientState, Conversation, JournalEvent, Session } from "../src/journal/types";
 import "../src/journal/shell.pcss";
 import "../src/journal/journal.pcss";
@@ -367,9 +369,117 @@ const imageFile = (name: string): File =>
 (client as unknown as { mediaUrl: (id: string) => Promise<string> }).mediaUrl = async (id: string) =>
     id.startsWith("img") ? `data:image/png;base64,${PNG_8X8}` : `data:application/octet-stream;base64,`;
 
+// ── Files pane fixture (Phase 1b) ─────────────────────────────────────────────────────────────
+// A mock FilesApi returning canned data so the harness can shoot every Files state (list, each
+// preview kind, empty, error/denied, truncated) in both themes without a live backend. Mirrors
+// how mediaUrl is stubbed above.
+const FILES_ROOT = "/root/.openclaw/workspace";
+const MIME: Record<string, string> = {
+    md: "text/markdown",
+    ts: "text/plain",
+    png: "image/png",
+    pdf: "application/pdf",
+    txt: "text/plain",
+    css: "text/css",
+    zip: "application/zip",
+    mp3: "audio/mpeg",
+    mp4: "video/mp4",
+};
+const TEXT_EXT = new Set(["md", "ts", "txt", "css"]);
+const extOf = (name: string): string => name.slice(name.lastIndexOf(".") + 1).toLowerCase();
+const MINIMAL_PDF =
+    "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvUGFyZW50IDIgMCBSL01lZGlhQm94WzAgMCAyMDAgMjAwXT4+CmVuZG9iagp4cmVmCjAgNAowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCnRyYWlsZXIKPDwvU2l6ZSA0L1Jvb3QgMSAwIFI+PgpzdGFydHhyZWYKMTkwCiUlRU9GCg==";
+const ROOT_ENTRIES: FileEntry[] = [
+    { name: "src", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
+    { name: "docs", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
+    { name: "big-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
+    { name: "empty-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
+    { name: "denied-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
+    { name: ".gitignore", kind: "file", size: 84, mtime: T * 1000, mime: "text/plain" },
+    { name: "README.md", kind: "file", size: 4310, mtime: T * 1000 - 3_600_000, mime: "text/markdown" },
+    { name: "client.ts", kind: "file", size: 10_240, mtime: T * 1000 - 86_400_000, mime: "text/plain" },
+    { name: "theme.css", kind: "file", size: 2048, mtime: T * 1000 - 200_000_000, mime: "text/css" },
+    { name: "diagram.png", kind: "file", size: 18_224, mtime: T * 1000 - 5_000_000, mime: "image/png" },
+    { name: "report.pdf", kind: "file", size: 240_512, mtime: T * 1000 - 9_000_000, mime: "application/pdf" },
+    { name: "notes.txt", kind: "file", size: 512, mtime: T * 1000 - 600_000, mime: "text/plain" },
+    { name: "archive.zip", kind: "file", size: 5_242_880, mtime: T * 1000 - 400_000_000, mime: "application/zip" },
+];
+const CODE_SAMPLE = [
+    "export function greet(name: string): string {",
+    "    // A short sample so CodePreview shows real highlighting.",
+    "    const parts = [`Hello, ${name}!`, 'Welcome to Matron.'];",
+    "    return parts.join(' ');",
+    "}",
+    "",
+    "const answer = 42;",
+].join("\n");
+const README_SAMPLE = [
+    "# Matron File Explorer",
+    "",
+    "Browse the working tree from **desktop or phone**, with inline preview.",
+    "",
+    "- Markdown, code, images, PDF, media",
+    "- Path-jailed server-side; secrets never served",
+    "",
+    "```bash",
+    "curl -s /journal/files/list?path=/root/.openclaw/workspace",
+    "```",
+].join("\n");
+
+const mockFilesApi: FilesApiLike = {
+    listDir: async (path: string, all?: boolean): Promise<FileListing> => {
+        if (path.endsWith("denied-dir")) throw new JournalApiError("denied", 403, "forbidden");
+        const base = { path, parent: path === FILES_ROOT ? null : FILES_ROOT };
+        if (path.endsWith("empty-dir")) return { ...base, entries: [], truncated: false };
+        if (path.endsWith("big-dir")) {
+            const entries: FileEntry[] = Array.from({ length: 2000 }, (_unused, index) => ({
+                name: `file-${String(index).padStart(4, "0")}.log`,
+                kind: "file" as const,
+                size: 1024 + index,
+                mtime: T * 1000 - index * 1000,
+                mime: "text/plain",
+            }));
+            return { ...base, entries, truncated: true };
+        }
+        const entries = all ? ROOT_ENTRIES : ROOT_ENTRIES.filter((entry) => !entry.name.startsWith("."));
+        return { ...base, entries, truncated: false };
+    },
+    fileMeta: async (path: string): Promise<FileMeta> => {
+        const name = path.slice(path.lastIndexOf("/") + 1);
+        const ext = extOf(name);
+        const match = ROOT_ENTRIES.find((entry) => entry.name === name);
+        return {
+            kind: "file",
+            size: match?.size ?? 1024,
+            mtime: match?.mtime ?? T * 1000,
+            mime: MIME[ext] ?? "application/octet-stream",
+            isText: TEXT_EXT.has(ext),
+        };
+    },
+    textContent: async (path: string): Promise<string> => {
+        if (path.endsWith(".md")) return README_SAMPLE;
+        if (path.endsWith(".ts")) return CODE_SAMPLE;
+        if (path.endsWith(".css")) return ":root {\n    --brand: #ffe500;\n}\n";
+        return "Plain text notes.\nSecond line.\n";
+    },
+    contentUrl: async (path: string): Promise<string> => {
+        if (path.endsWith(".png")) return `data:image/png;base64,${PNG_8X8}`;
+        if (path.endsWith(".pdf")) return MINIMAL_PDF;
+        if (path.endsWith(".mp3")) return "data:audio/mpeg;base64,";
+        if (path.endsWith(".mp4")) return "data:video/mp4;base64,";
+        return "data:application/octet-stream;base64,";
+    },
+    download: async (): Promise<void> => {},
+    revokeAll: (): void => {},
+};
+(client as unknown as { filesApi: () => FilesApiLike }).filesApi = () => mockFilesApi;
+const patchState = (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch.bind(client);
+
 // Expose hooks so the Playwright driver can drive states (stage files → upload modal, etc.).
 (window as unknown as { __matron: unknown }).__matron = {
     client,
+    openFiles: (path: string = FILES_ROOT) => patchState({ filesView: { open: true, path } }),
+    closeFiles: () => patchState({ filesView: undefined }),
     stageImage: (name = "screenshot.png") => client.stageFiles([imageFile(name)]),
     // Single NON-image file → hatched "image preview" placeholder + the single-file case
     // (no thumbnail strip, no "n of N" pill).
