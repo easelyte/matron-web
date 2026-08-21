@@ -32,6 +32,7 @@ import {
 import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { type EditFileEdit, type EditFileOutcome, pathRejectMessage } from "./edit-file";
+import { type ReadFileOutcome } from "./read-file";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
 import {
@@ -808,6 +809,28 @@ function editOutcomeMessage(outcome: EditFileOutcome): { message: string; stale:
     }
 }
 
+/** Copy for a failed load; a successful load populates the form instead. */
+function readOutcomeMessage(outcome: ReadFileOutcome): string {
+    switch (outcome.kind) {
+        case "not-found":
+            return "Couldn't load that file — it may not exist yet, or isn't readable. You can type the contents below, but saving requires the file to already exist on the box.";
+        case "too-large":
+            return "That file is too large to load through the bridge.";
+        case "no-scope":
+            return "The box hasn't pinned any editable folders, so file editing is unavailable there.";
+        case "invalid":
+            return outcome.detail
+                ? `The bridge rejected the request: ${outcome.detail}`
+                : "The bridge rejected the request.";
+        case "unreachable":
+            return outcome.message;
+        case "path-rejected":
+            return pathRejectMessage(outcome.reason);
+        default:
+            return outcome.kind === "error" ? outcome.message : "Couldn't load the file.";
+    }
+}
+
 /**
  * Guarded file editor (loop #548). Applies a small edit to an EXISTING file on
  * an agent's box through the bridge `edit_file` RPC — for the operator on the
@@ -845,11 +868,17 @@ export function EditFileSheet({
     const [expectedSha256, setExpectedSha256] = useState("");
     const [formError, setFormError] = useState<string | undefined>(undefined);
     const [formErrorStale, setFormErrorStale] = useState(false);
+    // Non-null once the current contents were loaded from the box: the checksum
+    // is auto-filled, so the CAS is armed by default. Cleared when the path is
+    // retargeted (a loaded sha is bound to the file it was read from).
+    const [loaded, setLoaded] = useState<{ bytes: number } | undefined>(undefined);
+    const [loading, setLoading] = useState(false);
 
     const sheetStateRef = useRef(sheetState);
     const agentsRef = useRef<DeviceDTO[]>([]);
     const agentsRequestIdRef = useRef(0);
     const savingRef = useRef(false);
+    const loadingRef = useRef(false);
     const mountedRef = useRef(false);
     const dismissedRef = useRef(false);
 
@@ -894,8 +923,43 @@ export function EditFileSheet({
         onClose();
     };
 
+    // Load the file's current contents from the box: seed the whole-file
+    // textarea and auto-fill the checksum, turning edit_file's opt-in CAS into
+    // an on-by-default compare-and-swap. A read has no side effects, so a failed
+    // load is always safe to retry.
+    const loadFromBox = async (agent: DeviceDTO): Promise<void> => {
+        if (loadingRef.current || savingRef.current || dismissedRef.current) return;
+        // Same trim-to-detect-blank rule as submit: a trailing space is a legal,
+        // distinct Linux filename, so send exactly what the operator typed.
+        if (path.trim().length === 0) {
+            setFormError("Enter the absolute path of the file to load.");
+            setFormErrorStale(false);
+            return;
+        }
+        loadingRef.current = true;
+        setLoading(true);
+        setFormError(undefined);
+        setFormErrorStale(false);
+        const outcome = await client.readFile(agent.device_id, { path });
+        loadingRef.current = false;
+        setLoading(false);
+        if (!mountedRef.current || dismissedRef.current) return;
+        if (outcome.kind === "loaded") {
+            // Switch to whole-file mode with the live content + its checksum,
+            // so a subsequent Save sends content + the armed expected_sha256.
+            setMode("content");
+            setContent(outcome.content);
+            setExpectedSha256(outcome.sha256);
+            setLoaded({ bytes: outcome.bytes });
+            return;
+        }
+        setLoaded(undefined);
+        setFormError(readOutcomeMessage(outcome));
+        setFormErrorStale(false);
+    };
+
     const submit = async (agent: DeviceDTO): Promise<void> => {
-        if (savingRef.current || dismissedRef.current) return;
+        if (savingRef.current || loadingRef.current || dismissedRef.current) return;
         // Trim ONLY to detect a blank field — a trailing space is a legal,
         // distinct Linux filename, so silently trimming could retarget the
         // edit to a different file. Send exactly what the operator typed.
@@ -1017,12 +1081,32 @@ export function EditFileSheet({
                             id="mj-edit-file-path"
                             type="text"
                             value={path}
-                            onChange={(event) => setPath(event.target.value)}
+                            onChange={(event) => {
+                                setPath(event.target.value);
+                                // A loaded checksum is bound to the file it was
+                                // read from — retargeting the path must not carry
+                                // a stale auto-filled sha onto a different file.
+                                if (loaded) {
+                                    setLoaded(undefined);
+                                    setExpectedSha256("");
+                                }
+                            }}
                             placeholder="/absolute/path/on/the/box"
                             autoCapitalize="off"
                             autoCorrect="off"
                             spellCheck={false}
                         />
+                        <div className="mj_UploadConfirm_actions">
+                            <button type="button" onClick={() => void loadFromBox(formAgent)} disabled={loading}>
+                                {loading ? "Loading…" : "Load current contents"}
+                            </button>
+                        </div>
+                        {loaded && (
+                            <p role="status" className="mj_EditFile_loaded">
+                                Loaded {loaded.bytes} {loaded.bytes === 1 ? "byte" : "bytes"} — the checksum is filled,
+                                so your save is protected against clobbering a change made since.
+                            </p>
+                        )}
 
                         <div role="radiogroup" aria-label="Edit mode" className="mj_EditFile_modes">
                             <label>
@@ -1077,7 +1161,7 @@ export function EditFileSheet({
                             </>
                         )}
 
-                        <label htmlFor="mj-edit-file-sha">Expected checksum (optional, sha256)</label>
+                        <label htmlFor="mj-edit-file-sha">Expected checksum (sha256 — auto-filled by Load)</label>
                         <input
                             id="mj-edit-file-sha"
                             type="text"
@@ -1111,6 +1195,7 @@ export function EditFileSheet({
                                 type="button"
                                 className="mj_UploadConfirm_send"
                                 onClick={() => void submit(formAgent)}
+                                disabled={loading}
                             >
                                 Save edit
                             </button>
