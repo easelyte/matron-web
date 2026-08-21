@@ -170,10 +170,8 @@ export class FilesApi implements FilesApiLike {
     }
 
     public textContent(path: string, signal?: AbortSignal): Promise<string> {
-        return this.request(
-            this.contentPath(path, "inline"),
-            signal,
-            async (response) => new TextDecoder().decode(await response.arrayBuffer()),
+        return this.request(this.contentPath(path, "inline"), signal, async (response) =>
+            new TextDecoder().decode(await response.arrayBuffer()),
         );
     }
 
