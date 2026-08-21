@@ -9,6 +9,7 @@ import { JournalApi, JournalApiError, loadMatronConfig } from "./api";
 import { JournalConnection } from "./connection";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { JournalDatabase } from "./database";
+import { buildEditFileParams, classifyEditFileReply, type EditFileInput, type EditFileOutcome } from "./edit-file";
 import { mergeSessionStatus } from "./status";
 import {
     buildSidebarIndex,
@@ -482,6 +483,18 @@ export class MatronJournalClient {
             }
             return [{ path: folder.path, last_used: folder.last_used }];
         });
+    }
+
+    /**
+     * Apply a guarded, atomic edit to an existing file on the agent's box via
+     * the bridge `edit_file` RPC (loop #548). Thin wrapper: build the exact wire
+     * params -> agentRpc -> classify the reply into a UI-ready outcome. All the
+     * param-shape + error-code mapping (the CAS + path-safety surface) lives in
+     * the pure, unit-tested ./edit-file module.
+     */
+    public async editFile(agentDeviceId: number, input: EditFileInput): Promise<EditFileOutcome> {
+        const reply = await this.agentRpc(agentDeviceId, "edit_file", buildEditFileParams(input));
+        return classifyEditFileReply(reply);
     }
 
     public startSessionRpc(agentDeviceId: number, workdir: string, browser: boolean): Promise<StartOutcome> {
