@@ -3962,12 +3962,13 @@ describe("session creation orchestration", () => {
                 { ...CONVERSATIONS[1], session_state: "running" }, // c2 still running
             ]),
         });
-        state.state = signedInState(client);
         state.database = database;
         // Both left with a live tool-call card because their turn-end 'end' frames were dropped.
         const card = { messageRef: "toolref", content: "ls", offset: 2, headTruncated: false };
         state.toolStreams.set("c1", { toolref: { ...card } });
         state.toolStreams.set("c2", { toolref: { ...card } });
+        // c1 is the selected conversation and its stale card is already published to the snapshot.
+        state.state = { ...signedInState(client), toolStreams: { toolref: { ...card } } };
 
         await state.handleJournal({
             kind: "journal",
@@ -3979,8 +3980,11 @@ describe("session creation orchestration", () => {
             payload: { state: "done" },
         });
 
-        expect(state.toolStreams.has("c1")).toBe(false); // finished → pruned
+        expect(state.toolStreams.has("c1")).toBe(false); // finished → private map pruned
         expect(state.toolStreams.get("c2")).toEqual({ toolref: card }); // still running → kept
+        // Published snapshot for the selected conversation must be republished empty so the stale
+        // card cannot re-render on c1's next running turn (F1 — private/published divergence).
+        expect(client.getSnapshot().toolStreams).toEqual({});
     });
 });
 

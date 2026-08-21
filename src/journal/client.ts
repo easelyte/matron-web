@@ -2114,6 +2114,19 @@ export class MatronJournalClient {
             if (conversation.session_state !== "running") this.toolStreams.delete(conversation.id);
         }
         this.patch({ conversations });
+        // Keep the published snapshot in lockstep with the private map (P2). Deleting the private
+        // entry above does NOT touch ClientState.toolStreams, so a pruned card would otherwise
+        // still sit in the snapshot and re-render on the conversation's next running turn (before
+        // any fresh ephemeral frame republishes it). Republish the selected conversation's
+        // ephemeral state whenever its streams were just pruned.
+        const selectedId = this.state.selectedConversationId;
+        if (
+            selectedId !== undefined &&
+            !this.toolStreams.has(selectedId) &&
+            Object.keys(this.state.toolStreams).length > 0
+        ) {
+            this.refreshEphemeralState(selectedId);
+        }
     }
 
     private async refreshSelectedConversation(
