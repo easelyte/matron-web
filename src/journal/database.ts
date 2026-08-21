@@ -302,7 +302,11 @@ export class JournalDatabase {
         await transactionDone(transaction);
         return conversations.sort((left, right) => {
             const activity = (right.last_ts ?? right.created_at) - (left.last_ts ?? left.created_at);
-            return activity || right.last_seq - left.last_seq;
+            // Tie-break by the immutable id, NOT last_seq: last_seq advances on
+            // every frame, so a last_seq tie-break would let a non-message event
+            // resurface a conversation whose last_ts ties another's (matches the
+            // server's ORDER BY ... , id DESC and keeps ordering total/stable).
+            return activity || (right.id < left.id ? -1 : right.id > left.id ? 1 : 0);
         });
     }
 
@@ -345,7 +349,14 @@ export class JournalDatabase {
 
         transaction.objectStore("events").put(event);
         conversation.last_seq = Math.max(conversation.last_seq, event.seq);
-        conversation.last_ts = Math.max(conversation.last_ts ?? 0, event.ts);
+        // last_ts (the conversation-list sort key and the "last activity" time)
+        // advances ONLY on a MESSAGE event — see the message branch below. A
+        // meta/status/read_marker frame must not resurface a conversation to the
+        // top of the list or bump its timestamp past a stale preview line, since
+        // those frames never refresh the snippet. Mirrors the server's last_ts
+        // (journal.js: ts of the newest MESSAGE_TYPES event). last_seq above is
+        // still monotonic for the merge/read-cursor invariants; only ordering
+        // drops it as the primary key.
 
         if (event.type === "convo_meta") {
             if (typeof event.payload.title === "string") conversation.title = event.payload.title;
@@ -367,6 +378,9 @@ export class JournalDatabase {
                 conversation.session_outcome = event.payload.session_outcome;
             }
         } else if (MESSAGE_EVENT_TYPES.has(event.type)) {
+            // Snippet and last_ts advance together, so the displayed "last
+            // message" line can never dangle out of sync with the row's slot.
+            conversation.last_ts = Math.max(conversation.last_ts ?? 0, event.ts);
             conversation.snippet = eventSnippet(event.type, event.payload);
             if (!event.sender.startsWith("user:")) {
                 conversation.unread_count += 1;
