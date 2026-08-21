@@ -57,9 +57,14 @@ describe("EditFileSheet", () => {
         return { client, editFile };
     }
 
-    it("calls editFile with the exact replace-mode input incl the compare-and-swap checksum", async () => {
+    it("sends the exact replace-mode input incl the CAS checksum and the UNTRIMMED path", async () => {
         const sha = "b".repeat(64);
-        const { client, editFile } = makeClient({ kind: "saved", path: "/box/app/.env", bytes: 20, mode: "replace" });
+        const { client, editFile } = makeClient({
+            kind: "saved",
+            path: "/box/app/config.ts",
+            bytes: 20,
+            mode: "replace",
+        });
         const { container, root } = await mountSheet(client);
         mounted.push(root);
 
@@ -74,7 +79,8 @@ describe("EditFileSheet", () => {
         };
 
         await act(async () => {
-            setValue("mj-edit-file-path", "/box/app/.env");
+            // Trailing space is a distinct legal Linux path — must survive verbatim.
+            setValue("mj-edit-file-path", "/box/app/config.ts ");
             setValue("mj-edit-file-old", "PORT=3000");
             setValue("mj-edit-file-new", "PORT=4000");
             setValue("mj-edit-file-sha", sha);
@@ -87,11 +93,37 @@ describe("EditFileSheet", () => {
         await flush();
 
         expect(editFile).toHaveBeenCalledWith(7, {
-            path: "/box/app/.env",
+            path: "/box/app/config.ts ",
             edit: { mode: "replace", oldString: "PORT=3000", newString: "PORT=4000" },
             expectedSha256: sha,
         });
         expect(container.textContent).toContain("Saved 20 bytes");
+    });
+
+    it("warns (does not invite retry) when the box times out — the edit may have landed", async () => {
+        const { client } = makeClient({ kind: "uncertain" });
+        const { container, root } = await mountSheet(client);
+        mounted.push(root);
+
+        const setValue = (id: string, value: string): void => {
+            const el = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#${id}`);
+            const proto =
+                el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+            Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, value);
+            el?.dispatchEvent(new Event("input", { bubbles: true }));
+        };
+        await act(async () => {
+            setValue("mj-edit-file-path", "/box/app/config.ts");
+            setValue("mj-edit-file-old", "a");
+            setValue("mj-edit-file-new", "b");
+        });
+        const save = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Save edit");
+        await act(async () => {
+            save?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        });
+        await flush();
+
+        expect(container.textContent).toContain("Check the file before trying again");
     });
 
     it("renders a clear, non-crashing message when the file changed under us (stale CAS)", async () => {

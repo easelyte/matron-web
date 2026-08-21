@@ -67,7 +67,14 @@ export type EditFileOutcome =
     | { kind: "no-scope" }
     /** malformed request (should not happen from this UI). */
     | { kind: "invalid"; detail?: string }
-    /** never reached the agent (relay/timeout/teardown) — safe to retry. */
+    /**
+     * No reply arrived (timeout/teardown), but the edit MAY have committed —
+     * a timeout only proves non-delivery of the RESPONSE, not non-execution.
+     * The bridge has no dedupe and treats expected_sha256 as the only replay
+     * guard, so a blind retry could apply the edit twice. Verify, don't retry.
+     */
+    | { kind: "uncertain" }
+    /** proven non-delivery (relay refused to forward) — safe to retry. */
     | { kind: "unreachable"; message: string }
     /** unexpected bridge error. */
     | { kind: "error"; message: string };
@@ -119,19 +126,37 @@ function transportMessage(code: string): string {
  */
 export function classifyEditFileReply(reply: RpcReply): EditFileOutcome {
     if (reply.ok) {
+        // Parse-don't-validate the success shape: a degraded/version-skewed
+        // bridge returning a partial result must NOT render as a false "Saved"
+        // (empty path / 0 bytes). Every field is required and exactly typed.
         const result = reply.result;
         if (typeof result === "object" && result !== null && !Array.isArray(result)) {
             const record = result as Record<string, unknown>;
-            const path = typeof record.path === "string" ? record.path : "";
-            const bytes = typeof record.bytes === "number" && Number.isFinite(record.bytes) ? record.bytes : 0;
-            const mode = record.mode === "replace" ? "replace" : "content";
-            return { kind: "saved", path, bytes, mode };
+            const path = record.path;
+            const bytes = record.bytes;
+            const mode = record.mode;
+            if (
+                typeof path === "string" &&
+                path.length > 0 &&
+                typeof bytes === "number" &&
+                Number.isInteger(bytes) &&
+                bytes >= 0 &&
+                (mode === "content" || mode === "replace")
+            ) {
+                return { kind: "saved", path, bytes, mode };
+            }
         }
         return { kind: "error", message: "The edit returned an unexpected response." };
     }
     if (reply.origin !== "agent") {
-        // Transport failure — the edit itself never ran, so a retry is safe.
-        return { kind: "unreachable", message: transportMessage(reply.code) };
+        // A relay refusal PROVES the request never reached the box, so a retry
+        // is safe. A timeout/teardown proves only that no RESPONSE arrived —
+        // the edit may already have committed — so it must NOT invite a blind
+        // retry (no bridge dedupe). See the "uncertain" outcome. (P32 retry safety)
+        if (reply.origin === "relay") {
+            return { kind: "unreachable", message: transportMessage(reply.code) };
+        }
+        return { kind: "uncertain" };
     }
     switch (reply.code) {
         case "stale":

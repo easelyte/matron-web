@@ -124,9 +124,15 @@ describe("classifyEditFileReply", () => {
         ).toEqual({ kind: "invalid", detail: "path must be a non-empty string" });
     });
 
-    it("treats non-agent origins (relay/timeout/teardown) as unreachable, not a rejected edit", () => {
+    it("treats a proven relay non-delivery as unreachable (safe to retry)", () => {
         expect(classifyEditFileReply({ ok: false, origin: "relay", code: "not_connected" }).kind).toBe("unreachable");
-        expect(classifyEditFileReply({ ok: false, origin: "timeout", code: "timeout" }).kind).toBe("unreachable");
+    });
+
+    it("treats timeout/teardown as uncertain, NOT a safe-retry — the edit may have committed", () => {
+        // A timeout proves only that no RESPONSE arrived, not that the edit
+        // didn't run; the bridge has no dedupe, so a blind retry could double-apply.
+        expect(classifyEditFileReply({ ok: false, origin: "timeout", code: "timeout" })).toEqual({ kind: "uncertain" });
+        expect(classifyEditFileReply({ ok: false, origin: "teardown", code: "gone" })).toEqual({ kind: "uncertain" });
     });
 
     it("fails loud on an unknown agent code rather than silently succeeding", () => {
@@ -134,8 +140,27 @@ describe("classifyEditFileReply", () => {
         expect(outcome).toEqual({ kind: "error", message: "internal: boom" });
     });
 
-    it("fails loud on a malformed ok result shape", () => {
+    it("fails loud on every malformed ok result shape instead of rendering a false success", () => {
         expect(classifyEditFileReply({ ok: true, origin: "agent", result: null }).kind).toBe("error");
+        // Empty object: no plausible-default rescue into a blank "Saved" path.
+        expect(classifyEditFileReply({ ok: true, origin: "agent", result: {} }).kind).toBe("error");
+        // Missing path.
+        expect(classifyEditFileReply({ ok: true, origin: "agent", result: { bytes: 5, mode: "content" } }).kind).toBe(
+            "error",
+        );
+        // Unknown mode.
+        expect(
+            classifyEditFileReply({ ok: true, origin: "agent", result: { path: "/p", bytes: 5, mode: "append" } }).kind,
+        ).toBe("error");
+        // Non-integer / negative bytes.
+        expect(
+            classifyEditFileReply({ ok: true, origin: "agent", result: { path: "/p", bytes: -1, mode: "content" } })
+                .kind,
+        ).toBe("error");
+        expect(
+            classifyEditFileReply({ ok: true, origin: "agent", result: { path: "/p", bytes: 1.5, mode: "content" } })
+                .kind,
+        ).toBe("error");
     });
 });
 

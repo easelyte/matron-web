@@ -785,6 +785,12 @@ function editOutcomeMessage(outcome: EditFileOutcome): { message: string; stale:
                     : "The bridge rejected the request.",
                 stale: false,
             };
+        case "uncertain":
+            return {
+                message:
+                    "The box didn't confirm the edit before timing out — it MAY already have been applied. Check the file before trying again (a blind retry could apply it twice).",
+                stale: false,
+            };
         case "unreachable":
             return { message: outcome.message, stale: false };
         case "path-rejected":
@@ -797,14 +803,19 @@ function editOutcomeMessage(outcome: EditFileOutcome): { message: string; stale:
 /**
  * Guarded file editor (loop #548). Applies a small edit to an EXISTING file on
  * an agent's box through the bridge `edit_file` RPC — for the operator on the
- * bridge with no SSH/VSCode (add a gitignored env var, tweak a config).
+ * bridge with no SSH/VSCode (tweak a config value, flip a feature flag). The
+ * bridge refuses sensitive basenames (.env, secrets, keys, credentials, …), so
+ * those paths come back path-rejected rather than editable.
  *
  * Two modes match the RPC exactly: a targeted "replace this text" splice (safe
  * without a read path — the bridge enforces the old text is present AND unique)
  * and a full-content replace. An optional expected-checksum field threads the
- * compare-and-swap so a known-hash edit is race-safe; every RPC error code is
- * rendered as clear, non-crashing copy, keeping the user's typed edit intact so
- * they can adjust and retry.
+ * compare-and-swap: the edit is rejected (stale) if the file no longer hashes
+ * to it, guarding against clobbering a change made since the checksum was taken.
+ * It is NOT a full atomic guarantee — the bridge checks the hash then commits
+ * through a later rename, so a writer landing in that window is still lost (a
+ * documented bridge residual). Every RPC error code is rendered as clear,
+ * non-crashing copy, keeping the user's typed edit intact so they can retry.
  *
  * NOTE: the bridge exposes no read RPC yet, so this cannot pre-load the file's
  * current contents or auto-compute the checksum — content is authored blind and
@@ -877,8 +888,10 @@ export function EditFileSheet({
 
     const submit = async (agent: DeviceDTO): Promise<void> => {
         if (savingRef.current || dismissedRef.current) return;
-        const trimmedPath = path.trim();
-        if (!trimmedPath) {
+        // Trim ONLY to detect a blank field — a trailing space is a legal,
+        // distinct Linux filename, so silently trimming could retarget the
+        // edit to a different file. Send exactly what the operator typed.
+        if (path.trim().length === 0) {
             setFormError("Enter the absolute path of the file to edit.");
             setFormErrorStale(false);
             return;
@@ -906,7 +919,7 @@ export function EditFileSheet({
         setFormErrorStale(false);
         transition({ step: "saving", agent });
         const outcome = await client.editFile(agent.device_id, {
-            path: trimmedPath,
+            path,
             edit,
             expectedSha256: sha.length > 0 ? sha : undefined,
         });
