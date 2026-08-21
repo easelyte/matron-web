@@ -20,8 +20,8 @@ import type { RendererProps } from "./types";
 import { useAsyncResource } from "./useAsyncResource";
 
 // Loads the file's metadata (cheap, no bytes), then dispatches to the matching renderer per
-// pickPreviewKind. Two-step (meta → content) matches the API design: `is_text` from meta drives
-// the text/binary split before any content fetch.
+// pickPreviewKind. Two-step (meta → content) matches the API design: `is_text` from meta drives the
+// text/binary split before any content fetch, and the meta `mtime` keys the content cache (F7).
 export function FilePreview({
     api,
     path,
@@ -31,9 +31,14 @@ export function FilePreview({
     path: string;
     filename: string;
 }): React.ReactElement {
-    const meta = useAsyncResource(() => api.fileMeta(path), `meta:${path}`);
+    const meta = useAsyncResource((signal) => api.fileMeta(path, signal), `meta:${path}`);
     if (meta.status === "loading") return <PreviewStatus variant="loading">Loading…</PreviewStatus>;
-    if (meta.status === "error") return <PreviewStatus variant="error">{meta.error}</PreviewStatus>;
+    if (meta.status === "error")
+        return (
+            <PreviewStatus variant="error" onRetry={meta.reload}>
+                {meta.error}
+            </PreviewStatus>
+        );
 
     const resolved = meta.data!;
     const props: RendererProps = { api, path, filename, meta: resolved };

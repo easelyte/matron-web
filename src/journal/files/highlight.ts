@@ -34,11 +34,10 @@ import yaml from "highlight.js/lib/languages/yaml";
 import { extensionOf } from "./format";
 
 // Above this size, syntax highlighting is skipped (plain escaped text) — mirrors markdown.tsx's
-// per-block guard so a large file never wedges the main thread tokenising.
+// per-block guard so a large file never wedges the main thread tokenising. (The inline-render
+// ceiling that switches to download-only for BOTH markdown and code lives in ./limits as
+// INLINE_TEXT_MAX — this is only the highlight-skip threshold, which is lower.)
 export const CODE_HIGHLIGHT_MAX = 120_000;
-// Above this the file is not rendered inline at all (download instead) — a multi-MB text file in
-// a <pre> wedges layout even without highlighting. The server also caps inline reads at 5 MB.
-export const CODE_RENDER_MAX = 512_000;
 
 let registered = false;
 

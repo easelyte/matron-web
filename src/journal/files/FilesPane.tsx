@@ -34,6 +34,9 @@ const ROW_HEIGHT = 40;
 interface Selected {
     path: string;
     name: string;
+    // Bumped on every click (even re-clicking the same file), so FilePreview remounts and re-reads
+    // meta — an agent may have rewritten the file since it was last opened (F7).
+    at: number;
 }
 
 interface RowData {
@@ -85,7 +88,7 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
     const [showHidden, setShowHidden] = useState(false);
 
     const listing = useAsyncResource<FileListing>(
-        () => (api ? api.listDir(dir, showHidden) : Promise.reject(new Error("Not signed in."))),
+        (signal) => (api ? api.listDir(dir, showHidden, signal) : Promise.reject(new Error("Not signed in."))),
         `list:${dir}:${showHidden ? 1 : 0}`,
     );
 
@@ -100,11 +103,16 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
         setDir((current) => joinPath(current, entry.name));
     }, []);
     const selectFile = useCallback(
-        (entry: FileEntry) => setSelected({ path: joinPath(dir, entry.name), name: entry.name }),
+        (entry: FileEntry) => setSelected({ path: joinPath(dir, entry.name), name: entry.name, at: Date.now() }),
         [dir],
     );
 
-    const crumbs = useMemo(() => breadcrumb(listing.data?.path ?? dir), [listing.data?.path, dir]);
+    // Breadcrumb spans root → path ONLY (never above the read-root jail, F4). Falls back to the
+    // path as its own root before the first listing loads (single crumb, nothing above).
+    const crumbs = useMemo(
+        () => breadcrumb(listing.data?.root ?? listing.data?.path ?? dir, listing.data?.path ?? dir),
+        [listing.data?.root, listing.data?.path, dir],
+    );
     const rowData = useMemo<RowData>(
         () => ({
             entries: listing.data?.entries ?? [],
@@ -162,7 +170,9 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
                         {listing.status === "loading" ? (
                             <PreviewStatus variant="loading">Loading…</PreviewStatus>
                         ) : listing.status === "error" ? (
-                            <PreviewStatus variant="error">{listing.error}</PreviewStatus>
+                            <PreviewStatus variant="error" onRetry={listing.reload}>
+                                {listing.error}
+                            </PreviewStatus>
                         ) : rowData.entries.length === 0 ? (
                             <PreviewStatus variant="empty">This folder is empty.</PreviewStatus>
                         ) : (
@@ -183,7 +193,12 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
 
                 <div className="mj_FilesPane_preview">
                     {selected && api ? (
-                        <FilePreview api={api} path={selected.path} filename={selected.name} />
+                        <FilePreview
+                            key={`${selected.path}:${selected.at}`}
+                            api={api}
+                            path={selected.path}
+                            filename={selected.name}
+                        />
                     ) : (
                         <PreviewStatus variant="empty">Select a file to preview it.</PreviewStatus>
                     )}

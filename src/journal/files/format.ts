@@ -56,12 +56,29 @@ export interface Crumb {
     path: string;
 }
 
-/** Ancestor breadcrumb for an absolute path, root-first: [{"/","/"}, {"root","/root"}, …]. */
-export function breadcrumb(path: string): Crumb[] {
-    const parts = path.replace(/\/+$/, "").split("/").filter(Boolean);
-    const crumbs: Crumb[] = [{ label: "/", path: "/" }];
-    let acc = "";
-    for (const part of parts) {
+function basename(path: string): string {
+    const clean = path.replace(/\/+$/, "");
+    return clean === "" ? "/" : clean.slice(clean.lastIndexOf("/") + 1) || "/";
+}
+
+/**
+ * Breadcrumb from the configured read-`root` DOWN to `path`, inclusive — NEVER above the jail (F4).
+ * The first crumb is the root (labelled by its basename); segments above root are never rendered or
+ * navigable. When `path` is not under `root` (shouldn't happen), only the root crumb is returned.
+ */
+export function breadcrumb(root: string, path: string): Crumb[] {
+    const cleanRoot = root.replace(/\/+$/, "") || "/";
+    const cleanPath = path.replace(/\/+$/, "") || "/";
+    const crumbs: Crumb[] = [{ label: basename(cleanRoot), path: cleanRoot }];
+    if (cleanPath === cleanRoot) return crumbs;
+    const prefix = cleanRoot === "/" ? "/" : `${cleanRoot}/`;
+    if (!cleanPath.startsWith(prefix)) return crumbs;
+    const rest = cleanPath
+        .slice(cleanRoot === "/" ? 1 : cleanRoot.length)
+        .split("/")
+        .filter(Boolean);
+    let acc = cleanRoot === "/" ? "" : cleanRoot;
+    for (const part of rest) {
         acc += `/${part}`;
         crumbs.push({ label: part, path: acc });
     }

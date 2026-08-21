@@ -426,10 +426,12 @@ const README_SAMPLE = [
     "```",
 ].join("\n");
 
+const PDF_BYTES = Uint8Array.from(atob(MINIMAL_PDF.split(",")[1]), (c) => c.charCodeAt(0));
 const mockFilesApi: FilesApiLike = {
     listDir: async (path: string, all?: boolean): Promise<FileListing> => {
         if (path.endsWith("denied-dir")) throw new JournalApiError("denied", 403, "forbidden");
-        const base = { path, parent: path === FILES_ROOT ? null : FILES_ROOT };
+        // `root` per the F4 contract: the read-root containing `path`. Breadcrumbs never go above it.
+        const base = { path, root: FILES_ROOT, parent: path === FILES_ROOT ? null : FILES_ROOT };
         if (path.endsWith("empty-dir")) return { ...base, entries: [], truncated: false };
         if (path.endsWith("big-dir")) {
             const entries: FileEntry[] = Array.from({ length: 2000 }, (_unused, index) => ({
@@ -462,15 +464,20 @@ const mockFilesApi: FilesApiLike = {
         if (path.endsWith(".css")) return ":root {\n    --brand: #ffe500;\n}\n";
         return "Plain text notes.\nSecond line.\n";
     },
+    fileBytes: async (): Promise<ArrayBuffer> => {
+        // Only the PDF preview calls this; return a real (tiny, valid) PDF so pdf.js renders a canvas.
+        const copy = new Uint8Array(PDF_BYTES.length);
+        copy.set(PDF_BYTES);
+        return copy.buffer;
+    },
     contentUrl: async (path: string): Promise<string> => {
         if (path.endsWith(".png")) return `data:image/png;base64,${PNG_8X8}`;
-        if (path.endsWith(".pdf")) return MINIMAL_PDF;
         if (path.endsWith(".mp3")) return "data:audio/mpeg;base64,";
         if (path.endsWith(".mp4")) return "data:video/mp4;base64,";
         return "data:application/octet-stream;base64,";
     },
     download: async (): Promise<void> => {},
-    revokeAll: (): void => {},
+    dispose: (): void => {},
 };
 (client as unknown as { filesApi: () => FilesApiLike }).filesApi = () => mockFilesApi;
 const patchState = (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch.bind(client);

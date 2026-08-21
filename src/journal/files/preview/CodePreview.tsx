@@ -8,43 +8,35 @@ Please see LICENSE files in the repository root for full details.
 import React, { useMemo, useState } from "react";
 
 import { copyText } from "../../clipboard";
-import { CODE_RENDER_MAX, highlightFile } from "../highlight";
+import { highlightFile } from "../highlight";
+import { INLINE_TEXT_MAX } from "../limits";
+import { PreviewStatus } from "./PreviewChrome";
+import { TooLargePreview } from "./TooLargePreview";
 import type { RendererProps } from "./types";
-import { DownloadButton, PreviewStatus } from "./PreviewChrome";
 import { useAsyncResource } from "./useAsyncResource";
 
-// Standalone text/code viewer. Reuses the existing highlight.js path (same curated languages as
-// the message renderer) → identical `hljs-*` theming. Not routed through markdown, so a file
-// containing ``` fences renders faithfully.
-export function CodePreview({ api, path, filename }: RendererProps): React.ReactElement {
-    const text = useAsyncResource(() => api.textContent(path), `code:${path}`);
+// Standalone text/code viewer. Reuses the existing highlight.js path (same curated languages as the
+// message renderer) → identical `hljs-*` theming. Not routed through markdown, so a file containing
+// ``` fences renders faithfully. Shares the inline-render ceiling with markdown (F6).
+export function CodePreview({ api, path, filename, meta }: RendererProps): React.ReactElement {
+    const text = useAsyncResource((signal) => api.textContent(path, signal), `code:${path}:${meta.mtime}`);
     const [copyLabel, setCopyLabel] = useState("Copy");
-    const [downloading, setDownloading] = useState(false);
 
     const source = text.data ?? "";
-    const tooLarge = source.length > CODE_RENDER_MAX;
+    const tooLarge = source.length > INLINE_TEXT_MAX;
     const highlighted = useMemo(
         () => (text.status === "loaded" && !tooLarge ? highlightFile(filename, source) : undefined),
         [text.status, tooLarge, filename, source],
     );
 
     if (text.status === "loading") return <PreviewStatus variant="loading">Loading…</PreviewStatus>;
-    if (text.status === "error") return <PreviewStatus variant="error">{text.error}</PreviewStatus>;
-
-    if (tooLarge) {
+    if (text.status === "error")
         return (
-            <div className="mj_FilesGeneric">
-                <p className="mj_FilesGeneric_note">This file is too large to preview inline.</p>
-                <DownloadButton
-                    busy={downloading}
-                    onDownload={() => {
-                        setDownloading(true);
-                        void api.download(path, filename).finally(() => setDownloading(false));
-                    }}
-                />
-            </div>
+            <PreviewStatus variant="error" onRetry={text.reload}>
+                {text.error}
+            </PreviewStatus>
         );
-    }
+    if (tooLarge) return <TooLargePreview api={api} path={path} filename={filename} />;
 
     async function handleCopy(): Promise<void> {
         const ok = await copyText(source);

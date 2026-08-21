@@ -4799,16 +4799,28 @@ button.mj_File {
     border-radius: var(--cpd-radius-md);
 }
 
+/* PDF preview: a scrollable column of pdf.js-painted canvases (never a document/plugin embed). */
 .mj_FilesPdf {
-    height: 100%;
-    min-height: 60vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--cpd-space-3x);
 }
 
-.mj_FilesPdf object {
+.mj_FilesPdf_pages {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--cpd-space-3x);
     width: 100%;
-    height: 100%;
-    min-height: 60vh;
-    border: 0;
+}
+
+.mj_FilesPdf_page {
+    max-width: 100%;
+    height: auto;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-md);
+    box-shadow: var(--cpd-shadow-sm);
 }
 
 .mj_FilesMedia {
@@ -4941,6 +4953,33 @@ button.mj_File {
 .mj_FilesDownload svg {
     width: var(--cpd-icon-sm, 16px);
     height: var(--cpd-icon-sm, 16px);
+}
+
+.mj_FilesDownload_error {
+    margin: var(--cpd-space-2x) 0 0;
+    color: var(--cpd-color-text-critical-primary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+/* Retry affordance on transient preview/list errors (timeout, network). */
+.mj_FilesRetry {
+    margin-top: var(--cpd-space-2x);
+    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-pill);
+    background: transparent;
+    color: var(--cpd-color-text-action-accent);
+    cursor: pointer;
+    font: var(--cpd-font-body-sm-semibold, 600 14px/20px Inter, sans-serif);
+}
+
+.mj_FilesRetry:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_FilesRetry:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 1px;
 }
 
 /* Mobile: stack the two panes; the preview drops below the list. */

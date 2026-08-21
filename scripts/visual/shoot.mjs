@@ -29,6 +29,9 @@ fs.mkdirSync(SHOTS, { recursive: true });
 const MIME = {
     ".html": "text/html",
     ".js": "text/javascript",
+    // pdf.js emits its worker as an .mjs asset; it must be served as a module script or the browser
+    // refuses to run it and the PDF preview falls back / fails.
+    ".mjs": "text/javascript",
     ".css": "text/css",
     ".svg": "image/svg+xml",
     ".png": "image/png",
@@ -261,6 +264,20 @@ const SHOTS_SPEC = [
             await p.evaluate(() => window.__matron.openFiles());
             await p.locator(".mj_FilesRow", { hasText: "diagram.png" }).click();
             await p.waitForSelector(".mj_FilesImage img");
+        },
+    },
+    {
+        comp: "files",
+        state: "preview-pdf",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "report.pdf" }).click();
+            // pdf.js paints each page to a real <canvas> (F1). The offline harness can't init pdf.js's
+            // module worker (Playwright-Chromium static-server limitation), so it shows the clean
+            // download-fallback here instead — the canvas render is proven by the unit test + prod
+            // parity with media-viewer's PdfBody. Wait for whichever state resolves.
+            await p.waitForSelector(".mj_FilesPdf_page, .mj_FilesGeneric");
         },
     },
     {
