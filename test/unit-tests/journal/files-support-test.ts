@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import { FilesApi } from "../../../src/journal/files/filesApi";
 import { breadcrumb, extensionOf, humanizeMtime, humanizeSize, joinPath } from "../../../src/journal/files/format";
 import { CODE_HIGHLIGHT_MAX, highlightFile, languageForFilename } from "../../../src/journal/files/highlight";
-import { DOWNLOAD_URL_TTL_MS } from "../../../src/journal/files/limits";
+import { DOWNLOAD_URL_TTL_MS, FETCH_TIMEOUT_MS } from "../../../src/journal/files/limits";
 
 describe("format helpers", () => {
     it("humanizeSize", () => {
@@ -200,6 +200,67 @@ describe("FilesApi", () => {
         const b = await api.contentUrl("/root/f.png", { mtime: 2 });
         expect(b).not.toBe(a1); // changed mtime → new fetch + new URL
         expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    // F2: a superseded mtime generation is revoked so a long session doesn't retain every revision.
+    it("revokes the prior mtime generation when a newer one is cached", async () => {
+        globalThis.fetch = jest.fn().mockResolvedValue(fakeResponse({ status: 200 })) as unknown as typeof fetch;
+        const api = new FilesApi(SERVER, "tok");
+        const g1 = await api.contentUrl("/root/f.png", { mtime: 1 });
+        expect(revoked).not.toContain(g1); // still current → not revoked
+        const g2 = await api.contentUrl("/root/f.png", { mtime: 2 });
+        expect(g2).not.toBe(g1);
+        expect(revoked).toContain(g1); // prior generation superseded → revoked
+        const other = await api.contentUrl("/root/g.png", { mtime: 1 });
+        expect(revoked).not.toContain(other); // a different (disposition,path) is untouched
+    });
+
+    // F3: the shared (deduped) content request is NOT bound to one view's AbortSignal — a sibling
+    // subscriber aborting (StrictMode effect replay / rapid close→reopen) must not reject the fetch
+    // another subscriber is awaiting.
+    it("does not abort a shared content request when a caller's signal aborts", async () => {
+        globalThis.fetch = jest.fn((_url: unknown, opts?: { signal?: AbortSignal }) => {
+            const signal = opts?.signal;
+            return new Promise<Response>((resolve, reject) => {
+                if (signal?.aborted) return reject(new DOMException("aborted", "AbortError"));
+                signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+                setTimeout(() => resolve(fakeResponse({ status: 200 })), 0);
+            });
+        }) as unknown as typeof fetch;
+        const api = new FilesApi(SERVER, "tok");
+        const controller = new AbortController();
+        const pending = api.contentUrl("/root/f.png", { mtime: 1, signal: controller.signal });
+        controller.abort(); // sibling teardown — must NOT reach the shared fetch's signal
+        await expect(pending).resolves.toMatch(/^blob:mock\//);
+    });
+
+    // F1: the body read is bounded by the timeout, not just the header phase — a 2xx-then-stalled
+    // body times out instead of leaving the pane loading forever.
+    it("bounds the response BODY read by the timeout, not just headers", async () => {
+        jest.useFakeTimers();
+        globalThis.fetch = jest.fn((_url: unknown, opts?: { signal?: AbortSignal }) => {
+            const signal = opts?.signal;
+            const stalled = {
+                status: 200,
+                arrayBuffer: () =>
+                    new Promise((_res, reject) =>
+                        signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))),
+                    ),
+                blob: () =>
+                    new Promise((_res, reject) =>
+                        signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))),
+                    ),
+                clone: () => ({ text: async () => "{}" }),
+                text: async () => "{}",
+            } as unknown as Response;
+            return Promise.resolve(stalled); // headers arrive; body never settles on its own
+        }) as unknown as typeof fetch;
+        const api = new FilesApi(SERVER, "tok");
+        const pending = api.textContent("/root/big.md");
+        await Promise.resolve();
+        await Promise.resolve(); // let fetch resolve + the body read begin (abort listener attached)
+        jest.advanceTimersByTime(FETCH_TIMEOUT_MS + 1);
+        await expect(pending).rejects.toMatchObject({ code: "timeout" });
     });
 
     // F8/F3: dispose aborts an in-flight request (abort-on-teardown).

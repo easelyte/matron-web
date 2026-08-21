@@ -125,6 +125,9 @@ export class FilesApi implements FilesApiLike {
     private readonly lifecycle = new AbortController();
     // Inline-content object URLs, keyed by (disposition, mtime, path) so a changed mtime busts it.
     private readonly urls = new Map<string, string>();
+    // Current cache key per (disposition, path): lets us revoke the PRIOR mtime generation when a
+    // newer one is cached, so a long session doesn't retain every previewed revision (F2).
+    private readonly generations = new Map<string, string>();
     private readonly inflight = new Map<string, Promise<string>>();
     // One-shot download URLs — deliberately NOT cached; revoked on a TTL and on dispose.
     private readonly transientUrls = new Set<string>();
@@ -166,14 +169,16 @@ export class FilesApi implements FilesApiLike {
         };
     }
 
-    public async textContent(path: string, signal?: AbortSignal): Promise<string> {
-        const response = await this.fetchContent(path, "inline", signal);
-        return new TextDecoder().decode(await response.arrayBuffer());
+    public textContent(path: string, signal?: AbortSignal): Promise<string> {
+        return this.request(
+            this.contentPath(path, "inline"),
+            signal,
+            async (response) => new TextDecoder().decode(await response.arrayBuffer()),
+        );
     }
 
-    public async fileBytes(path: string, opts?: { mtime?: number; signal?: AbortSignal }): Promise<ArrayBuffer> {
-        const response = await this.fetchContent(path, "inline", opts?.signal);
-        return response.arrayBuffer();
+    public fileBytes(path: string, opts?: { mtime?: number; signal?: AbortSignal }): Promise<ArrayBuffer> {
+        return this.request(this.contentPath(path, "inline"), opts?.signal, (response) => response.arrayBuffer());
     }
 
     public contentUrl(
@@ -188,14 +193,32 @@ export class FilesApi implements FilesApiLike {
         if (pending) return pending;
         const request = (async (): Promise<string> => {
             try {
-                const response = await this.fetchContent(path, disposition, opts.signal);
-                const blob = await response.blob();
+                // The shared request is deliberately NOT tied to `opts.signal` (F3): a sibling
+                // subscriber's teardown (StrictMode effect replay, rapid close→reopen) must not abort
+                // a fetch another subscriber is still awaiting — that stranded the preview in Loading.
+                // It stays bounded by the lifecycle + timeout signals inside request(); a superseded
+                // view simply ignores the result (useAsyncResource's `cancelled` guard).
+                const blob = await this.request(this.contentPath(path, disposition), undefined, (response) =>
+                    response.blob(),
+                );
                 const url = URL.createObjectURL(blob);
                 if (this.disposed) {
                     // Resolved after sign-out: drop it and revoke so it can't leak into the next session.
                     URL.revokeObjectURL(url);
                     throw new JournalApiError("The session ended.", 0, "disposed");
                 }
+                // Supersede the prior mtime generation for this (disposition, path): revoke the stale
+                // URL so repeatedly previewing a rewritten file doesn't accumulate every revision (F2).
+                const genKey = `${disposition}:${path}`;
+                const prevKey = this.generations.get(genKey);
+                if (prevKey && prevKey !== cacheKey) {
+                    const prevUrl = this.urls.get(prevKey);
+                    if (prevUrl) {
+                        URL.revokeObjectURL(prevUrl);
+                        this.urls.delete(prevKey);
+                    }
+                }
+                this.generations.set(genKey, cacheKey);
                 this.urls.set(cacheKey, url);
                 return url;
             } finally {
@@ -207,9 +230,10 @@ export class FilesApi implements FilesApiLike {
     }
 
     public async download(path: string, filename: string, signal?: AbortSignal): Promise<void> {
-        const response = await this.fetchContent(path, "attachment", signal);
-        const blob = await response.blob();
-        // Completed after sign-out → drop it; never save old-session bytes to disk (F3).
+        // Single-owner (not deduped) → safe to abort on the caller's signal; body read stays inside
+        // the timeout via request() so a stalled attachment stream can't hang forever (F1).
+        const blob = await this.request(this.contentPath(path, "attachment"), signal, (response) => response.blob());
+        // Completed after sign-out → mint nothing; never save old-session bytes to disk (F3).
         if (this.disposed) return;
         const url = URL.createObjectURL(blob);
         this.transientUrls.add(url);
@@ -231,29 +255,37 @@ export class FilesApi implements FilesApiLike {
         this.lifecycle.abort();
         for (const url of this.urls.values()) URL.revokeObjectURL(url);
         this.urls.clear();
+        this.generations.clear();
         for (const url of this.transientUrls) URL.revokeObjectURL(url);
         this.transientUrls.clear();
     }
 
-    private async fetchJson(path: string, signal?: AbortSignal): Promise<unknown> {
-        const response = await this.fetchRaw(path, signal);
-        const text = new TextDecoder().decode(await response.arrayBuffer());
-        try {
-            return JSON.parse(text);
-        } catch {
-            throw new JournalApiError("The server returned malformed JSON.", response.status);
-        }
+    private fetchJson(path: string, signal?: AbortSignal): Promise<unknown> {
+        return this.request(path, signal, async (response) => {
+            const text = new TextDecoder().decode(await response.arrayBuffer());
+            try {
+                return JSON.parse(text);
+            } catch {
+                throw new JournalApiError("The server returned malformed JSON.", response.status);
+            }
+        });
     }
 
-    private fetchContent(path: string, disposition: ContentDisposition, signal?: AbortSignal): Promise<Response> {
+    private contentPath(path: string, disposition: ContentDisposition): string {
         const query = new URLSearchParams({ path, disposition });
-        return this.fetchRaw(`/files/content?${query.toString()}`, signal);
+        return `/files/content?${query.toString()}`;
     }
 
-    // Mirrors JournalApi.request + client.mediaUrl's lifecycle guard: Bearer auth, a bounded
-    // timeout, lifecycle + per-view + timeout aborts combined, and a typed throw for any non-2xx so
-    // callers branch on `.status` (403/413/404 uniform denial).
-    private async fetchRaw(path: string, signal?: AbortSignal): Promise<Response> {
+    // Mirrors JournalApi.request + client.mediaUrl's lifecycle guard: Bearer auth, a bounded timeout,
+    // lifecycle + per-view + timeout aborts combined, and a typed throw for any non-2xx so callers
+    // branch on `.status` (403/413/404 uniform denial). Crucially the response BODY is consumed by
+    // `consume` INSIDE this timeout scope (F1): a server that returns 2xx headers then stalls the body
+    // aborts on the deadline instead of leaving the pane loading forever.
+    private async request<T>(
+        path: string,
+        signal: AbortSignal | undefined,
+        consume: (response: Response) => Promise<T>,
+    ): Promise<T> {
         if (this.disposed) throw new JournalApiError("The session ended.", 0, "disposed");
         if (!this.token) throw new JournalApiError("Not signed in.", 401, "unauthenticated");
 
@@ -263,31 +295,31 @@ export class FilesApi implements FilesApiLike {
         if (signal) signals.push(signal);
         const combined = AbortSignal.any(signals);
 
-        let response: Response;
         try {
-            response = await fetch(endpointUrl(this.serverUrl, path), {
+            const response = await fetch(endpointUrl(this.serverUrl, path), {
                 headers: { Authorization: `Bearer ${this.token}` },
                 signal: combined,
             });
+            if (response.status < 200 || response.status >= 300) {
+                let code: string | undefined;
+                try {
+                    const parsed: unknown = JSON.parse(await response.clone().text());
+                    if (isObject(parsed) && typeof parsed.error === "string") code = parsed.error;
+                } catch {
+                    // Non-JSON error body — fall back to the status-only message.
+                }
+                throw new JournalApiError(messageForFileStatus(response.status), response.status, code);
+            }
+            return await consume(response);
         } catch (error) {
             if (this.lifecycle.signal.aborted) throw new JournalApiError("The session ended.", 0, "disposed");
             if (timeout.signal.aborted) throw new JournalApiError("The request timed out.", 0, "timeout");
             if (signal?.aborted) throw new JournalApiError("Cancelled.", 0, "aborted");
+            if (error instanceof JournalApiError) throw error;
             throw new JournalApiError(error instanceof Error ? error.message : "Could not reach the server.", 0);
         } finally {
             clearTimeout(timer);
         }
-        if (response.status < 200 || response.status >= 300) {
-            let code: string | undefined;
-            try {
-                const parsed: unknown = JSON.parse(await response.clone().text());
-                if (isObject(parsed) && typeof parsed.error === "string") code = parsed.error;
-            } catch {
-                // Non-JSON error body — fall back to the status-only message.
-            }
-            throw new JournalApiError(messageForFileStatus(response.status), response.status, code);
-        }
-        return response;
     }
 }
 
