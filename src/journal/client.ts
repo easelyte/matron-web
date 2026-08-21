@@ -752,6 +752,27 @@ export class MatronJournalClient {
         if (conversation?.unread_count) this.scheduleRead(conversationId, conversation.last_seq, 0);
     }
 
+    /**
+     * #699: complete the historical→live transition when forward-paging (loadNewerHistory) reaches
+     * the true tail. beginConversationSelection suppresses these for a historical window; now that
+     * the reader has caught up they must run — but without re-selecting (which would reset the
+     * window and lose the forward-paged rows). Mirrors the live-entry effects of selectConversation:
+     * resubscribe via `viewing` (the deep-link path never sent it, and it drives the server's
+     * ephemeral replay per the subchats design), clear the unread override now that the tail is
+     * seen, schedule the read marker, and repopulate the activity/stream caches that were blanked
+     * while viewing history.
+     */
+    private resumeLiveFromHistoryWindow(conversationId: string): void {
+        this.clearUnreadOverride(conversationId);
+        this.patch({
+            activity: this.activities.get(conversationId),
+            sessionStatus: this.statuses.get(conversationId),
+            textStreams: { ...(this.textStreams.get(conversationId) ?? {}) },
+            toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
+        });
+        this.announceConversationViewing(conversationId);
+    }
+
     public clearSelection(): void {
         this.connection?.send({ op: "viewing", convo_id: null });
         if (this.state.session) storeSelectedConversation(this.state.session, undefined);
@@ -911,6 +932,114 @@ export class MatronJournalClient {
                 return;
             }
             this.historyError = error instanceof Error ? error.message : "Could not load message history";
+            this.patch({ connectionError: this.historyError });
+        } finally {
+            if (ownsLoad()) {
+                this.patch({
+                    loadingHistory: false,
+                    hasOlderHistory: this.history.get(conversationId)?.hasMore ?? false,
+                    viewingHistoryWindow: this.history.get(conversationId)?.hasMoreNewer ?? false,
+                });
+            }
+        }
+    }
+
+    /**
+     * #699: forward-page a deep-link historical window toward the live tail. The mirror of
+     * loadOlderHistory — where that extends the window's oldest edge downward, this extends the
+     * newest edge upward so scrolling DOWN loads NEWER messages instead of forcing "Jump to
+     * latest" (which discards reading position). The server has no after_seq, so the forward
+     * half is obtained via around_seq = newestSeq + 1: messagesAround returns floor(limit/2)
+     * rows before the anchor (already held — deduped by putHistory) and the remainder from the
+     * anchor up, i.e. the events with seq >= newestSeq + 1. Only meaningful while a historical
+     * window is open (hasMoreNewer); once a forward page brings nothing past the newest edge the
+     * window collapses (hasMoreNewer = false) and the normal live-append path (handleEvent)
+     * resumes. Tail detection is response-derived (no-forward-progress), never from cached
+     * summary state, so it can neither strand unfetched rows nor wedge. Reuses loadOlderHistory's
+     * selection-epoch / session / database ownership guard so a response that lost the selection
+     * never mutates it.
+     */
+    public async loadNewerHistory(): Promise<void> {
+        const conversationId = this.state.selectedConversationId;
+        if (!conversationId || !this.database || !this.api || this.state.loadingHistory) return;
+        const history = this.history.get(conversationId);
+        // Forward-paging only applies inside an open historical window with a known newest edge.
+        if (!history || !history.hasMoreNewer || history.newestSeq === undefined) return;
+        const anchorNewestSeq = history.newestSeq;
+        const database = this.database;
+        const api = this.api;
+        const gen = this.sessionGen;
+        const selectionEpoch = this.selectionEpoch;
+        const ownsLoad = (): boolean =>
+            this.sessionGen === gen &&
+            this.database === database &&
+            this.api === api &&
+            this.isCurrentSelection(conversationId, selectionEpoch);
+
+        this.patch({ loadingHistory: true });
+        try {
+            const response = await api.messages(conversationId, undefined, HISTORY_PAGE_SIZE, anchorNewestSeq + 1);
+            if (!ownsLoad()) return;
+            await database.putHistory(response.events);
+            if (!ownsLoad()) return;
+            await this.reconcilePersistedOwnMessages(database);
+            if (!ownsLoad()) return;
+            const minimum = response.events.reduce<number | undefined>(
+                (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
+                history.oldestSeq,
+            );
+            const maximum = response.events.reduce<number | undefined>(
+                (current, event) => (current === undefined ? event.seq : Math.max(current, event.seq)),
+                history.newestSeq,
+            );
+            // Tail detection is derived purely from the response, never from independently-cached
+            // metadata: the window collapses only once a forward page brings nothing past the
+            // newest edge (no event with seq > anchor). Using the sidebar's last_seq as terminal
+            // proof would be a canonical-source violation — a stale-low summary could prematurely
+            // flip to "live" and strand server rows the window never fetched, while a stale-high
+            // one could wedge it. No-forward-progress costs at most one extra overlap-only request
+            // at the true tail and can neither hide nor skip rows.
+            const reachedTail = maximum === undefined || maximum <= anchorNewestSeq;
+            // On collapse the upper bound must cover any live frame that raced in and was persisted
+            // (with a higher seq) while the window was open — handleJournal suppresses the newestSeq
+            // bump during a historical window, so a stale response maximum would filter that frame
+            // out of the "live" timeline. Take the max with the canonical last_seq (the DB's newest
+            // applied seq); max() also means a stale-LOW last_seq can never pull the bound below the
+            // fetched edge. While still paging the bound stays at the fetched maximum.
+            const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
+            const liveNewestSeq =
+                reachedTail && maximum !== undefined ? Math.max(maximum, conversation?.last_seq ?? maximum) : maximum;
+            this.history.set(conversationId, {
+                initialized: true,
+                oldestSeq: minimum,
+                newestSeq: liveNewestSeq,
+                hasMore: history.hasMore,
+                hasMoreNewer: !reachedTail,
+            });
+            if (this.state.selectedConversationId === conversationId) {
+                // Check-act ordering: the abort-capable refresh must land BEFORE any irreversible
+                // live-entry side effect. If db.events()/outbox() rejects, roll the window back so
+                // the reader is not stranded on stale rows with pagination gone — and, crucially,
+                // without having cleared unread or flushed a durable read marker for messages the
+                // refreshed timeline never actually showed.
+                try {
+                    await this.refreshSelectedConversation(conversationId, database, gen, selectionEpoch);
+                } catch (refreshError) {
+                    this.history.set(conversationId, history);
+                    throw refreshError;
+                }
+                if (!ownsLoad()) return;
+                // Only now that the timeline is refreshed: reaching the tail is a full historical→
+                // live transition, not just a flag flip — run the same live-entry side effects
+                // selectConversation performs (subscribe via `viewing`, clear unread, schedule the
+                // read marker, repopulate ephemerals) WITHOUT resetting the window (which would
+                // discard the forward-paged rows and the reading position).
+                if (reachedTail) this.resumeLiveFromHistoryWindow(conversationId);
+            }
+            this.clearHistoryError();
+        } catch (error) {
+            if (!ownsLoad()) return;
+            this.historyError = error instanceof Error ? error.message : "Could not load newer messages";
             this.patch({ connectionError: this.historyError });
         } finally {
             if (ownsLoad()) {

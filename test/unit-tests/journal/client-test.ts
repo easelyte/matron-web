@@ -117,6 +117,7 @@ interface ClientInternals {
     dismissedAttachments: Set<string>;
     pendingAck: number;
     sessionGen: number;
+    selectionEpoch: number;
     startSession(session: Session): Promise<void>;
     scheduleRead(conversationId: string, upToSeq: number, delay?: number): void;
     flushRead(conversationId: string): Promise<void>;
@@ -755,6 +756,245 @@ describe("MatronJournalClient state handling", () => {
             connectionError: "Couldn't jump to that message",
         });
         expect(state.history.get("c1")?.hasMoreNewer).toBe(false);
+    });
+
+    it("pages forward from the newest edge and resumes live once a page brings nothing newer", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        // Deep-link window opened at seq 102. Tail detection is response-derived: the window stays
+        // open while forward pages advance the edge and collapses only when one brings nothing new.
+        const windowEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const forwardPageA = [textEvent("c1", 104), textEvent("c1", 106), textEvent("c1", 180)];
+        // around_seq = 181 anchors past the edge; the server's forward half is empty, so only the
+        // already-held overlap comes back (max <= 180) → no forward progress → tail.
+        const forwardPageB = [textEvent("c1", 180)];
+        const database = historyWindowDatabase(windowEvents);
+        const messages = jest.fn(
+            async (_conversationId: string, _before?: number, _limit?: number, aroundSeq?: number) =>
+                aroundSeq === 103 ? { events: forwardPageA } : { events: forwardPageB },
+        );
+        state.state = {
+            ...signedInState(client, "c1"),
+            events: windowEvents,
+            viewingHistoryWindow: true,
+        };
+        state.database = database;
+        state.api = { messages };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        // First forward page advances the edge to 180; more may still exist, so the window stays open.
+        await client.loadNewerHistory();
+        await jest.runAllTimersAsync();
+
+        expect(messages).toHaveBeenNthCalledWith(1, "c1", undefined, 80, 103);
+        expect(database.putHistory).toHaveBeenNthCalledWith(1, forwardPageA);
+        expect(state.history.get("c1")).toMatchObject({ oldestSeq: 98, newestSeq: 180, hasMoreNewer: true });
+        expect(client.getSnapshot().viewingHistoryWindow).toBe(true);
+        expect(client.getSnapshot().events.map((event) => event.seq)).toEqual([98, 100, 102, 104, 106, 180]);
+
+        // Second forward page returns nothing past the edge: the window collapses and live resumes.
+        await client.loadNewerHistory();
+        await jest.runAllTimersAsync();
+
+        expect(messages).toHaveBeenNthCalledWith(2, "c1", undefined, 80, 181);
+        expect(state.history.get("c1")).toMatchObject({ oldestSeq: 98, newestSeq: 180, hasMoreNewer: false });
+        expect(client.getSnapshot().viewingHistoryWindow).toBe(false);
+        expect(client.getSnapshot().events.map((event) => event.seq)).toEqual([98, 100, 102, 104, 106, 180]);
+    });
+
+    it("keeps the window open when last_seq trails the fetched forward edge (no cached-tail collapse)", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const windowEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const database = historyWindowDatabase(windowEvents);
+        // A forward page advances the edge to 180 while the cached summary still reports last_seq
+        // 120. A cached-tail heuristic would falsely collapse here and strand rows 121-180+; the
+        // response-derived rule must keep paging.
+        const messages = jest.fn(async () => ({ events: [textEvent("c1", 140), textEvent("c1", 180)] }));
+        state.state = {
+            ...signedInState(client, "c1"),
+            events: windowEvents,
+            viewingHistoryWindow: true,
+            conversations: [{ ...CONVERSATIONS[0], id: "c1", last_seq: 120 }, ...CONVERSATIONS.slice(1)],
+        };
+        state.database = database;
+        state.api = { messages };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        await client.loadNewerHistory();
+        await jest.runAllTimersAsync();
+
+        expect(state.history.get("c1")).toMatchObject({ newestSeq: 180, hasMoreNewer: true });
+        expect(client.getSnapshot().viewingHistoryWindow).toBe(true);
+    });
+
+    it("runs the full live-entry transition when forward paging reaches the tail", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const windowEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const database = historyWindowDatabase(windowEvents);
+        // Overlap-only page → no forward progress → tail reached.
+        const messages = jest.fn(async () => ({ events: [textEvent("c1", 102)] }));
+        const send = jest.fn().mockReturnValue(true);
+        state.state = {
+            ...signedInState(client, "c1"),
+            events: windowEvents,
+            viewingHistoryWindow: true,
+            unreadOverrideIds: new Set(["c1"]),
+            conversations: [
+                { ...CONVERSATIONS[0], id: "c1", last_seq: 102, unread_count: 2 },
+                ...CONVERSATIONS.slice(1),
+            ],
+        };
+        state.database = database;
+        state.api = { messages };
+        state.connection = { send };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        await client.loadNewerHistory();
+        await jest.runAllTimersAsync();
+
+        expect(state.history.get("c1")).toMatchObject({ hasMoreNewer: false });
+        expect(client.getSnapshot().viewingHistoryWindow).toBe(false);
+        // The deep-link window never sent `viewing`; the tail transition must subscribe now
+        // (server-side ephemeral replay), clear the unread override, and flush the read marker.
+        expect(send).toHaveBeenCalledWith({ op: "viewing", convo_id: "c1" });
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(false);
+        expect(database.markLocallyRead).toHaveBeenCalledWith("c1", 102);
+    });
+
+    it("keeps a live frame that raced the final forward page from being hidden on collapse", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const windowEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const database = historyWindowDatabase(windowEvents);
+        // The final REST page is stale (predates the live frame) — overlap-only, so it reads as tail.
+        const messages = jest.fn(async () => ({ events: [textEvent("c1", 102)] }));
+        state.state = {
+            ...signedInState(client, "c1"),
+            events: windowEvents,
+            viewingHistoryWindow: true,
+        };
+        state.database = database;
+        state.api = { messages };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        // A live frame (seq 150) arrives and is persisted while the window is still open. The
+        // historical-window path deliberately does not advance newestSeq for it.
+        await state.handleJournal(textEvent("c1", 150));
+        await jest.runAllTimersAsync();
+        expect(state.history.get("c1")).toMatchObject({ newestSeq: 102, hasMoreNewer: true });
+
+        // Collapsing on the stale page must not strand the persisted live frame behind newestSeq.
+        await client.loadNewerHistory();
+        await jest.runAllTimersAsync();
+
+        expect(state.history.get("c1")).toMatchObject({ hasMoreNewer: false });
+        expect(state.history.get("c1")?.newestSeq ?? 0).toBeGreaterThanOrEqual(150);
+        expect(client.getSnapshot().events.map((event) => event.seq)).toContain(150);
+    });
+
+    it("rolls back the window and skips read side effects when the tail refresh fails", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const windowEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const database = historyWindowDatabase(windowEvents);
+        const messages = jest.fn(async () => ({ events: [textEvent("c1", 102)] }));
+        // The forward page succeeds but the subsequent timeline refresh read rejects.
+        database.events = jest.fn().mockRejectedValue(new Error("db read failed"));
+        const send = jest.fn().mockReturnValue(true);
+        state.state = {
+            ...signedInState(client, "c1"),
+            events: windowEvents,
+            viewingHistoryWindow: true,
+            unreadOverrideIds: new Set(["c1"]),
+            conversations: [
+                { ...CONVERSATIONS[0], id: "c1", last_seq: 102, unread_count: 2 },
+                ...CONVERSATIONS.slice(1),
+            ],
+        };
+        state.database = database;
+        state.api = { messages };
+        state.connection = { send };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        await client.loadNewerHistory();
+        await jest.runAllTimersAsync();
+
+        // Check-act ordering: the failed refresh leaves the window intact and performs none of the
+        // irreversible live-entry effects — no `viewing` resubscribe, no unread clear, no read marker.
+        expect(state.history.get("c1")).toMatchObject({ newestSeq: 102, hasMoreNewer: true });
+        expect(client.getSnapshot().viewingHistoryWindow).toBe(true);
+        expect(send).not.toHaveBeenCalledWith({ op: "viewing", convo_id: "c1" });
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+        expect(database.markLocallyRead).not.toHaveBeenCalled();
+    });
+
+    it("discards a forward-paging response after the selection changes", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const forwardPage = deferred<{ events: JournalEvent[] }>();
+        const database = historyWindowDatabase([textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)]);
+        const messages = jest.fn(() => forwardPage.promise);
+        state.state = {
+            ...signedInState(client, "c1"),
+            viewingHistoryWindow: true,
+            conversations: [{ ...CONVERSATIONS[0], id: "c1", last_seq: 210 }, ...CONVERSATIONS.slice(1)],
+        };
+        state.database = database;
+        state.api = { messages };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        const paging = client.loadNewerHistory();
+        // A concurrent selection change bumps the epoch and takes over the selection.
+        state.selectionEpoch = (state.selectionEpoch ?? 0) + 1;
+        state.state = { ...state.state, selectedConversationId: "c2" };
+        forwardPage.resolve({ events: [textEvent("c1", 104), textEvent("c1", 106)] });
+        await paging;
+        await jest.runAllTimersAsync();
+
+        // The stale window must not be mutated by a response it no longer owns.
+        expect(state.history.get("c1")).toMatchObject({ newestSeq: 102, hasMoreNewer: true });
     });
 
     it("blocks prompt and agent-spawn answers in history and allows them after Jump to latest", async () => {
