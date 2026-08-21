@@ -4625,6 +4625,7 @@ function Timeline({
         | undefined
     >(undefined);
     const historyScrollRestored = useRef(false);
+    const wasViewingHistoryWindow = useRef(state.viewingHistoryWindow);
     const { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs } = useMemo(() => {
         const queuedReleasePromptSeqs = new Set<number>();
         const legacyQueuePromptSeqs = new Set<number>();
@@ -4742,7 +4743,19 @@ function Timeline({
         pendingScrollFrame.current = requestAnimationFrame(() => {
             pendingScrollFrame.current = undefined;
             if (selectedConversationId.current !== queuedConversationId) return;
-            setFollow(isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight));
+            const nearBottom = isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight);
+            // While a historical window is open we are browsing, not tailing live: keep follow off
+            // so the layout effect never snaps to the bottom mid-forward-page. Scrolling down to
+            // the loaded newest edge pages FORWARD (loads newer) instead of demanding "Jump to
+            // latest". The client guards on loadingHistory + hasMoreNewer, so a burst of scroll
+            // frames self-debounces and stops at the true tail (which collapses the window back to
+            // live, after which normal follow resumes).
+            if (state.viewingHistoryWindow) {
+                setFollow(false);
+                if (nearBottom && !state.loadingHistory) void client.loadNewerHistory();
+            } else {
+                setFollow(nearBottom);
+            }
         });
     };
 
@@ -4794,9 +4807,15 @@ function Timeline({
             return;
         }
 
-        if (isFollowingTail) node.scrollTop = node.scrollHeight;
+        // #699: never snap to the bottom while a historical window is open. Forward-paging
+        // appends newer rows below the viewport; the browser keeps scrollTop stable, preserving
+        // the reader's position. Snapping here would jump past the freshly fetched page — the
+        // exact reading-position loss this feature exists to avoid. Once the window collapses at
+        // the true tail, normal live-tail following resumes.
+        if (isFollowingTail && !state.viewingHistoryWindow) node.scrollTop = node.scrollHeight;
     }, [
         state.selectedConversationId,
+        state.viewingHistoryWindow,
         visibleEvents,
         state.pendingMessages.length,
         state.textStreams,
@@ -4804,6 +4823,23 @@ function Timeline({
         state.loadingHistory,
         isFollowingTail,
     ]);
+
+    useEffect(() => {
+        const wasOpen = wasViewingHistoryWindow.current;
+        wasViewingHistoryWindow.current = state.viewingHistoryWindow;
+        // #699: forward-paging just collapsed the historical window to live (true → false). While
+        // the window was open onScroll forced follow off, so it will not resume on its own. If the
+        // reader is at the loaded bottom edge (the scroll-to-newest path that reached the tail),
+        // re-arm tail-following and snap to the newest so live messages stay visible. If they are
+        // not at the edge (collapsed via the Load-newer button mid-scroll) leave their position —
+        // Jump-to-bottom surfaces instead.
+        if (!wasOpen || state.viewingHistoryWindow) return;
+        const node = scrollRef.current;
+        if (node && isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight)) {
+            setFollow(true);
+            scrollToBottom();
+        }
+    }, [state.viewingHistoryWindow, scrollToBottom]);
 
     useLayoutEffect(() => {
         const targetSeq = state.pendingScrollSeq;
@@ -4959,6 +4995,17 @@ function Timeline({
                                 {state.activity.state === "thinking"
                                     ? "Thinking"
                                     : `Running ${state.activity.detail || "a tool"}`}
+                            </li>
+                        )}
+                        {state.viewingHistoryWindow && (
+                            <li className="mj_HistoryRow">
+                                <button
+                                    className="mj_LoadHistory"
+                                    onClick={() => void client.loadNewerHistory()}
+                                    disabled={state.loadingHistory}
+                                >
+                                    {state.loadingHistory ? "Loading…" : "Load newer messages"}
+                                </button>
                             </li>
                         )}
                     </ol>

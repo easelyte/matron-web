@@ -206,6 +206,36 @@ describe("timeline tail following", () => {
         expect(rendered.container.querySelector(".mj_JumpToBottom")).toBeNull();
     });
 
+    it("re-follows the tail when forward-paging collapses the historical window at the bottom edge (#699)", async () => {
+        const client = signedInClient();
+        const loadNewer = jest.spyOn(client, "loadNewerHistory").mockResolvedValue(undefined);
+        rendered = await renderClient(client);
+        const panel = rendered.container.querySelector<HTMLDivElement>(".mx_RoomView_messagePanel")!;
+        // Near the loaded bottom edge (scrollHeight 1000, clientHeight 100, threshold 80).
+        setScrollMetrics(panel, 900);
+        await act(async () => patchClient(client, { viewingHistoryWindow: true }));
+
+        // Scrolling to the newest loaded edge of the history window suppresses follow and pages forward.
+        panel.dispatchEvent(new Event("scroll"));
+        await flushFrames();
+        expect(loadNewer).toHaveBeenCalled();
+
+        // Forward paging reaches the true tail: the window collapses to live and a live event lands.
+        const tail: JournalEvent = {
+            seq: 1,
+            convo_id: "c1",
+            ts: 1,
+            sender: "agent:test",
+            type: "text",
+            payload: { text: "live tail" },
+        };
+        await act(async () => patchClient(client, { viewingHistoryWindow: false, events: [tail] }));
+
+        // Follow is re-armed and the view snaps to the newest so the live message stays visible.
+        expect(panel.scrollTop).toBe(1000);
+        expect(rendered.container.querySelector(".mj_JumpToBottom")).toBeNull();
+    });
+
     it("a conversation switch forces follow and a pre-switch frame cannot flip it off", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);
