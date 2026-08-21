@@ -2104,7 +2104,16 @@ export class MatronJournalClient {
 
     private async refreshConversations(): Promise<void> {
         if (!this.database) return;
-        this.patch({ conversations: await this.database.conversations() });
+        const conversations = await this.database.conversations();
+        // Reconcile the fire-and-forget tool-call cards against the durable run-state (#698). The
+        // turn-end tool_stream 'end' frame (applyToolStream) is never replayed, so a dropped one
+        // would strand a dangling 'running' tool card in this.toolStreams. session_state is the
+        // persisted, replayed signal — a conversation no longer running has no live tool stream.
+        // Mirrors the activity-indicator reconcile so a settled turn cannot leave a pending card.
+        for (const conversation of conversations) {
+            if (conversation.session_state !== "running") this.toolStreams.delete(conversation.id);
+        }
+        this.patch({ conversations });
     }
 
     private async refreshSelectedConversation(
