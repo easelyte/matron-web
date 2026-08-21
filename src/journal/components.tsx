@@ -31,6 +31,7 @@ import {
 } from "./client";
 import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
+import { type EditFileEdit, type EditFileOutcome, pathRejectMessage } from "./edit-file";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
 import {
@@ -741,6 +742,401 @@ export function NewSessionSheet({
     );
 }
 
+type EditSheetState =
+    | { step: "loading-agents" }
+    | { step: "agents-error" }
+    | { step: "agents"; agents: DeviceDTO[] }
+    | { step: "form"; agent: DeviceDTO }
+    | { step: "saving"; agent: DeviceDTO }
+    | { step: "saved"; agent: DeviceDTO; path: string; bytes: number };
+
+type EditMode = "replace" | "content";
+
+/** Copy for the non-path outcome kinds; path rejections use pathRejectMessage. */
+function editOutcomeMessage(outcome: EditFileOutcome): { message: string; stale: boolean } {
+    switch (outcome.kind) {
+        case "stale":
+            return {
+                message:
+                    "The file changed on the box since you loaded it, so nothing was written (its checksum no longer matches). Re-check the current contents and try again.",
+                stale: true,
+            };
+        case "not-found":
+            return {
+                message: "The text to replace wasn't found in the file. Copy an exact snippet and try again.",
+                stale: false,
+            };
+        case "ambiguous":
+            return {
+                message: "The text to replace appears more than once — add surrounding context so it's unique.",
+                stale: false,
+            };
+        case "too-large":
+            return { message: "The file (or the result) is too large to edit through the bridge.", stale: false };
+        case "no-scope":
+            return {
+                message: "The box hasn't pinned any editable folders, so file editing is unavailable there.",
+                stale: false,
+            };
+        case "invalid":
+            return {
+                message: outcome.detail
+                    ? `The bridge rejected the request: ${outcome.detail}`
+                    : "The bridge rejected the request.",
+                stale: false,
+            };
+        case "uncertain":
+            return {
+                message:
+                    "The box didn't confirm the edit before timing out — it MAY already have been applied. Check the file before trying again (a blind retry could apply it twice).",
+                stale: false,
+            };
+        case "unreachable":
+            return { message: outcome.message, stale: false };
+        case "path-rejected":
+            return { message: pathRejectMessage(outcome.reason), stale: false };
+        default:
+            return { message: outcome.kind === "error" ? outcome.message : "The edit failed.", stale: false };
+    }
+}
+
+/**
+ * Guarded file editor (loop #548). Applies a small edit to an EXISTING file on
+ * an agent's box through the bridge `edit_file` RPC — for the operator on the
+ * bridge with no SSH/VSCode (tweak a config value, flip a feature flag). The
+ * bridge refuses sensitive basenames (.env, secrets, keys, credentials, …), so
+ * those paths come back path-rejected rather than editable.
+ *
+ * Two modes match the RPC exactly: a targeted "replace this text" splice (safe
+ * without a read path — the bridge enforces the old text is present AND unique)
+ * and a full-content replace. An optional expected-checksum field threads the
+ * compare-and-swap: the edit is rejected (stale) if the file no longer hashes
+ * to it, guarding against clobbering a change made since the checksum was taken.
+ * It is NOT a full atomic guarantee — the bridge checks the hash then commits
+ * through a later rename, so a writer landing in that window is still lost (a
+ * documented bridge residual). Every RPC error code is rendered as clear,
+ * non-crashing copy, keeping the user's typed edit intact so they can retry.
+ *
+ * NOTE: the bridge exposes no read RPC yet, so this cannot pre-load the file's
+ * current contents or auto-compute the checksum — content is authored blind and
+ * the CAS is opt-in. A read_file RPC would let this offer load-then-edit.
+ */
+export function EditFileSheet({
+    client,
+    onClose,
+}: {
+    client: MatronJournalClient;
+    onClose: () => void;
+}): React.ReactElement {
+    const [sheetState, setSheetState] = useState<EditSheetState>({ step: "loading-agents" });
+    const [path, setPath] = useState("");
+    const [mode, setMode] = useState<EditMode>("replace");
+    const [oldString, setOldString] = useState("");
+    const [newString, setNewString] = useState("");
+    const [content, setContent] = useState("");
+    const [expectedSha256, setExpectedSha256] = useState("");
+    const [formError, setFormError] = useState<string | undefined>(undefined);
+    const [formErrorStale, setFormErrorStale] = useState(false);
+
+    const sheetStateRef = useRef(sheetState);
+    const agentsRef = useRef<DeviceDTO[]>([]);
+    const agentsRequestIdRef = useRef(0);
+    const savingRef = useRef(false);
+    const mountedRef = useRef(false);
+    const dismissedRef = useRef(false);
+
+    const transition = useCallback((next: EditSheetState): void => {
+        sheetStateRef.current = next;
+        setSheetState(next);
+    }, []);
+
+    const loadAgents = useCallback((): void => {
+        const agentsRequestId = ++agentsRequestIdRef.current;
+        transition({ step: "loading-agents" });
+        void client.listAgents().then(
+            (agents) => {
+                if (!mountedRef.current || dismissedRef.current || agentsRequestId !== agentsRequestIdRef.current)
+                    return;
+                agentsRef.current = agents;
+                const connected = agents.filter((agent) => agent.connected);
+                if (connected.length === 1) {
+                    transition({ step: "form", agent: connected[0] });
+                } else {
+                    transition({ step: "agents", agents });
+                }
+            },
+            () => {
+                if (mountedRef.current && !dismissedRef.current && agentsRequestId === agentsRequestIdRef.current) {
+                    transition({ step: "agents-error" });
+                }
+            },
+        );
+    }, [client, transition]);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        loadAgents();
+        return () => {
+            mountedRef.current = false;
+        };
+    }, [loadAgents]);
+
+    const dismiss = (): void => {
+        dismissedRef.current = true;
+        onClose();
+    };
+
+    const submit = async (agent: DeviceDTO): Promise<void> => {
+        if (savingRef.current || dismissedRef.current) return;
+        // Trim ONLY to detect a blank field — a trailing space is a legal,
+        // distinct Linux filename, so silently trimming could retarget the
+        // edit to a different file. Send exactly what the operator typed.
+        if (path.trim().length === 0) {
+            setFormError("Enter the absolute path of the file to edit.");
+            setFormErrorStale(false);
+            return;
+        }
+        let edit: EditFileEdit;
+        if (mode === "replace") {
+            if (oldString.length === 0) {
+                setFormError("Enter the exact text to replace.");
+                setFormErrorStale(false);
+                return;
+            }
+            edit = { mode: "replace", oldString, newString };
+        } else {
+            edit = { mode: "content", content };
+        }
+        const sha = expectedSha256.trim();
+        if (sha.length > 0 && !/^[0-9a-f]{64}$/i.test(sha)) {
+            setFormError("The expected checksum must be a 64-character hex sha256 (or leave it blank).");
+            setFormErrorStale(false);
+            return;
+        }
+
+        savingRef.current = true;
+        setFormError(undefined);
+        setFormErrorStale(false);
+        transition({ step: "saving", agent });
+        const outcome = await client.editFile(agent.device_id, {
+            path,
+            edit,
+            expectedSha256: sha.length > 0 ? sha : undefined,
+        });
+        savingRef.current = false;
+        if (!mountedRef.current || dismissedRef.current) return;
+        if (outcome.kind === "saved") {
+            transition({ step: "saved", agent, path: outcome.path, bytes: outcome.bytes });
+            return;
+        }
+        const { message, stale } = editOutcomeMessage(outcome);
+        setFormError(message);
+        setFormErrorStale(stale);
+        transition({ step: "form", agent });
+    };
+
+    const formAgent = sheetState.step === "form" ? sheetState.agent : undefined;
+
+    return (
+        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-edit-file-title">
+            <div className="mj_UploadConfirm mj_NewSessionSheet">
+                <div className="mj_NewSessionSheet_head">
+                    <h2 className="mj_UploadConfirm_title" id="mj-edit-file-title">
+                        Edit a file
+                    </h2>
+                    <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={dismiss}>
+                        <svg
+                            viewBox="0 0 24 24"
+                            width="16"
+                            height="16"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                        >
+                            <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+
+                {sheetState.step === "loading-agents" && (
+                    <div role="status">
+                        <span className="mj_Spinner" aria-hidden="true" /> Loading agents…
+                    </div>
+                )}
+
+                {sheetState.step === "agents-error" && (
+                    <>
+                        <p className="mj_UploadConfirm_error">Couldn't load agents.</p>
+                        <div className="mj_UploadConfirm_actions">
+                            <button type="button" className="mj_UploadConfirm_send" onClick={loadAgents}>
+                                Retry
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {sheetState.step === "agents" && (
+                    <>
+                        {sheetState.agents.length === 0 ? (
+                            <p>No agents connected — start the bridge on your box.</p>
+                        ) : (
+                            <div role="list" aria-label="Agents">
+                                {sheetState.agents.map((agent) => (
+                                    <button
+                                        key={agent.device_id}
+                                        type="button"
+                                        role="listitem"
+                                        disabled={!agent.connected}
+                                        onClick={() => transition({ step: "form", agent })}
+                                    >
+                                        <strong>{agentName(agent)}</strong>
+                                        <span>{agentStatus(agent)}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </>
+                )}
+
+                {formAgent && (
+                    <>
+                        <p>Edit a file on {agentName(formAgent)}</p>
+                        <label htmlFor="mj-edit-file-path">File path</label>
+                        <input
+                            id="mj-edit-file-path"
+                            type="text"
+                            value={path}
+                            onChange={(event) => setPath(event.target.value)}
+                            placeholder="/absolute/path/on/the/box"
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            spellCheck={false}
+                        />
+
+                        <div role="radiogroup" aria-label="Edit mode" className="mj_EditFile_modes">
+                            <label>
+                                <input
+                                    type="radio"
+                                    name="mj-edit-file-mode"
+                                    checked={mode === "replace"}
+                                    onChange={() => setMode("replace")}
+                                />{" "}
+                                Replace text
+                            </label>
+                            <label>
+                                <input
+                                    type="radio"
+                                    name="mj-edit-file-mode"
+                                    checked={mode === "content"}
+                                    onChange={() => setMode("content")}
+                                />{" "}
+                                Replace whole file
+                            </label>
+                        </div>
+
+                        {mode === "replace" ? (
+                            <>
+                                <label htmlFor="mj-edit-file-old">Text to replace (must appear exactly once)</label>
+                                <textarea
+                                    id="mj-edit-file-old"
+                                    value={oldString}
+                                    onChange={(event) => setOldString(event.target.value)}
+                                    rows={3}
+                                    spellCheck={false}
+                                />
+                                <label htmlFor="mj-edit-file-new">Replacement text</label>
+                                <textarea
+                                    id="mj-edit-file-new"
+                                    value={newString}
+                                    onChange={(event) => setNewString(event.target.value)}
+                                    rows={3}
+                                    spellCheck={false}
+                                />
+                            </>
+                        ) : (
+                            <>
+                                <label htmlFor="mj-edit-file-content">New file contents</label>
+                                <textarea
+                                    id="mj-edit-file-content"
+                                    value={content}
+                                    onChange={(event) => setContent(event.target.value)}
+                                    rows={8}
+                                    spellCheck={false}
+                                />
+                            </>
+                        )}
+
+                        <label htmlFor="mj-edit-file-sha">Expected checksum (optional, sha256)</label>
+                        <input
+                            id="mj-edit-file-sha"
+                            type="text"
+                            value={expectedSha256}
+                            onChange={(event) => setExpectedSha256(event.target.value)}
+                            placeholder="Leave blank to skip the safety check"
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            spellCheck={false}
+                        />
+
+                        {formError && (
+                            <p
+                                className={`mj_UploadConfirm_error${formErrorStale ? " mj_EditFile_stale" : ""}`}
+                                role="alert"
+                            >
+                                {formError}
+                            </p>
+                        )}
+
+                        <div className="mj_UploadConfirm_actions">
+                            {agentsRef.current.filter((agent) => agent.connected).length !== 1 && (
+                                <button
+                                    type="button"
+                                    onClick={() => transition({ step: "agents", agents: agentsRef.current })}
+                                >
+                                    Back
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                className="mj_UploadConfirm_send"
+                                onClick={() => void submit(formAgent)}
+                            >
+                                Save edit
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {sheetState.step === "saving" && (
+                    <div role="status">
+                        <span className="mj_Spinner" aria-hidden="true" /> Saving edit…
+                    </div>
+                )}
+
+                {sheetState.step === "saved" && (
+                    <>
+                        <p>
+                            Saved {sheetState.bytes} {sheetState.bytes === 1 ? "byte" : "bytes"} to{" "}
+                            <code>{sheetState.path}</code>.
+                        </p>
+                        <div className="mj_UploadConfirm_actions">
+                            <button type="button" onClick={() => transition({ step: "form", agent: sheetState.agent })}>
+                                Edit another
+                            </button>
+                            <button type="button" className="mj_UploadConfirm_send" onClick={dismiss}>
+                                Done
+                            </button>
+                        </div>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export function markForKind(kind: string | null | undefined, className?: string): React.ReactElement | null {
     const classes = [className, kind === "codex" ? "mj_OpenAIMark" : "mj_AnthropicMark"].filter(Boolean).join(" ");
     if (kind === "codex") return <OpenAIMark className={classes} />;
@@ -895,10 +1291,16 @@ function ConversationList({
     const [tab, setTab] = useState<"active" | "favorites" | "archived">("active");
     const [accountOpen, setAccountOpen] = useState(false);
     const [newSessionOpen, setNewSessionOpen] = useState(false);
+    const [editFileOpen, setEditFileOpen] = useState(false);
     const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
     const roomMenuRef = useRef(roomMenu);
     const roomMenuElementRef = useRef<HTMLDivElement>(null);
     const roomMenuOpenerRef = useRef<HTMLElement | null>(null);
+    // Handle for the deferred post-action focus-restore rAF (below). Tracked so
+    // it can be cancelled when it becomes stale — on unmount, and when a new
+    // menu opens — so a prior action's restore can never steal focus from a
+    // freshly opened menu (or fire after unmount into a later render's DOM).
+    const menuActionFocusRafRef = useRef<number | undefined>(undefined);
     const menuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
     const longPressTargetRef = useRef<{ conversationId: string; row: HTMLButtonElement } | undefined>(undefined);
     const longPressFiredRef = useRef(false);
@@ -964,6 +1366,12 @@ function ConversationList({
     openRoomMenuRef.current = (conversationId, left, top, opener): void => {
         setAccountOpen(false);
         setNewSessionOpen(false);
+        // A pending focus-restore from a just-actioned menu would otherwise fire
+        // after this menu's item[0] focus and yank focus to the search input.
+        if (menuActionFocusRafRef.current !== undefined) {
+            cancelAnimationFrame(menuActionFocusRafRef.current);
+            menuActionFocusRafRef.current = undefined;
+        }
         roomMenuOpenerRef.current = opener;
         setRoomMenu({ conversationId, left, top });
     };
@@ -994,7 +1402,9 @@ function ConversationList({
     // through to document.body.
     const restoreFocusAfterMenuAction = useCallback((): void => {
         const opener = roomMenuOpenerRef.current;
-        requestAnimationFrame(() => {
+        if (menuActionFocusRafRef.current !== undefined) cancelAnimationFrame(menuActionFocusRafRef.current);
+        menuActionFocusRafRef.current = requestAnimationFrame(() => {
+            menuActionFocusRafRef.current = undefined;
             if (opener && opener.isConnected) opener.focus();
             else document.getElementById("room-list-search-input")?.focus();
         });
@@ -1021,6 +1431,7 @@ function ConversationList({
         () => () => {
             longPressControllerRef.current?.onPointerCancel();
             longPressScrollCleanupRef.current();
+            if (menuActionFocusRafRef.current !== undefined) cancelAnimationFrame(menuActionFocusRafRef.current);
         },
         [],
     );
@@ -1525,10 +1936,19 @@ function ConversationList({
                     <div className="mj_HeaderMenu mj_AccountMenu">
                         <strong>{state.session?.username}</strong>
                         <span>{state.session?.serverUrl}</span>
+                        <button
+                            onClick={() => {
+                                setAccountOpen(false);
+                                setEditFileOpen(true);
+                            }}
+                        >
+                            Edit a file
+                        </button>
                         <button onClick={() => void client.logout()}>Sign out</button>
                     </div>
                 )}
                 {newSessionOpen && <NewSessionSheet client={client} onClose={() => setNewSessionOpen(false)} />}
+                {editFileOpen && <EditFileSheet client={client} onClose={() => setEditFileOpen(false)} />}
                 {roomMenu && menuConversation && (
                     <div
                         className="mj_HeaderMenu mj_RoomItemMenu"
