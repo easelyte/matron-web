@@ -44,6 +44,7 @@ import {
     ClipboardIcon,
     CloseIcon,
     CodeBracketsIcon,
+    FolderIcon,
     CompactIcon,
     ComposeIcon,
     ArchiveFileIcon,
@@ -78,7 +79,14 @@ import {
     UnarchiveIcon,
     UploadTrayIcon,
 } from "./icons";
+import { FilesPane } from "./files/FilesPane";
 import { createLongPressController, type LongPressController } from "./longPress";
+
+// True inside the packaged Electron desktop app (its preload injects window.electron). The Files
+// pane is web/iOS-PWA only for Phase 1 — see FilesApi header + the gated entry button (F2).
+function isElectronRuntime(): boolean {
+    return typeof window !== "undefined" && Boolean((window as Window & { electron?: unknown }).electron);
+}
 import { MarkdownBody, markdownToPlainText } from "./markdown";
 import {
     buildMediaCorpus,
@@ -1749,6 +1757,26 @@ function ConversationList({
                                                 onClick={() => client.markAllRead()}
                                             >
                                                 <MarkAllReadIcon />
+                                            </button>
+                                        )}
+                                        {/* Files pane uses renderer fetch, which the packaged Electron app
+                                            can't use from the matron:// origin (desktop transport is IPC).
+                                            Feature-gate the entry point OFF on desktop (F2). TODO: desktop
+                                            support needs binary bodies over journalRequest — follow-up. */}
+                                        {!isElectronRuntime() && (
+                                            <button
+                                                className="mj_IconButton"
+                                                type="button"
+                                                aria-label="Files"
+                                                aria-pressed={state.filesView?.open ? true : undefined}
+                                                title="Browse files"
+                                                onClick={() =>
+                                                    state.filesView?.open
+                                                        ? client.closeFilesView()
+                                                        : client.openFilesView()
+                                                }
+                                            >
+                                                <FolderIcon />
                                             </button>
                                         )}
                                         <button
@@ -6617,8 +6645,12 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                 >
                     <div />
                 </div>
-                <div className={`mx_RoomView_wrapper ${state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}>
-                    {state.selectedConversationId ? (
+                <div
+                    className={`mx_RoomView_wrapper ${state.filesView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
+                >
+                    {state.filesView?.open && !isElectronRuntime() ? (
+                        <FilesPane client={client} state={state} />
+                    ) : state.selectedConversationId ? (
                         <div
                             className={`mx_RoomView${dragActive ? " mj_RoomView_dragActive" : ""}`}
                             onDragOver={(event) => {

@@ -7,6 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 import { JournalApi, JournalApiError, loadMatronConfig } from "./api";
 import { JournalConnection } from "./connection";
+import { FilesApi } from "./files/filesApi";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { JournalDatabase } from "./database";
 import { buildEditFileParams, classifyEditFileReply, type EditFileInput, type EditFileOutcome } from "./edit-file";
@@ -302,6 +303,9 @@ export class MatronJournalClient {
     private readonly retiredStreamRefs = new Set<string>();
     private readonly mediaUrls = new Map<string, string>();
     private readonly mediaUrlRequests = new Map<string, Promise<string>>();
+    // Files pane (Phase 1b): one FilesApi bound to the current session, built lazily on first use
+    // and torn down (blob URLs revoked) on sign-out. Mirrors the mediaUrls ownership model.
+    private filesApiInstance?: FilesApi;
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
@@ -437,6 +441,8 @@ export class MatronJournalClient {
         this.api = undefined;
         for (const url of this.mediaUrls.values()) URL.revokeObjectURL(url);
         this.mediaUrls.clear();
+        this.filesApiInstance?.dispose();
+        this.filesApiInstance = undefined;
         // The archived-conversations key is deliberately left in place: it is a per-device
         // preference that re-login should restore. Clearing it here would also go unnoticed
         // by this tab, since storage events only fire in other tabs.
@@ -723,6 +729,9 @@ export class MatronJournalClient {
         storeSelectedConversation(this.state.session, conversationId);
         this.patch({
             selectedConversationId: conversationId,
+            // Selecting a conversation closes the Files pane so the chosen room becomes visible
+            // (filesView is the main-region discriminant checked ahead of selectedConversationId).
+            filesView: undefined,
             events: [],
             pendingMessages: [],
             loadingHistory: false,
@@ -1624,6 +1633,34 @@ export class MatronJournalClient {
 
     public selectedConversation(): Conversation | undefined {
         return this.state.conversations.find((conversation) => conversation.id === this.state.selectedConversationId);
+    }
+
+    // ── Files pane (Phase 1b) ───────────────────────────────────────────────────────────────
+    // The session-scoped file API, built lazily. Returns undefined when signed out. The fixture
+    // harness overrides this method with a mock (mirrors how it stubs mediaUrl).
+    public filesApi(): FilesApi | undefined {
+        const session = this.state.session;
+        if (!session) return undefined;
+        this.filesApiInstance ??= new FilesApi(session.serverUrl, session.token);
+        return this.filesApiInstance;
+    }
+
+    // Open the Files pane (main-region discriminant). Preserves the selected conversation so
+    // closing returns to it. `path` seeds the browsed directory; defaults to the remembered one.
+    public openFilesView(path?: string): void {
+        this.patch({ filesView: { open: true, path: path ?? this.state.filesView?.path } });
+    }
+
+    public closeFilesView(): void {
+        if (!this.state.filesView) return;
+        this.patch({ filesView: undefined });
+    }
+
+    // Persist the last-browsed directory so a reopen returns there. No-op when the pane is closed.
+    public setFilesPath(path: string): void {
+        if (!this.state.filesView?.open) return;
+        if (this.state.filesView.path === path) return;
+        this.patch({ filesView: { open: true, path } });
     }
 
     private async startSession(session: Session): Promise<void> {
