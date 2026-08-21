@@ -1296,6 +1296,11 @@ function ConversationList({
     const roomMenuRef = useRef(roomMenu);
     const roomMenuElementRef = useRef<HTMLDivElement>(null);
     const roomMenuOpenerRef = useRef<HTMLElement | null>(null);
+    // Handle for the deferred post-action focus-restore rAF (below). Tracked so
+    // it can be cancelled when it becomes stale — on unmount, and when a new
+    // menu opens — so a prior action's restore can never steal focus from a
+    // freshly opened menu (or fire after unmount into a later render's DOM).
+    const menuActionFocusRafRef = useRef<number | undefined>(undefined);
     const menuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
     const longPressTargetRef = useRef<{ conversationId: string; row: HTMLButtonElement } | undefined>(undefined);
     const longPressFiredRef = useRef(false);
@@ -1361,6 +1366,12 @@ function ConversationList({
     openRoomMenuRef.current = (conversationId, left, top, opener): void => {
         setAccountOpen(false);
         setNewSessionOpen(false);
+        // A pending focus-restore from a just-actioned menu would otherwise fire
+        // after this menu's item[0] focus and yank focus to the search input.
+        if (menuActionFocusRafRef.current !== undefined) {
+            cancelAnimationFrame(menuActionFocusRafRef.current);
+            menuActionFocusRafRef.current = undefined;
+        }
         roomMenuOpenerRef.current = opener;
         setRoomMenu({ conversationId, left, top });
     };
@@ -1391,7 +1402,9 @@ function ConversationList({
     // through to document.body.
     const restoreFocusAfterMenuAction = useCallback((): void => {
         const opener = roomMenuOpenerRef.current;
-        requestAnimationFrame(() => {
+        if (menuActionFocusRafRef.current !== undefined) cancelAnimationFrame(menuActionFocusRafRef.current);
+        menuActionFocusRafRef.current = requestAnimationFrame(() => {
+            menuActionFocusRafRef.current = undefined;
             if (opener && opener.isConnected) opener.focus();
             else document.getElementById("room-list-search-input")?.focus();
         });
@@ -1418,6 +1431,7 @@ function ConversationList({
         () => () => {
             longPressControllerRef.current?.onPointerCancel();
             longPressScrollCleanupRef.current();
+            if (menuActionFocusRafRef.current !== undefined) cancelAnimationFrame(menuActionFocusRafRef.current);
         },
         [],
     );
