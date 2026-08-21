@@ -62,6 +62,12 @@ export type ReadFileOutcome =
     | { kind: "not-found" }
     /** the file exceeds the bridge's read-size cap. */
     | { kind: "too-large" }
+    /**
+     * The file isn't UTF-8 text (invalid/binary bytes that wouldn't survive a
+     * decode -> re-encode round-trip). The bridge refuses it so a load-then-save
+     * can't silently corrupt it — the editor only handles text files.
+     */
+    | { kind: "not-text" }
     /** path failed the bridge's safety boundary; `reason` is verbatim. */
     | { kind: "path-rejected"; reason: string }
     /** the bridge has no allowed roots pinned — editing is unavailable there. */
@@ -149,6 +155,8 @@ export function classifyReadFileReply(reply: RpcReply): ReadFileOutcome {
         case "too_large": // read_file's own size code
         case "too-large": // defensive: guard's raw reason, if ever passed through
             return { kind: "too-large" };
+        case "not_text": // bridge refuses non-round-trippable (binary/invalid-utf8) files
+            return { kind: "not-text" };
         case "bad_workdir":
             return { kind: "no-scope" };
         case "bad_request":

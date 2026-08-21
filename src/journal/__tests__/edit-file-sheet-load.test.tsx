@@ -236,4 +236,114 @@ describe("EditFileSheet — load-then-edit (read_file)", () => {
         expect(readFile).not.toHaveBeenCalled();
         expect(container.textContent).toContain("path of the file to load");
     });
+
+    it("refuses to load a binary / non-UTF-8 file without crashing (not-text)", async () => {
+        const { client, editFile } = makeClient({ kind: "not-text" });
+        const { container, root } = await mountSheet(client);
+        mounted.push(root);
+
+        await act(async () => {
+            setValue(container, "mj-edit-file-path", "/box/logo.png");
+        });
+        await act(async () => {
+            clickButton(container, "Load current contents");
+        });
+        await flush();
+
+        expect(container.textContent).toContain("isn't UTF-8 text");
+        expect(container.querySelector<HTMLInputElement>("#mj-edit-file-sha")?.value).toBe("");
+        expect(editFile).not.toHaveBeenCalled();
+    });
+
+    // --- F1: loaded state must not cross agent/path targets (P56) ---
+
+    const AGENT_A: DeviceDTO = { device_id: 7, kind: "agent", name: "box-a", connected: true, is_self: false };
+    const AGENT_B: DeviceDTO = { device_id: 9, kind: "agent", name: "box-b", connected: true, is_self: false };
+
+    function makeTwoAgentClient(readOutcome: ReadFileOutcome): {
+        client: MatronJournalClient;
+        readFile: jest.Mock;
+        editFile: jest.Mock;
+    } {
+        const client = new MatronJournalClient();
+        jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
+        const readFile = jest.fn().mockResolvedValue(readOutcome);
+        const editFile = jest.fn().mockResolvedValue({ kind: "saved", path: "/f", bytes: 1, mode: "content" });
+        (client as unknown as { readFile: unknown }).readFile = readFile;
+        (client as unknown as { editFile: unknown }).editFile = editFile;
+        return { client, readFile, editFile };
+    }
+
+    function clickListItem(container: HTMLElement, index: number): void {
+        const items = Array.from(container.querySelectorAll('[role="listitem"]'));
+        const el = items[index];
+        if (!el) throw new Error(`missing listitem #${index}`);
+        el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    }
+
+    it("invalidates the loaded checksum when the operator switches boxes (no cross-target CAS)", async () => {
+        // Cloned files across boxes can share a checksum, so an auto-filled sha
+        // from box A must never ride along to box B.
+        const { client, editFile } = makeTwoAgentClient({
+            kind: "loaded",
+            path: "/box/app/config.ts",
+            content: "SHARED=1\n",
+            sha256: SHA,
+            bytes: 8,
+        });
+        const { container, root } = await mountSheet(client);
+        mounted.push(root);
+
+        // Two agents -> the agents list. Pick A, set the path, load.
+        await act(async () => clickListItem(container, 0));
+        await act(async () => setValue(container, "mj-edit-file-path", "/box/app/config.ts"));
+        await act(async () => clickButton(container, "Load current contents"));
+        await flush();
+        expect(container.querySelector<HTMLInputElement>("#mj-edit-file-sha")?.value).toBe(SHA);
+
+        // Back to the list, select B. The loaded checksum is dropped.
+        await act(async () => clickButton(container, "Back"));
+        await act(async () => clickListItem(container, 1));
+        await flush();
+        expect(container.querySelector<HTMLInputElement>("#mj-edit-file-sha")?.value).toBe("");
+        expect(container.textContent).not.toContain("Loaded 8 bytes");
+
+        // Saving on B must NOT carry A's loaded checksum.
+        await act(async () => clickButton(container, "Save edit"));
+        await flush();
+        expect(editFile).toHaveBeenCalledTimes(1);
+        const [deviceId, arg] = editFile.mock.calls[0];
+        expect(deviceId).toBe(9); // box B
+        expect(arg.expectedSha256).toBeUndefined();
+    });
+
+    it("discards a load reply whose path changed while it was in flight (deferred-response race)", async () => {
+        const client = new MatronJournalClient();
+        jest.spyOn(client, "listAgents").mockResolvedValue([AGENT]);
+        let resolveRead: (o: ReadFileOutcome) => void = () => undefined;
+        const readFile = jest.fn().mockReturnValue(
+            new Promise<ReadFileOutcome>((resolve) => {
+                resolveRead = resolve;
+            }),
+        );
+        (client as unknown as { readFile: unknown }).readFile = readFile;
+        const { container, root } = await mountSheet(client);
+        mounted.push(root);
+
+        await act(async () => setValue(container, "mj-edit-file-path", "/box/a.txt"));
+        await act(async () => clickButton(container, "Load current contents"));
+        // Operator retargets the path BEFORE the (slow) read returns.
+        await act(async () => setValue(container, "mj-edit-file-path", "/box/b.txt"));
+        // The in-flight read finally resolves for the OLD path — must be discarded.
+        await act(async () => {
+            resolveRead({ kind: "loaded", path: "/box/a.txt", content: "STALE=1\n", sha256: SHA, bytes: 8 });
+        });
+        await flush();
+
+        expect(container.querySelector<HTMLTextAreaElement>("#mj-edit-file-content")?.value ?? "").not.toBe(
+            "STALE=1\n",
+        );
+        expect(container.querySelector<HTMLInputElement>("#mj-edit-file-sha")?.value).toBe("");
+        expect(container.textContent).not.toContain("Loaded 8 bytes");
+    });
 });

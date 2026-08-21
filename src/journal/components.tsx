@@ -816,6 +816,8 @@ function readOutcomeMessage(outcome: ReadFileOutcome): string {
             return "Couldn't load that file — it may not exist yet, or isn't readable. You can type the contents below, but saving requires the file to already exist on the box.";
         case "too-large":
             return "That file is too large to load through the bridge.";
+        case "not-text":
+            return "That file isn't UTF-8 text (it looks binary), so the editor can't load it without risking corruption.";
         case "no-scope":
             return "The box hasn't pinned any editable folders, so file editing is unavailable there.";
         case "invalid":
@@ -869,9 +871,12 @@ export function EditFileSheet({
     const [formError, setFormError] = useState<string | undefined>(undefined);
     const [formErrorStale, setFormErrorStale] = useState(false);
     // Non-null once the current contents were loaded from the box: the checksum
-    // is auto-filled, so the CAS is armed by default. Cleared when the path is
-    // retargeted (a loaded sha is bound to the file it was read from).
-    const [loaded, setLoaded] = useState<{ bytes: number } | undefined>(undefined);
+    // is auto-filled, so the CAS is armed by default. The FULL target identity
+    // (agent device_id + the exact path read) travels with it, so a loaded sha
+    // is never applied to a different box or path — cloned files can share a
+    // checksum, so binding to the sha alone would let a CAS pass against the
+    // wrong target (P56). Invalidated on any path/agent change.
+    const [loaded, setLoaded] = useState<{ bytes: number; agentDeviceId: number; path: string } | undefined>(undefined);
     const [loading, setLoading] = useState(false);
 
     const sheetStateRef = useRef(sheetState);
@@ -879,6 +884,10 @@ export function EditFileSheet({
     const agentsRequestIdRef = useRef(0);
     const savingRef = useRef(false);
     const loadingRef = useRef(false);
+    // Monotonic load-request id: a reply whose id is no longer current (the path
+    // or agent changed, or a newer load superseded it while it was in flight) is
+    // discarded rather than applied to the current target.
+    const loadSeqRef = useRef(0);
     const mountedRef = useRef(false);
     const dismissedRef = useRef(false);
 
@@ -923,6 +932,16 @@ export function EditFileSheet({
         onClose();
     };
 
+    // Drop the loaded checksum + its auto-filled sha, and invalidate any load
+    // still in flight (so its reply is discarded rather than applied). Called
+    // whenever the target changes — path retarget or agent switch — because a
+    // loaded sha is bound to the exact {agent, path} it was read from.
+    const clearLoaded = (): void => {
+        loadSeqRef.current += 1;
+        setLoaded(undefined);
+        setExpectedSha256("");
+    };
+
     // Load the file's current contents from the box: seed the whole-file
     // textarea and auto-fill the checksum, turning edit_file's opt-in CAS into
     // an on-by-default compare-and-swap. A read has no side effects, so a failed
@@ -936,21 +955,28 @@ export function EditFileSheet({
             setFormErrorStale(false);
             return;
         }
+        // Capture the target this reply must still match on arrival.
+        const seq = ++loadSeqRef.current;
+        const requestedPath = path;
+        const requestedAgentId = agent.device_id;
         loadingRef.current = true;
         setLoading(true);
         setFormError(undefined);
         setFormErrorStale(false);
-        const outcome = await client.readFile(agent.device_id, { path });
+        const outcome = await client.readFile(requestedAgentId, { path: requestedPath });
         loadingRef.current = false;
         setLoading(false);
-        if (!mountedRef.current || dismissedRef.current) return;
+        // Discard a reply for a target the operator has since moved off of (path
+        // edited or agent switched while it was in flight, or a newer load
+        // superseded it) — applying it would arm a CAS for the wrong file/box.
+        if (!mountedRef.current || dismissedRef.current || seq !== loadSeqRef.current) return;
         if (outcome.kind === "loaded") {
             // Switch to whole-file mode with the live content + its checksum,
             // so a subsequent Save sends content + the armed expected_sha256.
             setMode("content");
             setContent(outcome.content);
             setExpectedSha256(outcome.sha256);
-            setLoaded({ bytes: outcome.bytes });
+            setLoaded({ bytes: outcome.bytes, agentDeviceId: requestedAgentId, path: requestedPath });
             return;
         }
         setLoaded(undefined);
@@ -982,6 +1008,19 @@ export function EditFileSheet({
         const sha = expectedSha256.trim();
         if (sha.length > 0 && !/^[0-9a-f]{64}$/i.test(sha)) {
             setFormError("The expected checksum must be a 64-character hex sha256 (or leave it blank).");
+            setFormErrorStale(false);
+            return;
+        }
+        // Refuse to send an AUTO-LOADED checksum to a different target than it
+        // was read from (P56). Cloned files across boxes can share a checksum,
+        // so a CAS could pass and clobber the wrong box/path. This backstops the
+        // on-change invalidation: if the loaded {agent, path} no longer matches
+        // the submit target, clear it and make the operator reload.
+        if (loaded && (loaded.agentDeviceId !== agent.device_id || loaded.path !== path)) {
+            clearLoaded();
+            setFormError(
+                "This checksum was loaded from a different box or path — reload the current file before saving.",
+            );
             setFormErrorStale(false);
             return;
         }
@@ -1062,7 +1101,12 @@ export function EditFileSheet({
                                         type="button"
                                         role="listitem"
                                         disabled={!agent.connected}
-                                        onClick={() => transition({ step: "form", agent })}
+                                        onClick={() => {
+                                            // Switching boxes invalidates any loaded
+                                            // checksum — it was read from another box.
+                                            if (loaded) clearLoaded();
+                                            transition({ step: "form", agent });
+                                        }}
                                     >
                                         <strong>{agentName(agent)}</strong>
                                         <span>{agentStatus(agent)}</span>
@@ -1085,7 +1129,10 @@ export function EditFileSheet({
                                 setPath(event.target.value);
                                 // A loaded checksum is bound to the file it was
                                 // read from — retargeting the path must not carry
-                                // a stale auto-filled sha onto a different file.
+                                // a stale auto-filled sha onto a different file,
+                                // and any load in flight for the old path must be
+                                // discarded when it returns.
+                                loadSeqRef.current += 1;
                                 if (loaded) {
                                     setLoaded(undefined);
                                     setExpectedSha256("");
@@ -1186,7 +1233,12 @@ export function EditFileSheet({
                             {agentsRef.current.filter((agent) => agent.connected).length !== 1 && (
                                 <button
                                     type="button"
-                                    onClick={() => transition({ step: "agents", agents: agentsRef.current })}
+                                    onClick={() => {
+                                        // Leaving the form to pick another box drops the
+                                        // loaded checksum (bound to this box + path).
+                                        if (loaded) clearLoaded();
+                                        transition({ step: "agents", agents: agentsRef.current });
+                                    }}
                                 >
                                     Back
                                 </button>
@@ -1216,7 +1268,15 @@ export function EditFileSheet({
                             <code>{sheetState.path}</code>.
                         </p>
                         <div className="mj_UploadConfirm_actions">
-                            <button type="button" onClick={() => transition({ step: "form", agent: sheetState.agent })}>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    // Fresh edit: drop the just-saved file's stale
+                                    // loaded checksum so the next save re-loads.
+                                    if (loaded) clearLoaded();
+                                    transition({ step: "form", agent: sheetState.agent });
+                                }}
+                            >
                                 Edit another
                             </button>
                             <button type="button" className="mj_UploadConfirm_send" onClick={dismiss}>
