@@ -4416,6 +4416,13 @@ function Timeline({
         void client.loadOlderHistory();
     };
 
+    // Gate the fire-and-forget tool-call cards on the durable, replayed run-state (#698): the
+    // turn-end tool_stream 'end' frame is never replayed, so a dropped one would otherwise strand
+    // a dangling 'running' tool card until the next turn. Only render live tool streams while the
+    // session is actually running; the model reconcile (refreshConversations) prunes any that
+    // linger in the map. Mirrors the activity-indicator run-state reconcile.
+    const sessionRunning = client.selectedConversation()?.session_state === "running";
+
     const timelineMain = (
         <main className="mx_RoomView_timeline" data-testid="timeline">
             <div className="mx_RoomView_messagePanel mx_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
@@ -4520,9 +4527,10 @@ function Timeline({
                                 </div>
                             </li>
                         ))}
-                        {Object.values(state.viewingHistoryWindow ? {} : state.toolStreams).map((stream) => (
-                            <ToolStream key={stream.messageRef} stream={stream} />
-                        ))}
+                        {sessionRunning &&
+                            Object.values(state.viewingHistoryWindow ? {} : state.toolStreams).map((stream) => (
+                                <ToolStream key={stream.messageRef} stream={stream} />
+                            ))}
                         {!state.viewingHistoryWindow && state.activity && state.activity.state !== "idle" && (
                             <li className="mx_WhoIsTypingTile mj_Activity">
                                 <span />

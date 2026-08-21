@@ -3948,6 +3948,44 @@ describe("session creation orchestration", () => {
         expect(state.textStreams.get("c2")).toEqual({ ref: "partial" });
         expect(state.toolStreams.get("c2")).toEqual({ ref: { content: "partial" } });
     });
+
+    it("prunes a dangling tool-call card when the conversation is no longer running (#698)", async () => {
+        // The tool-call card rides a fire-and-forget tool_stream whose turn-end 'end' frame is
+        // never replayed (applyToolStream), so a dropped one would strand a dangling 'running'
+        // tool card in this.toolStreams. session_state is the durable, replayed signal, so a
+        // conversation that is no longer running must have its tool streams reconciled off.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase({
+            conversations: jest.fn().mockResolvedValue([
+                { ...CONVERSATIONS[0], session_state: "done" }, // c1 finished
+                { ...CONVERSATIONS[1], session_state: "running" }, // c2 still running
+            ]),
+        });
+        state.database = database;
+        // Both left with a live tool-call card because their turn-end 'end' frames were dropped.
+        const card = { messageRef: "toolref", content: "ls", offset: 2, headTruncated: false };
+        state.toolStreams.set("c1", { toolref: { ...card } });
+        state.toolStreams.set("c2", { toolref: { ...card } });
+        // c1 is the selected conversation and its stale card is already published to the snapshot.
+        state.state = { ...signedInState(client), toolStreams: { toolref: { ...card } } };
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 30,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "system",
+            type: "session_status",
+            payload: { state: "done" },
+        });
+
+        expect(state.toolStreams.has("c1")).toBe(false); // finished → private map pruned
+        expect(state.toolStreams.get("c2")).toEqual({ toolref: card }); // still running → kept
+        // Published snapshot for the selected conversation must be republished empty so the stale
+        // card cannot re-render on c1's next running turn (F1 — private/published divergence).
+        expect(client.getSnapshot().toolStreams).toEqual({});
+    });
 });
 
 describe("MatronJournalClient mediaUrl", () => {

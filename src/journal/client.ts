@@ -2104,7 +2104,29 @@ export class MatronJournalClient {
 
     private async refreshConversations(): Promise<void> {
         if (!this.database) return;
-        this.patch({ conversations: await this.database.conversations() });
+        const conversations = await this.database.conversations();
+        // Reconcile the fire-and-forget tool-call cards against the durable run-state (#698). The
+        // turn-end tool_stream 'end' frame (applyToolStream) is never replayed, so a dropped one
+        // would strand a dangling 'running' tool card in this.toolStreams. session_state is the
+        // persisted, replayed signal — a conversation no longer running has no live tool stream.
+        // Mirrors the activity-indicator reconcile so a settled turn cannot leave a pending card.
+        for (const conversation of conversations) {
+            if (conversation.session_state !== "running") this.toolStreams.delete(conversation.id);
+        }
+        this.patch({ conversations });
+        // Keep the published snapshot in lockstep with the private map (P2). Deleting the private
+        // entry above does NOT touch ClientState.toolStreams, so a pruned card would otherwise
+        // still sit in the snapshot and re-render on the conversation's next running turn (before
+        // any fresh ephemeral frame republishes it). Republish the selected conversation's
+        // ephemeral state whenever its streams were just pruned.
+        const selectedId = this.state.selectedConversationId;
+        if (
+            selectedId !== undefined &&
+            !this.toolStreams.has(selectedId) &&
+            Object.keys(this.state.toolStreams).length > 0
+        ) {
+            this.refreshEphemeralState(selectedId);
+        }
     }
 
     private async refreshSelectedConversation(
