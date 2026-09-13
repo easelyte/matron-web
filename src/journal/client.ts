@@ -2166,14 +2166,29 @@ export class MatronJournalClient {
             if (removed && event.convo_id === this.state.selectedConversationId) {
                 await this.refreshSelectedConversation(event.convo_id);
             }
-            // A duplicate frame is not a no-op for our mirror: tabs sharing a server/user share one
-            // IndexedDB, so applied=false means a peer tab already wrote this row and advanced the
-            // shared cursor — the durable store is ahead of our in-memory conversations, and ours is
-            // the stale copy (P48). Reconcile anyway, or a terminal session_status the peer applied
-            // never prunes this tab's stale activity / tool card and the indicator hangs on the very
-            // tab most likely to have dropped the ephemeral turn-end frame.
-            await this.refreshConversations();
-            if (event.type === "convo_meta" && this.uploadConvos.size > 0) this.abortUploadsForChildConvos();
+            // A duplicate session_status is not a no-op for our mirror: tabs sharing a server/user
+            // share one IndexedDB, so applied=false means a peer tab already wrote the row and
+            // advanced the shared cursor — the durable store holds the new run-state and ours is
+            // the stale copy (P48). Without this the tab that dropped the ephemeral turn-end frame
+            // (the backgrounded one — the exact failure the activity reconcile fixes) keeps
+            // rendering a stale "Thinking" until some later frame it wins. session_status is the
+            // ONLY frame that mutates session_state (database.ts applyJournal), so this covers the
+            // whole run-state surface while keeping ordinary duplicate message frames off the
+            // O(conversations) scan. Refresh the selected timeline alongside it, on the applied
+            // path's terms, so the sidebar cannot advance past the events list.
+            if (event.type === "session_status") {
+                await this.refreshConversations();
+                if (
+                    event.convo_id === this.state.selectedConversationId &&
+                    this.history.get(event.convo_id)?.hasMoreNewer !== true
+                ) {
+                    await this.refreshSelectedConversation(event.convo_id);
+                }
+            }
+            if (event.type === "convo_meta" && this.uploadConvos.size > 0) {
+                await this.refreshConversations();
+                this.abortUploadsForChildConvos();
+            }
             return;
         }
         this.clearHistoryError();
