@@ -4320,6 +4320,34 @@ describe("session creation orchestration", () => {
         // refreshEphemeralState would have wiped this (the private textStreams map is empty).
         expect(client.getSnapshot().textStreams).toEqual({ ref: "partial" });
     });
+
+    it("reconciles a stale activity from a duplicate frame a peer tab already applied", async () => {
+        // Tabs sharing a server/user share one IndexedDB, so a terminal session_status applied by
+        // the peer tab advances the shared cursor and comes back applied=false here. The durable
+        // store is still authoritative (P48): reconcile against it instead of returning, or the
+        // tab that dropped the ephemeral 'idle' keeps rendering "Thinking" until the next turn.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.database = fakeDatabase({
+            applyJournal: jest.fn().mockResolvedValue(false), // peer tab won the cursor race
+            conversations: jest.fn().mockResolvedValue([{ ...CONVERSATIONS[0], session_state: "done" }]),
+        });
+        state.activities.set("c1", { state: "thinking" });
+        state.state = { ...signedInState(client), activity: { state: "thinking" } };
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 33,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "system",
+            type: "session_status",
+            payload: { state: "done" },
+        });
+
+        expect(state.activities.has("c1")).toBe(false);
+        expect(client.getSnapshot().activity).toBeUndefined();
+    });
 });
 
 describe("MatronJournalClient mediaUrl", () => {

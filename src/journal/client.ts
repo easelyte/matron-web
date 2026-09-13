@@ -2166,10 +2166,14 @@ export class MatronJournalClient {
             if (removed && event.convo_id === this.state.selectedConversationId) {
                 await this.refreshSelectedConversation(event.convo_id);
             }
-            if (event.type === "convo_meta" && this.uploadConvos.size > 0) {
-                await this.refreshConversations();
-                this.abortUploadsForChildConvos();
-            }
+            // A duplicate frame is not a no-op for our mirror: tabs sharing a server/user share one
+            // IndexedDB, so applied=false means a peer tab already wrote this row and advanced the
+            // shared cursor — the durable store is ahead of our in-memory conversations, and ours is
+            // the stale copy (P48). Reconcile anyway, or a terminal session_status the peer applied
+            // never prunes this tab's stale activity / tool card and the indicator hangs on the very
+            // tab most likely to have dropped the ephemeral turn-end frame.
+            await this.refreshConversations();
+            if (event.type === "convo_meta" && this.uploadConvos.size > 0) this.abortUploadsForChildConvos();
             return;
         }
         this.clearHistoryError();
