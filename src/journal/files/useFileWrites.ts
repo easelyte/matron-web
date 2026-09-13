@@ -88,8 +88,16 @@ async function perform(
             // a write landing inside this last millisecond window is still possible (and is what a
             // server-side expected-revision check would have to close). The prior version does go
             // to .matron-trash/, so even the residual case stays recoverable.
+            const content = input.content ?? "";
             if (input.baseline !== undefined) {
                 const current = await api.textContent(pending.path);
+                if (current === content && current !== input.baseline) {
+                    // The file already IS what we were about to write: an earlier attempt committed
+                    // and only its response was lost. Report the truth (done) rather than a bogus
+                    // "someone else changed this" — the retry of an ambiguous success must resolve,
+                    // not deadlock behind the stale-edit guard.
+                    return { notice: `${pending.name} was already saved.` };
+                }
                 if (current !== input.baseline) {
                     throw new JournalApiError(
                         "This file changed on the server after you opened it. Close the editor and reopen it so you are editing the current version.",
@@ -100,10 +108,7 @@ async function perform(
             }
             // overwrite:true — the edit affordance only exists for a file that is already there,
             // and the server copies the prior version into .matron-trash/ before replacing it.
-            const result = await api.writeFile(pending.path, input.content ?? "", {
-                overwrite: true,
-                idempotencyKey,
-            });
+            const result = await api.writeFile(pending.path, content, { overwrite: true, idempotencyKey });
             return { notice: result.dryRun ? DRY_RUN_NOTICE : undefined };
         }
         case "delete": {
@@ -123,6 +128,15 @@ const DRY_RUN_NOTICE = "The server is in dry-run mode: it recorded the request a
 
 // Transport-level codes whose own message is a bare internal string; these take the uniform copy.
 const TRANSPORT_CODES = new Set(["timeout", "disposed", "aborted"]);
+
+/**
+ * Did this failure leave the outcome UNKNOWN (request may have committed) rather than definitely
+ * refused? A status-0 failure never reached a server verdict: a timeout, a dropped connection, or
+ * a reply we could not parse. Server denials (403/409/413/507/404) are definite — nothing happened.
+ */
+function outcomeIsUnknown(error: unknown): boolean {
+    return error instanceof JournalApiError && error.status === 0 && error.code !== "disposed";
+}
 
 function describeFailure(error: unknown): string {
     if (error instanceof JournalApiError) {
@@ -183,6 +197,20 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
                     onWritten();
                 } catch (error) {
                     if (!alive.current) return;
+                    if (current.pending.kind === "delete" && outcomeIsUnknown(error)) {
+                        // DELETE is the one write the frozen wire contract gives no
+                        // `Idempotency-Key`, so a blind in-dialog retry is not a replay — if the
+                        // first request actually committed and another actor recreated the path in
+                        // the gap, the retry would delete the REPLACEMENT. Treat an unknown outcome
+                        // as unknown: close the dialog, re-read the listing, and make the operator
+                        // look at what is actually there before deciding to delete again.
+                        setNotice(
+                            `Couldn't confirm whether ${current.pending.name} was deleted. The folder has been refreshed — check it before trying again.`,
+                        );
+                        dispatch({ type: "settled" });
+                        onWritten();
+                        return;
+                    }
                     dispatch({ type: "failed", message: describeFailure(error) });
                 } finally {
                     inFlight.current = false;

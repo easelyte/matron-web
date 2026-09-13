@@ -380,3 +380,75 @@ describe("write lifecycle under the real app shell", () => {
         expect(dialog()?.querySelector(".mj_UploadConfirm_error")?.textContent).toMatch(/changed on the server/i);
     });
 });
+
+describe("uncertain outcomes (Codex round 2)", () => {
+    it("resolves an ambiguous edit success instead of deadlocking on the stale-edit guard", async () => {
+        // The write committed but its response was lost; the retry finds the file already equal to
+        // the draft. That is "already saved", not "someone else changed this".
+        let served = "# notes\n";
+        const api = mockApi({
+            textContent: jest.fn(async () => served) as unknown as FilesApiLike["textContent"],
+            writeFile: jest
+                .fn()
+                .mockRejectedValueOnce(
+                    new JournalApiError("timed out", 0, "timeout"),
+                ) as unknown as FilesApiLike["writeFile"],
+        });
+        const pane = await mountPane(api);
+        await click(pane.querySelector(".mj_FilesRow:not(.mj_FilesRow_dir)"));
+        await flush();
+        await click(pane.querySelector(".mj_FilesPreview_edit"));
+        await flush();
+        await setValue(document.querySelector(".mj_FileWrite_textarea"), "# edited\n");
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(dialog()).not.toBeNull(); // the timeout left the outcome unknown
+
+        served = "# edited\n"; // ...the first attempt had in fact landed
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(dialog()).toBeNull();
+        expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/already saved/i);
+    });
+
+    it("does not offer a blind retry when a DELETE's outcome is unknown", async () => {
+        // DELETE carries no idempotency key in the wire contract, so a retry is a fresh mutation:
+        // if the first one committed and the path was recreated, the retry hits the replacement.
+        const api = mockApi({
+            deleteEntry: jest.fn().mockRejectedValue(new JournalApiError("timed out", 0, "timeout")),
+        });
+        const pane = await mountPane(api);
+        await click(pane.querySelector('[aria-label="Delete notes.md"]'));
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(dialog()).toBeNull(); // closed, not left sitting on a "Try again" button
+        expect((api.listDir as jest.Mock).mock.calls.length).toBeGreaterThan(1); // listing refreshed
+        expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/couldn't confirm/i);
+    });
+
+    it("a definite server denial still keeps the delete dialog open for a retry", async () => {
+        const api = mockApi({
+            deleteEntry: jest.fn().mockRejectedValue(new JournalApiError("nope", 409, "dir-not-empty")),
+        });
+        const pane = await mountPane(api);
+        await click(pane.querySelector('[aria-label="Delete src"]'));
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(dialog()).not.toBeNull();
+    });
+
+    it("refuses to edit a file whose bytes did not decode as UTF-8", async () => {
+        const api = mockApi({
+            textContent: jest.fn().mockResolvedValue("binary \uFFFD\uFFFD bytes"),
+        });
+        const pane = await mountPane(api);
+        await click(pane.querySelector(".mj_FilesRow:not(.mj_FilesRow_dir)"));
+        await flush();
+        await click(pane.querySelector(".mj_FilesPreview_edit"));
+        await flush();
+        expect(document.querySelector(".mj_FileWrite_textarea")).toBeNull();
+        expect(dialog()?.textContent).toMatch(/isn't valid UTF-8/i);
+        // The refusal is load-bearing: Save must be disabled, not merely visually discouraged.
+        expect((document.querySelector(".mj_FileWrite_danger") as HTMLButtonElement).disabled).toBe(true);
+    });
+});

@@ -125,6 +125,11 @@ function UploadBody({
     );
 }
 
+/** U+FFFD in the decoded text means the bytes were not valid UTF-8 and information was lost. */
+function isLossy(text: string): boolean {
+    return text.includes("\uFFFD");
+}
+
 function EditBody({
     api,
     path,
@@ -148,6 +153,9 @@ function EditBody({
     );
     useEffect(() => {
         if (content.status !== "loaded" || content.data === undefined) return;
+        // Lossy decode (see below): seed nothing, so `draft` stays undefined and Save stays
+        // disabled — the refusal below is not just cosmetic.
+        if (isLossy(content.data)) return;
         onLoaded(content.data);
         if (draft === undefined) onDraft(content.data);
         // Seeds the draft exactly once per load; later keystrokes own it.
@@ -159,6 +167,17 @@ function EditBody({
         return (
             <PreviewStatus variant="error" onRetry={content.reload}>
                 {content.error}
+            </PreviewStatus>
+        );
+    }
+    // The transport decodes bytes as UTF-8 non-fatally, so invalid sequences arrive as U+FFFD. Two
+    // reasons to refuse rather than edit: saving would write the replacement characters BACK and
+    // corrupt the file, and the pre-save staleness comparison is done on these decoded strings, so
+    // a lossy decode could make two different byte sequences look identical.
+    if (isLossy(content.data ?? "")) {
+        return (
+            <PreviewStatus variant="error">
+                This file isn&apos;t valid UTF-8 text, so it can&apos;t be edited here without corrupting it.
             </PreviewStatus>
         );
     }
