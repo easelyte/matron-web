@@ -269,7 +269,9 @@ describe("non-destructive writes", () => {
         await setValue(document.querySelector(".mj_FileWrite_input"), "notes-2026.md");
         await click(document.querySelector(".mj_FileWrite_confirm"));
         await flush();
-        expect(api.move).toHaveBeenCalledWith(`${DIR}/notes.md`, `${DIR}/notes-2026.md`);
+        expect(api.move).toHaveBeenCalledWith(`${DIR}/notes.md`, `${DIR}/notes-2026.md`, {
+            idempotencyKey: expect.any(String),
+        });
     });
 
     it("editing a text file saves with overwrite:true (the server trashes the prior version)", async () => {
@@ -287,7 +289,10 @@ describe("non-destructive writes", () => {
         expect(dialog()?.textContent).toContain(".matron-trash/");
         await click(document.querySelector(".mj_FileWrite_danger"));
         await flush();
-        expect(api.writeFile).toHaveBeenCalledWith(`${DIR}/notes.md`, "# notes 2\n", { overwrite: true });
+        expect(api.writeFile).toHaveBeenCalledWith(`${DIR}/notes.md`, "# notes 2\n", {
+            overwrite: true,
+            idempotencyKey: expect.any(String),
+        });
     });
 
     it("does not offer inline editing for a binary file", async () => {
@@ -301,5 +306,77 @@ describe("non-destructive writes", () => {
         await click(pane.querySelector(".mj_FilesRow"));
         await flush();
         expect(pane.querySelector(".mj_FilesPreview_bar")).toBeNull();
+    });
+});
+
+// -- Findings from the Codex adversarial review (F1/F2/F3) ---------------------------------------
+
+describe("write lifecycle under the real app shell", () => {
+    it("survives StrictMode's setup/cleanup/setup effect replay (no wedged `mutating`)", async () => {
+        // The app entry point mounts under React.StrictMode. An `alive` flag that is only set at
+        // ref init would be left false by the first cleanup, so every later write would mutate the
+        // server and then drop its own outcome, freezing the dialog in `mutating` forever.
+        const api = mockApi();
+        container = document.createElement("div");
+        document.body.append(container);
+        await act(async () => {
+            root = createRoot(container as HTMLDivElement);
+            root.render(
+                <React.StrictMode>
+                    <FilesPane client={mockClient(api)} state={STATE} />
+                </React.StrictMode>,
+            );
+        });
+        await flush();
+        await click(container.querySelector('[aria-label="Delete notes.md"]'));
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(api.deleteEntry).toHaveBeenCalledTimes(1);
+        expect(dialog()).toBeNull(); // the outcome was applied, not discarded
+    });
+
+    it("reuses ONE idempotency key across a failed attempt and its retry", async () => {
+        const writeFile = jest
+            .fn()
+            .mockRejectedValueOnce(new JournalApiError("storage", 507, "trash-write-failed"))
+            .mockResolvedValue({ path: `${DIR}/notes.md`, bytes: 9, dryRun: false });
+        const api = mockApi({ writeFile: writeFile as unknown as FilesApiLike["writeFile"] });
+        const pane = await mountPane(api);
+        await click(pane.querySelector(".mj_FilesRow:not(.mj_FilesRow_dir)"));
+        await flush();
+        await click(pane.querySelector(".mj_FilesPreview_edit"));
+        await flush();
+        await setValue(document.querySelector(".mj_FileWrite_textarea"), "# edited\n");
+
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(dialog()).not.toBeNull(); // failed -> back to confirming, with the error
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+
+        expect(writeFile).toHaveBeenCalledTimes(2);
+        const first = writeFile.mock.calls[0][2] as { idempotencyKey?: string };
+        const second = writeFile.mock.calls[1][2] as { idempotencyKey?: string };
+        expect(first.idempotencyKey).toBeTruthy();
+        // A retry must REPLAY the same mutation, not mint a new identity the server would re-run.
+        expect(second.idempotencyKey).toBe(first.idempotencyKey);
+    });
+
+    it("refuses to save an edit whose file changed on the server after it was opened", async () => {
+        // The preview reads the file too, so drive the server's answer by time, not call count.
+        let served = "# notes\n";
+        const textContent = jest.fn(async () => served);
+        const api = mockApi({ textContent: textContent as unknown as FilesApiLike["textContent"] });
+        const pane = await mountPane(api);
+        await click(pane.querySelector(".mj_FilesRow:not(.mj_FilesRow_dir)"));
+        await flush();
+        await click(pane.querySelector(".mj_FilesPreview_edit"));
+        await flush();
+        await setValue(document.querySelector(".mj_FileWrite_textarea"), "# my stale edit\n");
+        served = "# rewritten by an agent while the editor sat open\n";
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(api.writeFile).not.toHaveBeenCalled();
+        expect(dialog()?.querySelector(".mj_UploadConfirm_error")?.textContent).toMatch(/changed on the server/i);
     });
 });

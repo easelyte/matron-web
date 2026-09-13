@@ -507,16 +507,47 @@ describe("FilesApi writes", () => {
         expect(messageForFileStatus(507)).not.toBe(messageForFileStatus(500));
     });
 
-    it("accepts an empty 2xx body as success rather than a malformed-JSON failure", async () => {
+    // P33: a write response that does not match the contract is NOT a success. The client must
+    // never echo the requested path back as "done" — that would close the dialog (and advance an
+    // upload queue) while the actual outcome on disk is unknown.
+    it("refuses an empty 2xx body instead of reporting a fabricated success", async () => {
         globalThis.fetch = jest.fn().mockResolvedValue({
             status: 200,
             arrayBuffer: async () => new TextEncoder().encode("").buffer,
             clone: () => ({ text: async () => "" }),
         } as unknown as Response) as unknown as typeof fetch;
-        await expect(new FilesApi(SERVER, "tok").mkdir("/root/x/new")).resolves.toEqual({
-            path: "/root/x/new",
-            dryRun: false,
+        await expect(new FilesApi(SERVER, "tok").mkdir("/root/x/new")).rejects.toMatchObject({
+            code: "unconfirmed",
         });
+    });
+
+    it("refuses a 2xx whose body is missing the contract's fields", async () => {
+        const api = new FilesApi(SERVER, "tok");
+        captureFetch({ status: 200, body: {} });
+        await expect(api.mkdir("/root/x/new")).rejects.toMatchObject({ code: "unconfirmed" });
+        captureFetch({ status: 200, body: { path: "/root/x/n.md" } }); // no `bytes`
+        await expect(api.writeFile("/root/x/n.md", "abc")).rejects.toMatchObject({ code: "unconfirmed" });
+        captureFetch({ status: 200, body: { from: "/root/x/a" } }); // no `to`
+        await expect(api.move("/root/x/a", "/root/x/b")).rejects.toMatchObject({ code: "unconfirmed" });
+        // A delete without the already_missing discriminant is unreadable: trashed-or-no-op unknown.
+        captureFetch({ status: 200, body: { path: "/root/x/a", trashed: null } });
+        await expect(api.deleteEntry("/root/x/a", { confirm: true })).rejects.toMatchObject({
+            code: "unconfirmed",
+        });
+    });
+
+    it("carries a caller-supplied Idempotency-Key on upload / write / move (retry replays)", async () => {
+        const api = new FilesApi(SERVER, "tok");
+        const key = "stable-key-1";
+        const a = captureFetch({ status: 200, body: { path: "/root/x/n.md", bytes: 3 } });
+        await api.writeFile("/root/x/n.md", "abc", { overwrite: true, idempotencyKey: key });
+        expect(a.calls[0].headers?.["Idempotency-Key"]).toBe(key);
+        const b = captureFetch({ status: 200, body: { from: "/root/x/a", to: "/root/x/b" } });
+        await api.move("/root/x/a", "/root/x/b", { idempotencyKey: key });
+        expect(b.calls[0].headers?.["Idempotency-Key"]).toBe(key);
+        const c = captureFetch({ status: 200, body: { path: "/root/x/a.png", bytes: 1 } });
+        await api.upload(new File([new Uint8Array(1)], "a.png"), { targetDir: "/root/x", idempotencyKey: key });
+        expect(c.calls[0].headers?.["Idempotency-Key"]).toBe(key);
     });
 
     it("bounds a write by the longer WRITE_TIMEOUT_MS, not the 30 s read timeout", async () => {
@@ -545,12 +576,13 @@ describe("FilesApi writes", () => {
 describe("write confirm machine", () => {
     const del: PendingWrite = { kind: "delete", path: "/root/x/a", name: "a", isDir: false };
     const mkdir: PendingWrite = { kind: "mkdir", dir: "/root/x" };
-    const confirming: WriteState = { pending: del, phase: "confirming" };
-    const mutating: WriteState = { pending: del, phase: "mutating" };
+    const KEY = "key-1";
+    const confirming: WriteState = { pending: del, phase: "confirming", idempotencyKey: KEY };
+    const mutating: WriteState = { pending: del, phase: "mutating", idempotencyKey: KEY };
 
     it("cannot reach `mutating` without passing through `confirming`", () => {
         expect(writeReducer(undefined, { type: "submit" })).toBeUndefined();
-        expect(writeReducer(undefined, { type: "open", pending: del })).toEqual(confirming);
+        expect(writeReducer(undefined, { type: "open", pending: del, idempotencyKey: KEY })).toEqual(confirming);
         expect(writeReducer(confirming, { type: "submit" })).toEqual(mutating);
     });
 
@@ -567,22 +599,24 @@ describe("write confirm machine", () => {
     });
 
     it("refuses to swap the pending target out from under an in-flight mutation", () => {
-        expect(writeReducer(mutating, { type: "open", pending: mkdir })).toBe(mutating);
+        expect(writeReducer(mutating, { type: "open", pending: mkdir, idempotencyKey: "key-2" })).toBe(mutating);
     });
 
     it("a failure returns to confirming WITH the error (never silently closes)", () => {
         expect(writeReducer(mutating, { type: "failed", message: "boom" })).toEqual({
             pending: del,
             phase: "confirming",
+            idempotencyKey: KEY, // retained: the retry must REPLAY, not re-run
             error: "boom",
         });
     });
 
     it("success closes, or advances to the next queued upload", () => {
         expect(writeReducer(mutating, { type: "settled" })).toBeUndefined();
-        expect(writeReducer(mutating, { type: "settled", next: mkdir })).toEqual({
+        expect(writeReducer(mutating, { type: "settled", next: mkdir, nextKey: "key-2" })).toEqual({
             pending: mkdir,
             phase: "confirming",
+            idempotencyKey: "key-2", // a NEW target gets its own key
         });
     });
 

@@ -38,15 +38,24 @@ export type PendingWrite =
 export interface WriteState {
     pending: PendingWrite;
     phase: "confirming" | "mutating";
+    /**
+     * The `Idempotency-Key` for THIS target, minted once when the write is opened and retained
+     * across every failed attempt + retry (V2/P32). Minting it per API call instead would defeat
+     * the point: a retry after a lost response would look like a brand-new mutation to the server
+     * and be executed a second time. A new key is minted only for a genuinely new target (the next
+     * file in an upload queue), never for a retry of the same one.
+     */
+    idempotencyKey: string;
     /** Surfaced inside the dialog after a failed attempt (uniform messageForFileStatus copy). */
     error?: string;
 }
 
 export type WriteEvent =
-    | { type: "open"; pending: PendingWrite }
+    // Keys are minted by the caller, not here — the reducer stays pure (no crypto.randomUUID).
+    | { type: "open"; pending: PendingWrite; idempotencyKey: string }
     | { type: "submit" }
     /** The request succeeded. `next` carries the remaining upload queue head, if any. */
-    | { type: "settled"; next?: PendingWrite }
+    | { type: "settled"; next?: PendingWrite; nextKey?: string }
     | { type: "failed"; message: string }
     | { type: "cancel" };
 
@@ -56,16 +65,24 @@ export function writeReducer(state: WriteState | undefined, event: WriteEvent): 
             // Never interrupt an in-flight mutation with a new dialog (invariant 3's corollary:
             // the operator would otherwise lose the outcome of the destructive op they just ran).
             if (state?.phase === "mutating") return state;
-            return { pending: event.pending, phase: "confirming" };
+            return { pending: event.pending, phase: "confirming", idempotencyKey: event.idempotencyKey };
         case "submit":
             if (!state || state.phase !== "confirming") return state;
-            return { pending: state.pending, phase: "mutating" };
+            return { pending: state.pending, phase: "mutating", idempotencyKey: state.idempotencyKey };
         case "settled":
             if (state?.phase !== "mutating") return state;
-            return event.next ? { pending: event.next, phase: "confirming" } : undefined;
+            return event.next
+                ? { pending: event.next, phase: "confirming", idempotencyKey: event.nextKey ?? state.idempotencyKey }
+                : undefined;
         case "failed":
             if (state?.phase !== "mutating") return state;
-            return { pending: state.pending, phase: "confirming", error: event.message };
+            // The key survives the failure — that is what makes the retry a replay, not a re-run.
+            return {
+                pending: state.pending,
+                phase: "confirming",
+                idempotencyKey: state.idempotencyKey,
+                error: event.message,
+            };
         case "cancel":
             if (state?.phase === "mutating") return state;
             return undefined;

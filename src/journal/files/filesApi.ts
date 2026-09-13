@@ -236,12 +236,56 @@ function isDryRun(raw: unknown): boolean {
     return isObject(raw) && raw.dry_run === true;
 }
 
-function pathOf(raw: unknown, fallback: string): string {
-    return (isObject(raw) ? asString(raw.path) : "") || fallback;
+/**
+ * A write response that does not match the contract is NOT a success. Fabricating the result from
+ * the request (echoing the path we asked for, defaulting `bytes` to 0, `trashed` to null) would let
+ * a proxy-truncated body, a partial rollout, or schema drift close the dialog and advance an upload
+ * queue while the client has no idea whether anything was written, dry-run, or trashed. Fail loud
+ * instead and tell the operator to go look.
+ */
+function unconfirmed(): never {
+    throw new JournalApiError(
+        "The server's reply didn't match what this version expects, so the change could not be confirmed. Reload the folder to see what actually happened.",
+        0,
+        "unconfirmed",
+    );
 }
 
-function parseWriteResult(raw: unknown, fallbackPath: string): FileWriteResult {
-    return { path: pathOf(raw, fallbackPath), bytes: isObject(raw) ? asNumber(raw.bytes) : 0, dryRun: isDryRun(raw) };
+function requiredString(value: unknown): string {
+    if (typeof value !== "string" || value === "") unconfirmed();
+    return value;
+}
+
+function parseWriteResult(raw: unknown): FileWriteResult {
+    if (isDryRun(raw)) return { path: "", bytes: 0, dryRun: true };
+    if (!isObject(raw) || typeof raw.bytes !== "number" || !Number.isFinite(raw.bytes)) unconfirmed();
+    return { path: requiredString(raw.path), bytes: raw.bytes, dryRun: false };
+}
+
+function parseDirResult(raw: unknown): DirWriteResult {
+    if (isDryRun(raw)) return { path: "", dryRun: true };
+    if (!isObject(raw)) unconfirmed();
+    return { path: requiredString(raw.path), dryRun: false };
+}
+
+function parseMoveResult(raw: unknown): MoveResult {
+    if (isDryRun(raw)) return { from: "", to: "", dryRun: true };
+    if (!isObject(raw)) unconfirmed();
+    return { from: requiredString(raw.from), to: requiredString(raw.to), dryRun: false };
+}
+
+function parseDeleteResult(raw: unknown): DeleteResult {
+    if (isDryRun(raw)) return { path: "", trashed: null, alreadyMissing: false, dryRun: true };
+    // `trashed` is string|null and `already_missing` boolean per the contract — both discriminate a
+    // real delete from an idempotent no-op, so neither may be guessed.
+    if (!isObject(raw) || typeof raw.already_missing !== "boolean") unconfirmed();
+    if (raw.trashed !== null && typeof raw.trashed !== "string") unconfirmed();
+    return {
+        path: requiredString(raw.path),
+        trashed: raw.trashed === null || raw.trashed === "" ? null : raw.trashed,
+        alreadyMissing: raw.already_missing,
+        dryRun: false,
+    };
 }
 
 export class FilesApi implements FilesApiLike {
@@ -400,12 +444,14 @@ export class FilesApi implements FilesApiLike {
             idempotencyKey: opts.idempotencyKey ?? newIdempotencyKey(),
             timeoutMs: WRITE_TIMEOUT_MS,
         });
-        return parseWriteResult(raw, target);
+        const result = parseWriteResult(raw);
+        return result.dryRun ? { ...result, path: target } : result;
     }
 
     public async mkdir(path: string, signal?: AbortSignal): Promise<DirWriteResult> {
         const raw = await this.postJson("/files/mkdir", { path }, signal);
-        return { path: pathOf(raw, path), dryRun: isDryRun(raw) };
+        const result = parseDirResult(raw);
+        return result.dryRun ? { ...result, path } : result;
     }
 
     public async move(
@@ -414,12 +460,8 @@ export class FilesApi implements FilesApiLike {
         opts?: { idempotencyKey?: string; signal?: AbortSignal },
     ): Promise<MoveResult> {
         const raw = await this.postJson("/files/move", { from, to }, opts?.signal, opts?.idempotencyKey);
-        const body = isObject(raw) ? raw : {};
-        return {
-            from: asString(body.from) || from,
-            to: asString(body.to) || to,
-            dryRun: isDryRun(raw),
-        };
+        const result = parseMoveResult(raw);
+        return result.dryRun ? { ...result, from, to } : result;
     }
 
     public async writeFile(
@@ -438,7 +480,8 @@ export class FilesApi implements FilesApiLike {
             opts?.idempotencyKey ?? newIdempotencyKey(),
             WRITE_TIMEOUT_MS,
         );
-        return parseWriteResult(raw, path);
+        const result = parseWriteResult(raw);
+        return result.dryRun ? { ...result, path } : result;
     }
 
     public async deleteEntry(
@@ -447,14 +490,8 @@ export class FilesApi implements FilesApiLike {
     ): Promise<DeleteResult> {
         const query = new URLSearchParams({ path, recursive: opts.recursive ? "1" : "0", confirm: "1" });
         const raw = await this.fetchJson(`/files?${query.toString()}`, opts.signal, { method: "DELETE" });
-        const body = isObject(raw) ? raw : {};
-        return {
-            path: asString(body.path) || path,
-            // Discriminated per the wire contract — never fabricate a trash path we were not given.
-            trashed: typeof body.trashed === "string" && body.trashed ? body.trashed : null,
-            alreadyMissing: body.already_missing === true,
-            dryRun: isDryRun(raw),
-        };
+        const result = parseDeleteResult(raw);
+        return result.dryRun ? { ...result, path } : result;
     }
 
     private postJson(
@@ -489,9 +526,10 @@ export class FilesApi implements FilesApiLike {
             signal,
             async (response) => {
                 const text = new TextDecoder().decode(await response.arrayBuffer());
-                // A 2xx with an empty body is a valid "done, nothing to say" for a write; treat it
-                // as an empty object rather than a malformed-JSON failure on a successful mutation.
-                if (text.trim() === "") return {};
+                // An empty 2xx body is NOT "done, nothing to say": every endpoint in the contract
+                // returns a body, so an empty one means something between us and the journal
+                // dropped it and the outcome is unknown. The strict parsers reject it below.
+                if (text.trim() === "") return undefined;
                 try {
                     return JSON.parse(text);
                 } catch {

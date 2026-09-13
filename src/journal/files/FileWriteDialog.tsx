@@ -43,6 +43,12 @@ import {
 export interface WriteInput {
     name?: string;
     content?: string;
+    /**
+     * For an edit: the bytes the editor was seeded with. The hook re-reads the file immediately
+     * before saving and refuses if it no longer matches, so a draft that went stale while the
+     * dialog sat open cannot silently replace newer content.
+     */
+    baseline?: string;
 }
 
 function HeaderIcon({ pending }: { pending: PendingWrite }): React.ReactElement {
@@ -124,12 +130,14 @@ function EditBody({
     path,
     draft,
     onDraft,
+    onLoaded,
     disabled,
 }: {
     api: FilesApiLike | undefined;
     path: string;
     draft: string | undefined;
     onDraft: (next: string) => void;
+    onLoaded: (content: string) => void;
     disabled: boolean;
 }): React.ReactElement {
     // Load the CURRENT bytes at open time — the operator edits what is on disk right now, not a
@@ -139,7 +147,9 @@ function EditBody({
         `edit:${path}`,
     );
     useEffect(() => {
-        if (content.status === "loaded" && content.data !== undefined && draft === undefined) onDraft(content.data);
+        if (content.status !== "loaded" || content.data === undefined) return;
+        onLoaded(content.data);
+        if (draft === undefined) onDraft(content.data);
         // Seeds the draft exactly once per load; later keystrokes own it.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [content.status, content.data]);
@@ -193,6 +203,8 @@ export function FileWriteDialog({
         return "";
     });
     const [draft, setDraft] = useState<string | undefined>(undefined);
+    // The exact bytes the editor opened with (see WriteInput.baseline).
+    const [baseline, setBaseline] = useState<string | undefined>(undefined);
 
     // Escape closes — but only while the operator still owns the decision (canDismiss). A request
     // already on the wire is not cancellable, and the modal must not lie about that.
@@ -227,7 +239,7 @@ export function FileWriteDialog({
 
     const submit = (): void => {
         if (!canConfirm) return;
-        onSubmit(pending.kind === "edit" ? { content: draft } : { name });
+        onSubmit(pending.kind === "edit" ? { content: draft, baseline } : { name });
     };
 
     return (
@@ -285,7 +297,14 @@ export function FileWriteDialog({
                         <UploadBody pending={pending} file={head} name={name} onName={setName} disabled={busy} />
                     ) : null}
                     {pending.kind === "edit" ? (
-                        <EditBody api={api} path={pending.path} draft={draft} onDraft={setDraft} disabled={busy} />
+                        <EditBody
+                            api={api}
+                            path={pending.path}
+                            draft={draft}
+                            onDraft={setDraft}
+                            onLoaded={setBaseline}
+                            disabled={busy}
+                        />
                     ) : null}
                     {pending.kind === "delete" ? (
                         <p className="mj_FileWrite_target">

@@ -41,10 +41,20 @@ export interface FileWrites {
 
 interface Outcome {
     next?: PendingWrite;
+    nextKey?: string;
     notice?: string;
 }
 
-async function perform(api: FilesApiLike, pending: PendingWrite, input: WriteInput): Promise<Outcome> {
+function newKey(): string {
+    return crypto.randomUUID();
+}
+
+async function perform(
+    api: FilesApiLike,
+    pending: PendingWrite,
+    input: WriteInput,
+    idempotencyKey: string,
+): Promise<Outcome> {
     switch (pending.kind) {
         case "mkdir": {
             const name = sanitizeFileName(input.name ?? "");
@@ -55,19 +65,45 @@ async function perform(api: FilesApiLike, pending: PendingWrite, input: WriteInp
         case "rename": {
             const name = sanitizeFileName(input.name ?? "");
             if (!name) throw new JournalApiError("Enter a name.", 0, "invalid-name");
-            const result = await api.move(pending.path, joinPath(pending.dir, name));
+            const result = await api.move(pending.path, joinPath(pending.dir, name), { idempotencyKey });
             return { notice: result.dryRun ? DRY_RUN_NOTICE : undefined };
         }
         case "upload": {
             const file = uploadHead(pending);
             if (!file) return {};
-            const result = await api.upload(file, { targetDir: pending.dir, name: input.name });
-            return { next: advanceUpload(pending), notice: result.dryRun ? DRY_RUN_NOTICE : undefined };
+            const result = await api.upload(file, { targetDir: pending.dir, name: input.name, idempotencyKey });
+            const next = advanceUpload(pending);
+            return {
+                next,
+                // A new target gets its own key; the current one is never reused for another file.
+                nextKey: next ? newKey() : undefined,
+                notice: result.dryRun ? DRY_RUN_NOTICE : undefined,
+            };
         }
         case "edit": {
-            // Always overwrite:true — the edit affordance only exists for a file that is already
-            // there, and the server copies the prior version into .matron-trash/ before replacing.
-            const result = await api.writeFile(pending.path, input.content ?? "", { overwrite: true });
+            // Lost-update guard. The dialog read the file when it opened; an agent may have
+            // rewritten it since. Re-read immediately before the overwrite and refuse if the bytes
+            // moved, so a stale draft cannot silently replace newer content. This is a NARROWING
+            // check, not an atomic one: the wire contract carries no revision token / If-Match, so
+            // a write landing inside this last millisecond window is still possible (and is what a
+            // server-side expected-revision check would have to close). The prior version does go
+            // to .matron-trash/, so even the residual case stays recoverable.
+            if (input.baseline !== undefined) {
+                const current = await api.textContent(pending.path);
+                if (current !== input.baseline) {
+                    throw new JournalApiError(
+                        "This file changed on the server after you opened it. Close the editor and reopen it so you are editing the current version.",
+                        0,
+                        "stale-edit",
+                    );
+                }
+            }
+            // overwrite:true — the edit affordance only exists for a file that is already there,
+            // and the server copies the prior version into .matron-trash/ before replacing it.
+            const result = await api.writeFile(pending.path, input.content ?? "", {
+                overwrite: true,
+                idempotencyKey,
+            });
             return { notice: result.dryRun ? DRY_RUN_NOTICE : undefined };
         }
         case "delete": {
@@ -85,13 +121,16 @@ async function perform(api: FilesApiLike, pending: PendingWrite, input: WriteInp
 
 const DRY_RUN_NOTICE = "The server is in dry-run mode: it recorded the request and changed nothing.";
 
+// Transport-level codes whose own message is a bare internal string; these take the uniform copy.
+const TRANSPORT_CODES = new Set(["timeout", "disposed", "aborted"]);
+
 function describeFailure(error: unknown): string {
     if (error instanceof JournalApiError) {
-        // A client-side refusal (bad name) carries its own message; server denials get the uniform,
-        // reason-agnostic copy so the UI never leaks WHY a path was rejected.
-        return error.status === 0 && error.code === "invalid-name"
-            ? error.message
-            : messageForFileStatus(error.status, error.code);
+        // Client-side refusals (bad name, stale edit, unconfirmed response) carry their own
+        // specific, actionable message. Server DENIALS get the uniform, reason-agnostic copy so the
+        // UI never leaks WHY a path was rejected.
+        const ownMessage = error.status === 0 && error.code !== undefined && !TRANSPORT_CODES.has(error.code);
+        return ownMessage ? error.message : messageForFileStatus(error.status, error.code);
     }
     return error instanceof Error ? error.message : "Something went wrong.";
 }
@@ -103,16 +142,21 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
     stateRef.current = state;
     const inFlight = useRef(false);
     const alive = useRef(true);
-    useEffect(
-        () => () => {
+    useEffect(() => {
+        // Set on SETUP, not just at ref init: StrictMode replays passive effects as
+        // setup -> cleanup -> setup, so an init-only `true` would be left false by the first
+        // cleanup and every later write would have its outcome dropped, wedging the dialog in
+        // `mutating` forever (P23 — no unreachable terminal state).
+        alive.current = true;
+        return () => {
             alive.current = false;
-        },
-        [],
-    );
+        };
+    }, []);
 
     const begin = useCallback((pending: PendingWrite) => {
         setNotice(undefined);
-        dispatch({ type: "open", pending });
+        // One key per TARGET, minted here and kept through every retry of that target.
+        dispatch({ type: "open", pending, idempotencyKey: newKey() });
     }, []);
     const cancel = useCallback(() => dispatch({ type: "cancel" }), []);
     const dismissNotice = useCallback(() => setNotice(undefined), []);
@@ -130,10 +174,10 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
             dispatch({ type: "submit" });
             void (async () => {
                 try {
-                    const outcome = await perform(api, current.pending, input);
+                    const outcome = await perform(api, current.pending, input, current.idempotencyKey);
                     if (!alive.current) return;
                     setNotice(outcome.notice);
-                    dispatch({ type: "settled", next: outcome.next });
+                    dispatch({ type: "settled", next: outcome.next, nextKey: outcome.nextKey });
                     // Refresh AFTER the transition so the listing and the dialog agree; runs for
                     // every success, including mid-queue uploads.
                     onWritten();
