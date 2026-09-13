@@ -5045,11 +5045,12 @@ function Timeline({
         void client.loadOlderHistory();
     };
 
-    // Gate the fire-and-forget tool-call cards on the durable, replayed run-state (#698): the
-    // turn-end tool_stream 'end' frame is never replayed, so a dropped one would otherwise strand
-    // a dangling 'running' tool card until the next turn. Only render live tool streams while the
-    // session is actually running; the model reconcile (refreshConversations) prunes any that
-    // linger in the map. Mirrors the activity-indicator run-state reconcile.
+    // Gate the fire-and-forget ephemerals on the durable, replayed run-state: neither the turn-end
+    // tool_stream 'end' frame (#698) nor the activity 'idle' frame (bridge lib/journal-publisher.js
+    // publishActivity) is ever replayed, so a dropped one would otherwise strand a dangling
+    // 'running' tool card or a stale "Thinking" until the next turn. Only render live tool streams
+    // and the activity indicator while the session is actually running; the model reconcile
+    // (refreshConversations) prunes any that linger in the maps.
     const sessionRunning = client.selectedConversation()?.session_state === "running";
 
     const timelineMain = (
@@ -5160,16 +5161,19 @@ function Timeline({
                             Object.values(state.viewingHistoryWindow ? {} : state.toolStreams).map((stream) => (
                                 <ToolStream key={stream.messageRef} stream={stream} />
                             ))}
-                        {!state.viewingHistoryWindow && state.activity && state.activity.state !== "idle" && (
-                            <li className="mx_WhoIsTypingTile mj_Activity">
-                                <span />
-                                <span />
-                                <span />
-                                {state.activity.state === "thinking"
-                                    ? "Thinking"
-                                    : `Running ${state.activity.detail || "a tool"}`}
-                            </li>
-                        )}
+                        {!state.viewingHistoryWindow &&
+                            state.activity &&
+                            state.activity.state !== "idle" &&
+                            sessionRunning && (
+                                <li className="mx_WhoIsTypingTile mj_Activity">
+                                    <span />
+                                    <span />
+                                    <span />
+                                    {state.activity.state === "thinking"
+                                        ? "Thinking"
+                                        : `Running ${state.activity.detail || "a tool"}`}
+                                </li>
+                            )}
                         {state.viewingHistoryWindow && (
                             <li className="mj_HistoryRow">
                                 <button

@@ -4226,6 +4226,128 @@ describe("session creation orchestration", () => {
         // card cannot re-render on c1's next running turn (F1 — private/published divergence).
         expect(client.getSnapshot().toolStreams).toEqual({});
     });
+
+    it("prunes a stale activity when the conversation is no longer running", async () => {
+        // The activity indicator rides a fire-and-forget ephemeral whose turn-end 'idle' frame is
+        // never replayed (bridge lib/journal-publisher.js publishActivity), so a dropped one would
+        // strand a stale "Thinking" in this.activities. session_state is the durable, replayed
+        // signal, so a conversation that is no longer running must have its activity reconciled off.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase({
+            conversations: jest.fn().mockResolvedValue([
+                { ...CONVERSATIONS[0], session_state: "done" }, // c1 finished
+                { ...CONVERSATIONS[1], session_state: "running" }, // c2 still running
+            ]),
+        });
+        state.database = database;
+        // Both stuck on 'thinking' because their turn-end 'idle' frames were dropped.
+        state.activities.set("c1", { state: "thinking" });
+        state.activities.set("c2", { state: "thinking" });
+        // c1 is the selected conversation and its stale activity is already published.
+        state.state = { ...signedInState(client), activity: { state: "thinking" } };
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 30,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "system",
+            type: "session_status",
+            payload: { state: "done" },
+        });
+
+        expect(state.activities.has("c1")).toBe(false); // finished → private map pruned
+        expect(state.activities.get("c2")).toEqual({ state: "thinking" }); // still running → kept
+        // Published snapshot for the selected conversation must be republished without the stale
+        // activity, or ClientState.activity keeps rendering "Thinking" after the private prune.
+        expect(client.getSnapshot().activity).toBeUndefined();
+    });
+
+    it("republishes the snapshot when only the activity was pruned (no tool streams involved)", async () => {
+        // Lockstep guard: the republish condition must fire on a pruned activity on its own, not
+        // only when a pruned tool-stream entry (#698) happens to trigger it.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.database = fakeDatabase({
+            conversations: jest.fn().mockResolvedValue([{ ...CONVERSATIONS[0], session_state: "done" }]),
+        });
+        state.activities.set("c1", { state: "tool", detail: "Bash" });
+        state.state = { ...signedInState(client), activity: { state: "tool", detail: "Bash" }, toolStreams: {} };
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 31,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "system",
+            type: "session_status",
+            payload: { state: "done" },
+        });
+
+        expect(state.activities.has("c1")).toBe(false);
+        expect(client.getSnapshot().activity).toBeUndefined();
+    });
+
+    it("does not republish ephemeral state when nothing was pruned", async () => {
+        // A running conversation keeps its activity, so refreshConversations must leave the
+        // published ephemeral state alone rather than clobbering live streams on every refresh.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.database = fakeDatabase({
+            conversations: jest.fn().mockResolvedValue([{ ...CONVERSATIONS[0], session_state: "running" }]),
+        });
+        state.activities.set("c1", { state: "thinking" });
+        state.state = {
+            ...signedInState(client),
+            activity: { state: "thinking" },
+            textStreams: { ref: "partial" },
+            toolStreams: {},
+        };
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 32,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "system",
+            type: "session_status",
+            payload: { state: "running" },
+        });
+
+        expect(state.activities.get("c1")).toEqual({ state: "thinking" });
+        expect(client.getSnapshot().activity).toEqual({ state: "thinking" });
+        // refreshEphemeralState would have wiped this (the private textStreams map is empty).
+        expect(client.getSnapshot().textStreams).toEqual({ ref: "partial" });
+    });
+
+    it("reconciles a stale activity from a duplicate frame a peer tab already applied", async () => {
+        // Tabs sharing a server/user share one IndexedDB, so a terminal session_status applied by
+        // the peer tab advances the shared cursor and comes back applied=false here. The durable
+        // store is still authoritative (P48): reconcile against it instead of returning, or the
+        // tab that dropped the ephemeral 'idle' keeps rendering "Thinking" until the next turn.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.database = fakeDatabase({
+            applyJournal: jest.fn().mockResolvedValue(false), // peer tab won the cursor race
+            conversations: jest.fn().mockResolvedValue([{ ...CONVERSATIONS[0], session_state: "done" }]),
+        });
+        state.activities.set("c1", { state: "thinking" });
+        state.state = { ...signedInState(client), activity: { state: "thinking" } };
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 33,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "system",
+            type: "session_status",
+            payload: { state: "done" },
+        });
+
+        expect(state.activities.has("c1")).toBe(false);
+        expect(client.getSnapshot().activity).toBeUndefined();
+    });
 });
 
 describe("MatronJournalClient mediaUrl", () => {
