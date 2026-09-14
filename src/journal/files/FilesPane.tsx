@@ -195,7 +195,13 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
         setSelected(undefined);
         reload();
     }, [reload]);
-    const writes = useFileWrites(api, onWritten);
+    // The same barrier, handed to the hook: a suspended upload queue may only be re-offered once a
+    // fresh listing has landed for THIS directory and it is still writable. `writable` is already
+    // false while the reconciling re-read is in flight, and stays false if it fails or comes back
+    // without the capability, so the queue is released by exactly the condition that restores every
+    // other write affordance.
+    const directory = useMemo(() => ({ ready: writable, path: listingPath }), [writable, listingPath]);
+    const writes = useFileWrites(api, onWritten, directory);
     const { begin } = writes;
     const fileInput = useRef<HTMLInputElement>(null);
 

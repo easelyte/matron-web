@@ -1050,3 +1050,124 @@ describe("an expiry keeps the rest of the upload queue (Codex round 3, F4)", () 
         expect(upload).toHaveBeenCalledTimes(1);
     });
 });
+
+// -- Round 4: the carried queue must not punch through the reconciliation barrier, and a wall
+//    clock is not a trustworthy deadline on its own ----------------------------------------------
+
+describe("a carried upload queue stays behind the reconciliation barrier (Codex round 4, F1)", () => {
+    beforeEach(() => jest.useFakeTimers({ doNotFake: ["queueMicrotask"] }));
+    afterEach(() => jest.useRealTimers());
+
+    /** Mount with a listing whose SECOND read (the reconciling one) is under the test's control. */
+    async function paneWithHeldReload(second: {
+        resolve?: FileListing;
+        reject?: Error;
+    }): Promise<{ pane: HTMLDivElement; release: () => void; upload: jest.Mock }> {
+        let release!: () => void;
+        let call = 0;
+        const listDir = jest.fn(() => {
+            call += 1;
+            if (call === 1) return Promise.resolve(listing(true));
+            return new Promise<FileListing>((resolve, reject) => {
+                release = () => (second.reject ? reject(second.reject) : resolve(second.resolve ?? listing(true)));
+            });
+        });
+        const upload = jest.fn().mockRejectedValue(new JournalApiError("timed out", 0, "timeout"));
+        const api = mockApi({
+            listDir: listDir as unknown as FilesApiLike["listDir"],
+            upload: upload as unknown as FilesApiLike["upload"],
+        });
+        const pane = await mountPane(api);
+        await pickUpload(
+            pane,
+            new File(["a"], "one.png", { type: "image/png" }),
+            new File(["b"], "two.png", { type: "image/png" }),
+        );
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        await act(async () => {
+            jest.advanceTimersByTime(REPLAY_WINDOW_MS + 1);
+            await Promise.resolve();
+        });
+        await flush();
+        return { pane, release, upload };
+    }
+
+    it("offers nothing while the reconciling listing is still in flight", async () => {
+        const { pane, release, upload } = await paneWithHeldReload({ resolve: listing(true) });
+
+        // The barrier is up: no dialog for the next file, and no write affordance anywhere.
+        expect(dialog()).toBeNull();
+        expect(pane.querySelector(".mj_FilesToolbar")).toBeNull();
+        expect(upload).toHaveBeenCalledTimes(1);
+
+        // ...and the queue is not lost — it is released when the listing lands.
+        await act(async () => {
+            release();
+            await Promise.resolve();
+        });
+        await flush();
+        expect(dialog()).not.toBeNull();
+        expect(dialog()?.textContent).toMatch(/two\.png/);
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).toBeNull();
+    });
+
+    it("never re-offers it when the refreshed directory comes back read-only", async () => {
+        // The capability can be revoked underneath an operator mid-selection. Re-offering the
+        // queue would present a confirm button for a write the server will now refuse.
+        const { pane, release, upload } = await paneWithHeldReload({ resolve: listing(false) });
+        await act(async () => {
+            release();
+            await Promise.resolve();
+        });
+        await flush();
+
+        expect(dialog()).toBeNull();
+        expect(pane.querySelector(".mj_FilesToolbar")).toBeNull();
+        expect(upload).toHaveBeenCalledTimes(1);
+    });
+
+    it("never re-offers it when the reconciling re-read fails outright", async () => {
+        const { pane, release, upload } = await paneWithHeldReload({ reject: new Error("network down") });
+        await act(async () => {
+            release();
+            await Promise.resolve();
+        });
+        await flush();
+
+        expect(dialog()).toBeNull();
+        expect(upload).toHaveBeenCalledTimes(1);
+        expect(pane.querySelector(".mj_FilesPreview_status_error")).not.toBeNull();
+    });
+});
+
+describe("the replay deadline survives a wall-clock rollback (Codex round 4, F2)", () => {
+    beforeEach(() => jest.useFakeTimers({ doNotFake: ["queueMicrotask"] }));
+    afterEach(() => jest.useRealTimers());
+
+    it("expires on elapsed time even when the system clock is set backwards", async () => {
+        // NTP correction, a laptop waking up, or an operator fixing their clock. Measured on the
+        // wall alone, the client would sit inside an apparent window the server had already left,
+        // and the next retry would be a fresh mutation wearing a replayed key.
+        const upload = jest.fn().mockRejectedValue(new JournalApiError("timed out", 0, "timeout"));
+        const api = mockApi({ upload: upload as unknown as FilesApiLike["upload"] });
+        const pane = await mountPane(api);
+        await pickUpload(pane, new File(["abc"], "shot.png", { type: "image/png" }));
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).not.toBeNull();
+
+        // The wall clock jumps an hour into the past; `setSystemTime` deliberately leaves the
+        // monotonic clock alone, exactly as a real adjustment does.
+        jest.setSystemTime(Date.now() - 60 * REPLAY_WINDOW_MS);
+        await act(async () => {
+            jest.advanceTimersByTime(REPLAY_WINDOW_MS + 1);
+            await Promise.resolve();
+        });
+        await flush();
+
+        expect(dialog()).toBeNull();
+        expect(upload).toHaveBeenCalledTimes(1);
+        expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/no longer be retried safely/i);
+    });
+});

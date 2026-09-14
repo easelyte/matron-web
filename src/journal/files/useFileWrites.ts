@@ -153,6 +153,17 @@ async function perform(
 
 const DRY_RUN_NOTICE = "The server is in dry-run mode: it recorded the request and changed nothing.";
 
+/**
+ * Has the pinned replay stopped being one? True as soon as EITHER deadline has passed: the wall
+ * clock (what the server's TTL is nominally measured in) or the monotonic one (which a clock
+ * adjustment cannot move). Taking the earlier of the two means a rollback or a sleeping laptop can
+ * only ever cost a replay that was still valid — never grant one that was not.
+ */
+function replayHasLapsed(state: WriteState): boolean {
+    if (state.replayExpiresAt !== undefined && Date.now() >= state.replayExpiresAt) return true;
+    return state.replayExpiresAtMono !== undefined && performance.now() >= state.replayExpiresAtMono;
+}
+
 // Transport-level codes whose own message is a bare internal string; these take the uniform copy.
 const TRANSPORT_CODES = new Set(["timeout", "disposed", "aborted"]);
 
@@ -215,7 +226,22 @@ function describeFailure(error: unknown): string {
     return error instanceof Error ? error.message : "Something went wrong.";
 }
 
-export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => void): FileWrites {
+/**
+ * What the pane currently knows about the directory, so a SUSPENDED upload queue can be resumed
+ * only once the reconciling re-read has actually answered for the same place it was queued in.
+ * `ready` is the pane's own `writable` — derived from the CURRENT listing, false while a reload is
+ * in flight and false if the refreshed listing revokes the capability.
+ */
+export interface DirectoryReadiness {
+    ready: boolean;
+    path: string;
+}
+
+export function useFileWrites(
+    api: FilesApiLike | undefined,
+    onWritten: () => void,
+    directory: DirectoryReadiness,
+): FileWrites {
     const [state, dispatch] = useReducer(writeReducer, undefined);
     const [notice, setNotice] = useState<string | undefined>(undefined);
     const stateRef = useRef<WriteState | undefined>(undefined);
@@ -233,8 +259,17 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
         };
     }, []);
 
+    /**
+     * The tail of an upload selection whose head expired unresolved. Parked here rather than in
+     * reducer state because it is deliberately NOT a pending write yet: it must not render, and
+     * must not be submittable, until the reconciling re-read has answered.
+     */
+    const held = useRef<PendingWrite | undefined>(undefined);
+
     const begin = useCallback((pending: PendingWrite) => {
         setNotice(undefined);
+        // A new write the operator started themselves supersedes anything parked.
+        held.current = undefined;
         // One key per TARGET, minted here and kept through every retry of that target.
         dispatch({ type: "open", pending, idempotencyKey: newKey() });
     }, []);
@@ -249,20 +284,26 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
             // An EXPIRY is not a decision the operator made — it is a deadline passing while they
             // were reading the notice. Reconciling the whole PendingWrite would take the rest of a
             // multi-file selection with it: files they never saw, dropped under a message naming
-            // only the first. So the queue is carried forward on expiry. It is safe to do so: each
-            // remaining file is an independent write that mints its own key and still has to be
-            // confirmed, so nothing is sent as a consequence of this.
+            // only the first. So the queue is carried forward on expiry.
+            //
+            // But it is SUSPENDED, not re-opened here. This re-read is the reconciliation barrier
+            // (FilesPane): every write affordance goes away until a fresh listing lands, precisely
+            // so no further mutation can be aimed at directory state the operator was just told to
+            // go and check. Opening the next dialog immediately would punch a hole straight
+            // through it — the dialog renders independently of `writable`, so its confirm button
+            // would still send while the re-read was in flight, had failed, or had come back
+            // read-only. The queue is released by the effect below, once the barrier lifts.
             //
             // An explicit cancel is the opposite — the operator asking to stop — and still
             // abandons the selection.
             const next = expired && current.pending.kind === "upload" ? advanceUpload(current.pending) : undefined;
-            if (next) dispatch({ type: "open", pending: next, idempotencyKey: newKey() });
-            else dispatch({ type: "cancel" });
+            held.current = next;
+            dispatch({ type: "cancel" });
 
             const queued = next?.kind === "upload" ? next.files.length - next.index : 0;
             const stillQueued =
                 queued > 0
-                    ? ` ${queued} more file${queued === 1 ? "" : "s"} from that selection ${queued === 1 ? "is" : "are"} still waiting for you to confirm.`
+                    ? ` ${queued} more file${queued === 1 ? "" : "s"} from that selection ${queued === 1 ? "is" : "are"} still queued — ${queued === 1 ? "it" : "they"} will be offered again once the folder has been re-read.`
                     : "";
             setNotice(
                 expired
@@ -275,6 +316,7 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
     );
 
     const cancel = useCallback(() => {
+        held.current = undefined;
         const current = stateRef.current;
         if (current?.phase === "confirming" && current.replay !== undefined) {
             reconcile(current, false);
@@ -287,26 +329,50 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
     // before that window closes, rather than letting the confirm button quietly turn into a second
     // mutation behind copy that still promises a replay.
     const replayExpiresAt = state?.phase === "confirming" ? state.replayExpiresAt : undefined;
+    const replayExpiresAtMono = state?.phase === "confirming" ? state.replayExpiresAtMono : undefined;
     useEffect(() => {
-        if (replayExpiresAt === undefined) return;
+        if (replayExpiresAt === undefined && replayExpiresAtMono === undefined) return;
+        // Fire on whichever deadline arrives first — the wall clock can be moved, the monotonic
+        // one cannot, and the replay has to end at the earlier of the two.
+        const delays = [
+            replayExpiresAt === undefined ? undefined : replayExpiresAt - Date.now(),
+            replayExpiresAtMono === undefined ? undefined : replayExpiresAtMono - performance.now(),
+        ].filter((value): value is number => value !== undefined);
         const timer = setTimeout(
             () => {
                 const current = stateRef.current;
                 if (current?.phase === "confirming" && current.replay !== undefined) reconcile(current, true);
             },
-            Math.max(0, replayExpiresAt - Date.now()),
+            Math.max(0, Math.min(...delays)),
         );
         return () => clearTimeout(timer);
-    }, [replayExpiresAt, reconcile]);
+    }, [replayExpiresAt, replayExpiresAtMono, reconcile]);
 
-    const dismissNotice = useCallback(() => setNotice(undefined), []);
+    // Release a suspended upload queue once the barrier lifts: a listing has landed, it is still
+    // writable, and it is the SAME directory the files were queued for. A refresh that fails, or
+    // that comes back without the capability, simply never releases it — the operator is left in
+    // the read-only view the server actually authorized, which is the safe way round. Navigating
+    // elsewhere drops it: that is the operator moving on, and resuming into another directory
+    // would aim their selection somewhere they never chose.
+    const { ready: dirReady, path: dirPath } = directory;
+    useEffect(() => {
+        const next = held.current;
+        if (next === undefined || !dirReady) return;
+        held.current = undefined;
+        if (next.kind !== "upload" || next.dir !== dirPath) return;
+        dispatch({ type: "open", pending: next, idempotencyKey: newKey() });
+    }, [dirReady, dirPath]);
+
+    const dismissNotice = useCallback(() => {
+        setNotice(undefined);
+    }, []);
 
     const submit = useCallback(
         (input: WriteInput) => {
             const current = stateRef.current;
             if (!current || current.phase !== "confirming") return;
             if (inFlight.current) return; // synchronous double-submit guard
-            if (current.replayExpiresAt !== undefined && Date.now() >= current.replayExpiresAt) {
+            if (replayHasLapsed(current)) {
                 // The timer above normally gets here first, but a backgrounded tab has its timers
                 // throttled — so the deadline is enforced where it matters, on the send.
                 reconcile(current, true);
@@ -329,8 +395,11 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
             // dialog locks its fields for the same reason; this is the enforcement, not the hint.
             const attempt = current.replay ?? input;
             // Stamped BEFORE the request leaves, because that is what the server's clock is
-            // measuring against — see the deadline note where `failed` is dispatched.
+            // measuring against — see the deadline note where `failed` is dispatched. Both clocks
+            // are read: wall for the server's TTL, monotonic so a backwards wall-clock adjustment
+            // cannot extend the window.
             const sentAt = Date.now();
+            const sentAtMono = performance.now();
             dispatch({ type: "submit" });
             void (async () => {
                 try {
@@ -377,6 +446,9 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
                         // conservative end of the skew, which is the end we want to be wrong on.
                         replayExpiresAt: unresolved
                             ? (current.replayExpiresAt ?? sentAt + REPLAY_WINDOW_MS)
+                            : undefined,
+                        replayExpiresAtMono: unresolved
+                            ? (current.replayExpiresAtMono ?? sentAtMono + REPLAY_WINDOW_MS)
                             : undefined,
                     });
                 } finally {

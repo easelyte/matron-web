@@ -94,6 +94,15 @@ export interface WriteState {
      * and the hook reconciles against the server instead of sending.
      */
     replayExpiresAt?: number;
+    /**
+     * The same deadline on a MONOTONIC clock (`performance.now()`). The wall-clock one above is
+     * what the server's TTL is nominally measured in, but a wall clock can be set BACKWARDS — by
+     * NTP correction, by the operator, by a laptop waking up — and a rollback between the send and
+     * the failure would leave the client inside an apparent window the server had already left in
+     * real elapsed time, quietly turning the next retry into a fresh mutation. Whichever of the two
+     * elapses first ends the replay, so a rollback can only ever make the client MORE conservative.
+     */
+    replayExpiresAtMono?: number;
 }
 
 export type WriteEvent =
@@ -114,6 +123,7 @@ export type WriteEvent =
           idempotencyKey: string;
           replay?: WriteInput;
           replayExpiresAt?: number;
+          replayExpiresAtMono?: number;
       }
     | { type: "cancel" };
 
@@ -143,6 +153,7 @@ export function writeReducer(state: WriteState | undefined, event: WriteEvent): 
                 // nothing happened and the operator is being asked to change the name.
                 replay: event.replay,
                 replayExpiresAt: event.replayExpiresAt,
+                replayExpiresAtMono: event.replayExpiresAtMono,
             };
         case "cancel":
             if (state?.phase === "mutating") return state;
