@@ -239,6 +239,30 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().trackerLoading).toBe(false);
     });
 
+    // F2: mission markers restart loadMissions independently of the pane, so a slower earlier request
+    // must not overwrite a newer one — otherwise a closed/obsolete list resurrects.
+    it("loadMissions ignores a superseded concurrent load", async () => {
+        const { client, state } = makeClient();
+        let resolveStale!: (value: { missions: Mission[] }) => void;
+        const stalePending = new Promise<{ missions: Mission[] }>((resolve) => {
+            resolveStale = resolve;
+        });
+        state.api = {
+            missions: jest
+                .fn()
+                .mockReturnValueOnce(stalePending)
+                .mockResolvedValueOnce({ missions: [mission({ num: 9, title: "fresh" })] }),
+        };
+
+        const first = client.loadMissions(); // older request, still pending
+        await client.loadMissions(); // newer request resolves first → wins
+        expect(client.getSnapshot().missions?.map((m) => m.title)).toEqual(["fresh"]);
+
+        resolveStale({ missions: [mission({ num: 1, title: "stale" })] }); // older resolves — ignored
+        await first;
+        expect(client.getSnapshot().missions?.map((m) => m.title)).toEqual(["fresh"]);
+    });
+
     it("loadInbox fetches open items app-wide and writes the inbox", async () => {
         const { client, state } = makeClient();
         state.api = { items: jest.fn().mockResolvedValue({ items: [item()], next_cursor: null }) };

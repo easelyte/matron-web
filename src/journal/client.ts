@@ -333,6 +333,7 @@ export class MatronJournalClient {
     private trackerItemGen = 0;
     private trackerMissionGen = 0;
     private trackerInboxGen = 0;
+    private trackerMissionsGen = 0;
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
@@ -1764,13 +1765,17 @@ export class MatronJournalClient {
     public async loadMissions(): Promise<void> {
         const api = this.api;
         if (!api) return;
+        // Request-generation guard, matching loadInbox/loadItem/loadMission: the pane primes this on
+        // open and mission markers independently restart it, so a slower earlier request must never
+        // overwrite a newer one's result (else closed missions / obsolete counts reappear) (F2).
+        const gen = ++this.trackerMissionsGen;
         this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             const { missions } = await api.missions();
-            if (this.api !== api) return;
+            if (this.api !== api || this.trackerMissionsGen !== gen) return;
             this.patch({ missions, trackerLoading: false });
         } catch (error) {
-            if (this.api !== api) return;
+            if (this.api !== api || this.trackerMissionsGen !== gen) return;
             this.patch({ trackerError: errorMessage(error), trackerLoading: false });
         }
     }
