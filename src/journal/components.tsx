@@ -2434,16 +2434,21 @@ function useMinuteClock(now?: number): number {
 // ranks below any stamped one but still wins when it is all we have. Ties go to the later
 // candidate, which keeps the callers' source order as the tiebreak: legacy < status.vitals < the
 // live push, i.e. the fastest-cadence source wins a same-millisecond stamp.
-// How far ahead of the client clock a sample stamp may sit and still be believed. Clocks skew,
-// so a small lead is normal; a wild one (a garbled or wrongly-scaled wire value) is not, and
-// would otherwise win every comparison forever AND read as age zero, pinning the meter to a
-// bogus reading that no later sample could displace. Such a stamp is treated as absent: the
-// reading can still render, it just cannot outrank a real sample on freshness.
-const MAX_STAMP_SKEW_MS = 5 * 60_000;
+// Upper bound on a believable epoch-millisecond sample stamp. A garbled or wrongly-scaled wire
+// value (1e308, say) is finite, so it would otherwise win every freshness comparison forever
+// AND clamp to age zero, pinning the meter to a bogus reading no later sample could displace.
+//
+// Deliberately an ABSOLUTE plausibility bound, not a distance from the client clock: the two
+// clocks here are the browser's and the bridge's, and a browser running minutes behind is
+// ordinary. Rejecting stamps relative to local time would make that skew reject every real
+// bridge timestamp, freezing the meters on the first reading and ignoring the 5s pushes that
+// should replace it. Comparisons between candidates stay purely relative, so any shared offset
+// cancels out and only a value that is not a plausible timestamp at all is discarded.
+const MAX_PLAUSIBLE_STAMP_MS = Date.UTC(2100, 0, 1);
 
 function usableStamp(sampledAtMs: number | undefined): number | null {
     if (typeof sampledAtMs !== "number" || !Number.isFinite(sampledAtMs)) return null;
-    if (sampledAtMs > Date.now() + MAX_STAMP_SKEW_MS) return null;
+    if (sampledAtMs <= 0 || sampledAtMs > MAX_PLAUSIBLE_STAMP_MS) return null;
     return sampledAtMs;
 }
 

@@ -286,20 +286,33 @@ describe("buildUsageMeters host vitals (status.vitals source + #529 live overrid
         // The bridge sends cpu_pct: null until its sampler has two ticks, and status only
         // republishes at turn end — so a conversation opened during warm-up must still pick up
         // the CPU bar from the ~5s push rather than waiting for the next turn to end.
-        const meters = buildUsageMeters(
-            { vitals: { cpu_pct: null, ram_pct: 20, sampled_at_ms: 1_000 } },
-            undefined,
-            { cpu: 44, ram: 21, sampled_at_ms: 2_000 },
-        );
+        const meters = buildUsageMeters({ vitals: { cpu_pct: null, ram_pct: 20, sampled_at_ms: 1_000 } }, undefined, {
+            cpu: 44,
+            ram: 21,
+            sampled_at_ms: 2_000,
+        });
 
         expect(byId(meters, "host_cpu")).toMatchObject({ percent: 44, sampled_at_ms: 2_000 });
     });
 
+    it("still ranks normally when the CLIENT clock runs minutes behind the bridge", () => {
+        // Both stamps are ahead of local time here. A skew-relative plausibility bound would
+        // reject both and freeze the meter on the turn-end reading; an absolute one lets the
+        // newer push win, because the comparison between candidates is purely relative.
+        const ahead = Date.now() + 6 * 60_000;
+        const meters = buildUsageMeters({ vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: ahead } }, undefined, {
+            cpu: 44,
+            ram: 21,
+            sampled_at_ms: ahead + 5_000,
+        });
+
+        expect(byId(meters, "host_cpu")).toMatchObject({ percent: 44, sampled_at_ms: ahead + 5_000 });
+    });
+
     it("ignores an implausibly-future stamp for ranking instead of pinning the meter", () => {
-        const meters = buildUsageMeters(
-            { vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1e308 } },
-            [{ id: "host_cpu", label: "Host CPU", percent: 66, sampled_at_ms: Date.now() }],
-        );
+        const meters = buildUsageMeters({ vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1e308 } }, [
+            { id: "host_cpu", label: "Host CPU", percent: 66, sampled_at_ms: Date.now() },
+        ]);
 
         // The bogus stamp cannot outrank a real sample, so the legacy reading wins.
         expect(byId(meters, "host_cpu").percent).toBe(66);
