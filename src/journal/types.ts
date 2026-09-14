@@ -190,8 +190,11 @@ export interface ToolStreamPayload {
 // that is the bridge's wire shape for this frame, not a typo. `sampled_at_ms` is the epoch ms of
 // the reading so the staleness dim (status.ts HOST_VITALS_STALE_MS) still ages it if pushes stop.
 export interface HostVitals {
-    cpu: number;
-    ram: number;
+    // OPTIONAL, matching the bridge frame: it omits `cpu` until its CPU sampler has two ticks
+    // after boot, and `ram` if the OS reports no total memory. Consumers must narrow before
+    // using either as a percent.
+    cpu?: number;
+    ram?: number;
     sampled_at_ms: number;
 }
 

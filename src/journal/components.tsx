@@ -2474,19 +2474,24 @@ export function buildUsageMeters(
         }
     }
     // Host-global vitals override (#529, fork-side): the host-scoped ephemeral push arrives on
-    // a ~5s cadence, far fresher than the turn-end status frame, so when present it is the
-    // authoritative live figure for host_cpu / host_ram across EVERY conversation — override
-    // each synthesized meter's percent + sample stamp (cpu→host_cpu, ram→host_ram). Absent
-    // (no push yet, or a bridge without it) → the status.vitals figures stand. The overridden
+    // a ~5s cadence, far fresher than the turn-end status frame, so when it is the newer sample
+    // it is the authoritative live figure for host_cpu / host_ram across EVERY conversation.
+    // Precedence is FRESHNESS, not presence: if the push stalls, or the client reconnects to a
+    // server that no longer sends it, the cached sample is retained (client.ts never clears it)
+    // and must not overwrite a newer status.vitals reading. Each half is also checked for a
+    // finite value — the bridge OMITS `cpu` from the frame until its sampler warms, and an
+    // undefined percent would blank a bar that status.vitals could fill. The overridden
     // sampled_at_ms drives isSampleStale, so a healthy push keeps the bars un-dimmed; if the
     // push stops, the stamp ages out and the dim fires.
     const merged = hostVitals
         ? meters.map((meter) => {
-              if (meter.id === "host_cpu")
-                  return { ...meter, percent: hostVitals.cpu, sampled_at_ms: hostVitals.sampled_at_ms };
-              if (meter.id === "host_ram")
-                  return { ...meter, percent: hostVitals.ram, sampled_at_ms: hostVitals.sampled_at_ms };
-              return meter;
+              if (meter.id !== "host_cpu" && meter.id !== "host_ram") return meter;
+              // A meter with no stamp (legacy limits[] entry from a pre-#156 bridge) has no
+              // freshness to compare, so the live push wins.
+              if (meter.sampled_at_ms != null && hostVitals.sampled_at_ms < meter.sampled_at_ms) return meter;
+              const percent = meter.id === "host_cpu" ? hostVitals.cpu : hostVitals.ram;
+              if (typeof percent !== "number" || !Number.isFinite(percent)) return meter;
+              return { ...meter, percent, sampled_at_ms: hostVitals.sampled_at_ms };
           })
         : meters;
     // Normalise to the design's column-first grid order (ctx/5h, fbl/model/wk, cpu/ram);
@@ -6811,12 +6816,18 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     const [dragActive, setDragActive] = useState(state.dragActive);
     const [draftReloadTicks, setDraftReloadTicks] = useState<Record<string, number>>({});
     const [bodyEl, setBodyEl] = useState<HTMLElement | null>(null);
-    // Meter count drives the usage collapse threshold: the synthetic ctx bar + each
-    // non-blank limit. >4 (host cpu/ram present) needs the wider pane before the 3-column
-    // grid renders inline instead of collapsing to the popover.
-    const meterCount =
-        (state.sessionStatus?.context ? 1 : 0) +
-        (state.sessionStatus?.limits?.filter((limit) => limit.label.trim()).length ?? 0);
+    // Meter count drives the usage collapse threshold: the synthetic ctx bar, each non-blank
+    // account limit, and the host cpu/ram meters. >4 (host cpu/ram present) needs the wider
+    // pane before the 3-column grid renders inline instead of collapsing to the popover.
+    // Derived from the SAME builder the headers render, and filtered by the same non-blank
+    // label rule UsageCluster applies, so the count cannot disagree with what is on screen —
+    // counting status.limits alone undercounts by two now that the host meters are
+    // synthesized from status.vitals rather than carried inside limits[].
+    const meterCount = buildUsageMeters(
+        state.sessionStatus,
+        state.sessionStatus?.limits?.filter((limit) => limit.label.trim()),
+        state.hostVitals,
+    ).filter((meter) => meter.label.trim()).length;
     const collapse = useAdaptiveHeader(bodyEl, meterCount);
     const appContent = useRef<HTMLDivElement>(null);
     const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
