@@ -320,6 +320,45 @@ const SHOTS_SPEC = [
             await p.waitForSelector(".mj_FilesPane_truncated");
         },
     },
+    // Tracker pane (Phase 4): the four surfaces — missions list, mission detail, inbox, item detail.
+    // Each opens the pane via the __matron hook (the pane's load* effects no-op with the fake client,
+    // so the pre-patched store data is what renders).
+    {
+        comp: "tracker",
+        state: "missions",
+        clip: ".mj_TrackerPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openTrackerMissions());
+            await p.waitForSelector(".mj_TrackerMissionRow");
+        },
+    },
+    {
+        comp: "tracker",
+        state: "mission-detail",
+        clip: ".mj_TrackerPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openTrackerMission());
+            await p.waitForSelector(".mj_TrackerMissionHead_name");
+        },
+    },
+    {
+        comp: "tracker",
+        state: "inbox",
+        clip: ".mj_TrackerPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openTrackerInbox());
+            await p.waitForSelector(".mj_TrackerItemRow");
+        },
+    },
+    {
+        comp: "tracker",
+        state: "item-detail",
+        clip: ".mj_TrackerPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openTrackerItem());
+            await p.waitForSelector(".mj_TrackerItemTitle");
+        },
+    },
 ];
 
 const THEMES = ["light", "dark"];

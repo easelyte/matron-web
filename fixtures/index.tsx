@@ -26,7 +26,16 @@ import { JournalApiError } from "../src/journal/api";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
 import type { FileEntry, FileListing, FileMeta, FilesApiLike } from "../src/journal/files/filesApi";
-import type { ClientState, Conversation, JournalEvent, Session } from "../src/journal/types";
+import type {
+    ClientState,
+    Conversation,
+    JournalEvent,
+    Mission,
+    MissionDetail,
+    Session,
+    TrackerComment,
+    TrackerItem,
+} from "../src/journal/types";
 import "../src/journal/shell.pcss";
 import "../src/journal/journal.pcss";
 
@@ -482,11 +491,296 @@ const mockFilesApi: FilesApiLike = {
 (client as unknown as { filesApi: () => FilesApiLike }).filesApi = () => mockFilesApi;
 const patchState = (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch.bind(client);
 
+// ── Tracker pane fixture (Phase 4) ──────────────────────────────────────────────────────────────
+// Canned missions / inbox items / a mission detail / an item detail so the harness can shoot the
+// four tracker surfaces (missions list, mission detail, inbox, item detail) in both themes without
+// a live server. The fake client has no `api`, so the pane's load* effects no-op and this
+// pre-patched store data is what renders (mirrors how the Files pane is driven above).
+const H = 3_600_000;
+const trackerMissions: Mission[] = [
+    {
+        id: "ms_5",
+        num: 5,
+        state: "open",
+        title: "Ship the tracker web port",
+        body: "Port the Missions / Milestones / Decisions-Inbox surfaces onto the journal web client.",
+        close_summary: null,
+        closed_by: null,
+        closed_over_open_items: 0,
+        origin_convo_id: "c1",
+        created_by: "agent",
+        created_at: Date.now() - 40 * H,
+        updated_at: Date.now() - 2 * H,
+        last_milestone_at: Date.now() - 2 * H,
+        closed_at: null,
+        open_items: 3,
+        needs_you: 2,
+        conversations: 2,
+        milestones: 4,
+        last_milestone: {
+            num: 11,
+            title: "Approved the visual language",
+            kind: "user_input",
+            created_at: Date.now() - 2 * H,
+        },
+    },
+    {
+        id: "ms_6",
+        num: 6,
+        state: "open",
+        title: "Backup rotation hardening",
+        body: "",
+        close_summary: null,
+        closed_by: null,
+        closed_over_open_items: 0,
+        origin_convo_id: "c2",
+        created_by: "agent",
+        created_at: Date.now() - 90 * H,
+        updated_at: Date.now() - 26 * H,
+        last_milestone_at: Date.now() - 26 * H,
+        closed_at: null,
+        open_items: 0,
+        needs_you: 0,
+        conversations: 1,
+        milestones: 2,
+        last_milestone: { num: 8, title: "Cron entry verified", kind: "progress", created_at: Date.now() - 26 * H },
+    },
+    {
+        id: "ms_4",
+        num: 4,
+        state: "closed",
+        title: "Migrate to Postgres 17",
+        body: "",
+        close_summary: "pg_upgrade completed with zero errors; rollback point retained for a week.",
+        closed_by: "user",
+        closed_over_open_items: 1,
+        origin_convo_id: "c3",
+        created_by: "agent",
+        created_at: Date.now() - 200 * H,
+        updated_at: Date.now() - 120 * H,
+        last_milestone_at: Date.now() - 130 * H,
+        closed_at: Date.now() - 120 * H,
+        open_items: 0,
+        needs_you: 0,
+        conversations: 1,
+        milestones: 3,
+        last_milestone: { num: 5, title: "Dry-run clean", kind: "progress", created_at: Date.now() - 130 * H },
+    },
+];
+
+const trackerInboxItems: TrackerItem[] = [
+    {
+        id: "it_12",
+        num: 12,
+        kind: "question",
+        state: "open",
+        resolution: null,
+        awaiting: "user",
+        rank: 0,
+        title: "Which brand colour for the tracker accent?",
+        body: "Yellow reads as the needs-you signal already — do we reuse it or introduce a second accent?",
+        labels: ["design"],
+        links: [],
+        supersedes: null,
+        origin_convo_id: "c1",
+        created_by: "agent",
+        created_at: Date.now() - 5 * H,
+        updated_at: Date.now() - 1 * H,
+        closed_at: null,
+        mission_id: "ms_5",
+        mission_num: 5,
+        comment_count: 2,
+        last_comment_at: Date.now() - 1 * H,
+        attachments: [],
+        has_image: false,
+    },
+    {
+        id: "it_13",
+        num: 13,
+        kind: "decision",
+        state: "open",
+        resolution: null,
+        awaiting: "user",
+        rank: 0,
+        title: "Fold plug revenue into the dashboard balance?",
+        body: "",
+        labels: [],
+        links: [],
+        supersedes: null,
+        origin_convo_id: "c2",
+        created_by: "agent",
+        created_at: Date.now() - 8 * H,
+        updated_at: Date.now() - 3 * H,
+        closed_at: null,
+        mission_id: null,
+        mission_num: null,
+        comment_count: 0,
+        last_comment_at: null,
+        attachments: [],
+        has_image: false,
+    },
+    {
+        id: "it_14",
+        num: 14,
+        kind: "task",
+        state: "open",
+        resolution: null,
+        awaiting: "agent",
+        rank: 0,
+        title: "Wire the WS invalidation for tracker markers",
+        body: "Refetch only the loaded surface on item/mission/milestone frames.",
+        labels: [],
+        links: [],
+        supersedes: null,
+        origin_convo_id: "c1",
+        created_by: "agent",
+        created_at: Date.now() - 10 * H,
+        updated_at: Date.now() - 6 * H,
+        closed_at: null,
+        mission_id: "ms_5",
+        mission_num: 5,
+        comment_count: 1,
+        last_comment_at: Date.now() - 6 * H,
+        attachments: [],
+        has_image: false,
+    },
+];
+
+const trackerItemDetail: { item: TrackerItem; comments: TrackerComment[] } = {
+    item: trackerInboxItems[0],
+    comments: [
+        {
+            id: "cm_1",
+            item_id: "it_12",
+            author: "agent",
+            device_id: 1,
+            kind: "comment",
+            body: "The needs-you orange is `#FFB020`. Reusing it for the accent risks diluting the urgency signal.",
+            attachments: [],
+            meta: null,
+            created_at: Date.now() - 4 * H,
+        },
+        {
+            id: "cm_2",
+            item_id: "it_12",
+            author: "user",
+            device_id: 2,
+            kind: "comment",
+            body: "Agreed — keep orange for needs-you only. Use the teal accent for the tracker chrome.",
+            attachments: [],
+            meta: null,
+            created_at: Date.now() - 1 * H,
+        },
+        {
+            id: "cm_3",
+            item_id: "it_12",
+            author: "user",
+            device_id: 2,
+            kind: "status",
+            body: "",
+            attachments: [],
+            meta: {
+                from: { state: "open", resolution: null, awaiting: "user" },
+                to: { state: "open", resolution: null, awaiting: "agent" },
+            },
+            created_at: Date.now() - 1 * H,
+        },
+    ],
+};
+
+const trackerMissionDetail: MissionDetail = {
+    mission: trackerMissions[0],
+    milestones: [
+        {
+            id: "ml_11",
+            mission_id: "ms_5",
+            num: 11,
+            kind: "user_input",
+            title: "Approved the visual language",
+            body: "Orange = needs-you only; teal for chrome; purple for decisions.",
+            convo_id: "c1",
+            seq: 42,
+            device_id: 2,
+            created_by: "user",
+            created_at: Date.now() - 2 * H,
+        },
+        {
+            id: "ml_10",
+            mission_id: "ms_5",
+            num: 10,
+            kind: "progress",
+            title: "Landed the tracker spine (types + api + client)",
+            body: "",
+            convo_id: "c1",
+            seq: 30,
+            device_id: 1,
+            created_by: "agent",
+            created_at: Date.now() - 20 * H,
+        },
+    ],
+    items: [
+        {
+            id: "it_12",
+            num: 12,
+            kind: "question",
+            state: "open",
+            awaiting: "user",
+            title: "Which brand colour for the tracker accent?",
+            origin_convo_id: "c1",
+            updated_at: Date.now() - 1 * H,
+        },
+        {
+            id: "it_14",
+            num: 14,
+            kind: "task",
+            state: "open",
+            awaiting: "agent",
+            title: "Wire the WS invalidation for tracker markers",
+            origin_convo_id: "c1",
+            updated_at: Date.now() - 6 * H,
+        },
+    ],
+    conversations: [
+        { id: "c1", title: "matron-web · deploy", state: "running", box: "vps" },
+        { id: "s1", title: "test triage", state: "running", box: "vps" },
+    ],
+};
+
 // Expose hooks so the Playwright driver can drive states (stage files → upload modal, etc.).
 (window as unknown as { __matron: unknown }).__matron = {
     client,
     openFiles: (path: string = FILES_ROOT) => patchState({ filesView: { open: true, path } }),
     closeFiles: () => patchState({ filesView: undefined }),
+    // Tracker: the four surfaces. The pane's load* effects no-op (no api), so pre-patch the store.
+    openTrackerMissions: () =>
+        patchState({
+            filesView: undefined,
+            trackerView: { open: true, view: "missions" },
+            missions: trackerMissions,
+            inboxItems: trackerInboxItems,
+        }),
+    openTrackerMission: () =>
+        patchState({
+            filesView: undefined,
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            missions: trackerMissions,
+            trackerMission: trackerMissionDetail,
+        }),
+    openTrackerInbox: () =>
+        patchState({
+            filesView: undefined,
+            trackerView: { open: true, view: "inbox" },
+            missions: trackerMissions,
+            inboxItems: trackerInboxItems,
+        }),
+    openTrackerItem: () =>
+        patchState({
+            filesView: undefined,
+            trackerView: { open: true, view: "inbox", selectedItemId: 12 },
+            inboxItems: trackerInboxItems,
+            trackerItem: trackerItemDetail,
+        }),
+    closeTracker: () => patchState({ trackerView: undefined }),
     stageImage: (name = "screenshot.png") => client.stageFiles([imageFile(name)]),
     // Single NON-image file → hatched "image preview" placeholder + the single-file case
     // (no thumbnail strip, no "n of N" pill).

@@ -39,6 +39,7 @@ import {
     AnthropicMark,
     ArchiveIcon,
     AttachmentIcon,
+    ChecklistIcon,
     CheckIcon,
     ChevronDownIcon,
     ChevronLeftIcon,
@@ -89,6 +90,8 @@ function isElectronRuntime(): boolean {
     return typeof window !== "undefined" && Boolean((window as Window & { electron?: unknown }).electron);
 }
 import { MarkdownBody, markdownToPlainText } from "./markdown";
+import { MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
+import { TrackerPane } from "./tracker/TrackerPane";
 import {
     buildMediaCorpus,
     isRenderableInViewer,
@@ -1924,6 +1927,23 @@ function ConversationList({
                                                 <FolderIcon />
                                             </button>
                                         )}
+                                        {/* Tracker is NOT Electron-gated: unlike Files (raw fetch),
+                                            it uses JournalApi, which routes through the Electron
+                                            bridge, so it works on desktop as well as web/iOS. */}
+                                        <button
+                                            className="mj_IconButton"
+                                            type="button"
+                                            aria-label="Tracker"
+                                            aria-pressed={state.trackerView?.open ?? false}
+                                            title="Tracker"
+                                            onClick={() =>
+                                                state.trackerView?.open
+                                                    ? client.closeTrackerView()
+                                                    : client.openTrackerView()
+                                            }
+                                        >
+                                            <ChecklistIcon />
+                                        </button>
                                         <button
                                             className="mj_IconButton"
                                             type="button"
@@ -4333,6 +4353,23 @@ export function isPermissionDecisionReply(event: JournalEvent, permissionRequest
     return permissionRequestSeqs.has(targetSeq);
 }
 
+/**
+ * Tracker events that EventContent renders as null and so must not occupy a timeline row at all —
+ * otherwise EventRow still wraps the null content in an avatar + sender bubble (a ghost message).
+ * Two families: the plain-text `fallback_for` mirror the bridge emits for old clients (this client
+ * renders the real `item` marker instead), and the quiet invalidation-only `item` markers
+ * (reordered / updated) that carry no visible card. Kept in lock-step with EventContent's null
+ * returns; the created/closed/commented/reopened item actions still render their cards.
+ */
+function isSuppressedTrackerEvent(event: JournalEvent): boolean {
+    if (event.type === "text") return asString(event.payload.fallback_for).length > 0;
+    if (event.type === "item") {
+        const action = asString(event.payload.action);
+        return action === "reordered" || action === "updated";
+    }
+    return false;
+}
+
 function PeerMessage({ event }: { event: JournalEvent }): React.ReactElement {
     const rawFromKind = asString(event.payload.from_kind);
     const fromKind = rawFromKind === "claude" || rawFromKind === "codex" ? rawFromKind : null;
@@ -4387,15 +4424,32 @@ export function EventContent({
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
     isReadOnly?: boolean;
     resolvedAction?: (itemId: string) => "send" | "cancel" | "expired" | undefined;
-}): React.ReactElement {
+}): React.ReactElement | null {
     const answer = answeredPromptReplies.get(`${event.convo_id}:${event.seq}`);
     switch (event.type) {
         case "text":
+            // A tracker fallback text (payload.fallback_for set) is the plain-text mirror the
+            // bridge emits for old clients that can't render the real `item` marker. This client
+            // renders that marker, so suppress the duplicate fallback text.
+            if (asString(event.payload.fallback_for)) return null;
             return (
                 <div className="mj_Markdown">
-                    <MarkdownBody text={asString(event.payload.body)} label={String(event.seq)} />
+                    <MarkdownBody
+                        text={asString(event.payload.body)}
+                        label={String(event.seq)}
+                        onTrackerLink={(kind, num) =>
+                            kind === "item" ? client.openTrackerItem(num) : client.openTrackerMission(num)
+                        }
+                    />
                 </div>
             );
+        case "item":
+            // Quiet invalidation-only markers (reordered/updated) and unknown actions render null.
+            return renderItemMarker(event, client);
+        case "milestone":
+            return <MilestoneCard client={client} event={event} />;
+        case "mission":
+            return <MissionNotice client={client} event={event} />;
         case "peer_message":
             return <PeerMessage event={event} />;
         case "prompt":
@@ -4820,7 +4874,8 @@ function Timeline({
                 (event) =>
                     !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
                     !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs) &&
-                    !isPermissionDecisionReply(event, permissionRequestSeqs),
+                    !isPermissionDecisionReply(event, permissionRequestSeqs) &&
+                    !isSuppressedTrackerEvent(event),
             ),
         [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs],
     );
@@ -6791,9 +6846,11 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                     <div />
                 </div>
                 <div
-                    className={`mx_RoomView_wrapper ${state.filesView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
+                    className={`mx_RoomView_wrapper ${state.trackerView?.open || state.filesView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
                 >
-                    {state.filesView?.open && !isElectronRuntime() ? (
+                    {state.trackerView?.open ? (
+                        <TrackerPane client={client} state={state} />
+                    ) : state.filesView?.open && !isElectronRuntime() ? (
                         <FilesPane client={client} state={state} />
                     ) : state.selectedConversationId ? (
                         <div

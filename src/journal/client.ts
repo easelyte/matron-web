@@ -14,6 +14,7 @@ import { buildEditFileParams, classifyEditFileReply, type EditFileInput, type Ed
 import { buildReadFileParams, classifyReadFileReply, type ReadFileInput, type ReadFileOutcome } from "./read-file";
 import { mergeSessionStatus } from "./status";
 import {
+    asNumber,
     buildSidebarIndex,
     type ClientState,
     type Conversation,
@@ -32,6 +33,9 @@ import {
     type ServerFrame,
     type Session,
     type SnapshotResponse,
+    type TrackerItem,
+    type TrackerResolution,
+    type TrackerViewState,
     trimUtf8Prefix,
     type ToolStreamState,
     utf8Length,
@@ -743,9 +747,11 @@ export class MatronJournalClient {
         storeSelectedConversation(this.state.session, conversationId);
         this.patch({
             selectedConversationId: conversationId,
-            // Selecting a conversation closes the Files pane so the chosen room becomes visible
-            // (filesView is the main-region discriminant checked ahead of selectedConversationId).
+            // Selecting a conversation closes the Files pane and the Tracker pane so the chosen
+            // room becomes visible (both are main-region discriminants checked ahead of
+            // selectedConversationId; the tracker also takes precedence over Files).
             filesView: undefined,
+            trackerView: undefined,
             events: [],
             pendingMessages: [],
             loadingHistory: false,
@@ -1662,6 +1668,9 @@ export class MatronJournalClient {
     // Open the Files pane (main-region discriminant). Preserves the selected conversation so
     // closing returns to it. `path` seeds the browsed directory; defaults to the remembered one.
     public openFilesView(path?: string): void {
+        // Symmetric to openTrackerView closing Files: one main-region surface at a time, so
+        // opening Files closes the tracker (the tracker takes render precedence otherwise).
+        this.closeTrackerView();
         this.patch({ filesView: { open: true, path: path ?? this.state.filesView?.path } });
     }
 
@@ -1675,6 +1684,210 @@ export class MatronJournalClient {
         if (!this.state.filesView?.open) return;
         if (this.state.filesView.path === path) return;
         this.patch({ filesView: { open: true, path } });
+    }
+
+    // ── Tracker pane (Missions / Milestones / Decisions-Inbox) ──────────────────────
+    // The tracker shares the main region with the Files pane and the conversation view —
+    // one surface at a time — so opening it closes Files (mirrors how Files closes over the
+    // conversation view). `trackerView` is the discriminant; the list/detail data is
+    // store-resident (loaded lazily by the load* helpers below, invalidated over WS).
+
+    public openTrackerView(opts: { view?: "missions" | "inbox"; itemId?: number; missionId?: number } = {}): void {
+        this.closeFilesView();
+        const prev = this.state.trackerView;
+        const next: TrackerViewState = {
+            open: true,
+            view: opts.view ?? prev?.view ?? "inbox",
+            selectedItemId: opts.itemId ?? prev?.selectedItemId,
+            selectedMissionId: opts.missionId ?? prev?.selectedMissionId,
+        };
+        this.patch({ trackerView: next });
+    }
+
+    public closeTrackerView(): void {
+        if (!this.state.trackerView) return;
+        this.patch({ trackerView: undefined });
+    }
+
+    // Deep-link / row-tap entry points: select the row (last-tap-wins) and switch to its view.
+    // The pane's own effect issues the matching load* call when the selection changes.
+    public openTrackerItem(num: number): void {
+        this.openTrackerView({ view: "inbox", itemId: num });
+    }
+
+    public openTrackerMission(num: number): void {
+        this.openTrackerView({ view: "missions", missionId: num });
+    }
+
+    // ── Tracker data loaders (fetch → patch; the SAME trackerLoading/trackerError pair as the
+    // messageSearch precedent). Each guards on the api instance so a response that races a
+    // logout / re-login can never write into a newer session's store. ──────────────────────
+
+    public async loadMissions(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        this.patch({ trackerLoading: true, trackerError: undefined });
+        try {
+            const { missions } = await api.missions();
+            if (this.api !== api) return;
+            this.patch({ missions, trackerLoading: false });
+        } catch (error) {
+            if (this.api !== api) return;
+            this.patch({ trackerError: errorMessage(error), trackerLoading: false });
+        }
+    }
+
+    public async loadInbox(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        this.patch({ trackerLoading: true, trackerError: undefined });
+        try {
+            // App-wide open items; the inbox sorts "needs you" (open && awaiting==user) first
+            // client-side, so a single open-state fetch feeds every section.
+            const { items } = await api.items({ state: "open" });
+            if (this.api !== api) return;
+            this.patch({ inboxItems: items, trackerLoading: false });
+        } catch (error) {
+            if (this.api !== api) return;
+            this.patch({ trackerError: errorMessage(error), trackerLoading: false });
+        }
+    }
+
+    public async loadItem(id: number | string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        this.patch({ trackerLoading: true, trackerError: undefined });
+        try {
+            const detail = await api.item(id);
+            if (this.api !== api) return;
+            this.patch({ trackerItem: detail, trackerLoading: false });
+        } catch (error) {
+            if (this.api !== api) return;
+            this.patch({ trackerError: errorMessage(error), trackerLoading: false });
+        }
+    }
+
+    public async loadMission(id: number | string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        this.patch({ trackerLoading: true, trackerError: undefined });
+        try {
+            const detail = await api.mission(id);
+            if (this.api !== api) return;
+            this.patch({ trackerMission: detail, trackerLoading: false });
+        } catch (error) {
+            if (this.api !== api) return;
+            this.patch({ trackerError: errorMessage(error), trackerLoading: false });
+        }
+    }
+
+    // ── Tracker mutations (fresh Idempotency-Key per call → refetch the affected row + patch).
+    // On failure they surface trackerError but leave the loaded data intact (await-refetch, no
+    // optimistic outbox in v1). The inbox / missions list are refetched only when already loaded,
+    // so a mutation from a detail view keeps their badges live without forcing a cold load. ──
+
+    public async commentItem(
+        id: number | string,
+        body: { body?: string; attachments?: TrackerItem["attachments"] },
+    ): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        try {
+            await api.postItemComment(id, body, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return;
+        }
+        if (this.api !== api) return;
+        await this.loadItem(id);
+        if (this.state.inboxItems) await this.loadInbox();
+    }
+
+    public async closeTrackerItem(id: number | string, resolution: TrackerResolution, comment?: string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        try {
+            await api.closeItem(id, { resolution, comment }, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return;
+        }
+        if (this.api !== api) return;
+        await this.loadItem(id);
+        if (this.state.inboxItems) await this.loadInbox();
+    }
+
+    public async reopenTrackerItem(id: number | string, comment?: string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        try {
+            await api.reopenItem(id, { comment }, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return;
+        }
+        if (this.api !== api) return;
+        await this.loadItem(id);
+        if (this.state.inboxItems) await this.loadInbox();
+    }
+
+    public async saveMissionEdits(id: number | string, fields: { title?: string; body?: string }): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        try {
+            await api.patchMission(id, fields, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return;
+        }
+        if (this.api !== api) return;
+        await this.loadMission(id);
+        if (this.state.missions) await this.loadMissions();
+    }
+
+    public async closeTrackerMission(id: number | string, summary: string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        try {
+            await api.closeMission(id, { summary }, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return;
+        }
+        if (this.api !== api) return;
+        await this.loadMission(id);
+        if (this.state.missions) await this.loadMissions();
+    }
+
+    // WS invalidation for tracker markers (`item` / `mission` / `milestone` journal frames).
+    // A marker is a change connected clients must reflect without re-polling; we refetch ONLY the
+    // tracker data currently loaded/open (a closed pane, or an unloaded list, fetches nothing) so
+    // badges stay live cheaply. `mission` is treated as pure invalidation. Item/mission numbers on
+    // the wire are the human #num; milestone markers carry `mission_num` for their parent mission.
+    private handleTrackerMarker(event: JournalEvent): void {
+        if (event.type === "item") {
+            const num = asNumber(event.payload.num, 0);
+            if (num && this.state.trackerItem && this.state.trackerItem.item.num === num) {
+                void this.loadItem(num);
+            }
+            if (this.state.inboxItems) void this.loadInbox();
+            return;
+        }
+        if (event.type === "mission") {
+            const num = asNumber(event.payload.num, 0);
+            if (num && this.state.trackerMission && this.state.trackerView?.selectedMissionId === num) {
+                void this.loadMission(num);
+            }
+            if (this.state.missions) void this.loadMissions();
+            return;
+        }
+        if (event.type === "milestone") {
+            const missionNum = asNumber(event.payload.mission_num, 0);
+            if (missionNum && this.state.trackerMission && this.state.trackerView?.selectedMissionId === missionNum) {
+                void this.loadMission(missionNum);
+            }
+            if (this.state.missions) void this.loadMissions();
+        }
     }
 
     private async startSession(session: Session): Promise<void> {
@@ -2155,6 +2368,10 @@ export class MatronJournalClient {
 
     private async handleJournal(event: JournalEvent): Promise<void> {
         if (!this.database) return;
+        // Tracker markers (item/mission/milestone) drive a live refetch of any loaded tracker
+        // data regardless of whether this event is newly applied below — fire-and-forget so it
+        // never blocks (or is blocked by) timeline application. Non-tracker types return at once.
+        this.handleTrackerMarker(event);
         const applied = await this.database.applyJournal(event);
         this.clearRpcCreateWatchdog(event.convo_id);
         const removed = await this.database.reconcileOwnMessage(event);
