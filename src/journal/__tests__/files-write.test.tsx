@@ -1255,7 +1255,7 @@ describe("the write capability is re-checked where the write is SENT (Codex roun
     let writes: ReturnType<typeof useFileWrites> | undefined;
 
     function Harness({ api, ready }: { api: FilesApiLike; ready: boolean }): null {
-        writes = useFileWrites(api, () => {}, { settled: true, writable: ready, path: DIR });
+        writes = useFileWrites(api, () => {}, { status: "loaded", writable: ready, path: DIR });
         return null;
     }
 
@@ -1323,7 +1323,7 @@ describe("navigating away drops a parked upload queue (Codex round 5, F3)", () =
     let writes: ReturnType<typeof useFileWrites> | undefined;
 
     function Harness({ api, ready, path }: { api: FilesApiLike; ready: boolean; path: string }): null {
-        writes = useFileWrites(api, () => {}, { settled: true, writable: ready, path });
+        writes = useFileWrites(api, () => {}, { status: "loaded", writable: ready, path });
         return null;
     }
 
@@ -1370,8 +1370,16 @@ describe("navigating away drops a parked upload queue (Codex round 5, F3)", () =
 describe("a read-only answer ENDS a parked queue (Codex round 6, F1)", () => {
     let writes: ReturnType<typeof useFileWrites> | undefined;
 
-    function Harness({ api, settled, writable }: { api: FilesApiLike; settled: boolean; writable: boolean }): null {
-        writes = useFileWrites(api, () => {}, { settled, writable, path: DIR });
+    function Harness({
+        api,
+        status,
+        writable,
+    }: {
+        api: FilesApiLike;
+        status: "loading" | "loaded" | "error";
+        writable: boolean;
+    }): null {
+        writes = useFileWrites(api, () => {}, { status, writable, path: DIR });
         return null;
     }
 
@@ -1385,13 +1393,13 @@ describe("a read-only answer ENDS a parked queue (Codex round 6, F1)", () => {
         await act(async () => {
             root = createRoot(container as HTMLDivElement);
         });
-        const show = async (settled: boolean, writable: boolean): Promise<void> => {
+        const show = async (status: "loading" | "loaded" | "error", writable: boolean): Promise<void> => {
             await act(async () => {
-                root?.render(<Harness api={api} settled={settled} writable={writable} />);
+                root?.render(<Harness api={api} status={status} writable={writable} />);
             });
             await flush();
         };
-        await show(true, true);
+        await show("loaded", true);
 
         await act(async () => {
             writes?.begin({
@@ -1407,11 +1415,11 @@ describe("a read-only answer ENDS a parked queue (Codex round 6, F1)", () => {
         await flush();
         expect(writes?.state).toBeUndefined(); // two.png is parked behind the barrier
 
-        await show(false, false); // the re-read goes out
-        await show(true, false); // ...and answers: read-only. The queue is over.
+        await show("loading", false); // the re-read goes out
+        await show("loaded", false); // ...and answers: read-only. The queue is over.
         expect(writes?.state).toBeUndefined();
 
-        await show(true, true); // capability comes back later
+        await show("loaded", true); // capability comes back later
         expect(writes?.state).toBeUndefined(); // ...and the abandoned selection stays abandoned
     });
 
@@ -1422,13 +1430,13 @@ describe("a read-only answer ENDS a parked queue (Codex round 6, F1)", () => {
         await act(async () => {
             root = createRoot(container as HTMLDivElement);
         });
-        const show = async (settled: boolean, writable: boolean): Promise<void> => {
+        const show = async (status: "loading" | "loaded" | "error", writable: boolean): Promise<void> => {
             await act(async () => {
-                root?.render(<Harness api={api} settled={settled} writable={writable} />);
+                root?.render(<Harness api={api} status={status} writable={writable} />);
             });
             await flush();
         };
-        await show(true, true);
+        await show("loaded", true);
         await act(async () => {
             writes?.begin({
                 kind: "upload",
@@ -1442,9 +1450,67 @@ describe("a read-only answer ENDS a parked queue (Codex round 6, F1)", () => {
         });
         await flush();
 
-        await show(false, false);
+        await show("loading", false);
         expect(writes?.state).toBeUndefined(); // still in flight — nothing offered
-        await show(true, true);
+        await show("loaded", true);
         expect(writes?.state?.phase).toBe("confirming"); // ...and released once it answers
+    });
+});
+
+describe("a failed re-read is not an answer (Codex round 7)", () => {
+    let writes: ReturnType<typeof useFileWrites> | undefined;
+
+    function Harness({
+        api,
+        status,
+        writable,
+    }: {
+        api: FilesApiLike;
+        status: "loading" | "loaded" | "error";
+        writable: boolean;
+    }): null {
+        writes = useFileWrites(api, () => {}, { status, writable, path: DIR });
+        return null;
+    }
+
+    it("keeps a parked queue across a transient listing failure and releases it on the retry", async () => {
+        // Collapsing "errored" into "answered" made a dropped socket discard the rest of the
+        // operator's selection — the one outcome the expiry notice explicitly promises against,
+        // and one they cannot undo except by picking the files again.
+        const api = mockApi({ upload: jest.fn().mockResolvedValue({ path: `${DIR}/a`, bytes: 1, dryRun: false }) });
+        container = document.createElement("div");
+        document.body.append(container);
+        await act(async () => {
+            root = createRoot(container as HTMLDivElement);
+        });
+        const show = async (status: "loading" | "loaded" | "error", writable: boolean): Promise<void> => {
+            await act(async () => {
+                root?.render(<Harness api={api} status={status} writable={writable} />);
+            });
+            await flush();
+        };
+        await show("loaded", true);
+        await act(async () => {
+            writes?.begin({
+                kind: "upload",
+                dir: DIR,
+                files: [new File(["a"], "one.png"), new File(["b"], "two.png")],
+                index: 0,
+            });
+        });
+        await act(async () => {
+            writes?.submit({});
+        });
+        await flush();
+        expect(writes?.state).toBeUndefined(); // two.png parked
+
+        await show("loading", false);
+        await show("error", false); // the network dropped; the pane shows its Retry
+        expect(writes?.state).toBeUndefined(); // nothing offered — but nothing thrown away either
+
+        await show("loading", false);
+        await show("loaded", true); // the retry lands
+        expect(writes?.state?.phase).toBe("confirming");
+        expect(writes?.state?.pending.kind).toBe("upload");
     });
 });

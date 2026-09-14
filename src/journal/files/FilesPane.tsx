@@ -200,12 +200,12 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
     // false while the reconciling re-read is in flight, and stays false if it fails or comes back
     // without the capability, so the queue is released by exactly the condition that restores every
     // other write affordance.
-    // `settled` is "the listing answered", NOT "the listing said yes" — a parked upload queue waits
-    // on the first and is dropped by the second, and collapsing them lets a read-only answer leave
-    // the queue re-enterable. A reload puts the resource back into `loading`, which is exactly the
-    // window the barrier exists to cover.
+    // The listing's status goes through UNCOLLAPSED. A parked upload queue treats loading, error
+    // and loaded-but-read-only as three different things (wait, wait-with-a-retry, and over), and
+    // flattening any two of them either strands the queue or throws it away. A reload puts the
+    // resource back into `loading`, which is exactly the window the barrier exists to cover.
     const directory = useMemo(
-        () => ({ settled: listing.status !== "loading", writable, path: listingPath }),
+        () => ({ status: listing.status, writable, path: listingPath }),
         [listing.status, writable, listingPath],
     );
     const writes = useFileWrites(api, onWritten, directory);

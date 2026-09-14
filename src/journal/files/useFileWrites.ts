@@ -238,9 +238,15 @@ function describeFailure(error: unknown): string {
  * unauthorized write.
  */
 export interface DirectoryReadiness {
-    /** The listing has ANSWERED (loaded or errored) — i.e. no re-read is in flight. */
-    settled: boolean;
-    /** The server says this directory accepts writes right now. */
+    /**
+     * The listing's own three states, passed through rather than collapsed. Each means something
+     * different to a parked queue: `loading` is the barrier (wait), `error` is "ask again" (wait,
+     * with a Retry on screen — a dropped socket must not cost the operator their selection, and the
+     * notice explicitly promises the files will be offered again), and only `loaded` is an
+     * ANSWER — which either authorizes the rest of the selection or ends it.
+     */
+    status: "loading" | "loaded" | "error";
+    /** The server says this directory accepts writes right now. Only meaningful when loaded. */
     writable: boolean;
     path: string;
 }
@@ -362,7 +368,7 @@ export function useFileWrites(
     // the read-only view the server actually authorized, which is the safe way round. Navigating
     // elsewhere drops it: that is the operator moving on, and resuming into another directory
     // would aim their selection somewhere they never chose.
-    const { settled: dirSettled, writable: dirWritable, path: dirPath } = directory;
+    const { status: dirStatus, writable: dirWritable, path: dirPath } = directory;
     useEffect(() => {
         const next = held.current;
         if (next === undefined) return;
@@ -373,13 +379,16 @@ export function useFileWrites(
             held.current = undefined;
             return;
         }
-        if (!dirSettled) return; // the re-read is still out; the barrier stays up and the queue waits
-        // It answered. Either it authorizes the rest of the selection or the selection is over —
+        // Still out, or it failed and the operator has a Retry in front of them: the barrier stays
+        // up and the queue waits. A transient network error is not an answer, and treating it as
+        // one silently discarded files the notice had just promised would be offered again.
+        if (dirStatus !== "loaded") return;
+        // It ANSWERED. Either it authorizes the rest of the selection or the selection is over —
         // there is no third state in which the queue lingers, waiting to be re-entered later.
         held.current = undefined;
         if (!dirWritable) return;
         dispatch({ type: "open", pending: next, idempotencyKey: newKey() });
-    }, [dirSettled, dirWritable, dirPath]);
+    }, [dirStatus, dirWritable, dirPath]);
 
     const dismissNotice = useCallback(() => {
         setNotice(undefined);
