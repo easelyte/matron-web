@@ -235,24 +235,74 @@ describe("buildUsageMeters host vitals (status.vitals source + #529 live overrid
     });
 
     it("lets a NEWER limits[] host entry win over a retained stale vitals (bridge rollback)", () => {
-        // Composed path, which neither half's tests covered on their own: mergeSessionStatus
-        // carries `vitals` across an update that omits it, so after a rollback to a bridge that
-        // sends host meters in limits[] again, the retained object is still present — forever.
-        // Resolving on presence would let that stale vitals mask every newer legacy reading and
-        // pin the header to a frozen number. Freshness must hand it back to limits[].
+        // Composed path, which neither half's tests covered on their own. mergeSessionStatus
+        // otherwise carries `vitals` across an update that omits it, so after a rollback to a
+        // bridge that sends host meters in limits[] again, a stale reading would sit there
+        // forever masking every newer legacy sample and pinning the header to a frozen number.
         const afterRollback = mergeSessionStatus(
             { vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1_000 } },
             { limits: [{ id: "host_cpu", label: "Host CPU", percent: 66, sampled_at_ms: 9_000 }] },
         );
 
-        expect(afterRollback.vitals).toEqual({ cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1_000 });
+        expect(afterRollback.vitals).toBeUndefined();
 
         const meters = buildUsageMeters(afterRollback, afterRollback.limits);
 
         expect(meters.filter((meter) => meter.id === "host_cpu")).toHaveLength(1);
         expect(byId(meters, "host_cpu")).toMatchObject({ percent: 66, sampled_at_ms: 9_000 });
-        // The ram half has no newer legacy entry, so it still comes from the retained vitals.
-        expect(byId(meters, "host_ram")).toMatchObject({ percent: 20, sampled_at_ms: 1_000 });
+    });
+
+    it("hands the meters back to UNSTAMPED legacy entries after a rollback (vitals evicted)", () => {
+        // The pre-#156 wire shape had no sampled_at_ms on host meters at all, so freshness has
+        // nothing to rank them on. mergeSessionStatus therefore evicts the retained vitals when
+        // an update asserts the legacy contract, rather than leaving a stale stamped reading to
+        // outrank every unstamped sample that follows it.
+        const afterRollback = mergeSessionStatus(
+            { vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1_000 } },
+            { limits: [{ id: "host_cpu", label: "Host CPU", percent: 66 }] },
+        );
+
+        expect(afterRollback.vitals).toBeUndefined();
+
+        const meters = buildUsageMeters(afterRollback, afterRollback.limits);
+
+        expect(meters.filter((meter) => meter.id === "host_cpu")).toHaveLength(1);
+        expect(byId(meters, "host_cpu")).toMatchObject({ percent: 66 });
+        // The evicted vitals takes its ram half with it — the legacy producer is now the source.
+        expect(meters.some((meter) => meter.id === "host_ram")).toBe(false);
+    });
+
+    it("does NOT evict vitals when the bridge sends both (forward deploy window)", () => {
+        const merged = mergeSessionStatus(undefined, {
+            vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1_000 },
+            limits: [{ id: "host_cpu", label: "Host CPU", percent: 99, sampled_at_ms: 5 }],
+        });
+
+        expect(merged.vitals).toEqual({ cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1_000 });
+        expect(byId(buildUsageMeters(merged, merged.limits), "host_cpu").percent).toBe(10);
+    });
+
+    it("lets a warmed CPU push fill a half that status.vitals reported as null", () => {
+        // The bridge sends cpu_pct: null until its sampler has two ticks, and status only
+        // republishes at turn end — so a conversation opened during warm-up must still pick up
+        // the CPU bar from the ~5s push rather than waiting for the next turn to end.
+        const meters = buildUsageMeters(
+            { vitals: { cpu_pct: null, ram_pct: 20, sampled_at_ms: 1_000 } },
+            undefined,
+            { cpu: 44, ram: 21, sampled_at_ms: 2_000 },
+        );
+
+        expect(byId(meters, "host_cpu")).toMatchObject({ percent: 44, sampled_at_ms: 2_000 });
+    });
+
+    it("ignores an implausibly-future stamp for ranking instead of pinning the meter", () => {
+        const meters = buildUsageMeters(
+            { vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1e308 } },
+            [{ id: "host_cpu", label: "Host CPU", percent: 66, sampled_at_ms: Date.now() }],
+        );
+
+        // The bogus stamp cannot outrank a real sample, so the legacy reading wins.
+        expect(byId(meters, "host_cpu").percent).toBe(66);
     });
 
     it("prefers a legacy limits[] entry that is stamped when vitals carries no stamp at all", () => {

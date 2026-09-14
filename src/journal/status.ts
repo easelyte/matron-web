@@ -231,6 +231,11 @@ function renderReset(resetTime: number, now: number): string {
     return `${weekday} ${hour}`;
 }
 
+// True when a status update carries host CPU/RAM inside limits[] — the pre-#156 wire shape.
+function suppliesLegacyHostMeters(update: SessionStatus): boolean {
+    return Boolean(update.limits?.some((limit) => limit.id === "host_cpu" || limit.id === "host_ram"));
+}
+
 export function mergeSessionStatus(current: SessionStatus | undefined, update: SessionStatus): SessionStatus {
     return {
         model: update.model ?? current?.model,
@@ -240,7 +245,16 @@ export function mergeSessionStatus(current: SessionStatus | undefined, update: S
         // Host vitals ride the status frame at top level; carry them through the same
         // last-known-wins merge as the other fields, or a partial frame (e.g. a limits-only
         // repaint) blanks the CPU/RAM meters until the next full one.
-        vitals: update.vitals ?? current?.vitals,
+        //
+        // The one exception is a producer switching back to the legacy contract: an update that
+        // supplies host meters INSIDE limits[] and no top-level `vitals` is a bridge asserting
+        // pre-#156 behaviour (a rollback, or one that never sent vitals). Retaining the previous
+        // reading there would let it outlive the producer that made it and mask every newer
+        // legacy sample indefinitely — the meters would freeze at their pre-rollback values.
+        // Dropping it hands the meters back to limits[], whether or not those entries happen to
+        // carry a `sampled_at_ms` to be ranked on. Note this cannot misfire during the forward
+        // deploy window: a bridge that sends both still sets `update.vitals`, which is used.
+        vitals: update.vitals ?? (suppliesLegacyHostMeters(update) ? undefined : current?.vitals),
         email: update.email ?? current?.email,
     };
 }

@@ -2434,14 +2434,24 @@ function useMinuteClock(now?: number): number {
 // ranks below any stamped one but still wins when it is all we have. Ties go to the later
 // candidate, which keeps the callers' source order as the tiebreak: legacy < status.vitals < the
 // live push, i.e. the fastest-cadence source wins a same-millisecond stamp.
+// How far ahead of the client clock a sample stamp may sit and still be believed. Clocks skew,
+// so a small lead is normal; a wild one (a garbled or wrongly-scaled wire value) is not, and
+// would otherwise win every comparison forever AND read as age zero, pinning the meter to a
+// bogus reading that no later sample could displace. Such a stamp is treated as absent: the
+// reading can still render, it just cannot outrank a real sample on freshness.
+const MAX_STAMP_SKEW_MS = 5 * 60_000;
+
+function usableStamp(sampledAtMs: number | undefined): number | null {
+    if (typeof sampledAtMs !== "number" || !Number.isFinite(sampledAtMs)) return null;
+    if (sampledAtMs > Date.now() + MAX_STAMP_SKEW_MS) return null;
+    return sampledAtMs;
+}
+
 function freshestSample<T extends { sampled_at_ms?: number }>(candidates: T[]): T | undefined {
     let best: T | undefined;
     let bestStamp: number | null = null;
     for (const candidate of candidates) {
-        const stamp =
-            typeof candidate.sampled_at_ms === "number" && Number.isFinite(candidate.sampled_at_ms)
-                ? candidate.sampled_at_ms
-                : null;
+        const stamp = usableStamp(candidate.sampled_at_ms);
         if (best === undefined) {
             best = candidate;
             bestStamp = stamp;
@@ -2512,12 +2522,18 @@ export function buildUsageMeters(
         if (typeof vitalsPercent === "number" && Number.isFinite(vitalsPercent)) {
             candidates.push({ id, label, percent: vitalsPercent, sampled_at_ms: status?.vitals?.sampled_at_ms });
         }
-        // The #529 push REFRESHES a host meter; it never creates one. A status source (vitals,
-        // or a legacy limits[] entry) is what establishes that this conversation shows host bars
-        // at all — the push is host-scoped, carries no convo_id, and is deliberately not enough
-        // on its own. So it only joins the race once another candidate has opened it.
+        // The #529 push REFRESHES a host meter; it never creates one. A status source is what
+        // establishes that this conversation shows host bars at all — the push is host-scoped,
+        // carries no convo_id, and is deliberately not enough on its own.
+        //
+        // The gate is that source's PRESENCE (a `vitals` object, or a legacy limits[] entry),
+        // not whether it produced a finite value for this particular half. The bridge sends
+        // `cpu_pct: null` until its sampler has two ticks, and status only republishes at turn
+        // end — so gating per-half would let a conversation that opened during warm-up sit
+        // without a CPU bar indefinitely while valid pushes streamed past it.
+        const hostMetersEnabled = candidates.length > 0 || Boolean(status?.vitals);
         const pushPercent = id === "host_cpu" ? hostVitals?.cpu : hostVitals?.ram;
-        if (candidates.length > 0 && typeof pushPercent === "number" && Number.isFinite(pushPercent)) {
+        if (hostMetersEnabled && typeof pushPercent === "number" && Number.isFinite(pushPercent)) {
             candidates.push({ id, label, percent: pushPercent, sampled_at_ms: hostVitals?.sampled_at_ms });
         }
         const winner = freshestSample(candidates);
