@@ -506,10 +506,10 @@ function fileList(files: File[]): FileList {
     } as unknown as FileList;
 }
 
-async function pickUpload(pane: HTMLDivElement, file: File): Promise<void> {
+async function pickUpload(pane: HTMLDivElement, ...files: File[]): Promise<void> {
     const input = pane.querySelector('input[type="file"]') as HTMLInputElement;
     expect(input).not.toBeNull();
-    Object.defineProperty(input, "files", { value: fileList([file]), configurable: true });
+    Object.defineProperty(input, "files", { value: fileList(files), configurable: true });
     await act(async () => {
         input.dispatchEvent(new Event("change", { bubbles: true }));
         await Promise.resolve();
@@ -818,9 +818,12 @@ describe("a gateway failure is an unresolved outcome (Codex round 2, F1)", () =>
         expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/couldn't confirm/i);
     });
 
-    it("keeps 507 definite — the journal raises it from write-ahead gates, before anything lands", async () => {
-        // audit-fail-closed / trash-write-failed / metadata-preserve-failed all refuse BEFORE the
-        // irreversible call, so 507 proves non-mutation and the dialog stays retryable.
+    it("treats 507 as unknown too — a bare status does not authenticate its origin (round 3, F2)", async () => {
+        // OUR server raises 507 only from write-ahead gates, so from the journal it would prove
+        // non-mutation. But nothing on the wire says the 507 CAME from the journal: any
+        // intermediary can emit one, and a proxy that ran out of storage relaying a response has
+        // already let the write through. Believing the status means a retried delete removes the
+        // replacement. The conservative reading is the only sound one until the origin is provable.
         const api = mockApi({
             deleteEntry: jest.fn().mockRejectedValue(new JournalApiError("no room", 507)),
         });
@@ -828,8 +831,8 @@ describe("a gateway failure is an unresolved outcome (Codex round 2, F1)", () =>
         await click(pane.querySelector('[aria-label="Delete notes.md"]'));
         await click(document.querySelector(".mj_FileWrite_danger"));
         await flush();
-        expect(dialog()).not.toBeNull();
-        expect(dialog()?.querySelector(".mj_FileWrite_bound")).toBeNull();
+        expect(dialog()).toBeNull();
+        expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/couldn't confirm/i);
     });
 });
 
@@ -894,5 +897,156 @@ describe("a pinned replay expires before the server forgets the key (Codex round
         expect((upload.mock.calls[1][1] as { idempotencyKey?: string }).idempotencyKey).toBe(
             (upload.mock.calls[0][1] as { idempotencyKey?: string }).idempotencyKey,
         );
+    });
+});
+
+// -- Round 3: the deadline is only honest if it is anchored to the send, and an expiry must not
+//    quietly throw away the rest of the operator's selection ------------------------------------
+
+describe("the replay deadline is anchored to the first send (Codex round 3, F1)", () => {
+    beforeEach(() => jest.useFakeTimers({ doNotFake: ["queueMicrotask"] }));
+    afterEach(() => jest.useRealTimers());
+
+    /** A request the test fails by hand, so the clock can move while it is still on the wire. */
+    function heldRejection(): { promise: Promise<never>; reject: (error: unknown) => void } {
+        let reject!: (error: unknown) => void;
+        const promise = new Promise<never>((_resolve, fail) => {
+            reject = fail;
+        });
+        promise.catch(() => {}); // the hook attaches its own handler; keep this one from going unhandled
+        return { promise, reject };
+    }
+
+    it("is already spent when the failure itself took longer than the window to surface", async () => {
+        // The write timeout is 120s and the replay window is 60s, so a request that commits
+        // immediately and only rejects at timeout surfaces LONG after the server's record started
+        // aging. Measuring the deadline from the failure grants a fresh 60s over a key that may
+        // already be gone — and every further ambiguous retry renews it again.
+        const held = heldRejection();
+        const upload = jest.fn().mockImplementationOnce(() => held.promise);
+        const api = mockApi({ upload: upload as unknown as FilesApiLike["upload"] });
+        const pane = await mountPane(api);
+        await pickUpload(pane, new File(["abc"], "shot.png", { type: "image/png" }));
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        expect(upload).toHaveBeenCalledTimes(1); // in flight, not yet failed
+
+        // The request sits on the wire past the replay window, then fails.
+        jest.setSystemTime(Date.now() + REPLAY_WINDOW_MS + 1);
+        await act(async () => {
+            held.reject(new JournalApiError("timed out", 0, "timeout"));
+            await Promise.resolve();
+        });
+        await flush();
+        await act(async () => {
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+        });
+        await flush();
+
+        // Born expired: the pin is not offered as a retry it can no longer honour.
+        expect(dialog()).toBeNull();
+        expect(upload).toHaveBeenCalledTimes(1);
+        expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/no longer be retried safely/i);
+    });
+
+    it("does not renew the deadline on a second ambiguous failure", async () => {
+        // Two ambiguous attempts inside one window must still expire on the FIRST send's clock.
+        const upload = jest.fn().mockRejectedValue(new JournalApiError("timed out", 0, "timeout"));
+        const api = mockApi({ upload: upload as unknown as FilesApiLike["upload"] });
+        const pane = await mountPane(api);
+        await pickUpload(pane, new File(["abc"], "shot.png", { type: "image/png" }));
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).not.toBeNull();
+
+        // Retry most of the way through the window; the retry fails ambiguously too.
+        jest.setSystemTime(Date.now() + REPLAY_WINDOW_MS * 0.6);
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        expect(upload).toHaveBeenCalledTimes(2);
+
+        // Past the ORIGINAL deadline but well inside a renewed one.
+        jest.setSystemTime(Date.now() + REPLAY_WINDOW_MS * 0.5);
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+
+        expect(upload).toHaveBeenCalledTimes(2); // no third send
+        expect(dialog()).toBeNull();
+        expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/no longer be retried safely/i);
+    });
+});
+
+describe("an expiry keeps the rest of the upload queue (Codex round 3, F4)", () => {
+    beforeEach(() => jest.useFakeTimers({ doNotFake: ["queueMicrotask"] }));
+    afterEach(() => jest.useRealTimers());
+
+    it("carries the unprocessed files forward instead of dropping them silently", async () => {
+        // The operator picked three files and cancelled nothing. Reconciling the whole PendingWrite
+        // on a TIMER would discard the two they never saw, with a notice naming only the first.
+        const upload = jest.fn().mockRejectedValue(new JournalApiError("timed out", 0, "timeout"));
+        const api = mockApi({ upload: upload as unknown as FilesApiLike["upload"] });
+        const pane = await mountPane(api);
+        await pickUpload(
+            pane,
+            new File(["a"], "one.png", { type: "image/png" }),
+            new File(["b"], "two.png", { type: "image/png" }),
+            new File(["c"], "three.png", { type: "image/png" }),
+        );
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).not.toBeNull();
+
+        await act(async () => {
+            jest.advanceTimersByTime(REPLAY_WINDOW_MS + 1);
+            await Promise.resolve();
+        });
+        await flush();
+
+        // The queue survives: the dialog is now confirming the SECOND file, unpinned and editable.
+        expect(dialog()).not.toBeNull();
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).toBeNull();
+        expect(dialog()?.textContent).toMatch(/two\.png/);
+        const notice = pane.querySelector(".mj_FilesPane_notice")?.textContent ?? "";
+        expect(notice).toMatch(/one\.png/); // the unconfirmed one is named
+        expect(notice).toMatch(/2 more/); // and so is what is still queued
+        expect(upload).toHaveBeenCalledTimes(1); // nothing was sent automatically
+    });
+
+    it("still closes out when the expired upload was the last in the queue", async () => {
+        const upload = jest.fn().mockRejectedValue(new JournalApiError("timed out", 0, "timeout"));
+        const api = mockApi({ upload: upload as unknown as FilesApiLike["upload"] });
+        const pane = await mountPane(api);
+        await pickUpload(pane, new File(["a"], "only.png", { type: "image/png" }));
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+
+        await act(async () => {
+            jest.advanceTimersByTime(REPLAY_WINDOW_MS + 1);
+            await Promise.resolve();
+        });
+        await flush();
+
+        expect(dialog()).toBeNull();
+        expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).not.toMatch(/more file/i);
+    });
+
+    it("an explicit cancel still abandons the whole selection — that IS the operator saying stop", async () => {
+        const upload = jest.fn().mockRejectedValue(new JournalApiError("timed out", 0, "timeout"));
+        const api = mockApi({ upload: upload as unknown as FilesApiLike["upload"] });
+        const pane = await mountPane(api);
+        await pickUpload(
+            pane,
+            new File(["a"], "one.png", { type: "image/png" }),
+            new File(["b"], "two.png", { type: "image/png" }),
+        );
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+
+        await click(dialog()?.querySelector(".mj_UploadConfirm_skip") ?? null);
+        await flush();
+
+        expect(dialog()).toBeNull();
+        expect(upload).toHaveBeenCalledTimes(1);
     });
 });

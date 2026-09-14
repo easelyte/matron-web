@@ -170,14 +170,19 @@ const TRANSPORT_CODES = new Set(["timeout", "disposed", "aborted"]);
  *                              the response status). Classifying this as definite is what let a
  *                              delete be blind-retried and a fresh key be minted over a write that
  *                              had already landed.
- *  - 507                     → definite. OUR server's explicit "couldn't do this safely": the
- *                              journal raises it only from write-ahead gates (audit-fail-closed
- *                              before any irreversible call, trash-write-failed and
- *                              metadata-preserve-failed before the atomic swap), so it proves
- *                              non-mutation rather than merely reporting trouble.
- *  - 408 / other 5xx         → UNKNOWN. A gateway that timed out or lost an upstream success it
- *                              never saw is indistinguishable from one that stopped the request —
- *                              except that the first one committed.
+ *  - 408 / any 5xx           → UNKNOWN, 507 included. A gateway that timed out or lost an upstream
+ *                              success it never saw is indistinguishable from one that stopped the
+ *                              request — except that the first one committed. 507 was previously
+ *                              carved out as definite because the JOURNAL raises it only from
+ *                              write-ahead gates (audit-fail-closed, trash-write-failed,
+ *                              metadata-preserve-failed), all of which refuse before the
+ *                              irreversible call. That reasoning authenticates the status by its
+ *                              CONTENT, which nothing on the wire supports: any intermediary can
+ *                              emit 507, including one that ran out of storage while relaying a
+ *                              response to a write that had already committed. Believing it there
+ *                              makes a retried delete remove the replacement. Until the origin is
+ *                              provable (a signed reason the client can read), the conservative
+ *                              reading is the only sound one.
  *  - other 4xx               → definite. An application verdict: nothing happened.
  *  - anything not typed      → UNKNOWN. An unrecognized shape is not evidence of non-mutation.
  */
@@ -187,7 +192,6 @@ function outcomeIsUnknown(error: unknown): boolean {
     if (error.code === "disposed") return false;
     if (error.status === 0) return true;
     if (error.status >= 200 && error.status < 300) return true;
-    if (error.status === 507) return false;
     return error.status === 408 || error.status >= 500;
 }
 
@@ -242,10 +246,27 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
     const reconcile = useCallback(
         (current: WriteState, expired: boolean) => {
             const label = targetLabel(current.pending, current.replay);
-            dispatch({ type: "cancel" });
+            // An EXPIRY is not a decision the operator made — it is a deadline passing while they
+            // were reading the notice. Reconciling the whole PendingWrite would take the rest of a
+            // multi-file selection with it: files they never saw, dropped under a message naming
+            // only the first. So the queue is carried forward on expiry. It is safe to do so: each
+            // remaining file is an independent write that mints its own key and still has to be
+            // confirmed, so nothing is sent as a consequence of this.
+            //
+            // An explicit cancel is the opposite — the operator asking to stop — and still
+            // abandons the selection.
+            const next = expired && current.pending.kind === "upload" ? advanceUpload(current.pending) : undefined;
+            if (next) dispatch({ type: "open", pending: next, idempotencyKey: newKey() });
+            else dispatch({ type: "cancel" });
+
+            const queued = next?.kind === "upload" ? next.files.length - next.index : 0;
+            const stillQueued =
+                queued > 0
+                    ? ` ${queued} more file${queued === 1 ? "" : "s"} from that selection ${queued === 1 ? "is" : "are"} still waiting for you to confirm.`
+                    : "";
             setNotice(
                 expired
-                    ? `Couldn't confirm whether ${label} was written, and it can no longer be retried safely. The folder is being re-read — check what is actually there.`
+                    ? `Couldn't confirm whether ${label} was written, and it can no longer be retried safely. The folder is being re-read — check what is actually there.${stillQueued}`
                     : `Couldn't confirm whether ${label} was written. The folder is being re-read — check what is actually there before trying again.`,
             );
             onWritten();
@@ -307,6 +328,9 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
             // the attempt that may already have committed, never whatever the fields now hold. The
             // dialog locks its fields for the same reason; this is the enforcement, not the hint.
             const attempt = current.replay ?? input;
+            // Stamped BEFORE the request leaves, because that is what the server's clock is
+            // measuring against — see the deadline note where `failed` is dispatched.
+            const sentAt = Date.now();
             dispatch({ type: "submit" });
             void (async () => {
                 try {
@@ -342,7 +366,18 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
                         // ...and a replay needs the same BODY as well as the same key, or the
                         // server's key+payload fingerprint refuses it as a conflict.
                         replay: unresolved ? attempt : undefined,
-                        replayExpiresAt: unresolved ? Date.now() + REPLAY_WINDOW_MS : undefined,
+                        // ONE deadline per unresolved write, anchored to the first send and carried
+                        // across every later failure. Two reasons it cannot be measured from HERE:
+                        // a request can commit immediately and still not reject until the 120s
+                        // write timeout, by which point a window measured from the failure is
+                        // already fiction; and re-deriving it per attempt RENEWS it on each
+                        // ambiguous retry, so a write could stay "retryable" indefinitely while the
+                        // server's 120s record aged out underneath it. The server starts counting
+                        // when it settles, which is at or after the send — so anchoring here is the
+                        // conservative end of the skew, which is the end we want to be wrong on.
+                        replayExpiresAt: unresolved
+                            ? (current.replayExpiresAt ?? sentAt + REPLAY_WINDOW_MS)
+                            : undefined,
                     });
                 } finally {
                     inFlight.current = false;
