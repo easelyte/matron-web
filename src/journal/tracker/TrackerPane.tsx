@@ -62,7 +62,12 @@ export function TrackerPane({
         // a previously selected row is cleared to null on selection change (openTracker*), but the
         // id/num match here is the belt-and-braces guard so a stale record can never drive the detail
         // (whose action handlers close/reopen by that record's num) against the new selection (F1).
-        if (selectedItemId != null && state.trackerItem && state.trackerItem.item.num === selectedItemId) {
+        if (
+            view === "inbox" &&
+            selectedItemId != null &&
+            state.trackerItem &&
+            state.trackerItem.item.num === selectedItemId
+        ) {
             return (
                 <ItemDetail
                     item={state.trackerItem.item}
@@ -73,6 +78,7 @@ export function TrackerPane({
             );
         }
         if (
+            view === "missions" &&
             selectedMissionId != null &&
             state.trackerMission &&
             state.trackerMission.mission?.num === selectedMissionId

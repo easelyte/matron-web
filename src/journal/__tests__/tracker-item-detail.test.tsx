@@ -208,7 +208,48 @@ describe("ItemDetail", () => {
             container.querySelector<HTMLButtonElement>(".mj_TrackerComposer_send")!.click();
         });
 
-        expect(client.commentItem).toHaveBeenCalledWith(12, { body: "on it, deploying now" });
+        expect(client.commentItem).toHaveBeenCalledWith(12, { body: "on it, deploying now" }, expect.any(String));
+    });
+
+    // F1: a failed send keeps the draft; retrying the SAME text must reuse the idempotency key so the
+    // server can dedupe a comment that committed before its response was lost. New text → new key.
+    it("reuses the idempotency key across retries of the same draft, mints a new one when it changes", async () => {
+        const client = fakeClient();
+        client.commentItem.mockResolvedValue(false); // every send fails → draft (and key) persist
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({ num: 12 })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+
+        const textarea = container.querySelector<HTMLTextAreaElement>(".mj_TrackerComposer_input")!;
+        const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+        const type = async (text: string): Promise<void> => {
+            await act(async () => {
+                setValue.call(textarea, text);
+                textarea.dispatchEvent(new Event("input", { bubbles: true }));
+            });
+        };
+        const clickSend = async (): Promise<void> => {
+            await act(async () => {
+                container.querySelector<HTMLButtonElement>(".mj_TrackerComposer_send")!.click();
+            });
+        };
+
+        await type("please retry cleanly");
+        await clickSend();
+        await clickSend(); // retry of identical text
+        const key1a = client.commentItem.mock.calls[0][2];
+        const key1b = client.commentItem.mock.calls[1][2];
+        expect(key1a).toBe(key1b);
+
+        await type("actually a different comment");
+        await clickSend();
+        const key2 = client.commentItem.mock.calls[2][2];
+        expect(key2).not.toBe(key1a);
     });
 
     // F2: a failed send (mutator resolves false) must NOT clear the composer — the typed text is the
@@ -235,7 +276,11 @@ describe("ItemDetail", () => {
             container.querySelector<HTMLButtonElement>(".mj_TrackerComposer_send")!.click();
         });
 
-        expect(client.commentItem).toHaveBeenCalledWith(12, { body: "important context I do not want to lose" });
+        expect(client.commentItem).toHaveBeenCalledWith(
+            12,
+            { body: "important context I do not want to lose" },
+            expect.any(String),
+        );
         expect(container.querySelector<HTMLTextAreaElement>(".mj_TrackerComposer_input")!.value).toBe(
             "important context I do not want to lose",
         );
@@ -262,6 +307,26 @@ describe("ItemDetail", () => {
             link!.click();
         });
         expect(client.openTrackerLink).toHaveBeenCalledWith("item", 34);
+    });
+
+    // F4: a malformed tracker URL the renderer rejects (num 0 / out-of-range) must NOT leak a live
+    // custom-scheme href to the browser. The URL transform and the anchor parser share one predicate,
+    // so a rejected link is sanitized to an inert anchor, never emitted as `matron://…`.
+    it("renders an invalid matron:// link inert, not as a live custom-scheme href", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({ num: 12, body: "bad [zero](matron://item/0)" })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerItemBody a.mj_TrackerLink")).toBeNull();
+        const anchor = container.querySelector<HTMLAnchorElement>(".mj_TrackerItemBody a");
+        // Either no anchor, or an anchor whose href was stripped — never a live matron:// URL.
+        expect(anchor?.getAttribute("href") ?? "").not.toContain("matron:");
     });
 
     it("renders a status comment as a centered derived line, never its raw body", async () => {

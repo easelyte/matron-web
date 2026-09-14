@@ -192,6 +192,39 @@ describe("MatronJournalClient tracker view state", () => {
         expect(client.getSnapshot().trackerMission).toBeNull();
         expect(client.getSnapshot().trackerView?.selectedMissionId).toBe(8);
     });
+
+    // F3: item and mission selection are mutually exclusive. A cross-kind deep link (item→mission)
+    // must clear the item selection AND its cache, or the retained item would win the pane's
+    // precedence and shadow the mission just opened.
+    it("openTrackerMission clears a live item selection and its cached detail", () => {
+        const { client } = makeClient({
+            trackerView: { open: true, view: "inbox", selectedItemId: 7 },
+            trackerItem: { item: item({ num: 7 }), comments: [] },
+        });
+
+        client.openTrackerMission(5);
+
+        const view = client.getSnapshot().trackerView;
+        expect(view?.view).toBe("missions");
+        expect(view?.selectedMissionId).toBe(5);
+        expect(view?.selectedItemId).toBeUndefined();
+        expect(client.getSnapshot().trackerItem).toBeNull();
+    });
+
+    it("openTrackerItem clears a live mission selection and its cached detail", () => {
+        const { client } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail({ num: 5 }),
+        });
+
+        client.openTrackerItem(7);
+
+        const view = client.getSnapshot().trackerView;
+        expect(view?.view).toBe("inbox");
+        expect(view?.selectedItemId).toBe(7);
+        expect(view?.selectedMissionId).toBeUndefined();
+        expect(client.getSnapshot().trackerMission).toBeNull();
+    });
 });
 
 describe("MatronJournalClient tracker loaders", () => {
@@ -239,6 +272,53 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(items).toHaveBeenNthCalledWith(1, { state: "open" });
         expect(items).toHaveBeenNthCalledWith(2, { state: "open", cursor: "cursor-2" });
         expect((client.getSnapshot().inboxItems ?? []).map((row) => row.id)).toEqual(["it_1", "it_2", "it_3"]);
+        expect(client.getSnapshot().trackerError).toBeUndefined();
+    });
+
+    // F2: reaching the runaway page cap while the server still has more pages must NOT present the
+    // partial list as authoritative — publish what we have but surface the truncation as an error,
+    // or a silent cap re-creates the false "nothing needs you" the pagination walk exists to prevent.
+    it("loadInbox flags a partial inbox when the page cap is reached with more pages remaining", async () => {
+        const { client, state } = makeClient();
+        // Every page keeps returning a next_cursor → the walk can only stop at the MAX_PAGES guard.
+        const items = jest
+            .fn()
+            .mockImplementation(() =>
+                Promise.resolve({ items: [item({ id: `it_${items.mock.calls.length}` })], next_cursor: "more" }),
+            );
+        state.api = { items };
+
+        await client.loadInbox();
+
+        expect(items).toHaveBeenCalledTimes(20); // MAX_PAGES
+        expect(client.getSnapshot().inboxItems?.length).toBe(20);
+        expect(client.getSnapshot().trackerError).toMatch(/partial inbox/i);
+        expect(client.getSnapshot().trackerLoading).toBe(false);
+    });
+
+    // F2: like loadItem/loadMission, a slower earlier inbox load must not overwrite a newer one — a
+    // marker can restart loadInbox mid-pagination, and the older walk could otherwise finish last
+    // and restore rows the newer load already dropped.
+    it("loadInbox ignores a superseded concurrent load", async () => {
+        const { client, state } = makeClient();
+        let resolveStale!: (value: { items: TrackerItem[]; next_cursor: null }) => void;
+        const stalePending = new Promise<{ items: TrackerItem[]; next_cursor: null }>((resolve) => {
+            resolveStale = resolve;
+        });
+        state.api = {
+            items: jest
+                .fn()
+                .mockReturnValueOnce(stalePending)
+                .mockResolvedValueOnce({ items: [item({ id: "fresh" })], next_cursor: null }),
+        };
+
+        const first = client.loadInbox(); // older load, still paginating
+        await client.loadInbox(); // newer load resolves first → wins
+        expect((client.getSnapshot().inboxItems ?? []).map((row) => row.id)).toEqual(["fresh"]);
+
+        resolveStale({ items: [item({ id: "stale" })], next_cursor: null }); // older load resolves — ignored
+        await first;
+        expect((client.getSnapshot().inboxItems ?? []).map((row) => row.id)).toEqual(["fresh"]);
     });
 
     it("loadItem populates the open item detail", async () => {
@@ -329,6 +409,21 @@ describe("MatronJournalClient tracker mutations", () => {
         expect(state.api.item).toHaveBeenCalledWith(1);
         // The inbox is not loaded, so it is not refetched.
         expect(state.api.items).not.toHaveBeenCalled();
+    });
+
+    // F1: a caller that can retry an ambiguous send (ItemDetail keeps the draft on failure) supplies
+    // a STABLE key so the retry reuses it and the server dedupes the replay instead of duplicating.
+    it("commentItem forwards a caller-supplied idempotency key verbatim", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            postItemComment: jest.fn().mockResolvedValue({}),
+            item: jest.fn().mockResolvedValue({ item: item(), comments: [] }),
+            items: jest.fn(),
+        };
+
+        await client.commentItem(1, { body: "retry me" }, "stable-key-123");
+
+        expect(state.api.postItemComment).toHaveBeenCalledWith(1, { body: "retry me" }, "stable-key-123");
     });
 
     it("closeTrackerMission calls the api then refetches the mission and the loaded list", async () => {

@@ -332,6 +332,7 @@ export class MatronJournalClient {
     // patching (F1 stale-response guard).
     private trackerItemGen = 0;
     private trackerMissionGen = 0;
+    private trackerInboxGen = 0;
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
@@ -1698,14 +1699,19 @@ export class MatronJournalClient {
     // conversation view). `trackerView` is the discriminant; the list/detail data is
     // store-resident (loaded lazily by the load* helpers below, invalidated over WS).
 
-    public openTrackerView(opts: { view?: "missions" | "inbox"; itemId?: number; missionId?: number } = {}): void {
+    // `itemId`/`missionId`: a number selects that row; `null` explicitly CLEARS that selection
+    // (mutual exclusion — see openTrackerItem/openTrackerMission); `undefined` preserves the prev
+    // selection. `null ?? prev` would resolve to prev, so the clear needs the explicit === null arm.
+    public openTrackerView(
+        opts: { view?: "missions" | "inbox"; itemId?: number | null; missionId?: number | null } = {},
+    ): void {
         this.closeFilesView();
         const prev = this.state.trackerView;
         const next: TrackerViewState = {
             open: true,
             view: opts.view ?? prev?.view ?? "inbox",
-            selectedItemId: opts.itemId ?? prev?.selectedItemId,
-            selectedMissionId: opts.missionId ?? prev?.selectedMissionId,
+            selectedItemId: opts.itemId === null ? undefined : (opts.itemId ?? prev?.selectedItemId),
+            selectedMissionId: opts.missionId === null ? undefined : (opts.missionId ?? prev?.selectedMissionId),
         };
         this.patch({ trackerView: next });
     }
@@ -1725,14 +1731,22 @@ export class MatronJournalClient {
         if (this.state.trackerItem && this.state.trackerItem.item.num !== num) {
             this.patch({ trackerItem: null });
         }
-        this.openTrackerView({ view: "inbox", itemId: num });
+        // Item and mission selection are MUTUALLY EXCLUSIVE — the pane shows one detail at a time and
+        // gives the item precedence. Opening an item must clear any prior mission selection AND its
+        // cached detail, or a cross-kind deep link (mission→item) would leave the stale mission
+        // selected/rendered and shadow the item just opened (F3).
+        if (this.state.trackerMission) this.patch({ trackerMission: null });
+        this.openTrackerView({ view: "inbox", itemId: num, missionId: null });
     }
 
     public openTrackerMission(num: number): void {
         if (this.state.trackerMission && this.state.trackerMission.mission?.num !== num) {
             this.patch({ trackerMission: null });
         }
-        this.openTrackerView({ view: "missions", missionId: num });
+        // Symmetric to openTrackerItem — clear any item selection + cache so an item→mission deep
+        // link can't leave the item selected and win the pane's item-first precedence (F3).
+        if (this.state.trackerItem) this.patch({ trackerItem: null });
+        this.openTrackerView({ view: "missions", missionId: num, itemId: null });
     }
 
     // One in-app handler for `matron://item/<N>` / `matron://mission/<N>` markdown deep links, shared
@@ -1764,6 +1778,11 @@ export class MatronJournalClient {
     public async loadInbox(): Promise<void> {
         const api = this.api;
         if (!api) return;
+        // Request-generation guard: like loadItem/loadMission, a slower earlier load must never
+        // overwrite a newer one's result. A marker (WS) can restart loadInbox while an in-flight
+        // multi-page walk is mid-pagination; without this the older walk could finish last and
+        // restore rows the newer load already dropped (e.g. items closed meanwhile) (F2).
+        const gen = ++this.trackerInboxGen;
         this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             // App-wide open items; the inbox sorts "needs you" (open && awaiting==user) first
@@ -1777,20 +1796,34 @@ export class MatronJournalClient {
             const accumulated: TrackerItem[] = [];
             const seen = new Set<string>();
             let cursor: string | undefined;
-            for (let page = 0; page < MAX_PAGES; page += 1) {
+            let truncated = false;
+            for (let page = 0; ; page += 1) {
                 const { items, next_cursor } = await api.items({ state: "open", ...(cursor ? { cursor } : {}) });
-                if (this.api !== api) return;
+                if (this.api !== api || this.trackerInboxGen !== gen) return;
                 for (const item of items) {
                     if (seen.has(item.id)) continue;
                     seen.add(item.id);
                     accumulated.push(item);
                 }
-                if (!next_cursor || accumulated.length >= MAX_ITEMS) break;
+                if (!next_cursor) break;
+                // Hit the runaway guard while the server still has more pages: publish what we have
+                // but surface the truncation loudly rather than presenting a partial list as the
+                // authoritative "all open items" (a silent cap re-creates the false-empty bug) (F2).
+                if (page + 1 >= MAX_PAGES || accumulated.length >= MAX_ITEMS) {
+                    truncated = true;
+                    break;
+                }
                 cursor = next_cursor;
             }
-            this.patch({ inboxItems: accumulated, trackerLoading: false });
+            this.patch({
+                inboxItems: accumulated,
+                trackerLoading: false,
+                trackerError: truncated
+                    ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
+                    : undefined,
+            });
         } catch (error) {
-            if (this.api !== api) return;
+            if (this.api !== api || this.trackerInboxGen !== gen) return;
             this.patch({ trackerError: errorMessage(error), trackerLoading: false });
         }
     }
@@ -1836,14 +1869,21 @@ export class MatronJournalClient {
     // clearing a reply draft) on that flag so a failed mutation never silently drops user input (F2).
     // A write that lands but races a logout still resolves true (the write happened). ──
 
+    // `idempotencyKey`: callers that can RETRY the same write after an AMBIGUOUS delivery (a comment
+    // POST that may have committed before the response was lost) must pass a STABLE key so the retry
+    // reuses it and the server dedupes the replay instead of minting a duplicate comment (F1). Omit
+    // it for one-shot callers to get a fresh key per call. NOTE: end-to-end dedup also needs the
+    // deployed transport to FORWARD the Idempotency-Key header — the web fetch path does; the desktop
+    // Electron preload currently discards it (see api.ts), tracked as the desktop-PATCH residual.
     public async commentItem(
         id: number | string,
         body: { body?: string; attachments?: TrackerItem["attachments"] },
+        idempotencyKey?: string,
     ): Promise<boolean> {
         const api = this.api;
         if (!api) return false;
         try {
-            await api.postItemComment(id, body, crypto.randomUUID());
+            await api.postItemComment(id, body, idempotencyKey ?? crypto.randomUUID());
         } catch (error) {
             if (this.api === api) this.patch({ trackerError: errorMessage(error) });
             return false;

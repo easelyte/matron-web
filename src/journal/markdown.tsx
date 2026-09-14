@@ -243,11 +243,14 @@ function parseTrackerHref(href: string): { kind: "item" | "mission"; num: number
 /**
  * react-markdown's default URL sanitizer strips any non-safelisted scheme to "" — including our
  * `matron://` in-app deep links, which would arrive at the `a()` renderer as an empty href and
- * render inert BEFORE onTrackerLink could ever fire (F6). Preserve exactly the strict tracker-link
- * shape; delegate everything else (so javascript:, data:, etc. stay stripped).
+ * render inert BEFORE onTrackerLink could ever fire (F6). Preserve a tracker link ONLY when it
+ * passes the SAME parser the `a()` renderer uses (parseTrackerHref) — a looser regex here would
+ * preserve links the renderer then rejects (e.g. matron://item/0 or an out-of-range int), which
+ * would fall through to an ordinary anchor and leak a live custom-scheme href to the browser.
+ * Delegate everything else so javascript:, data:, etc. stay stripped.
  */
 function trackerUrlTransform(url: string): string {
-    return /^matron:\/\/(?:item|mission)\/[0-9]+$/.test(url) ? url : defaultUrlTransform(url);
+    return parseTrackerHref(url) ? url : defaultUrlTransform(url);
 }
 
 interface CodeBlockProps extends ComponentPropsWithoutRef<"pre">, ExtraProps {

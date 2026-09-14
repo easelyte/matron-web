@@ -12,7 +12,7 @@ Please see LICENSE files in the repository root for full details.
  * mutations go through the client; the store refetch keeps the thread live.
  */
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 
 import type { MatronJournalClient } from "../client";
 import { humanizeSize } from "../files/format";
@@ -93,6 +93,11 @@ export function ItemDetail({
     const [reply, setReply] = useState("");
     const [busy, setBusy] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
+    // Stable idempotency key bound to the current draft TEXT. A failed send keeps the draft, so a
+    // retry of the SAME text must reuse this key — otherwise a comment that committed before its
+    // response was lost would be duplicated on retry (F1). We regenerate only when the text differs
+    // from the last attempt (a genuinely new comment) or after a confirmed send.
+    const sendKeyRef = useRef<{ body: string; key: string } | null>(null);
 
     const urgent = needsUser(item);
     const hasUserReply = useMemo(() => comments.some((comment) => comment.author === "user"), [comments]);
@@ -110,10 +115,18 @@ export function ItemDetail({
         if (!body || busy) return;
         setBusy(true);
         try {
+            // Reuse the key across retries of identical text; mint a fresh one when the text changed
+            // (a different comment) so the server can dedupe an ambiguous-delivery replay (F1).
+            if (!sendKeyRef.current || sendKeyRef.current.body !== body) {
+                sendKeyRef.current = { body, key: crypto.randomUUID() };
+            }
             // Clear the draft ONLY on a confirmed successful post — a failed send (offline/auth/5xx)
             // resolves false and keeps the typed text so it isn't silently lost (F2).
-            const ok = await client.commentItem(item.num, { body });
-            if (ok) setReply("");
+            const ok = await client.commentItem(item.num, { body }, sendKeyRef.current.key);
+            if (ok) {
+                setReply("");
+                sendKeyRef.current = null;
+            }
         } finally {
             setBusy(false);
         }
