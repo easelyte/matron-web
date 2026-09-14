@@ -182,6 +182,15 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
     const reload = listing.reload;
     // A write can remove or rename the previewed file, so the selection is dropped on every
     // successful mutation and the listing is re-read from the server (no optimistic row patching).
+    //
+    // This re-read is also the RECONCILIATION BARRIER after an unresolved write (a delete whose
+    // outcome is unknown, or an uncertain write the operator backed out of). It holds because
+    // `writable` above is DERIVED from the current listing rather than cached: reloading clears
+    // `listing.data`, so `writable` goes false and every write affordance — toolbar, row actions,
+    // the preview's Edit — unmounts until a fresh listing lands. No new write can be started
+    // against the stale directory state the operator was just told to go and check. If the re-read
+    // FAILS the affordances stay down and the pane shows its error + Retry, which is the safe way
+    // round. Covered by "no write can be started while the reconciling listing is still in flight".
     const onWritten = useCallback(() => {
         setSelected(undefined);
         reload();

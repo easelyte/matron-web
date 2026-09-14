@@ -56,6 +56,15 @@ function newKey(): string {
     return crypto.randomUUID();
 }
 
+/**
+ * A refusal raised in THIS module, before any request was issued: an empty name, a draft that went
+ * stale, a file that is not text. Nothing reached the server, so the outcome is definite BY
+ * CONSTRUCTION — and that has to be expressible as more than "status 0", because a lost response
+ * carries status 0 too. Overloading the HTTP status to mean two opposite things is what made these
+ * local refusals masquerade as unconfirmed mutations.
+ */
+class LocalRefusal extends JournalApiError {}
+
 async function perform(
     api: FilesApiLike,
     pending: PendingWrite,
@@ -65,13 +74,13 @@ async function perform(
     switch (pending.kind) {
         case "mkdir": {
             const name = sanitizeFileName(input.name ?? "");
-            if (!name) throw new JournalApiError("Enter a folder name.", 0, "invalid-name");
+            if (!name) throw new LocalRefusal("Enter a folder name.", 0, "invalid-name");
             const result = await api.mkdir(joinPath(pending.dir, name));
             return { notice: result.dryRun ? DRY_RUN_NOTICE : undefined };
         }
         case "rename": {
             const name = sanitizeFileName(input.name ?? "");
-            if (!name) throw new JournalApiError("Enter a name.", 0, "invalid-name");
+            if (!name) throw new LocalRefusal("Enter a name.", 0, "invalid-name");
             const result = await api.move(pending.path, joinPath(pending.dir, name), { idempotencyKey });
             return { notice: result.dryRun ? DRY_RUN_NOTICE : undefined };
         }
@@ -101,7 +110,7 @@ async function perform(
                 // could let two different byte sequences look identical and defeat the guard.
                 const reread = await readEditableText(api, pending.path);
                 if (!reread.ok) {
-                    throw new JournalApiError(
+                    throw new LocalRefusal(
                         "This file is no longer valid UTF-8 text on the server, so it can't be saved from here.",
                         0,
                         "not-text",
@@ -116,7 +125,7 @@ async function perform(
                     return { notice: `${pending.name} was already saved.` };
                 }
                 if (current !== input.baseline) {
-                    throw new JournalApiError(
+                    throw new LocalRefusal(
                         "This file changed on the server after you opened it. Close the editor and reopen it so you are editing the current version.",
                         0,
                         "stale-edit",
@@ -147,16 +156,38 @@ const DRY_RUN_NOTICE = "The server is in dry-run mode: it recorded the request a
 const TRANSPORT_CODES = new Set(["timeout", "disposed", "aborted"]);
 
 /**
- * Did this failure leave the outcome UNKNOWN (request may have committed) rather than definitely
- * refused? A status-0 failure never reached a server verdict: a timeout, a dropped connection, or
- * a reply we could not parse. Server denials (403/409/413/507/404) are definite — nothing happened.
+ * Did this failure leave the outcome UNKNOWN (the request may have committed) rather than
+ * definitely refused? Classified by where the refusal CAME FROM, because the HTTP status alone
+ * cannot say: status 0 covers both a lost response and a local pre-flight refusal, and a 2xx can
+ * arrive with a body we cannot read — a write that certainly DID commit.
+ *
+ *  - LocalRefusal            → definite. Nothing was sent.
+ *  - `disposed`              → definite. The session was torn down; the pane is going away with it.
+ *  - status 0 (transport)    → UNKNOWN. Timed out, dropped, or an unparseable/absent reply.
+ *  - 2xx with a bad body     → UNKNOWN, and specifically likely-COMMITTED: the server answered
+ *                              success and we could not read it (filesApi's JSON.parse throw keeps
+ *                              the response status). Classifying this as definite is what let a
+ *                              delete be blind-retried and a fresh key be minted over a write that
+ *                              had already landed.
+ *  - 4xx / 5xx              → definite. A server verdict: nothing happened.
+ *  - anything not typed      → UNKNOWN. An unrecognized shape is not evidence of non-mutation.
  */
 function outcomeIsUnknown(error: unknown): boolean {
-    return error instanceof JournalApiError && error.status === 0 && error.code !== "disposed";
+    if (error instanceof LocalRefusal) return false;
+    if (!(error instanceof JournalApiError)) return true;
+    if (error.code === "disposed") return false;
+    if (error.status === 0) return true;
+    return error.status >= 200 && error.status < 300;
 }
 
 function describeFailure(error: unknown): string {
     if (error instanceof JournalApiError) {
+        // A success status we could not read. `messageForFileStatus` has no copy for a 2xx (it maps
+        // to the generic loading error), and "something went wrong" would be a lie in the one
+        // direction that matters: the change most likely WENT THROUGH.
+        if (error.status >= 200 && error.status < 300) {
+            return "The server accepted this but its reply couldn't be read, so the result is unconfirmed.";
+        }
         // Client-side refusals (bad name, stale edit, unconfirmed response) carry their own
         // specific, actionable message. Server DENIALS get the uniform, reason-agnostic copy so the
         // UI never leaks WHY a path was rejected.
@@ -197,7 +228,7 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
         // repeating the write under a fresh key and ending up with two copies.
         if (current?.phase === "confirming" && current.replay !== undefined) {
             setNotice(
-                `Couldn't confirm whether ${targetLabel(current.pending, current.replay)} was written. The folder has been refreshed — check it before trying again.`,
+                `Couldn't confirm whether ${targetLabel(current.pending, current.replay)} was written. The folder is being re-read — check what is actually there before trying again.`,
             );
             onWritten();
         }

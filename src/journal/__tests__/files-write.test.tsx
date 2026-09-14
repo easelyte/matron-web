@@ -678,3 +678,123 @@ describe("a UTF-8 BOM survives an edit (Codex confirming round, F3)", () => {
         });
     });
 });
+
+// -- Round 1 on the fix above: classify the outcome by ORIGIN, not by HTTP status ----------------
+
+describe("an unreadable SUCCESS is an unresolved outcome, not a refusal", () => {
+    it("does not offer a blind retry when a DELETE's 2xx reply could not be parsed", async () => {
+        // `filesApi.fetchJson` keeps the RESPONSE status when JSON.parse fails, so a committed
+        // delete whose body was truncated arrives as a status-200 error. Read as a definite
+        // refusal it bypasses the no-blind-retry path, and the retry deletes whatever now sits at
+        // that path — including a replacement another actor just created.
+        const api = mockApi({
+            deleteEntry: jest.fn().mockRejectedValue(new JournalApiError("The server returned malformed JSON.", 200)),
+        });
+        const pane = await mountPane(api);
+        await click(pane.querySelector('[aria-label="Delete notes.md"]'));
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(dialog()).toBeNull();
+        expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/couldn't confirm/i);
+    });
+
+    it("pins the payload after an upload whose 2xx reply could not be parsed", async () => {
+        const upload = jest
+            .fn()
+            .mockRejectedValueOnce(new JournalApiError("The server returned malformed JSON.", 200))
+            .mockResolvedValue({ path: `${DIR}/shot.png`, bytes: 3, dryRun: false });
+        const api = mockApi({ upload: upload as unknown as FilesApiLike["upload"] });
+        const pane = await mountPane(api);
+        await pickUpload(pane, new File(["abc"], "shot.png", { type: "image/png" }));
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+
+        expect((document.querySelector(".mj_FileWrite_input") as HTMLInputElement).disabled).toBe(true);
+        expect(dialog()?.querySelector(".mj_UploadConfirm_error")?.textContent).toMatch(/unconfirmed/i);
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        expect((upload.mock.calls[1][1] as { idempotencyKey?: string }).idempotencyKey).toBe(
+            (upload.mock.calls[0][1] as { idempotencyKey?: string }).idempotencyKey,
+        );
+    });
+});
+
+describe("a LOCAL refusal is definite — nothing was sent", () => {
+    it("leaves a stale-edit draft editable instead of pinning it as an unresolved write", async () => {
+        // The staleness check refuses BEFORE writeFile is called. Classified by status alone it
+        // looks exactly like a lost response, which would lock the editor and tell the operator
+        // their save may have gone through — of a request that was never issued.
+        let served = "# notes\n";
+        const api = mockApi({ fileBytes: jest.fn(async () => encode(served)) as unknown as FilesApiLike["fileBytes"] });
+        const pane = await mountPane(api);
+        await openEditor(pane);
+        await setValue(document.querySelector(".mj_FileWrite_textarea"), "# my stale edit\n");
+        served = "# rewritten by an agent while the editor sat open\n";
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+
+        expect(api.writeFile).not.toHaveBeenCalled();
+        expect((document.querySelector(".mj_FileWrite_textarea") as HTMLTextAreaElement).disabled).toBe(false);
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).toBeNull();
+    });
+
+    it("leaves the editor usable when the file stopped being UTF-8 text (not-text is local too)", async () => {
+        // Same class as the stale-edit guard: the re-read happens HERE, and refuses before any
+        // write is issued. Pinning it would lock the editor over a mutation that never existed.
+        let served = encode("# notes\n");
+        const api = mockApi({ fileBytes: jest.fn(async () => served) as unknown as FilesApiLike["fileBytes"] });
+        const pane = await mountPane(api);
+        await openEditor(pane);
+        await setValue(document.querySelector(".mj_FileWrite_textarea"), "# edited\n");
+        served = new Uint8Array([0xff, 0xfe, 0xff]).buffer as ArrayBuffer; // no longer decodable
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+
+        expect(api.writeFile).not.toHaveBeenCalled();
+        expect((document.querySelector(".mj_FileWrite_textarea") as HTMLTextAreaElement).disabled).toBe(false);
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).toBeNull();
+        expect(dialog()?.querySelector(".mj_UploadConfirm_error")?.textContent).toMatch(/valid UTF-8/i);
+    });
+});
+
+describe("the reconciling re-read is a barrier, not just a message", () => {
+    it("offers no way to start a new write while the reconciling listing is still in flight", async () => {
+        // Backing out of an unresolved write must not drop the operator into a directory view they
+        // can immediately act on: `writable` is derived from the CURRENT listing, so re-reading it
+        // takes every write affordance away until the server answers.
+        const first = { ...listing(true) };
+        let holdSecond: ((value: FileListing) => void) | undefined;
+        let call = 0;
+        const listDir = jest.fn(() => {
+            call += 1;
+            if (call === 1) return Promise.resolve(first);
+            return new Promise<FileListing>((resolve) => {
+                holdSecond = resolve;
+            });
+        });
+        const api = mockApi({
+            listDir: listDir as unknown as FilesApiLike["listDir"],
+            upload: jest.fn().mockRejectedValue(new JournalApiError("timed out", 0, "timeout")),
+        });
+        const pane = await mountPane(api);
+        await pickUpload(pane, new File(["abc"], "shot.png", { type: "image/png" }));
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        await click(dialog()?.querySelector(".mj_UploadConfirm_skip") ?? null);
+        await flush();
+
+        // The re-read is out on the wire and has not answered.
+        expect(listDir).toHaveBeenCalledTimes(2);
+        expect(pane.querySelector(".mj_FilesToolbar")).toBeNull();
+        expect(pane.querySelector('input[type="file"]')).toBeNull();
+        expect(pane.querySelector(".mj_FilesRow_actions")).toBeNull();
+        expect(pane.querySelector(".mj_FilesPreview_edit")).toBeNull();
+
+        await act(async () => {
+            holdSecond?.(listing(true));
+            await Promise.resolve();
+        });
+        await flush();
+        expect(pane.querySelector(".mj_FilesToolbar")).not.toBeNull(); // ...and back once it lands
+    });
+});

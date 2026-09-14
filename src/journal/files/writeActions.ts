@@ -75,6 +75,15 @@ export interface WriteState {
      * outcome is unresolved the payload is not the operator's to change: the dialog locks its
      * fields, and the hook submits THIS, not whatever the fields hold. Cancel is the way out, and
      * it re-reads the listing so the operator sees what actually landed before deciding again.
+     *
+     * The server side of this was read, not assumed (matron-journal `src/files-write-http.js`):
+     * `reserve(key, fingerprint)` throws `idem-key-conflict` when a key returns with a different
+     * fingerprint, and `denialToStatus` maps that to 409 with a bare `{error:'denied'}` body — no
+     * distinguishing reason, which is exactly why the client cannot classify that 409 and has to
+     * prevent the mismatch instead. RESIDUAL, and not closable from here: the server's replay
+     * window is `IDEM_TTL_MS` (120s). A pinned retry issued after the key has aged out is a NEW
+     * mutation, so an operator who leaves the dialog sitting for minutes and then retries can
+     * still duplicate. Closing that needs a server-side outcome the client can reconcile against.
      */
     replay?: WriteInput;
 }
