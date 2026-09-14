@@ -383,11 +383,18 @@ export class JournalDatabase {
             // presence guards are load-bearing, not defensive padding.
             if (typeof event.payload.summary === "string") {
                 // Assign on ANY string including "", so a cleared digest clears the surface.
+                const changed = event.payload.summary !== conversation.summary;
                 conversation.summary = event.payload.summary;
-                // Guarded separately: an older server that learned `summary` but not
-                // `summary_updated_at` must not zero an age we already know.
-                if (typeof event.payload.summary_updated_at === "number") {
-                    conversation.summary_updated_at = event.payload.summary_updated_at;
+                const updatedAt = event.payload.summary_updated_at;
+                if (typeof updatedAt === "number" && Number.isFinite(updatedAt)) {
+                    conversation.summary_updated_at = updatedAt;
+                } else if (changed) {
+                    // New text arriving with no usable time (an intermediate server that
+                    // learned `summary` but not `summary_updated_at`): 0 = unknown, which
+                    // renders no age label. Keeping the previous stamp would date fresh
+                    // content by the digest it replaced — exactly the lie this field exists
+                    // to prevent. An unchanged summary keeps the stamp it already has.
+                    conversation.summary_updated_at = 0;
                 }
             }
         } else if (event.type === "session_status" && typeof event.payload.state === "string") {

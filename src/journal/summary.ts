@@ -25,7 +25,11 @@ import type { ConversationSummary } from "./components";
  * bullets rather than as nothing.
  */
 export function parseSummaryBullets(text: string | undefined | null): string[] {
-    if (!text) return [];
+    // typeof, not just truthiness: the snapshot row is cast, not parsed (api.ts), and
+    // validateSnapshotRows checks only id/session_outcome, so a server sending a non-string
+    // here would otherwise reach .split() and throw INSIDE the app's render — a wedge that
+    // survives reload, since the bad value is already in IndexedDB. Degrade to "no digest".
+    if (typeof text !== "string" || !text) return [];
     const lines = text
         .split("\n")
         .map((line) => line.trim())
@@ -55,11 +59,13 @@ export function conversationSummary(
     const bullets = parseSummaryBullets(conversation?.summary);
     if (!bullets.length) return null;
     // 0 = never written (or an older server that sends no timestamp). Omit the key entirely
-    // rather than pass 0, which would render an "updated 56y ago" label off the epoch.
+    // rather than pass 0, which would render an "updated 56y ago" label off the epoch. Finite
+    // and positive, for the same untrusted-row reason as the type check above.
     const updatedAtMs = conversation?.summary_updated_at;
+    const hasAge = typeof updatedAtMs === "number" && Number.isFinite(updatedAtMs) && updatedAtMs > 0;
     return {
         bullets,
         state: "ready",
-        ...(typeof updatedAtMs === "number" && updatedAtMs > 0 ? { updatedAtMs } : {}),
+        ...(hasAge ? { updatedAtMs } : {}),
     };
 }

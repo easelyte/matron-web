@@ -105,6 +105,15 @@ describe("parseSummaryBullets", () => {
         expect(parseSummaryBullets("Here are the 3 bullets:\n• first\n• second")).toEqual(["first", "second"]);
     });
 
+    it("degrades to no bullets on a non-string value instead of throwing mid-render", () => {
+        // The snapshot row is cast, not parsed, and is persisted verbatim — a throw here would
+        // wedge the app on every render AND survive reload, since the bad value is in IndexedDB.
+        for (const value of [{}, 42, [], true]) {
+            expect(parseSummaryBullets(value as unknown as string)).toEqual([]);
+        }
+        expect(conversationSummary({ summary: {} as unknown as string })).toBeNull();
+    });
+
     it("falls back to plain lines when nothing is marked", () => {
         // The column is documented upstream as a prose roster blurb; such a value must render
         // as a bullet rather than as nothing.

@@ -4321,6 +4321,43 @@ describe("session creation orchestration", () => {
         expect(client.getSnapshot().textStreams).toEqual({ ref: "partial" });
     });
 
+    it("reconciles a stale pinned summary from a duplicate convo_meta a peer tab already applied", async () => {
+        // Same shared-IndexedDB race as the session_status case above, for the frame that
+        // carries the pinned digest (loop #554). The peer tab wrote the new summary and
+        // advanced the shared cursor, so this tab gets applied=false; without refreshing off
+        // the durable row its pinned bar shows the superseded digest indefinitely (P48). No
+        // upload is in flight here — the refresh must not be gated on one.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.database = fakeDatabase({
+            applyJournal: jest.fn().mockResolvedValue(false), // peer tab won the cursor race
+            conversations: jest
+                .fn()
+                .mockResolvedValue([
+                    { ...CONVERSATIONS[0], summary: "\u2022 fresh", summary_updated_at: 1_700_000_000_000 },
+                ]),
+        });
+        state.state = {
+            ...signedInState(client),
+            conversations: [{ ...CONVERSATIONS[0], summary: "\u2022 stale", summary_updated_at: 1 }],
+        };
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 34,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "agent:dev",
+            type: "convo_meta",
+            payload: { summary: "\u2022 fresh", summary_updated_at: 1_700_000_000_000 },
+        });
+
+        expect(client.getSnapshot().conversations[0]).toMatchObject({
+            summary: "\u2022 fresh",
+            summary_updated_at: 1_700_000_000_000,
+        });
+    });
+
     it("reconciles a stale activity from a duplicate frame a peer tab already applied", async () => {
         // Tabs sharing a server/user share one IndexedDB, so a terminal session_status applied by
         // the peer tab advances the shared cursor and comes back applied=false here. The durable

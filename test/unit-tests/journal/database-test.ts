@@ -422,15 +422,30 @@ describe("JournalDatabase", () => {
             summary_updated_at: 1_700_000_000_000,
         });
 
-        // An older server that knows `summary` but not the timestamp must not zero a known age.
+        // New text with no usable timestamp drops the age to unknown rather than dating the
+        // new digest by the one it replaced.
         await database.applyJournal(meta(3, { summary: "\u2022 first\n\u2022 second" }));
         expect((await database.conversations())[0]).toMatchObject({
             summary: "\u2022 first\n\u2022 second",
-            summary_updated_at: 1_700_000_000_000,
+            summary_updated_at: 0,
+        });
+
+        // A re-send of the SAME text with no timestamp keeps whatever age is recorded.
+        await database.applyJournal(
+            meta(4, { summary: "\u2022 first\n\u2022 second", summary_updated_at: 1_700_000_050_000 }),
+        );
+        await database.applyJournal(meta(5, { summary: "\u2022 first\n\u2022 second" }));
+        expect((await database.conversations())[0]).toMatchObject({ summary_updated_at: 1_700_000_050_000 });
+
+        // A non-finite timestamp is not a timestamp; the text still applies.
+        await database.applyJournal(meta(6, { summary: "\u2022 third", summary_updated_at: Number.NaN }));
+        expect((await database.conversations())[0]).toMatchObject({
+            summary: "\u2022 third",
+            summary_updated_at: 0,
         });
 
         // An explicit empty string clears the surface.
-        await database.applyJournal(meta(4, { summary: "", summary_updated_at: 1_700_000_100_000 }));
+        await database.applyJournal(meta(7, { summary: "", summary_updated_at: 1_700_000_100_000 }));
         expect((await database.conversations())[0]).toMatchObject({
             summary: "",
             summary_updated_at: 1_700_000_100_000,
