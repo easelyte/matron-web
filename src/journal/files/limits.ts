@@ -22,5 +22,21 @@ export const PDF_PAGE_CAP = 30;
 /** Per-request fetch timeout — a stalled read surfaces a retryable error instead of hanging. */
 export const FETCH_TIMEOUT_MS = 30_000;
 
+/**
+ * Timeout for a body-bearing write (upload / file write). Deliberately longer than the read
+ * timeout: a multi-megabyte upload over a phone link legitimately outlives 30 s, and aborting it
+ * mid-stream would leave the operator retrying forever. Still bounded, so a stalled socket fails
+ * visibly rather than hanging the dialog.
+ */
+export const WRITE_TIMEOUT_MS = 120_000;
+
+/**
+ * Largest text body (in CHARACTERS — the server enforces the authoritative byte cap) the inline
+ * editor will open or send back through `POST /files/write`. The edit surface is for config- and
+ * notes-sized files, not blobs; beyond this the pane keeps read-only preview, so the refusal is
+ * immediate and explainable instead of a 413 after a long upload.
+ */
+export const INLINE_EDIT_MAX = 256_000;
+
 /** How long a one-shot download object URL lives before it is revoked (never session-cached). */
 export const DOWNLOAD_URL_TTL_MS = 60_000;

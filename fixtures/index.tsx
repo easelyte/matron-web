@@ -385,6 +385,9 @@ const imageFile = (name: string): File =>
 // preview kind, empty, error/denied, truncated) in both themes without a live backend. Mirrors
 // how mediaUrl is stubbed above.
 const FILES_ROOT = "/root/.openclaw/workspace";
+// Global write switch for the harness: `openFilesReadOnly()` flips it off to shoot the dormant
+// (MATRON_FILE_ENABLE_WRITES=0 / dry-run) deploy, where the pane must look exactly like Phase 1.
+let filesWritable = true;
 const MIME: Record<string, string> = {
     md: "text/markdown",
     ts: "text/plain",
@@ -406,6 +409,7 @@ const ROOT_ENTRIES: FileEntry[] = [
     { name: "big-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
     { name: "empty-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
     { name: "denied-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
+    { name: "readonly-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
     { name: ".gitignore", kind: "file", size: 84, mtime: T * 1000, mime: "text/plain" },
     { name: "README.md", kind: "file", size: 4310, mtime: T * 1000 - 3_600_000, mime: "text/markdown" },
     { name: "client.ts", kind: "file", size: 10_240, mtime: T * 1000 - 86_400_000, mime: "text/plain" },
@@ -442,7 +446,15 @@ const mockFilesApi: FilesApiLike = {
     listDir: async (path: string, all?: boolean): Promise<FileListing> => {
         if (path.endsWith("denied-dir")) throw new JournalApiError("denied", 403, "forbidden");
         // `root` per the F4 contract: the read-root containing `path`. Breadcrumbs never go above it.
-        const base = { path, root: FILES_ROOT, parent: path === FILES_ROOT ? null : FILES_ROOT };
+        // `writable` is the Phase-2 capability flag: true everywhere EXCEPT read-only-dir, which
+        // stands in for a directory outside MATRON_FILE_WRITE_ROOTS (or a writes-off / dry-run
+        // server) so the harness can shoot the "no write affordances at all" state.
+        const base = {
+            path,
+            root: FILES_ROOT,
+            parent: path === FILES_ROOT ? null : FILES_ROOT,
+            writable: filesWritable && !path.endsWith("readonly-dir"),
+        };
         if (path.endsWith("empty-dir")) return { ...base, entries: [], truncated: false };
         if (path.endsWith("big-dir")) {
             const entries: FileEntry[] = Array.from({ length: 2000 }, (_unused, index) => ({
@@ -475,8 +487,12 @@ const mockFilesApi: FilesApiLike = {
         if (path.endsWith(".css")) return ":root {\n    --brand: #ffe500;\n}\n";
         return "Plain text notes.\nSecond line.\n";
     },
-    fileBytes: async (): Promise<ArrayBuffer> => {
-        // Only the PDF preview calls this; return a real (tiny, valid) PDF so pdf.js renders a canvas.
+    fileBytes: async (path: string): Promise<ArrayBuffer> => {
+        // The PDF preview wants real PDF bytes; the inline EDITOR reads through here too (strict
+        // UTF-8 decode), so a text path must return the same sample its preview shows.
+        if (TEXT_EXT.has(extOf(path))) {
+            return new TextEncoder().encode(await mockFilesApi.textContent(path)).buffer as ArrayBuffer;
+        }
         const copy = new Uint8Array(PDF_BYTES.length);
         copy.set(PDF_BYTES);
         return copy.buffer;
@@ -488,6 +504,23 @@ const mockFilesApi: FilesApiLike = {
         return "data:application/octet-stream;base64,";
     },
     download: async (): Promise<void> => {},
+    // Phase-2 writes. The harness never touches a real filesystem: each write resolves with the
+    // shape the server contract promises, so the confirm dialogs, the post-write refresh, and the
+    // outcome notice can all be shot without a backend.
+    upload: async (file: File, opts: { targetDir: string; name?: string }) => ({
+        path: `${opts.targetDir}/${opts.name ?? file.name}`,
+        bytes: file.size,
+        dryRun: false,
+    }),
+    mkdir: async (path: string) => ({ path, dryRun: false }),
+    move: async (from: string, to: string) => ({ from, to, dryRun: false }),
+    writeFile: async (path: string, content: string) => ({ path, bytes: content.length, dryRun: false }),
+    deleteEntry: async (path: string) => ({
+        path,
+        trashed: `${FILES_ROOT}/.matron-trash/20260821T101500Z-7f3a-${path.slice(path.lastIndexOf("/") + 1)}`,
+        alreadyMissing: false,
+        dryRun: false,
+    }),
     dispose: (): void => {},
 };
 (client as unknown as { filesApi: () => FilesApiLike }).filesApi = () => mockFilesApi;
@@ -496,7 +529,24 @@ const patchState = (client as unknown as { patch: (update: Partial<ClientState>)
 // Expose hooks so the Playwright driver can drive states (stage files → upload modal, etc.).
 (window as unknown as { __matron: unknown }).__matron = {
     client,
-    openFiles: (path: string = FILES_ROOT) => patchState({ filesView: { open: true, path } }),
+    openFiles: (path: string = FILES_ROOT) => {
+        filesWritable = true;
+        patchState({ filesView: { open: true, path } });
+    },
+    // The dormant/dry-run server: `writable:false` everywhere, so zero write affordances render.
+    openFilesReadOnly: (path: string = FILES_ROOT) => {
+        filesWritable = false;
+        patchState({ filesView: { open: true, path } });
+    },
+    // Stage a Files-pane upload without a real file picker (Playwright can't drive the native one).
+    stageFileUpload: () => {
+        const input = document.querySelector(".mj_FilesToolbar_file") as HTMLInputElement | null;
+        if (!input) return;
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([new Uint8Array(2048)], "contact-sheet.png", { type: "image/png" }));
+        input.files = transfer.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+    },
     closeFiles: () => patchState({ filesView: undefined }),
     stageImage: (name = "screenshot.png") => client.stageFiles([imageFile(name)]),
     // Single NON-image file → hatched "image preview" placeholder + the single-file case

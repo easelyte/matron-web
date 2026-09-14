@@ -339,6 +339,108 @@ const SHOTS_SPEC = [
             await p.waitForSelector(".mj_FilesPreview_status_error");
         },
     },
+    // Files pane writes (Phase 2): the write affordances, each confirm dialog, and the read-only
+    // (writable:false) parity shot that proves a dormant backend renders the Phase-1 pane.
+    {
+        comp: "files",
+        state: "write-toolbar",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesToolbar");
+        },
+    },
+    {
+        comp: "files",
+        state: "write-readonly",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            // writable:false everywhere — must be visually identical to the Phase-1 pane.
+            await p.evaluate(() => window.__matron.openFilesReadOnly());
+            await p.waitForSelector(".mj_FilesList");
+        },
+    },
+    {
+        comp: "files",
+        state: "confirm-delete",
+        clip: ".mj_FileWrite",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesToolbar");
+            await p.locator('[aria-label="Delete archive.zip"]').click();
+            await p.waitForSelector(".mj_FileWrite_danger");
+        },
+    },
+    {
+        comp: "files",
+        state: "confirm-delete-folder",
+        clip: ".mj_FileWrite",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesToolbar");
+            await p.locator('[aria-label="Delete src"]').click();
+            await p.waitForSelector(".mj_FileWrite_danger");
+        },
+    },
+    {
+        comp: "files",
+        state: "confirm-new-folder",
+        clip: ".mj_FileWrite",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesToolbar_button", { hasText: "New folder" }).click();
+            await p.fill(".mj_FileWrite_input", "design-refs");
+            await p.waitForSelector(".mj_FileWrite_confirm");
+        },
+    },
+    {
+        comp: "files",
+        state: "confirm-rename",
+        clip: ".mj_FileWrite",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesToolbar");
+            await p.locator('[aria-label="Rename README.md"]').click();
+            await p.fill(".mj_FileWrite_input", "README-2026.md");
+        },
+    },
+    {
+        comp: "files",
+        state: "confirm-upload",
+        clip: ".mj_FileWrite",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesToolbar");
+            // The native file picker can't be driven from the page, so the fixture injects a File
+            // straight into the hidden input and fires its change event.
+            await p.evaluate(() => window.__matron.stageFileUpload());
+            await p.waitForSelector(".mj_FileWrite_confirm");
+        },
+    },
+    {
+        comp: "files",
+        state: "confirm-overwrite",
+        clip: ".mj_FileWrite",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "README.md" }).click();
+            await p.waitForSelector(".mj_FilesPreview_edit");
+            await p.locator(".mj_FilesPreview_edit").click();
+            await p.waitForSelector(".mj_FileWrite_textarea");
+        },
+    },
+    {
+        comp: "files",
+        state: "write-notice",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesToolbar");
+            await p.locator('[aria-label="Delete archive.zip"]').click();
+            await p.locator(".mj_FileWrite_danger").click();
+            await p.waitForSelector(".mj_FilesPane_notice");
+        },
+    },
     {
         comp: "files",
         state: "truncated",

@@ -5,10 +5,21 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { FilesApi } from "../../../src/journal/files/filesApi";
+import { FilesApi, messageForFileStatus, sanitizeFileName } from "../../../src/journal/files/filesApi";
 import { breadcrumb, extensionOf, humanizeMtime, humanizeSize, joinPath } from "../../../src/journal/files/format";
 import { CODE_HIGHLIGHT_MAX, highlightFile, languageForFilename } from "../../../src/journal/files/highlight";
-import { DOWNLOAD_URL_TTL_MS, FETCH_TIMEOUT_MS } from "../../../src/journal/files/limits";
+import { DOWNLOAD_URL_TTL_MS, FETCH_TIMEOUT_MS, WRITE_TIMEOUT_MS } from "../../../src/journal/files/limits";
+import {
+    advanceUpload,
+    canDismiss,
+    isDestructive,
+    isEditableText,
+    nameIsSubmittable,
+    recoveryNote,
+    writeReducer,
+    type PendingWrite,
+    type WriteState,
+} from "../../../src/journal/files/writeActions";
 
 describe("format helpers", () => {
     it("humanizeSize", () => {
@@ -337,5 +348,319 @@ describe("FilesApi", () => {
         resolvers.forEach((r) => r());
         await pending; // resolves (void), does not throw
         expect(created).toHaveLength(0); // no object URL minted → no anchor click → nothing saved
+    });
+});
+
+// -- Phase 2 writes -----------------------------------------------------------------------------
+// The wire contract is shared with the journal backend, so these tests pin the exact request the
+// client emits (method, path, query flags, headers, body) as much as the parsed response.
+
+interface SentRequest {
+    url: string;
+    method?: string;
+    body?: unknown;
+    headers?: Record<string, string>;
+}
+
+function captureFetch(response: FakeResponseBody): { calls: SentRequest[] } {
+    const calls: SentRequest[] = [];
+    globalThis.fetch = jest.fn((url: unknown, init?: RequestInit) => {
+        calls.push({
+            url: String(url),
+            method: init?.method,
+            body: init?.body,
+            headers: init?.headers as Record<string, string>,
+        });
+        return Promise.resolve(fakeResponse(response));
+    }) as unknown as typeof fetch;
+    return { calls };
+}
+
+describe("sanitizeFileName", () => {
+    it("reduces any input to a single safe path component", () => {
+        expect(sanitizeFileName("notes.txt")).toBe("notes.txt");
+        expect(sanitizeFileName("../../etc/passwd")).toBe("passwd");
+        expect(sanitizeFileName("a\\b\\c.txt")).toBe("c.txt");
+        expect(sanitizeFileName("  spaced.md  ")).toBe("spaced.md");
+        expect(sanitizeFileName("bell.txt")).toBe("bell.txt");
+    });
+
+    it("returns empty (never a fabricated name) for input that is only separators or dots", () => {
+        expect(sanitizeFileName("")).toBe("");
+        expect(sanitizeFileName("/")).toBe("");
+        expect(sanitizeFileName("..")).toBe("");
+        expect(sanitizeFileName("   ")).toBe("");
+    });
+});
+
+describe("FilesApi writes", () => {
+    const originalFetch = globalThis.fetch;
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        jest.useRealTimers();
+    });
+
+    it("listDir reports writable only when the server says so (absent means read-only)", async () => {
+        captureFetch({ status: 200, body: { path: "/root/x", entries: [] } });
+        expect((await new FilesApi(SERVER, "tok").listDir("/root/x")).writable).toBe(false);
+        captureFetch({ status: 200, body: { path: "/root/x", entries: [], writable: true } });
+        expect((await new FilesApi(SERVER, "tok").listDir("/root/x")).writable).toBe(true);
+        // A truthy-but-not-true value must not be coerced into a write capability.
+        captureFetch({ status: 200, body: { path: "/root/x", entries: [], writable: "yes" } });
+        expect((await new FilesApi(SERVER, "tok").listDir("/root/x")).writable).toBe(false);
+    });
+
+    it("upload POSTs the full sanitized destination path in the query with an Idempotency-Key", async () => {
+        const { calls } = captureFetch({ status: 200, body: { path: "/root/x/a.png", bytes: 12 } });
+        const file = new File([new Uint8Array(12)], "a.png", { type: "image/png" });
+        const result = await new FilesApi(SERVER, "tok").upload(file, { targetDir: "/root/x" });
+        expect(calls[0].method).toBe("POST");
+        expect(calls[0].url).toContain("/files/upload?path=%2Froot%2Fx%2Fa.png");
+        expect(calls[0].body).toBe(file); // streamed, never buffered into an ArrayBuffer first
+        expect(calls[0].headers?.["Idempotency-Key"]).toMatch(/[0-9a-f-]{36}/);
+        expect(result).toEqual({ path: "/root/x/a.png", bytes: 12, dryRun: false });
+    });
+
+    it("upload strips any directory part from the chosen name before building the target", async () => {
+        const { calls } = captureFetch({ status: 200, body: { path: "/root/x/passwd", bytes: 1 } });
+        const file = new File([new Uint8Array(1)], "a.png");
+        await new FilesApi(SERVER, "tok").upload(file, { targetDir: "/root/x", name: "../../etc/passwd" });
+        expect(decodeURIComponent(calls[0].url)).toContain("path=/root/x/passwd");
+    });
+
+    it("upload refuses a name that sanitizes to nothing WITHOUT issuing a request", async () => {
+        const { calls } = captureFetch({ status: 200, body: {} });
+        const file = new File([new Uint8Array(1)], "a.png");
+        await expect(
+            new FilesApi(SERVER, "tok").upload(file, { targetDir: "/root/x", name: ".." }),
+        ).rejects.toMatchObject({ code: "invalid-name" });
+        expect(calls).toHaveLength(0);
+    });
+
+    it("mkdir POSTs {path}", async () => {
+        const { calls } = captureFetch({ status: 200, body: { path: "/root/x/new" } });
+        const result = await new FilesApi(SERVER, "tok").mkdir("/root/x/new");
+        expect(calls[0].url).toContain("/files/mkdir");
+        expect(JSON.parse(String(calls[0].body))).toEqual({ path: "/root/x/new" });
+        expect(result).toEqual({ path: "/root/x/new", dryRun: false });
+    });
+
+    it("move POSTs {from,to} and echoes the server's canonical pair", async () => {
+        const { calls } = captureFetch({ status: 200, body: { from: "/root/x/a", to: "/root/x/b" } });
+        const result = await new FilesApi(SERVER, "tok").move("/root/x/a", "/root/x/b");
+        expect(JSON.parse(String(calls[0].body))).toEqual({ from: "/root/x/a", to: "/root/x/b" });
+        expect(result).toEqual({ from: "/root/x/a", to: "/root/x/b", dryRun: false });
+    });
+
+    it("writeFile omits `overwrite` unless it is explicitly true (create-only is the safe default)", async () => {
+        const { calls } = captureFetch({ status: 200, body: { path: "/root/x/n.md", bytes: 3 } });
+        const api = new FilesApi(SERVER, "tok");
+        await api.writeFile("/root/x/n.md", "abc");
+        expect(JSON.parse(String(calls[0].body))).toEqual({ path: "/root/x/n.md", content: "abc" });
+        await api.writeFile("/root/x/n.md", "abc", { overwrite: true });
+        expect(JSON.parse(String(calls[1].body))).toEqual({ path: "/root/x/n.md", content: "abc", overwrite: true });
+        expect(calls[1].headers?.["Idempotency-Key"]).toMatch(/[0-9a-f-]{36}/);
+    });
+
+    it("deleteEntry always sends confirm=1 and maps the discriminated response", async () => {
+        const { calls } = captureFetch({
+            status: 200,
+            body: { path: "/root/x/a", trashed: "/root/.matron-trash/2026-a", already_missing: false },
+        });
+        const result = await new FilesApi(SERVER, "tok").deleteEntry("/root/x/a", { confirm: true, recursive: true });
+        expect(calls[0].method).toBe("DELETE");
+        expect(calls[0].url).toContain("recursive=1");
+        expect(calls[0].url).toContain("confirm=1");
+        expect(result).toEqual({
+            path: "/root/x/a",
+            trashed: "/root/.matron-trash/2026-a",
+            alreadyMissing: false,
+            dryRun: false,
+        });
+    });
+
+    it("deleteEntry never fabricates a trash path for an already-missing target", async () => {
+        captureFetch({ status: 200, body: { path: "/root/x/a", trashed: null, already_missing: true } });
+        const result = await new FilesApi(SERVER, "tok").deleteEntry("/root/x/a", { confirm: true });
+        expect(result.trashed).toBeNull();
+        expect(result.alreadyMissing).toBe(true);
+    });
+
+    it("surfaces a dry-run response as dryRun (server validated + audited, changed nothing)", async () => {
+        captureFetch({ status: 200, body: { dry_run: true } });
+        const result = await new FilesApi(SERVER, "tok").mkdir("/root/x/new");
+        expect(result.dryRun).toBe(true);
+    });
+
+    it.each([[403], [409], [413], [507], [404]])("maps a %i denial to a typed JournalApiError", async (status) => {
+        captureFetch({ status, body: { error: "denied" } });
+        await expect(new FilesApi(SERVER, "tok").deleteEntry("/root/x/a", { confirm: true })).rejects.toMatchObject({
+            status,
+            code: "denied",
+        });
+    });
+
+    it("gives 409 and 507 their own operator copy (never the generic fallback)", () => {
+        expect(messageForFileStatus(409)).toMatch(/conflicts/i);
+        expect(messageForFileStatus(507)).toMatch(/Nothing was changed/i);
+        expect(messageForFileStatus(409)).not.toBe(messageForFileStatus(500));
+        expect(messageForFileStatus(507)).not.toBe(messageForFileStatus(500));
+    });
+
+    // P33: a write response that does not match the contract is NOT a success. The client must
+    // never echo the requested path back as "done" — that would close the dialog (and advance an
+    // upload queue) while the actual outcome on disk is unknown.
+    it("refuses an empty 2xx body instead of reporting a fabricated success", async () => {
+        globalThis.fetch = jest.fn().mockResolvedValue({
+            status: 200,
+            arrayBuffer: async () => new TextEncoder().encode("").buffer,
+            clone: () => ({ text: async () => "" }),
+        } as unknown as Response) as unknown as typeof fetch;
+        await expect(new FilesApi(SERVER, "tok").mkdir("/root/x/new")).rejects.toMatchObject({
+            code: "unconfirmed",
+        });
+    });
+
+    it("refuses a 2xx whose body is missing the contract's fields", async () => {
+        const api = new FilesApi(SERVER, "tok");
+        captureFetch({ status: 200, body: {} });
+        await expect(api.mkdir("/root/x/new")).rejects.toMatchObject({ code: "unconfirmed" });
+        captureFetch({ status: 200, body: { path: "/root/x/n.md" } }); // no `bytes`
+        await expect(api.writeFile("/root/x/n.md", "abc")).rejects.toMatchObject({ code: "unconfirmed" });
+        captureFetch({ status: 200, body: { from: "/root/x/a" } }); // no `to`
+        await expect(api.move("/root/x/a", "/root/x/b")).rejects.toMatchObject({ code: "unconfirmed" });
+        // A delete without the already_missing discriminant is unreadable: trashed-or-no-op unknown.
+        captureFetch({ status: 200, body: { path: "/root/x/a", trashed: null } });
+        await expect(api.deleteEntry("/root/x/a", { confirm: true })).rejects.toMatchObject({
+            code: "unconfirmed",
+        });
+    });
+
+    it("carries a caller-supplied Idempotency-Key on upload / write / move (retry replays)", async () => {
+        const api = new FilesApi(SERVER, "tok");
+        const key = "stable-key-1";
+        const a = captureFetch({ status: 200, body: { path: "/root/x/n.md", bytes: 3 } });
+        await api.writeFile("/root/x/n.md", "abc", { overwrite: true, idempotencyKey: key });
+        expect(a.calls[0].headers?.["Idempotency-Key"]).toBe(key);
+        const b = captureFetch({ status: 200, body: { from: "/root/x/a", to: "/root/x/b" } });
+        await api.move("/root/x/a", "/root/x/b", { idempotencyKey: key });
+        expect(b.calls[0].headers?.["Idempotency-Key"]).toBe(key);
+        const c = captureFetch({ status: 200, body: { path: "/root/x/a.png", bytes: 1 } });
+        await api.upload(new File([new Uint8Array(1)], "a.png"), { targetDir: "/root/x", idempotencyKey: key });
+        expect(c.calls[0].headers?.["Idempotency-Key"]).toBe(key);
+    });
+
+    it("bounds a write by the longer WRITE_TIMEOUT_MS, not the 30 s read timeout", async () => {
+        jest.useFakeTimers();
+        globalThis.fetch = jest.fn(
+            (_url: unknown, opts?: { signal?: AbortSignal }) =>
+                new Promise((_resolve, reject) => {
+                    opts?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+                }),
+        ) as unknown as typeof fetch;
+        const pending = new FilesApi(SERVER, "tok").writeFile("/root/x/n.md", "abc", { overwrite: true });
+        let settled = false;
+        void pending.catch(() => {
+            settled = true;
+        });
+        jest.advanceTimersByTime(FETCH_TIMEOUT_MS + 1);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(settled).toBe(false); // the 30 s READ deadline must not abort an in-flight write
+        jest.advanceTimersByTime(WRITE_TIMEOUT_MS - FETCH_TIMEOUT_MS);
+        await expect(pending).rejects.toMatchObject({ code: "timeout" });
+    });
+});
+
+// -- Confirm machine (T-3.2): the safety rules, independent of any dialog ------------------------
+describe("write confirm machine", () => {
+    const del: PendingWrite = { kind: "delete", path: "/root/x/a", name: "a", isDir: false };
+    const mkdir: PendingWrite = { kind: "mkdir", dir: "/root/x" };
+    const KEY = "key-1";
+    const confirming: WriteState = { pending: del, phase: "confirming", idempotencyKey: KEY };
+    const mutating: WriteState = { pending: del, phase: "mutating", idempotencyKey: KEY };
+
+    it("cannot reach `mutating` without passing through `confirming`", () => {
+        expect(writeReducer(undefined, { type: "submit" })).toBeUndefined();
+        expect(writeReducer(undefined, { type: "open", pending: del, idempotencyKey: KEY })).toEqual(confirming);
+        expect(writeReducer(confirming, { type: "submit" })).toEqual(mutating);
+    });
+
+    it("ignores a second submit while a request is in flight (double-submit guard)", () => {
+        expect(writeReducer(mutating, { type: "submit" })).toBe(mutating);
+    });
+
+    it("ignores cancel while mutating, and dismisses while confirming", () => {
+        expect(writeReducer(mutating, { type: "cancel" })).toBe(mutating);
+        expect(writeReducer(confirming, { type: "cancel" })).toBeUndefined();
+        expect(canDismiss(mutating)).toBe(false);
+        expect(canDismiss(confirming)).toBe(true);
+        expect(canDismiss(undefined)).toBe(false);
+    });
+
+    it("refuses to swap the pending target out from under an in-flight mutation", () => {
+        expect(writeReducer(mutating, { type: "open", pending: mkdir, idempotencyKey: "key-2" })).toBe(mutating);
+    });
+
+    it("a failure returns to confirming WITH the error (never silently closes)", () => {
+        // Uncertain failure: the caller hands back the SAME key, so the retry replays.
+        expect(writeReducer(mutating, { type: "failed", message: "boom", idempotencyKey: KEY })).toEqual({
+            pending: del,
+            phase: "confirming",
+            idempotencyKey: KEY,
+            error: "boom",
+        });
+        // Definite refusal: the caller mints a fresh key, because the operator is about to change
+        // the payload (a new name) and the server fingerprints key+payload.
+        expect(writeReducer(mutating, { type: "failed", message: "409", idempotencyKey: "key-2" })).toEqual({
+            pending: del,
+            phase: "confirming",
+            idempotencyKey: "key-2",
+            error: "409",
+        });
+    });
+
+    it("success closes, or advances to the next queued upload", () => {
+        expect(writeReducer(mutating, { type: "settled" })).toBeUndefined();
+        expect(writeReducer(mutating, { type: "settled", next: mkdir, nextKey: "key-2" })).toEqual({
+            pending: mkdir,
+            phase: "confirming",
+            idempotencyKey: "key-2", // a NEW target gets its own key
+        });
+    });
+
+    it("marks only the content-destroying writes destructive, and says how to recover them", () => {
+        expect(isDestructive(del)).toBe(true);
+        expect(isDestructive({ kind: "edit", path: "/root/x/a", name: "a" })).toBe(true);
+        expect(isDestructive(mkdir)).toBe(false);
+        expect(isDestructive({ kind: "upload", dir: "/root/x", files: [], index: 0 })).toBe(false);
+        expect(recoveryNote(del)).toMatch(/\.matron-trash\//);
+        expect(recoveryNote({ kind: "edit", path: "/root/x/a", name: "a" })).toMatch(/\.matron-trash\//);
+        expect(recoveryNote(mkdir)).toBeUndefined();
+    });
+
+    it("walks an upload queue and stops at the end", () => {
+        const files = [new File([], "a"), new File([], "b")];
+        const queue: PendingWrite = { kind: "upload", dir: "/root/x", files, index: 0 };
+        expect(advanceUpload(queue)).toEqual({ ...queue, index: 1 });
+        expect(advanceUpload({ ...queue, index: 1 })).toBeUndefined();
+    });
+
+    it("refuses a rename that would be a no-op or an unusable name", () => {
+        const rename: PendingWrite = { kind: "rename", dir: "/root/x", path: "/root/x/a", name: "a", isDir: false };
+        expect(nameIsSubmittable(rename, "a")).toBe(false); // unchanged: would 409 at the server
+        expect(nameIsSubmittable(rename, "..")).toBe(false);
+        expect(nameIsSubmittable(rename, "b")).toBe(true);
+    });
+
+    it("offers inline editing only for text-ish files within the editor cap", () => {
+        const max = 1000;
+        expect(isEditableText({ name: "a.md", kind: "file", mime: "text/markdown", size: 10 }, max)).toBe(true);
+        expect(isEditableText({ name: "a.json", kind: "file", mime: "application/json", size: 10 }, max)).toBe(true);
+        // No MIME from the server, but a known text extension: still editable (the read proves it).
+        expect(isEditableText({ name: "a.yml", kind: "file", mime: "", size: 10 }, max)).toBe(true);
+        expect(isEditableText({ name: "a.png", kind: "file", mime: "image/png", size: 10 }, max)).toBe(false);
+        expect(isEditableText({ name: "a.md", kind: "file", mime: "text/markdown", size: max + 1 }, max)).toBe(false);
+        expect(isEditableText({ name: "src", kind: "dir", mime: "", size: 0 }, max)).toBe(false);
     });
 });

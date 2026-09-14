@@ -67,6 +67,14 @@ Please see LICENSE files in the repository root for full details.
     /* Modal scrim — a fixed dark veil over content; identical in both themes so the media
        viewer / upload modal read the same regardless of canvas colour. */
     --mj-scrim-modal: rgb(18 16 14 / 55%);
+    /* Destructive surface (Files-pane delete / overwrite confirm). No --cpd token exists for a
+       critical BACKGROUND — only critical ink — so author the tint + border here, per theme, the
+       same way --mj-selection / --mj-scrollbar are authored. Deliberately a tinted+outlined
+       treatment rather than a solid red fill: the solid would need its own on-critical ink to stay
+       readable in dark, where the critical token is a light #ff6a6a. */
+    --mj-critical-tint: rgb(189 32 32 / 10%);
+    --mj-critical-tint-strong: rgb(189 32 32 / 16%);
+    --mj-critical-border: rgb(189 32 32 / 45%);
 
     /* --- v2 motion + focus --- */
     --cpd-focus-ring: 0 0 0 2px var(--cpd-color-bg-canvas-default), 0 0 0 4px var(--cpd-color-text-action-accent);
@@ -182,6 +190,12 @@ Please see LICENSE files in the repository root for full details.
     --mj-scrollbar-hover: rgb(255 255 255 / 0.32);
     /* Surface A/B: priority accent brightens in dark (mirrors --cpd-color-text-action-accent). */
     --mj-priority-accent: #2dd4bf;
+
+    /* Destructive surface (dark): the critical token is light here, so the tint is built from it
+       rather than from the light-theme red — same treatment, theme-correct contrast. */
+    --mj-critical-tint: rgb(255 106 106 / 14%);
+    --mj-critical-tint-strong: rgb(255 106 106 / 22%);
+    --mj-critical-border: rgb(255 106 106 / 45%);
 
     /* In dark, shadows are near-invisible — surface lightness carries elevation; shadows keep shape only. */
     --cpd-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);

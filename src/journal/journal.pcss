@@ -4656,10 +4656,13 @@ button.mj_File {
 
 .mj_FilesRow {
     display: flex;
+    /* Flexes inside .mj_FilesRow_shell; the shell carries react-window's absolute row box. */
+    height: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
     align-items: center;
     gap: var(--cpd-space-2x);
     box-sizing: border-box;
-    width: 100%;
     padding: 0 var(--cpd-space-3x);
     border: 0;
     background: transparent;
@@ -4980,6 +4983,290 @@ button.mj_File {
 .mj_FilesRetry:focus-visible {
     outline: 2px solid var(--cpd-color-icon-accent-primary);
     outline-offset: 1px;
+}
+
+/* ─── Files pane writes (Phase 2) ──────────────────────────────────────────────────────────────
+   Every selector below only ever renders when the server reported the directory `writable`, so a
+   dormant (writes-off) or dry-run deploy paints the unchanged Phase-1 pane. Same --cpd tokens, plus
+   the authored --mj-critical-* destructive surface from shell.pcss. */
+
+/* Row shell: the row button + its per-entry write actions as siblings. react-window's absolute
+   row style lands on the shell, so the button stretches inside it. */
+.mj_FilesRow_shell {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.mj_FilesRow_actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 2px;
+    padding-right: var(--cpd-space-2x);
+}
+
+/* Always visible (not hover-revealed): the primary client is a phone, which has no hover. */
+.mj_FilesRow_action {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: var(--cpd-radius-sm, 6px);
+    background: transparent;
+    color: var(--cpd-color-icon-tertiary);
+    cursor: pointer;
+}
+
+.mj_FilesRow_action svg {
+    width: var(--cpd-icon-sm, 16px);
+    height: var(--cpd-icon-sm, 16px);
+}
+
+.mj_FilesRow_action:hover {
+    background: var(--cpd-state-hover);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_FilesRow_action_danger:hover {
+    background: var(--mj-critical-tint);
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_FilesRow_action:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: -2px;
+}
+
+/* Directory-level actions, directly under the breadcrumb. */
+.mj_FilesToolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    box-sizing: border-box;
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+}
+
+.mj_FilesToolbar_button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-pill);
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_FilesToolbar_button svg {
+    width: var(--cpd-icon-sm, 16px);
+    height: var(--cpd-icon-sm, 16px);
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_FilesToolbar_button:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_FilesToolbar_button:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 1px;
+}
+
+/* The file picker is driven by the Upload button; it is never itself a visible control. */
+.mj_FilesToolbar_file {
+    display: none;
+}
+
+/* Outcome line for the last write (trash destination / already-gone / dry-run). */
+.mj_FilesPane_notice {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--cpd-space-2x);
+    margin: 0;
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-xs-regular);
+    overflow-wrap: anywhere;
+}
+
+.mj_FilesPane_noticeClose {
+    display: inline-flex;
+    flex: 0 0 auto;
+    margin-left: auto;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-icon-tertiary);
+    cursor: pointer;
+}
+
+.mj_FilesPane_noticeClose svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* Edit affordance above the preview, for a text file in a writable directory. */
+.mj_FilesPreview_bar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: var(--cpd-space-2x);
+}
+
+.mj_FilesPreview_edit {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-pill);
+    background: transparent;
+    color: var(--cpd-color-text-action-accent);
+    cursor: pointer;
+    font: var(--cpd-font-body-sm-semibold, 600 14px/20px Inter, sans-serif);
+}
+
+.mj_FilesPreview_edit svg {
+    width: var(--cpd-icon-sm, 16px);
+    height: var(--cpd-icon-sm, 16px);
+}
+
+.mj_FilesPreview_edit:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_FilesPreview_edit:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 1px;
+}
+
+/* ─── Write confirm dialog ─────────────────────────────────────────────────────────────────────
+   Shares the shipped upload-confirm shell (.mj_UploadConfirm*); only the form fields, the target
+   line, and the destructive treatment are new. */
+.mj_FileWrite_body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-3x);
+    padding: 0 16px 14px;
+}
+
+.mj_FileWrite_field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.mj_FileWrite_label {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_FileWrite_input,
+.mj_FileWrite_textarea {
+    box-sizing: border-box;
+    width: 100%;
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md, 8px);
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-md-regular, 400 15px/21px Inter, sans-serif);
+}
+
+.mj_FileWrite_textarea {
+    min-height: 220px;
+    max-height: 46vh;
+    resize: vertical;
+    font:
+        400 12.5px/18px "Fira Code",
+        ui-monospace,
+        monospace;
+}
+
+.mj_FileWrite_input:focus-visible,
+.mj_FileWrite_textarea:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 1px;
+}
+
+.mj_FileWrite_input:disabled,
+.mj_FileWrite_textarea:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+/* Resolved absolute destination / character count — quiet, monospaced, never truncated silently. */
+.mj_FileWrite_dest {
+    color: var(--cpd-color-text-tertiary);
+    font:
+        400 11.5px/16px "Fira Code",
+        ui-monospace,
+        monospace;
+    overflow-wrap: anywhere;
+}
+
+.mj_FileWrite_dest_bad {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+/* Delete target: the name in ink, the absolute path underneath so the blast radius is explicit. */
+.mj_FileWrite_target {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+}
+
+.mj_FileWrite_targetName {
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-md-semibold, 600 15px/21px Inter, sans-serif);
+    overflow-wrap: anywhere;
+}
+
+.mj_FileWrite_targetPath {
+    color: var(--cpd-color-text-tertiary);
+    font:
+        400 11.5px/16px "Fira Code",
+        ui-monospace,
+        monospace;
+    overflow-wrap: anywhere;
+}
+
+/* Recovery note — the ".matron-trash/ keeps it" reassurance on destructive confirms. Deliberately
+   NEUTRAL, not critical-tinted: red is reserved for the act (title, target, button), and a red
+   panel whose text says "it can still be recovered" sends two opposite signals at once. */
+.mj_FileWrite_note {
+    margin: 0;
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-md, 8px);
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_FileWrite_actions {
+    padding: 0 14px 14px;
+}
+
+/* Destructive primary: critical ink on a critical tint with a critical hairline — reads as
+   destructive in BOTH themes without needing an on-critical ink token for a solid fill. */
+.mj_UploadConfirm_actions button.mj_FileWrite_danger {
+    border-color: var(--mj-critical-border);
+    background: var(--mj-critical-tint);
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_UploadConfirm_actions button.mj_FileWrite_danger:hover:not(:disabled) {
+    background: var(--mj-critical-tint-strong);
+    color: var(--cpd-color-text-critical-primary);
+    filter: none;
 }
 
 /* Mobile: stack the two panes; the preview drops below the list. */
