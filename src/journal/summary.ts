@@ -12,17 +12,18 @@ import type { ConversationSummary } from "./components";
 /**
  * Parse the bridge's rolling digest wire format into display bullets (loop #554).
  *
- * The wire carries the raw text the bridge accreted — one `• `-prefixed line per pass,
- * joined with "\n" (matron-bridge lib/pinned-summary.js). The marker is stripped here
- * because the list draws its own via `.mj_PinnedSummary_item::before`; leaving it in
- * would render a double bullet.
+ * The grammar is the producer's, not ours: matron-bridge `lib/pinned-summary.js` exports
+ * `summaryBlocks()` precisely so every consumer agrees on what "a bullet" is in a stored
+ * digest. A line starting with `•` opens a block; any following unmarked lines belong to
+ * that block (a wrapped bullet, or prose the model emitted without a marker), and leading
+ * unmarked lines form a block of their own. Dropping unmarked lines instead would delete
+ * exactly the continuation text where "…but it is blocked on X" lands — and would render a
+ * prose-only blurb (the column's documented upstream use) as nothing at all.
  *
- * Lines WITHOUT a marker are dropped when any marked line exists. That is deliberate:
- * the bridge's compaction path accepts codex output whenever any line matches /^•/m, so
- * a preamble ("Here are the 3 bullets:") can reach the column, and it is noise rather
- * than digest. When NO line is marked, every line is kept — a server or bridge that
- * wrote the documented "2-3 sentence" prose blurb into the same column still renders as
- * bullets rather than as nothing.
+ * Each block's own `• ` marker is stripped, because the list draws one via
+ * `.mj_PinnedSummary_item::before`; leaving it in would double the bullet. Continuation
+ * lines are joined with a space: the item is a single inline span, so a newline would
+ * collapse to whitespace anyway.
  */
 export function parseSummaryBullets(text: string | undefined | null): string[] {
     // typeof, not just truthiness: the snapshot row is cast, not parsed (api.ts), and
@@ -30,15 +31,20 @@ export function parseSummaryBullets(text: string | undefined | null): string[] {
     // here would otherwise reach .split() and throw INSIDE the app's render — a wedge that
     // survives reload, since the bad value is already in IndexedDB. Degrade to "no digest".
     if (typeof text !== "string" || !text) return [];
-    const lines = text
-        .split("\n")
-        .map((line) => line.trim())
+    const blocks: string[][] = [];
+    for (const line of text.split("\n").map((candidate) => candidate.trim())) {
+        if (!line) continue;
+        if (line.startsWith("\u2022") || blocks.length === 0) blocks.push([line]);
+        else blocks[blocks.length - 1].push(line);
+    }
+    return blocks
+        .map((block) =>
+            block
+                .join(" ")
+                .replace(/^\u2022\s*/, "")
+                .trim(),
+        )
         .filter(Boolean);
-    const marked = lines
-        .filter((line) => line.startsWith("•"))
-        .map((line) => line.replace(/^•\s*/, "").trim())
-        .filter(Boolean);
-    return marked.length ? marked : lines;
 }
 
 /**

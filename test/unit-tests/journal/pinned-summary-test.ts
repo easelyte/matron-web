@@ -99,10 +99,25 @@ describe("parseSummaryBullets", () => {
         expect(parseSummaryBullets("• real\n•\n•   ")).toEqual(["real"]);
     });
 
-    it("keeps only marked lines when any exist, so a compaction preamble is not a bullet", () => {
-        // matron-bridge accepts codex compaction output whenever ANY line matches /^•/m, so a
-        // chatty preamble can reach the column. It is noise, not digest.
-        expect(parseSummaryBullets("Here are the 3 bullets:\n• first\n• second")).toEqual(["first", "second"]);
+    it("attaches an unmarked line to the bullet it follows, per the producer's grammar", () => {
+        // matron-bridge exports summaryBlocks() so every consumer agrees what a bullet is: a
+        // marked line opens a block and following unmarked lines continue it. Dropping them
+        // would delete exactly the "…but it is blocked on X" half of a wrapped bullet.
+        expect(parseSummaryBullets("\u2022 Deployed\nBlocked on DNS\n\u2022 Next step")).toEqual([
+            "Deployed Blocked on DNS",
+            "Next step",
+        ]);
+    });
+
+    it("gives a leading unmarked line its own bullet", () => {
+        // Same grammar: with no open block, an unmarked line starts one. The bridge's
+        // compaction path can let a codex preamble reach the column this way; it renders
+        // rather than vanishing, which is what the producer and the roster blurb also do.
+        expect(parseSummaryBullets("Here are the 3 bullets:\n\u2022 first\n\u2022 second")).toEqual([
+            "Here are the 3 bullets:",
+            "first",
+            "second",
+        ]);
     });
 
     it("degrades to no bullets on a non-string value instead of throwing mid-render", () => {
@@ -114,11 +129,11 @@ describe("parseSummaryBullets", () => {
         expect(conversationSummary({ summary: {} as unknown as string })).toBeNull();
     });
 
-    it("falls back to plain lines when nothing is marked", () => {
+    it("renders unmarked prose as a single bullet", () => {
         // The column is documented upstream as a prose roster blurb; such a value must render
-        // as a bullet rather than as nothing.
+        // rather than vanish, and it is one statement, so it is one block.
         expect(parseSummaryBullets("A rolling prose blurb.")).toEqual(["A rolling prose blurb."]);
-        expect(parseSummaryBullets("line one\nline two")).toEqual(["line one", "line two"]);
+        expect(parseSummaryBullets("line one\nline two")).toEqual(["line one line two"]);
     });
 });
 
