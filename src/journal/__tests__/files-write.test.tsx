@@ -47,6 +47,7 @@ jest.mock("react-window", () => {
 });
 
 const DIR = "/root/.openclaw/workspace";
+const encode = (text: string): ArrayBuffer => new TextEncoder().encode(text).buffer as ArrayBuffer;
 const ENTRIES: FileEntry[] = [
     { name: "src", kind: "dir", size: 0, mtime: 1, mime: "" },
     { name: "notes.md", kind: "file", size: 120, mtime: 1, mime: "text/markdown" },
@@ -63,7 +64,8 @@ function mockApi(overrides: Partial<FilesApiLike> = {}): FilesApiLike {
             .fn()
             .mockResolvedValue({ kind: "file", size: 120, mtime: 1, mime: "text/markdown", isText: true }),
         textContent: jest.fn().mockResolvedValue("# notes\n"),
-        fileBytes: jest.fn(),
+        // The inline editor loads through fileBytes (strict UTF-8 decode), not textContent.
+        fileBytes: jest.fn(async () => encode("# notes\n")),
         contentUrl: jest.fn().mockResolvedValue("blob:mock/1"),
         download: jest.fn(),
         upload: jest.fn().mockResolvedValue({ path: `${DIR}/a.png`, bytes: 3, dryRun: false }),
@@ -146,6 +148,14 @@ function click(element: Element | null): Promise<void> {
 
 function dialog(): HTMLElement | null {
     return document.querySelector(".mj_FileWrite");
+}
+
+/** Select the (only) file row, then open the inline editor on it. */
+async function openEditor(pane: HTMLDivElement): Promise<void> {
+    await click(pane.querySelector(".mj_FilesRow:not(.mj_FilesRow_dir)"));
+    await flush();
+    await click(pane.querySelector(".mj_FilesPreview_edit"));
+    await flush();
 }
 
 describe("write affordances are capability-gated on the server's `writable` flag", () => {
@@ -335,17 +345,14 @@ describe("write lifecycle under the real app shell", () => {
         expect(dialog()).toBeNull(); // the outcome was applied, not discarded
     });
 
-    it("reuses ONE idempotency key across a failed attempt and its retry", async () => {
+    it("reuses ONE idempotency key when the outcome was UNCERTAIN (the retry must replay)", async () => {
         const writeFile = jest
             .fn()
-            .mockRejectedValueOnce(new JournalApiError("storage", 507, "trash-write-failed"))
+            .mockRejectedValueOnce(new JournalApiError("timed out", 0, "timeout"))
             .mockResolvedValue({ path: `${DIR}/notes.md`, bytes: 9, dryRun: false });
         const api = mockApi({ writeFile: writeFile as unknown as FilesApiLike["writeFile"] });
         const pane = await mountPane(api);
-        await click(pane.querySelector(".mj_FilesRow:not(.mj_FilesRow_dir)"));
-        await flush();
-        await click(pane.querySelector(".mj_FilesPreview_edit"));
-        await flush();
+        await openEditor(pane);
         await setValue(document.querySelector(".mj_FileWrite_textarea"), "# edited\n");
 
         await click(document.querySelector(".mj_FileWrite_danger"));
@@ -358,20 +365,38 @@ describe("write lifecycle under the real app shell", () => {
         const first = writeFile.mock.calls[0][2] as { idempotencyKey?: string };
         const second = writeFile.mock.calls[1][2] as { idempotencyKey?: string };
         expect(first.idempotencyKey).toBeTruthy();
-        // A retry must REPLAY the same mutation, not mint a new identity the server would re-run.
         expect(second.idempotencyKey).toBe(first.idempotencyKey);
     });
 
-    it("refuses to save an edit whose file changed on the server after it was opened", async () => {
-        // The preview reads the file too, so drive the server's answer by time, not call count.
-        let served = "# notes\n";
-        const textContent = jest.fn(async () => served);
-        const api = mockApi({ textContent: textContent as unknown as FilesApiLike["textContent"] });
+    it("mints a FRESH key after a definite refusal (the operator is told to change the name)", async () => {
+        // The server fingerprints key + payload and rejects a key reused with a different request,
+        // so carrying the key into a renamed retry would 409 forever.
+        const move = jest
+            .fn()
+            .mockRejectedValueOnce(new JournalApiError("exists", 409, "dest-exists"))
+            .mockResolvedValue({ from: `${DIR}/notes.md`, to: `${DIR}/n3.md`, dryRun: false });
+        const api = mockApi({ move: move as unknown as FilesApiLike["move"] });
         const pane = await mountPane(api);
-        await click(pane.querySelector(".mj_FilesRow:not(.mj_FilesRow_dir)"));
+        await click(pane.querySelector('[aria-label="Rename notes.md"]'));
+        await setValue(document.querySelector(".mj_FileWrite_input"), "taken.md");
+        await click(document.querySelector(".mj_FileWrite_confirm"));
         await flush();
-        await click(pane.querySelector(".mj_FilesPreview_edit"));
+        expect(dialog()?.querySelector(".mj_UploadConfirm_error")).not.toBeNull();
+        await setValue(document.querySelector(".mj_FileWrite_input"), "n3.md");
+        await click(document.querySelector(".mj_FileWrite_confirm"));
         await flush();
+
+        expect(move).toHaveBeenCalledTimes(2);
+        const first = move.mock.calls[0][2] as { idempotencyKey?: string };
+        const second = move.mock.calls[1][2] as { idempotencyKey?: string };
+        expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+    });
+
+    it("refuses to save an edit whose file changed on the server after it was opened", async () => {
+        let served = "# notes\n";
+        const api = mockApi({ fileBytes: jest.fn(async () => encode(served)) as unknown as FilesApiLike["fileBytes"] });
+        const pane = await mountPane(api);
+        await openEditor(pane);
         await setValue(document.querySelector(".mj_FileWrite_textarea"), "# my stale edit\n");
         served = "# rewritten by an agent while the editor sat open\n";
         await click(document.querySelector(".mj_FileWrite_danger"));
@@ -387,7 +412,7 @@ describe("uncertain outcomes (Codex round 2)", () => {
         // the draft. That is "already saved", not "someone else changed this".
         let served = "# notes\n";
         const api = mockApi({
-            textContent: jest.fn(async () => served) as unknown as FilesApiLike["textContent"],
+            fileBytes: jest.fn(async () => encode(served)) as unknown as FilesApiLike["fileBytes"],
             writeFile: jest
                 .fn()
                 .mockRejectedValueOnce(
@@ -395,10 +420,7 @@ describe("uncertain outcomes (Codex round 2)", () => {
                 ) as unknown as FilesApiLike["writeFile"],
         });
         const pane = await mountPane(api);
-        await click(pane.querySelector(".mj_FilesRow:not(.mj_FilesRow_dir)"));
-        await flush();
-        await click(pane.querySelector(".mj_FilesPreview_edit"));
-        await flush();
+        await openEditor(pane);
         await setValue(document.querySelector(".mj_FileWrite_textarea"), "# edited\n");
         await click(document.querySelector(".mj_FileWrite_danger"));
         await flush();
@@ -426,6 +448,24 @@ describe("uncertain outcomes (Codex round 2)", () => {
         expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/couldn't confirm/i);
     });
 
+    it("makes the pane inert and pulls focus into the dialog while a write is pending", async () => {
+        // `aria-modal` without this is a lie: focus could reach "Close files" behind the scrim and
+        // unmount the pane mid-delete, discarding the outcome, the refresh and the trash path.
+        const api = mockApi();
+        const pane = await mountPane(api);
+        const top = pane.querySelector(".mj_FilesPane_top") as HTMLElement;
+        const body = pane.querySelector(".mj_FilesPane_body") as HTMLElement;
+        expect(top.hasAttribute("inert")).toBe(false);
+        await click(pane.querySelector('[aria-label="Delete notes.md"]'));
+        expect(top.hasAttribute("inert")).toBe(true);
+        expect(body.hasAttribute("inert")).toBe(true);
+        expect(dialog()?.contains(document.activeElement)).toBe(true);
+        await act(async () => {
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        });
+        expect(top.hasAttribute("inert")).toBe(false); // restored on dismiss
+    });
+
     it("a definite server denial still keeps the delete dialog open for a retry", async () => {
         const api = mockApi({
             deleteEntry: jest.fn().mockRejectedValue(new JournalApiError("nope", 409, "dir-not-empty")),
@@ -437,15 +477,13 @@ describe("uncertain outcomes (Codex round 2)", () => {
         expect(dialog()).not.toBeNull();
     });
 
-    it("refuses to edit a file whose bytes did not decode as UTF-8", async () => {
+    it("refuses to edit a file whose bytes are not valid UTF-8 (strict decode, not a U+FFFD sniff)", async () => {
         const api = mockApi({
-            textContent: jest.fn().mockResolvedValue("binary \uFFFD\uFFFD bytes"),
+            // Lone continuation bytes: invalid UTF-8, which a FATAL decoder rejects.
+            fileBytes: jest.fn(async () => new Uint8Array([0x41, 0xff, 0xfe, 0x42]).buffer),
         });
         const pane = await mountPane(api);
-        await click(pane.querySelector(".mj_FilesRow:not(.mj_FilesRow_dir)"));
-        await flush();
-        await click(pane.querySelector(".mj_FilesPreview_edit"));
-        await flush();
+        await openEditor(pane);
         expect(document.querySelector(".mj_FileWrite_textarea")).toBeNull();
         expect(dialog()?.textContent).toMatch(/isn't valid UTF-8/i);
         // The refusal is load-bearing: Save must be disabled, not merely visually discouraged.

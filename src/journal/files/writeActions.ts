@@ -39,11 +39,11 @@ export interface WriteState {
     pending: PendingWrite;
     phase: "confirming" | "mutating";
     /**
-     * The `Idempotency-Key` for THIS target, minted once when the write is opened and retained
-     * across every failed attempt + retry (V2/P32). Minting it per API call instead would defeat
-     * the point: a retry after a lost response would look like a brand-new mutation to the server
-     * and be executed a second time. A new key is minted only for a genuinely new target (the next
-     * file in an upload queue), never for a retry of the same one.
+     * The `Idempotency-Key` for the next attempt at this target. Minted when the write is opened
+     * and RETAINED across an uncertain failure (timeout / dropped response), which is what makes
+     * that retry a replay rather than a second mutation (V2/P32). It is REPLACED after a definite
+     * refusal: nothing happened, and the operator is being told to change the name, so carrying the
+     * key over would hand the server a different payload under a key it has already fingerprinted.
      */
     idempotencyKey: string;
     /** Surfaced inside the dialog after a failed attempt (uniform messageForFileStatus copy). */
@@ -56,7 +56,13 @@ export type WriteEvent =
     | { type: "submit" }
     /** The request succeeded. `next` carries the remaining upload queue head, if any. */
     | { type: "settled"; next?: PendingWrite; nextKey?: string }
-    | { type: "failed"; message: string }
+    /**
+     * `idempotencyKey` is the key to use for the NEXT attempt. The caller retains the current one
+     * after an UNCERTAIN failure (so the retry replays) and mints a fresh one after a DEFINITE
+     * refusal — where nothing happened, and where the operator is invited to change the name, so
+     * reusing the key would present the server a different payload under the same key.
+     */
+    | { type: "failed"; message: string; idempotencyKey: string }
     | { type: "cancel" };
 
 export function writeReducer(state: WriteState | undefined, event: WriteEvent): WriteState | undefined {
@@ -76,11 +82,10 @@ export function writeReducer(state: WriteState | undefined, event: WriteEvent): 
                 : undefined;
         case "failed":
             if (state?.phase !== "mutating") return state;
-            // The key survives the failure — that is what makes the retry a replay, not a re-run.
             return {
                 pending: state.pending,
                 phase: "confirming",
-                idempotencyKey: state.idempotencyKey,
+                idempotencyKey: event.idempotencyKey,
                 error: event.message,
             };
         case "cancel":

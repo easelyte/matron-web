@@ -476,8 +476,12 @@ const mockFilesApi: FilesApiLike = {
         if (path.endsWith(".css")) return ":root {\n    --brand: #ffe500;\n}\n";
         return "Plain text notes.\nSecond line.\n";
     },
-    fileBytes: async (): Promise<ArrayBuffer> => {
-        // Only the PDF preview calls this; return a real (tiny, valid) PDF so pdf.js renders a canvas.
+    fileBytes: async (path: string): Promise<ArrayBuffer> => {
+        // The PDF preview wants real PDF bytes; the inline EDITOR reads through here too (strict
+        // UTF-8 decode), so a text path must return the same sample its preview shows.
+        if (TEXT_EXT.has(extOf(path))) {
+            return new TextEncoder().encode(await mockFilesApi.textContent(path)).buffer as ArrayBuffer;
+        }
         const copy = new Uint8Array(PDF_BYTES.length);
         copy.set(PDF_BYTES);
         return copy.buffer;

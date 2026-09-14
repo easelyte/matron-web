@@ -603,11 +603,20 @@ describe("write confirm machine", () => {
     });
 
     it("a failure returns to confirming WITH the error (never silently closes)", () => {
-        expect(writeReducer(mutating, { type: "failed", message: "boom" })).toEqual({
+        // Uncertain failure: the caller hands back the SAME key, so the retry replays.
+        expect(writeReducer(mutating, { type: "failed", message: "boom", idempotencyKey: KEY })).toEqual({
             pending: del,
             phase: "confirming",
-            idempotencyKey: KEY, // retained: the retry must REPLAY, not re-run
+            idempotencyKey: KEY,
             error: "boom",
+        });
+        // Definite refusal: the caller mints a fresh key, because the operator is about to change
+        // the payload (a new name) and the server fingerprints key+payload.
+        expect(writeReducer(mutating, { type: "failed", message: "409", idempotencyKey: "key-2" })).toEqual({
+            pending: del,
+            phase: "confirming",
+            idempotencyKey: "key-2",
+            error: "409",
         });
     });
 

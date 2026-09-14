@@ -246,7 +246,11 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
 
     return (
         <div className="mj_FilesPane">
-            <div className="mj_FilesPane_top">
+            {/* While a write dialog is up the rest of the pane is INERT (the same treatment the
+                app gives its own upload modal). Without it, `aria-modal` is a lie: a keyboard or
+                assistive-tech user could reach "Close files" behind the scrim and unmount the pane
+                mid-delete, throwing away the outcome, the refresh, and the trash path. */}
+            <div className="mj_FilesPane_top" inert={writes.state ? true : undefined}>
                 <button
                     type="button"
                     className="mj_IconButton mj_FilesPane_close"
@@ -266,7 +270,7 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
                 </label>
             </div>
 
-            <div className="mj_FilesPane_body">
+            <div className="mj_FilesPane_body" inert={writes.state ? true : undefined}>
                 <div className="mj_FilesPane_nav">
                     <nav className="mj_FilesBreadcrumb" aria-label="Path">
                         {crumbs.map((crumb, index) => (

@@ -22,7 +22,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useRef, useState } from "react";
 
 import { CloseIcon, FileIcon, FolderIcon, TrashIcon, UploadTrayIcon } from "../icons";
-import type { FilesApiLike } from "./filesApi";
+import { readEditableText, type EditableText, type FilesApiLike } from "./filesApi";
 import { humanizeSize } from "./format";
 import { INLINE_EDIT_MAX } from "./limits";
 import { PreviewStatus } from "./preview/PreviewChrome";
@@ -125,11 +125,6 @@ function UploadBody({
     );
 }
 
-/** U+FFFD in the decoded text means the bytes were not valid UTF-8 and information was lost. */
-function isLossy(text: string): boolean {
-    return text.includes("\uFFFD");
-}
-
 function EditBody({
     api,
     path,
@@ -147,20 +142,20 @@ function EditBody({
 }): React.ReactElement {
     // Load the CURRENT bytes at open time — the operator edits what is on disk right now, not a
     // stale preview. A failed read keeps the dialog in a refusing state (no empty-string save).
-    const content = useAsyncResource<string>(
-        (signal) => (api ? api.textContent(path, signal) : Promise.reject(new Error("Not signed in."))),
+    const content = useAsyncResource<EditableText>(
+        (signal) => (api ? readEditableText(api, path, signal) : Promise.reject(new Error("Not signed in."))),
         `edit:${path}`,
     );
+    const loaded = content.data?.ok ? content.data.text : undefined;
     useEffect(() => {
-        if (content.status !== "loaded" || content.data === undefined) return;
-        // Lossy decode (see below): seed nothing, so `draft` stays undefined and Save stays
-        // disabled — the refusal below is not just cosmetic.
-        if (isLossy(content.data)) return;
-        onLoaded(content.data);
-        if (draft === undefined) onDraft(content.data);
+        // Not valid UTF-8 → seed nothing, so `draft` stays undefined and Save stays genuinely
+        // disabled; the refusal below is not merely cosmetic.
+        if (content.status !== "loaded" || loaded === undefined) return;
+        onLoaded(loaded);
+        if (draft === undefined) onDraft(loaded);
         // Seeds the draft exactly once per load; later keystrokes own it.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [content.status, content.data]);
+    }, [content.status, loaded]);
 
     if (content.status === "loading") return <PreviewStatus variant="loading">Loading…</PreviewStatus>;
     if (content.status === "error") {
@@ -170,18 +165,16 @@ function EditBody({
             </PreviewStatus>
         );
     }
-    // The transport decodes bytes as UTF-8 non-fatally, so invalid sequences arrive as U+FFFD. Two
-    // reasons to refuse rather than edit: saving would write the replacement characters BACK and
-    // corrupt the file, and the pre-save staleness comparison is done on these decoded strings, so
-    // a lossy decode could make two different byte sequences look identical.
-    if (isLossy(content.data ?? "")) {
+    // Strict decode said these bytes are not UTF-8 text. Editing them would write replacement
+    // characters back over the original bytes, so refuse instead of offering a corrupting Save.
+    if (content.data && !content.data.ok) {
         return (
             <PreviewStatus variant="error">
                 This file isn&apos;t valid UTF-8 text, so it can&apos;t be edited here without corrupting it.
             </PreviewStatus>
         );
     }
-    const value = draft ?? content.data ?? "";
+    const value = draft ?? loaded ?? "";
     const tooLong = value.length > INLINE_EDIT_MAX;
     return (
         <label className="mj_FileWrite_field">
@@ -225,18 +218,58 @@ export function FileWriteDialog({
     // The exact bytes the editor opened with (see WriteInput.baseline).
     const [baseline, setBaseline] = useState<string | undefined>(undefined);
 
+    const card = useRef<HTMLDivElement>(null);
+
     // Escape closes — but only while the operator still owns the decision (canDismiss). A request
     // already on the wire is not cancellable, and the modal must not lie about that.
+    //
+    // Tab is TRAPPED inside the card for the same reason `aria-modal` is set: focus must not walk
+    // out to the app behind the scrim, where activating something could unmount this dialog (and
+    // the pane) while a destructive request is still in flight.
     useEffect(() => {
         const onKey = (event: KeyboardEvent): void => {
-            if (event.key !== "Escape" || event.defaultPrevented) return;
-            if (!canDismiss(state)) return;
-            event.preventDefault();
-            onCancel();
+            if (event.defaultPrevented) return;
+            if (event.key === "Escape") {
+                if (!canDismiss(state)) return;
+                event.preventDefault();
+                onCancel();
+                return;
+            }
+            if (event.key !== "Tab" || !card.current) return;
+            const focusable = [
+                ...card.current.querySelectorAll<HTMLElement>(
+                    'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+                ),
+            ];
+            if (focusable.length === 0) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const active = document.activeElement as HTMLElement | null;
+            const outside = !active || !card.current.contains(active);
+            if (outside) {
+                event.preventDefault();
+                (event.shiftKey ? last : first).focus();
+            } else if (event.shiftKey && active === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && active === last) {
+                event.preventDefault();
+                first.focus();
+            }
         };
         document.addEventListener("keydown", onKey);
         return () => document.removeEventListener("keydown", onKey);
     }, [state, onCancel]);
+
+    // Pull focus in on mount for the dialogs with no text field of their own (delete), so the trap
+    // has something inside the card to cycle and a screen reader lands on the dialog.
+    useEffect(() => {
+        if (card.current && !card.current.contains(document.activeElement)) {
+            card.current.querySelector<HTMLElement>("button:not([disabled])")?.focus();
+        }
+        // Mount only — later focus moves belong to the operator.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const destructive = isDestructive(pending);
     const note = recoveryNote(pending);
@@ -272,7 +305,7 @@ export function FileWriteDialog({
                 if (event.target === event.currentTarget && canDismiss(state)) onCancel();
             }}
         >
-            <div className="mj_UploadConfirm mj_UploadConfirm_queue mj_FileWrite">
+            <div className="mj_UploadConfirm mj_UploadConfirm_queue mj_FileWrite" ref={card}>
                 <header className="mj_UploadConfirm_header">
                     <HeaderIcon pending={pending} />
                     <h2 className="mj_UploadConfirm_title">{titleFor(pending)}</h2>

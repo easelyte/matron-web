@@ -601,6 +601,33 @@ export class FilesApi implements FilesApiLike {
     }
 }
 
+/**
+ * Load a file for the inline EDITOR, decoding strictly.
+ *
+ * `textContent` decodes non-fatally (a preview should render something for a stray bad byte), but
+ * an editor must not: saving a non-fatally-decoded string writes U+FFFD back over the original
+ * bytes and corrupts the file. A fatal decode is also the only way to tell "these bytes are not
+ * UTF-8" from "this valid file legitimately CONTAINS U+FFFD" — a content sniff cannot, and would
+ * refuse to edit a perfectly good file.
+ *
+ * Returns a discriminated result rather than throwing for the not-text case, so the caller can
+ * render a specific refusal instead of the uniform transport-error copy.
+ */
+export async function readEditableText(
+    api: Pick<FilesApiLike, "fileBytes">,
+    path: string,
+    signal?: AbortSignal,
+): Promise<EditableText> {
+    const bytes = await api.fileBytes(path, { signal });
+    try {
+        return { ok: true, text: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
+    } catch {
+        return { ok: false };
+    }
+}
+
+export type EditableText = { ok: true; text: string } | { ok: false };
+
 // Uniform, reason-agnostic operator-facing copy. The server deliberately does not leak WHY a path
 // was denied (sensitive vs outside-scope both map to 403), so the client mustn't either.
 export function messageForFileStatus(status: number, code?: string): string {

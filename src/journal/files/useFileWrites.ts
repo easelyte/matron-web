@@ -23,7 +23,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import { JournalApiError } from "../api";
 import type { FilesApiLike } from "./filesApi";
-import { messageForFileStatus, sanitizeFileName } from "./filesApi";
+import { messageForFileStatus, readEditableText, sanitizeFileName } from "./filesApi";
 import { joinPath } from "./format";
 import type { WriteInput } from "./FileWriteDialog";
 import { advanceUpload, uploadHead, writeReducer, type PendingWrite, type WriteState } from "./writeActions";
@@ -90,7 +90,17 @@ async function perform(
             // to .matron-trash/, so even the residual case stays recoverable.
             const content = input.content ?? "";
             if (input.baseline !== undefined) {
-                const current = await api.textContent(pending.path);
+                // Same STRICT read the editor opened with — comparing non-fatally decoded strings
+                // could let two different byte sequences look identical and defeat the guard.
+                const reread = await readEditableText(api, pending.path);
+                if (!reread.ok) {
+                    throw new JournalApiError(
+                        "This file is no longer valid UTF-8 text on the server, so it can't be saved from here.",
+                        0,
+                        "not-text",
+                    );
+                }
+                const current = reread.text;
                 if (current === content && current !== input.baseline) {
                     // The file already IS what we were about to write: an earlier attempt committed
                     // and only its response was lost. Report the truth (done) rather than a bogus
@@ -181,7 +191,14 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
             if (!current || current.phase !== "confirming") return;
             if (inFlight.current) return; // synchronous double-submit guard
             if (!api) {
-                dispatch({ type: "failed", message: messageForFileStatus(401) });
+                // `failed` is only meaningful from `mutating`, so step through it — otherwise the
+                // reducer drops the event and the dialog sits there with no explanation.
+                dispatch({ type: "submit" });
+                dispatch({
+                    type: "failed",
+                    message: messageForFileStatus(401),
+                    idempotencyKey: current.idempotencyKey,
+                });
                 return;
             }
             inFlight.current = true;
@@ -211,7 +228,12 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
                         onWritten();
                         return;
                     }
-                    dispatch({ type: "failed", message: describeFailure(error) });
+                    dispatch({
+                        type: "failed",
+                        message: describeFailure(error),
+                        // Uncertain → keep the key so the retry replays. Definite → mint a new one.
+                        idempotencyKey: outcomeIsUnknown(error) ? current.idempotencyKey : newKey(),
+                    });
                 } finally {
                     inFlight.current = false;
                 }
