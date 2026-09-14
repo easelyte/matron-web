@@ -9,7 +9,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { buildUsageMeters, UsageCluster } from "../../../src/journal/components";
-import { worstLimit } from "../../../src/journal/status";
+import { mergeSessionStatus, worstLimit } from "../../../src/journal/status";
 import { type SessionStatus } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
@@ -217,7 +217,8 @@ describe("buildUsageMeters host vitals (status.vitals source + #529 live overrid
     it("renders EXACTLY ONE cpu and one ram meter when a bridge also injects them into limits[]", () => {
         // The reverted bridge behaviour (and any client that meets an un-updated bridge
         // mid-deploy) puts synthetic host_cpu/host_ram entries in limits[]. Those must not
-        // double-render alongside the vitals-synthesized pair — vitals is authoritative.
+        // double-render alongside the vitals-derived pair. Here vitals carries the newer
+        // stamp (1000 vs 5), so freshness resolves to it.
         const meters = buildUsageMeters({ vitals }, [
             { id: "host_cpu", label: "Host CPU", percent: 99, sampled_at_ms: 5 },
             { id: "host_ram", label: "Host RAM", percent: 85, sampled_at_ms: 5 },
@@ -231,6 +232,38 @@ describe("buildUsageMeters host vitals (status.vitals source + #529 live overrid
         expect(byId(meters, "host_ram").percent).toBe(20);
         // The real account quota is not displaced.
         expect(byId(meters, "session_5h").percent).toBe(41);
+    });
+
+    it("lets a NEWER limits[] host entry win over a retained stale vitals (bridge rollback)", () => {
+        // Composed path, which neither half's tests covered on their own: mergeSessionStatus
+        // carries `vitals` across an update that omits it, so after a rollback to a bridge that
+        // sends host meters in limits[] again, the retained object is still present — forever.
+        // Resolving on presence would let that stale vitals mask every newer legacy reading and
+        // pin the header to a frozen number. Freshness must hand it back to limits[].
+        const afterRollback = mergeSessionStatus(
+            { vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1_000 } },
+            { limits: [{ id: "host_cpu", label: "Host CPU", percent: 66, sampled_at_ms: 9_000 }] },
+        );
+
+        expect(afterRollback.vitals).toEqual({ cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1_000 });
+
+        const meters = buildUsageMeters(afterRollback, afterRollback.limits);
+
+        expect(meters.filter((meter) => meter.id === "host_cpu")).toHaveLength(1);
+        expect(byId(meters, "host_cpu")).toMatchObject({ percent: 66, sampled_at_ms: 9_000 });
+        // The ram half has no newer legacy entry, so it still comes from the retained vitals.
+        expect(byId(meters, "host_ram")).toMatchObject({ percent: 20, sampled_at_ms: 1_000 });
+    });
+
+    it("prefers a legacy limits[] entry that is stamped when vitals carries no stamp at all", () => {
+        // An unstamped candidate has no freshness to compare, so it must not outrank a real
+        // sample just by being the "newer" contract.
+        const meters = buildUsageMeters(
+            { vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: undefined as unknown as number } },
+            [{ id: "host_cpu", label: "Host CPU", percent: 66, sampled_at_ms: 9_000 }],
+        );
+
+        expect(byId(meters, "host_cpu")).toMatchObject({ percent: 66, sampled_at_ms: 9_000 });
     });
 
     it("keeps limits[] host entries when the bridge sends no vitals (pre-#156 fallback)", () => {

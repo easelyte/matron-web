@@ -2429,6 +2429,33 @@ function useMinuteClock(now?: number): number {
     return now ?? clockNow;
 }
 
+// Pick the newest of several readings for the same meter. An unstamped candidate (a legacy
+// limits[] entry from a bridge that predates `sampled_at_ms`) has no freshness to compare, so it
+// ranks below any stamped one but still wins when it is all we have. Ties go to the later
+// candidate, which keeps the callers' source order as the tiebreak: legacy < status.vitals < the
+// live push, i.e. the fastest-cadence source wins a same-millisecond stamp.
+function freshestSample<T extends { sampled_at_ms?: number }>(candidates: T[]): T | undefined {
+    let best: T | undefined;
+    let bestStamp: number | null = null;
+    for (const candidate of candidates) {
+        const stamp =
+            typeof candidate.sampled_at_ms === "number" && Number.isFinite(candidate.sampled_at_ms)
+                ? candidate.sampled_at_ms
+                : null;
+        if (best === undefined) {
+            best = candidate;
+            bestStamp = stamp;
+            continue;
+        }
+        if (stamp === null) continue;
+        if (bestStamp === null || stamp >= bestStamp) {
+            best = candidate;
+            bestStamp = stamp;
+        }
+    }
+    return best;
+}
+
 // The usage meter leads with a synthetic "ctx" bar (context-window %), matching
 // the v3/v4 mock where ctx is the first, emphasised meter; the rate limits follow.
 export function buildUsageMeters(
@@ -2448,52 +2475,55 @@ export function buildUsageMeters(
             limit: status.context.window,
         });
     }
-    // Account subscription quotas. Host CPU/RAM are NOT read from here: a bridge that
-    // injects synthetic host_cpu/host_ram limit entries (reverted bridge behaviour, but a
-    // client can still meet one mid-deploy) would double-render CPU and RAM alongside the
-    // vitals-synthesized pair below. Drop those legacy entries whenever `status.vitals` is
-    // present — vitals is the authoritative source. With no vitals (a pre-#156 bridge) they
-    // are kept verbatim, so the meters still render rather than vanishing.
+    // Account subscription quotas only. Legacy host_cpu/host_ram entries (a bridge still
+    // injecting synthetic host meters into limits[]) are held back here rather than pushed
+    // through: they are folded into the host-meter resolution below so they compete on
+    // FRESHNESS instead of double-rendering next to the vitals-derived pair.
+    const legacyHostMeters = new Map<string, NonNullable<SessionStatus["limits"]>[number]>();
     if (limits?.length) {
-        const hasVitals = Boolean(status?.vitals);
-        meters.push(...limits.filter((limit) => !(hasVitals && (limit.id === "host_cpu" || limit.id === "host_ram"))));
-    }
-    // Host CPU/RAM ride a TOP-LEVEL `status.vitals` object on the status frame (upstream #156
-    // contract, shared with matron-apple). Synthesize them into the meter row here, carrying
-    // `sampled_at_ms` so the shared staleness muting expires an idle conversation's replayed
-    // reading. Absent `status.vitals` → no host meters, no crash (graceful degradation).
-    // Each half is narrowed individually (the bridge sends cpu_pct: null until its sampler
-    // warms), so a partial vitals object still renders what it can.
-    if (status?.vitals) {
-        const { cpu_pct, ram_pct, sampled_at_ms } = status.vitals;
-        if (typeof cpu_pct === "number" && Number.isFinite(cpu_pct)) {
-            meters.push({ id: "host_cpu", label: "host CPU", percent: cpu_pct, sampled_at_ms });
-        }
-        if (typeof ram_pct === "number" && Number.isFinite(ram_pct)) {
-            meters.push({ id: "host_ram", label: "host RAM", percent: ram_pct, sampled_at_ms });
+        for (const limit of limits) {
+            if (limit.id === "host_cpu" || limit.id === "host_ram") legacyHostMeters.set(limit.id, limit);
+            else meters.push(limit);
         }
     }
-    // Host-global vitals override (#529, fork-side): the host-scoped ephemeral push arrives on
-    // a ~5s cadence, far fresher than the turn-end status frame, so when it is the newer sample
-    // it is the authoritative live figure for host_cpu / host_ram across EVERY conversation.
-    // Precedence is FRESHNESS, not presence: if the push stalls, or the client reconnects to a
-    // server that no longer sends it, the cached sample is retained (client.ts never clears it)
-    // and must not overwrite a newer status.vitals reading. Each half is also checked for a
-    // finite value — the bridge OMITS `cpu` from the frame until its sampler warms, and an
-    // undefined percent would blank a bar that status.vitals could fill. The overridden
-    // sampled_at_ms drives isSampleStale, so a healthy push keeps the bars un-dimmed; if the
-    // push stops, the stamp ages out and the dim fires.
-    const merged = hostVitals
-        ? meters.map((meter) => {
-              if (meter.id !== "host_cpu" && meter.id !== "host_ram") return meter;
-              // A meter with no stamp (legacy limits[] entry from a pre-#156 bridge) has no
-              // freshness to compare, so the live push wins.
-              if (meter.sampled_at_ms != null && hostVitals.sampled_at_ms < meter.sampled_at_ms) return meter;
-              const percent = meter.id === "host_cpu" ? hostVitals.cpu : hostVitals.ram;
-              if (typeof percent !== "number" || !Number.isFinite(percent)) return meter;
-              return { ...meter, percent, sampled_at_ms: hostVitals.sampled_at_ms };
-          })
-        : meters;
+    // Host CPU/RAM reach us from up to three places, and the right reading is the FRESHEST one,
+    // never "whichever is present":
+    //   1. legacy limits[] entries      — a pre-#156 or synthetic-injecting bridge
+    //   2. status.vitals (top level)    — the #156 contract, shared with upstream + matron-apple
+    //   3. the host_vitals push (#529)  — fork-side, ~5s cadence, host-scoped across all convos
+    // Presence is the wrong test for any of them, because none is ever cleared once seen:
+    // mergeSessionStatus carries `vitals` across updates that omit it, and client.ts never drops
+    // a cached push. So a bridge rollback that resumes sending newer limits[] host entries would,
+    // under a presence test, be permanently masked by the retained older `vitals` — the header
+    // would show stale telemetry on exactly the compatibility path this is meant to preserve.
+    // Ranking every candidate by `sampled_at_ms` collapses that whole class: the newest sample
+    // wins regardless of which source produced it, in either deploy direction.
+    for (const id of ["host_cpu", "host_ram"] as const) {
+        const candidates: NonNullable<SessionStatus["limits"]> = [];
+        const legacy = legacyHostMeters.get(id);
+        // A legacy entry is a full meter already (label, resets, the lot) — take it verbatim so
+        // nothing a pre-#156 bridge sent is dropped in translation.
+        if (legacy) candidates.push(legacy);
+        const label = id === "host_cpu" ? "host CPU" : "host RAM";
+        // Each half is narrowed on its own: the bridge sends `cpu_pct: null` until its sampler
+        // has two ticks, and omits `cpu` from the push for the same reason, so a partial object
+        // must still contribute the half it does have.
+        const vitalsPercent = id === "host_cpu" ? status?.vitals?.cpu_pct : status?.vitals?.ram_pct;
+        if (typeof vitalsPercent === "number" && Number.isFinite(vitalsPercent)) {
+            candidates.push({ id, label, percent: vitalsPercent, sampled_at_ms: status?.vitals?.sampled_at_ms });
+        }
+        // The #529 push REFRESHES a host meter; it never creates one. A status source (vitals,
+        // or a legacy limits[] entry) is what establishes that this conversation shows host bars
+        // at all — the push is host-scoped, carries no convo_id, and is deliberately not enough
+        // on its own. So it only joins the race once another candidate has opened it.
+        const pushPercent = id === "host_cpu" ? hostVitals?.cpu : hostVitals?.ram;
+        if (candidates.length > 0 && typeof pushPercent === "number" && Number.isFinite(pushPercent)) {
+            candidates.push({ id, label, percent: pushPercent, sampled_at_ms: hostVitals?.sampled_at_ms });
+        }
+        const winner = freshestSample(candidates);
+        if (winner) meters.push(winner);
+    }
+    const merged = meters;
     // Normalise to the design's column-first grid order (ctx/5h, fbl/model/wk, cpu/ram);
     // stable so any extra limits keep their relative order after the known ones.
     return merged
