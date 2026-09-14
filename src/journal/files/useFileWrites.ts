@@ -224,11 +224,24 @@ function describeFailure(error: unknown): string {
 /**
  * What the pane currently knows about the directory, so a SUSPENDED upload queue can be resumed
  * only once the reconciling re-read has actually answered for the same place it was queued in.
- * `ready` is the pane's own `writable` — derived from the CURRENT listing, false while a reload is
- * in flight and false if the refreshed listing revokes the capability.
+ *
+ * `settled` and `writable` are deliberately SEPARATE. `writable` alone conflates "the re-read has
+ * not answered yet" with "the answer was no", and a parked queue has to treat those oppositely:
+ * the first is a wait, the second is terminal. Collapsing them left the queue parked on a
+ * read-only answer, where a later swing back to writable (another listing of the same directory —
+ * toggling hidden files, a retry) would resurrect a selection the operator had been told was gone.
+ *
+ * `writable` is the SERVER's answer for this exact directory (`listingIsWritable(ctx, realDir)` in
+ * the journal's files-write-http.js, returned by /files/list). It is an affordance gate, not the
+ * security boundary: the write endpoints re-check `fileEnableWrites`/`fileWriteRoots` and run the
+ * path guard on every request, so a stale `true` here costs a rejected request, not an
+ * unauthorized write.
  */
 export interface DirectoryReadiness {
-    ready: boolean;
+    /** The listing has ANSWERED (loaded or errored) — i.e. no re-read is in flight. */
+    settled: boolean;
+    /** The server says this directory accepts writes right now. */
+    writable: boolean;
     path: string;
 }
 
@@ -349,22 +362,24 @@ export function useFileWrites(
     // the read-only view the server actually authorized, which is the safe way round. Navigating
     // elsewhere drops it: that is the operator moving on, and resuming into another directory
     // would aim their selection somewhere they never chose.
-    const { ready: dirReady, path: dirPath } = directory;
+    const { settled: dirSettled, writable: dirWritable, path: dirPath } = directory;
     useEffect(() => {
         const next = held.current;
         if (next === undefined) return;
-        // Navigation is checked FIRST and without regard to readiness. A destination that never
-        // becomes ready — a read-only folder, one that fails to load — would otherwise leave the
-        // selection parked, and coming back to the original directory later would resurrect a
-        // dialog the operator had every reason to believe was gone.
+        // Navigation is checked FIRST and unconditionally. A destination that never becomes
+        // writable would otherwise leave the selection parked, and coming back to the original
+        // directory later would resurrect a dialog the operator had reason to believe was gone.
         if (next.kind !== "upload" || next.dir !== dirPath) {
             held.current = undefined;
             return;
         }
-        if (!dirReady) return; // still behind the barrier; wait for the listing that authorizes it
+        if (!dirSettled) return; // the re-read is still out; the barrier stays up and the queue waits
+        // It answered. Either it authorizes the rest of the selection or the selection is over —
+        // there is no third state in which the queue lingers, waiting to be re-entered later.
         held.current = undefined;
+        if (!dirWritable) return;
         dispatch({ type: "open", pending: next, idempotencyKey: newKey() });
-    }, [dirReady, dirPath]);
+    }, [dirSettled, dirWritable, dirPath]);
 
     const dismissNotice = useCallback(() => {
         setNotice(undefined);
@@ -375,7 +390,7 @@ export function useFileWrites(
             const current = stateRef.current;
             if (!current || current.phase !== "confirming") return;
             if (inFlight.current) return; // synchronous double-submit guard
-            if (!dirReady) {
+            if (!dirWritable) {
                 // The capability is re-checked HERE, at the moment of acting, not only where the
                 // affordance was rendered. The dialog outlives the listing that opened it — a
                 // re-read can be in flight, have failed, or have come back without write access
@@ -478,7 +493,7 @@ export function useFileWrites(
                 }
             })();
         },
-        [api, dirReady, onWritten, reconcile],
+        [api, dirWritable, onWritten, reconcile],
     );
 
     return { state, begin, cancel, submit, notice, dismissNotice };

@@ -1255,7 +1255,7 @@ describe("the write capability is re-checked where the write is SENT (Codex roun
     let writes: ReturnType<typeof useFileWrites> | undefined;
 
     function Harness({ api, ready }: { api: FilesApiLike; ready: boolean }): null {
-        writes = useFileWrites(api, () => {}, { ready, path: DIR });
+        writes = useFileWrites(api, () => {}, { settled: true, writable: ready, path: DIR });
         return null;
     }
 
@@ -1323,7 +1323,7 @@ describe("navigating away drops a parked upload queue (Codex round 5, F3)", () =
     let writes: ReturnType<typeof useFileWrites> | undefined;
 
     function Harness({ api, ready, path }: { api: FilesApiLike; ready: boolean; path: string }): null {
-        writes = useFileWrites(api, () => {}, { ready, path });
+        writes = useFileWrites(api, () => {}, { settled: true, writable: ready, path });
         return null;
     }
 
@@ -1364,5 +1364,87 @@ describe("navigating away drops a parked upload queue (Codex round 5, F3)", () =
         await show(true, DIR);
 
         expect(writes?.state).toBeUndefined(); // the abandoned selection does not come back
+    });
+});
+
+describe("a read-only answer ENDS a parked queue (Codex round 6, F1)", () => {
+    let writes: ReturnType<typeof useFileWrites> | undefined;
+
+    function Harness({ api, settled, writable }: { api: FilesApiLike; settled: boolean; writable: boolean }): null {
+        writes = useFileWrites(api, () => {}, { settled, writable, path: DIR });
+        return null;
+    }
+
+    it("does not resurrect it when the same directory becomes writable again later", async () => {
+        // The read-only branch used to just return, leaving the queue parked. Any later listing of
+        // the same directory that came back writable — a retry, toggling hidden files — walked
+        // straight into the release and re-offered a selection the operator was told was dropped.
+        const api = mockApi({ upload: jest.fn().mockResolvedValue({ path: `${DIR}/a`, bytes: 1, dryRun: false }) });
+        container = document.createElement("div");
+        document.body.append(container);
+        await act(async () => {
+            root = createRoot(container as HTMLDivElement);
+        });
+        const show = async (settled: boolean, writable: boolean): Promise<void> => {
+            await act(async () => {
+                root?.render(<Harness api={api} settled={settled} writable={writable} />);
+            });
+            await flush();
+        };
+        await show(true, true);
+
+        await act(async () => {
+            writes?.begin({
+                kind: "upload",
+                dir: DIR,
+                files: [new File(["a"], "one.png"), new File(["b"], "two.png")],
+                index: 0,
+            });
+        });
+        await act(async () => {
+            writes?.submit({});
+        });
+        await flush();
+        expect(writes?.state).toBeUndefined(); // two.png is parked behind the barrier
+
+        await show(false, false); // the re-read goes out
+        await show(true, false); // ...and answers: read-only. The queue is over.
+        expect(writes?.state).toBeUndefined();
+
+        await show(true, true); // capability comes back later
+        expect(writes?.state).toBeUndefined(); // ...and the abandoned selection stays abandoned
+    });
+
+    it("still releases the queue when the re-read answers writable", async () => {
+        const api = mockApi({ upload: jest.fn().mockResolvedValue({ path: `${DIR}/a`, bytes: 1, dryRun: false }) });
+        container = document.createElement("div");
+        document.body.append(container);
+        await act(async () => {
+            root = createRoot(container as HTMLDivElement);
+        });
+        const show = async (settled: boolean, writable: boolean): Promise<void> => {
+            await act(async () => {
+                root?.render(<Harness api={api} settled={settled} writable={writable} />);
+            });
+            await flush();
+        };
+        await show(true, true);
+        await act(async () => {
+            writes?.begin({
+                kind: "upload",
+                dir: DIR,
+                files: [new File(["a"], "one.png"), new File(["b"], "two.png")],
+                index: 0,
+            });
+        });
+        await act(async () => {
+            writes?.submit({});
+        });
+        await flush();
+
+        await show(false, false);
+        expect(writes?.state).toBeUndefined(); // still in flight — nothing offered
+        await show(true, true);
+        expect(writes?.state?.phase).toBe("confirming"); // ...and released once it answers
     });
 });

@@ -200,7 +200,14 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
     // false while the reconciling re-read is in flight, and stays false if it fails or comes back
     // without the capability, so the queue is released by exactly the condition that restores every
     // other write affordance.
-    const directory = useMemo(() => ({ ready: writable, path: listingPath }), [writable, listingPath]);
+    // `settled` is "the listing answered", NOT "the listing said yes" — a parked upload queue waits
+    // on the first and is dropped by the second, and collapsing them lets a read-only answer leave
+    // the queue re-enterable. A reload puts the resource back into `loading`, which is exactly the
+    // window the barrier exists to cover.
+    const directory = useMemo(
+        () => ({ settled: listing.status !== "loading", writable, path: listingPath }),
+        [listing.status, writable, listingPath],
+    );
     const writes = useFileWrites(api, onWritten, directory);
     const { begin } = writes;
     const fileInput = useRef<HTMLInputElement>(null);
