@@ -2185,9 +2185,16 @@ export class MatronJournalClient {
                     await this.refreshSelectedConversation(event.convo_id);
                 }
             }
-            if (event.type === "convo_meta" && this.uploadConvos.size > 0) {
+            // Same argument for convo_meta, and it is not upload-specific: the frame mutates
+            // title, the parent link, agent_kind and (loop #554) the pinned summary, so a peer
+            // tab that won the cursor race has already written all of them to the shared store
+            // while our mirror still renders the old values — the pinned digest most visibly,
+            // since it sits above the live timeline and only this frame refreshes it. Refresh
+            // unconditionally against the durable row (P48); the upload abort stays gated on
+            // there being uploads to abort.
+            if (event.type === "convo_meta") {
                 await this.refreshConversations();
-                this.abortUploadsForChildConvos();
+                if (this.uploadConvos.size > 0) this.abortUploadsForChildConvos();
             }
             return;
         }

@@ -68,6 +68,15 @@ export interface Conversation {
     last_ts?: number;
     read_up_to_seq: number;
     agent_kind?: string | null; // which backend runs this conversation ('claude' | 'codex'); null/undefined = unknown, no marker
+    /** Rolling bullet digest maintained by the owning bridge (loop #554), stored as the raw
+        "• a\n• b" text the bridge published. Absent against a server that does not send the
+        field; "" when the server knows the field but the bridge never wrote a digest. Parsed
+        for display by `conversationSummary()` in ./summary. */
+    summary?: string;
+    /** Epoch-ms of the last summary CHANGE, as observed by the journal server. 0/undefined =
+        never written or an older server — the surface then shows no age label rather than a
+        1970 date. Server-observed, so treat it as a lower bound on the digest's real age. */
+    summary_updated_at?: number;
 }
 
 export interface SnapshotResponse {

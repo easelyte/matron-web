@@ -90,6 +90,8 @@ function emptyConversation(id: string, timestamp: number): Conversation {
         last_ts: timestamp,
         read_up_to_seq: 0,
         agent_kind: null,
+        summary: "",
+        summary_updated_at: 0,
     };
 }
 
@@ -271,14 +273,16 @@ export class JournalDatabase {
         for (const message of pendingMessages) {
             if (!validConversationIds.has(message.convoId)) outbox.delete(message.localId);
         }
-        for (const summary of snapshot.conversations) {
-            let incomingParent = coerceParentId(summary.parent_convo_id);
-            if (incomingParent === summary.id) incomingParent = null;
+        // `row`, not `summary`: rows themselves now carry a `summary` field (the pinned
+        // digest, loop #554), and `summary.summary` would read as a typo.
+        for (const row of snapshot.conversations) {
+            let incomingParent = coerceParentId(row.parent_convo_id);
+            if (incomingParent === row.id) incomingParent = null;
             conversations.put({
-                ...summary,
-                parent_convo_id: existingParents.get(summary.id) ?? incomingParent ?? null,
-                last_ts: summary.last_ts ?? summary.created_at,
-                read_up_to_seq: summary.read_up_to_seq ?? (summary.unread_count === 0 ? summary.last_seq : 0),
+                ...row,
+                parent_convo_id: existingParents.get(row.id) ?? incomingParent ?? null,
+                last_ts: row.last_ts ?? row.created_at,
+                read_up_to_seq: row.read_up_to_seq ?? (row.unread_count === 0 ? row.last_seq : 0),
             } satisfies Conversation);
         }
         transaction.objectStore("meta").put(snapshot.seq, CURSOR_KEY);
@@ -371,6 +375,27 @@ export class JournalDatabase {
             // the recorded kind untouched.
             if (typeof event.payload.agent_kind === "string" && event.payload.agent_kind) {
                 conversation.agent_kind = event.payload.agent_kind;
+            }
+            // The pinned digest rides convo_meta so the summary surface refreshes live
+            // instead of only at /snapshot (loop #554). The always-both-keys guarantee holds
+            // only for bridge-originated convo_upsert frames — server-authored convo_meta
+            // variants (a membership change, a spawn room) carry just what changed — so the
+            // presence guards are load-bearing, not defensive padding.
+            if (typeof event.payload.summary === "string") {
+                // Assign on ANY string including "", so a cleared digest clears the surface.
+                const changed = event.payload.summary !== conversation.summary;
+                conversation.summary = event.payload.summary;
+                const updatedAt = event.payload.summary_updated_at;
+                if (typeof updatedAt === "number" && Number.isFinite(updatedAt)) {
+                    conversation.summary_updated_at = updatedAt;
+                } else if (changed) {
+                    // New text arriving with no usable time (an intermediate server that
+                    // learned `summary` but not `summary_updated_at`): 0 = unknown, which
+                    // renders no age label. Keeping the previous stamp would date fresh
+                    // content by the digest it replaced — exactly the lie this field exists
+                    // to prevent. An unchanged summary keeps the stamp it already has.
+                    conversation.summary_updated_at = 0;
+                }
             }
         } else if (event.type === "session_status" && typeof event.payload.state === "string") {
             conversation.session_state = event.payload.state;
