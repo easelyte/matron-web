@@ -31,6 +31,18 @@ export const FETCH_TIMEOUT_MS = 30_000;
 export const WRITE_TIMEOUT_MS = 120_000;
 
 /**
+ * How long a pinned replay (WriteState.replay) stays safe to send.
+ *
+ * The journal keeps a SETTLED idempotency record for 120s (`IDEM_TTL_MS`, files-write-http.js).
+ * Once it ages out the same key is a brand-new mutation, so "trying again replays it" stops being
+ * true — and a retry would make the second copy the pin exists to prevent. The client cannot see
+ * WHEN the server settled (we learn of the failure at-or-after that moment), so measuring from
+ * here is optimistic; the window is halved to absorb the skew. When it lapses the write stops
+ * being retryable and reconciles against the server instead.
+ */
+export const REPLAY_WINDOW_MS = 60_000;
+
+/**
  * Largest text body (in CHARACTERS — the server enforces the authoritative byte cap) the inline
  * editor will open or send back through `POST /files/write`. The edit surface is for config- and
  * notes-sized files, not blobs; beyond this the pane keeps read-only preview, so the refusal is

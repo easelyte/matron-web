@@ -32,24 +32,19 @@ import {
     confirmLabelFor,
     destinationFor,
     isDestructive,
+    isUnresolved,
     nameIsSubmittable,
     recoveryNote,
     titleFor,
     uploadHead,
     type PendingWrite,
+    type WriteInput,
     type WriteState,
 } from "./writeActions";
 
-export interface WriteInput {
-    name?: string;
-    content?: string;
-    /**
-     * For an edit: the bytes the editor was seeded with. The hook re-reads the file immediately
-     * before saving and refuses if it no longer matches, so a draft that went stale while the
-     * dialog sat open cannot silently replace newer content.
-     */
-    baseline?: string;
-}
+// WriteInput lives in the pure machine now (the machine has to be able to HOLD one — see
+// WriteState.replay). Re-exported here so the dialog stays its documented home for callers.
+export type { WriteInput };
 
 function HeaderIcon({ pending }: { pending: PendingWrite }): React.ReactElement {
     const className = "mj_UploadConfirm_uploadIcon";
@@ -219,6 +214,15 @@ export function FileWriteDialog({
     const [baseline, setBaseline] = useState<string | undefined>(undefined);
 
     const card = useRef<HTMLDivElement>(null);
+    const scrim = useRef<HTMLDivElement>(null);
+
+    // An attempt whose outcome is unknown pins its payload (writeActions.WriteState.replay): the
+    // retry must be a byte-for-byte replay, so the fields show what WILL be sent and refuse edits.
+    // Cancel is the way out, and it re-reads the directory first.
+    const bound = state.replay;
+    const locked = busy || bound !== undefined;
+    const nameValue = bound?.name ?? name;
+    const draftValue = bound !== undefined ? (bound.content ?? draft) : draft;
 
     // Escape closes — but only while the operator still owns the decision (canDismiss). A request
     // already on the wire is not cancellable, and the modal must not lie about that.
@@ -241,7 +245,16 @@ export function FileWriteDialog({
                     'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
                 ),
             ];
-            if (focusable.length === 0) return;
+            if (focusable.length === 0) {
+                // Mid-request EVERY control is disabled, so there is nothing inside the card to
+                // cycle. Returning here would hand Tab back to the browser and let focus walk out
+                // to the app behind the scrim — where activating a room closes the files view and
+                // unmounts this dialog while the request is still on the wire, discarding its
+                // outcome, the refresh and the trash location. Hold focus on the card instead.
+                event.preventDefault();
+                card.current.focus();
+                return;
+            }
             const first = focusable[0];
             const last = focusable[focusable.length - 1];
             const active = document.activeElement as HTMLElement | null;
@@ -265,25 +278,57 @@ export function FileWriteDialog({
     // has something inside the card to cycle and a screen reader lands on the dialog.
     useEffect(() => {
         if (card.current && !card.current.contains(document.activeElement)) {
-            card.current.querySelector<HTMLElement>("button:not([disabled])")?.focus();
+            (card.current.querySelector<HTMLElement>("button:not([disabled])") ?? card.current).focus();
         }
         // Mount only — later focus moves belong to the operator.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Disabling the control that HAS focus blurs it to <body>, which puts focus outside the modal
+    // for the whole of a slow request. Catch it on the transition into `mutating` and park focus on
+    // the card, so the trap above has an anchor and a screen reader is not dumped back to the app.
+    useEffect(() => {
+        if (!busy || !card.current) return;
+        if (!card.current.contains(document.activeElement)) card.current.focus();
+    }, [busy]);
+
+    // `aria-modal` is a CLAIM; this is what makes it true. The pane marks its own sections inert,
+    // but the pane is not the whole app — the conversation sidebar is its SIBLING, and reaching a
+    // room from there closes the files view out from under an in-flight write. Walk the ancestor
+    // chain and inert everything that is not on the path to this dialog. Anything already inert
+    // (the app's own upload modal does the same thing) is left alone, and therefore left set.
+    useEffect(() => {
+        const node = scrim.current;
+        if (!node) return;
+        const marked: HTMLElement[] = [];
+        for (let step: HTMLElement | null = node; step && step !== document.body; step = step.parentElement) {
+            for (const sibling of step.parentElement?.children ?? []) {
+                if (sibling === step || !(sibling instanceof HTMLElement)) continue;
+                if (sibling.hasAttribute("inert")) continue;
+                sibling.setAttribute("inert", "");
+                marked.push(sibling);
+            }
+        }
+        return () => {
+            for (const element of marked) element.removeAttribute("inert");
+        };
+        // Mount/unmount only: the dialog is keyed by its target, so a new target remounts it.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const destructive = isDestructive(pending);
     const note = recoveryNote(pending);
     const preflight =
-        head && head.size === 0 ? "That file is empty." : head && !name.trim() ? "Enter a file name." : undefined;
+        head && head.size === 0 ? "That file is empty." : head && !nameValue.trim() ? "Enter a file name." : undefined;
     const canConfirm = ((): boolean => {
         if (busy) return false;
         switch (pending.kind) {
             case "mkdir":
             case "rename":
             case "upload":
-                return !preflight && nameIsSubmittable(pending, name);
+                return !preflight && nameIsSubmittable(pending, nameValue);
             case "edit":
-                return draft !== undefined && draft.length <= INLINE_EDIT_MAX;
+                return draftValue !== undefined && draftValue.length <= INLINE_EDIT_MAX;
             case "delete":
                 return true;
         }
@@ -291,11 +336,15 @@ export function FileWriteDialog({
 
     const submit = (): void => {
         if (!canConfirm) return;
+        // A bound retry re-sends the pinned payload verbatim. The hook enforces this too; sending
+        // it from here as well keeps what the dialog SHOWS and what goes on the wire the same thing.
+        if (bound) return onSubmit(bound);
         onSubmit(pending.kind === "edit" ? { content: draft, baseline } : { name });
     };
 
     return (
         <div
+            ref={scrim}
             className="mj_UploadConfirm_scrim"
             role="dialog"
             aria-modal="true"
@@ -305,7 +354,9 @@ export function FileWriteDialog({
                 if (event.target === event.currentTarget && canDismiss(state)) onCancel();
             }}
         >
-            <div className="mj_UploadConfirm mj_UploadConfirm_queue mj_FileWrite" ref={card}>
+            {/* tabIndex -1 so the card itself can hold focus when every control inside it is
+                disabled — without it there is nothing in the modal to focus mid-request. */}
+            <div className="mj_UploadConfirm mj_UploadConfirm_queue mj_FileWrite" ref={card} tabIndex={-1}>
                 <header className="mj_UploadConfirm_header">
                     <HeaderIcon pending={pending} />
                     <h2 className="mj_UploadConfirm_title">{titleFor(pending)}</h2>
@@ -330,32 +381,32 @@ export function FileWriteDialog({
                     {pending.kind === "mkdir" ? (
                         <NameField
                             pending={pending}
-                            value={name}
+                            value={nameValue}
                             onChange={setName}
-                            disabled={busy}
+                            disabled={locked}
                             label="Folder name"
                         />
                     ) : null}
                     {pending.kind === "rename" ? (
                         <NameField
                             pending={pending}
-                            value={name}
+                            value={nameValue}
                             onChange={setName}
-                            disabled={busy}
+                            disabled={locked}
                             label={pending.isDir ? "Folder name" : "File name"}
                         />
                     ) : null}
                     {pending.kind === "upload" && head ? (
-                        <UploadBody pending={pending} file={head} name={name} onName={setName} disabled={busy} />
+                        <UploadBody pending={pending} file={head} name={nameValue} onName={setName} disabled={locked} />
                     ) : null}
                     {pending.kind === "edit" ? (
                         <EditBody
                             api={api}
                             path={pending.path}
-                            draft={draft}
+                            draft={draftValue}
                             onDraft={setDraft}
                             onLoaded={setBaseline}
-                            disabled={busy}
+                            disabled={locked}
                         />
                     ) : null}
                     {pending.kind === "delete" ? (
@@ -374,6 +425,13 @@ export function FileWriteDialog({
                     {error ? (
                         <p className="mj_UploadConfirm_error" role="alert">
                             {error}
+                        </p>
+                    ) : null}
+                    {isUnresolved(state) ? (
+                        <p className="mj_FileWrite_bound">
+                            It may already have gone through, so trying again re-sends exactly the same request instead
+                            of making a second one. To change anything, cancel and start again — the folder is re-read
+                            first. If a replay stops being safe, this closes and re-reads it for you.
                         </p>
                     ) : null}
                 </div>

@@ -27,6 +27,22 @@ Please see LICENSE files in the repository root for full details.
 import { extensionOf, joinPath } from "./format";
 import { sanitizeFileName } from "./filesApi";
 
+/**
+ * What the operator typed for the pending write. It lives HERE rather than in the dialog because
+ * the machine has to be able to hold onto one: an attempt whose outcome is unknown pins the exact
+ * payload it sent, so the retry is a byte-for-byte replay (see WriteState.replay).
+ */
+export interface WriteInput {
+    name?: string;
+    content?: string;
+    /**
+     * For an edit: the bytes the editor was seeded with. The hook re-reads the file immediately
+     * before saving and refuses if it no longer matches, so a draft that went stale while the
+     * dialog sat open cannot silently replace newer content.
+     */
+    baseline?: string;
+}
+
 /** What the operator asked for. The editable input (new name, text content) lives in the dialog. */
 export type PendingWrite =
     | { kind: "mkdir"; dir: string }
@@ -48,21 +64,72 @@ export interface WriteState {
     idempotencyKey: string;
     /** Surfaced inside the dialog after a failed attempt (uniform messageForFileStatus copy). */
     error?: string;
+    /**
+     * The payload of an attempt whose outcome is UNKNOWN, pinned so the retry replays it exactly.
+     *
+     * Retaining the key alone is not enough. The server fingerprints key + request body, so a
+     * retry that carries the same key with a CHANGED payload is refused with the same reason-
+     * agnostic 409 as a name collision — the client cannot tell the two apart on the wire, reads
+     * it as a definite refusal, and mints a fresh key. The next attempt then executes as a NEW
+     * mutation, leaving the silently-committed original AND the renamed copy. So while the
+     * outcome is unresolved the payload is not the operator's to change: the dialog locks its
+     * fields, and the hook submits THIS, not whatever the fields hold. Cancel is the way out, and
+     * it re-reads the listing so the operator sees what actually landed before deciding again.
+     *
+     * The server side of this was read, not assumed (matron-journal `src/files-write-http.js`):
+     * `reserve(key, fingerprint)` throws `idem-key-conflict` when a key returns with a different
+     * fingerprint, and `denialToStatus` maps that to 409 with a bare `{error:'denied'}` body — no
+     * distinguishing reason, which is exactly why the client cannot classify that 409 and has to
+     * prevent the mismatch instead. That replay window is FINITE — `IDEM_TTL_MS`, 120s
+     * — so the pin carries an expiry (`replayExpiresAt`) and the write stops being retryable
+     * before the key can age out, rather than quietly becoming a second mutation behind a UI that
+     * still promises a replay. What is left after that is a SERVER-side gap, not a client one:
+     * reconciling an unresolved write against what actually happened needs an outcome the server
+     * can still be asked for.
+     */
+    replay?: WriteInput;
+    /**
+     * When the pinned replay stops BEING a replay (see limits.REPLAY_WINDOW_MS). Minted by the
+     * caller, like the key — the reducer reads no clock. Past it the write is no longer retryable
+     * and the hook reconciles against the server instead of sending.
+     */
+    replayExpiresAt?: number;
+    /**
+     * The same deadline on a MONOTONIC clock (`performance.now()`). The wall-clock one above is
+     * what the server's TTL is nominally measured in, but a wall clock can be set BACKWARDS — by
+     * NTP correction, by the operator, by a laptop waking up — and a rollback between the send and
+     * the failure would leave the client inside an apparent window the server had already left in
+     * real elapsed time, quietly turning the next retry into a fresh mutation. Whichever of the two
+     * elapses first ends the replay, so a rollback can only ever make the client MORE conservative.
+     */
+    replayExpiresAtMono?: number;
 }
 
 export type WriteEvent =
     // Keys are minted by the caller, not here — the reducer stays pure (no crypto.randomUUID).
     | { type: "open"; pending: PendingWrite; idempotencyKey: string }
     | { type: "submit" }
-    /** The request succeeded. `next` carries the remaining upload queue head, if any. */
-    | { type: "settled"; next?: PendingWrite; nextKey?: string }
+    /**
+     * The request succeeded. It carries NO successor: the remaining head of an upload queue is
+     * parked by the hook and released only once the post-write re-read has landed and the
+     * directory is still writable. Opening it from here would put a submittable dialog in front of
+     * the operator while the listing that authorizes it is still in flight.
+     */
+    | { type: "settled" }
     /**
      * `idempotencyKey` is the key to use for the NEXT attempt. The caller retains the current one
      * after an UNCERTAIN failure (so the retry replays) and mints a fresh one after a DEFINITE
      * refusal — where nothing happened, and where the operator is invited to change the name, so
      * reusing the key would present the server a different payload under the same key.
      */
-    | { type: "failed"; message: string; idempotencyKey: string }
+    | {
+          type: "failed";
+          message: string;
+          idempotencyKey: string;
+          replay?: WriteInput;
+          replayExpiresAt?: number;
+          replayExpiresAtMono?: number;
+      }
     | { type: "cancel" };
 
 export function writeReducer(state: WriteState | undefined, event: WriteEvent): WriteState | undefined {
@@ -77,9 +144,7 @@ export function writeReducer(state: WriteState | undefined, event: WriteEvent): 
             return { pending: state.pending, phase: "mutating", idempotencyKey: state.idempotencyKey };
         case "settled":
             if (state?.phase !== "mutating") return state;
-            return event.next
-                ? { pending: event.next, phase: "confirming", idempotencyKey: event.nextKey ?? state.idempotencyKey }
-                : undefined;
+            return undefined;
         case "failed":
             if (state?.phase !== "mutating") return state;
             return {
@@ -87,11 +152,34 @@ export function writeReducer(state: WriteState | undefined, event: WriteEvent): 
                 phase: "confirming",
                 idempotencyKey: event.idempotencyKey,
                 error: event.message,
+                // Present only for an UNCERTAIN failure; a definite refusal clears it, because
+                // nothing happened and the operator is being asked to change the name.
+                replay: event.replay,
+                replayExpiresAt: event.replayExpiresAt,
+                replayExpiresAtMono: event.replayExpiresAtMono,
             };
         case "cancel":
             if (state?.phase === "mutating") return state;
             return undefined;
     }
+}
+
+/**
+ * Is this write's outcome unresolved (an attempt may have committed, and we could not confirm it)?
+ * Such a write must not be retried with a changed payload, and dismissing it has to re-read the
+ * listing rather than drop the operator back into a stale view of the directory.
+ */
+export function isUnresolved(state: WriteState | undefined): boolean {
+    return state?.phase === "confirming" && state.replay !== undefined;
+}
+
+/** How to refer to the target in operator-facing copy. */
+export function targetLabel(pending: PendingWrite, input?: WriteInput): string {
+    const typed = input?.name ? sanitizeFileName(input.name) : undefined;
+    if (typed) return typed;
+    if (pending.kind === "upload") return uploadHead(pending)?.name ?? "that upload";
+    if (pending.kind === "mkdir") return "that folder";
+    return pending.name;
 }
 
 /** Escape / ✕ / backdrop may dismiss only while the operator still owns the decision. */

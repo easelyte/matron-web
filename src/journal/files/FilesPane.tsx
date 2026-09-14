@@ -182,11 +182,33 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
     const reload = listing.reload;
     // A write can remove or rename the previewed file, so the selection is dropped on every
     // successful mutation and the listing is re-read from the server (no optimistic row patching).
+    //
+    // This re-read is also the RECONCILIATION BARRIER after an unresolved write (a delete whose
+    // outcome is unknown, or an uncertain write the operator backed out of). It holds because
+    // `writable` above is DERIVED from the current listing rather than cached: reloading clears
+    // `listing.data`, so `writable` goes false and every write affordance — toolbar, row actions,
+    // the preview's Edit — unmounts until a fresh listing lands. No new write can be started
+    // against the stale directory state the operator was just told to go and check. If the re-read
+    // FAILS the affordances stay down and the pane shows its error + Retry, which is the safe way
+    // round. Covered by "no write can be started while the reconciling listing is still in flight".
     const onWritten = useCallback(() => {
         setSelected(undefined);
         reload();
     }, [reload]);
-    const writes = useFileWrites(api, onWritten);
+    // The same barrier, handed to the hook: a suspended upload queue may only be re-offered once a
+    // fresh listing has landed for THIS directory and it is still writable. `writable` is already
+    // false while the reconciling re-read is in flight, and stays false if it fails or comes back
+    // without the capability, so the queue is released by exactly the condition that restores every
+    // other write affordance.
+    // The listing's status goes through UNCOLLAPSED. A parked upload queue treats loading, error
+    // and loaded-but-read-only as three different things (wait, wait-with-a-retry, and over), and
+    // flattening any two of them either strands the queue or throws it away. A reload puts the
+    // resource back into `loading`, which is exactly the window the barrier exists to cover.
+    const directory = useMemo(
+        () => ({ status: listing.status, writable, path: listingPath }),
+        [listing.status, writable, listingPath],
+    );
+    const writes = useFileWrites(api, onWritten, directory);
     const { begin } = writes;
     const fileInput = useRef<HTMLInputElement>(null);
 

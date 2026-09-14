@@ -620,7 +620,11 @@ export async function readEditableText(
 ): Promise<EditableText> {
     const bytes = await api.fileBytes(path, { signal });
     try {
-        return { ok: true, text: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
+        // `ignoreBOM: true` is a misnomer for "do not EAT the BOM": without it TextDecoder strips a
+        // leading U+FEFF, and since this string seeds both the editor and the staleness baseline,
+        // saving would write back three fewer bytes than were read — an ordinary edit silently
+        // dropping a valid byte sequence that downstream Windows/legacy tooling sniffs for.
+        return { ok: true, text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes) };
     } catch {
         return { ok: false };
     }
