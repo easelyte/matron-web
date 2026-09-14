@@ -181,9 +181,13 @@ export interface ToolStreamPayload {
     };
 }
 
-// Host-global vitals reading (#529 3-repo feature). The journal server pushes this on a
-// host-scoped ephemeral frame (NO convo_id) roughly every 5s; one value drives the
-// host_cpu / host_ram usage bars for EVERY conversation. `sampled_at_ms` is the epoch ms of
+// Host-global vitals reading (#529 3-repo feature, fork-side). The journal server pushes this
+// on a host-scoped ephemeral frame (NO convo_id) roughly every 5s; one value refreshes the
+// host_cpu / host_ram usage bars for EVERY conversation. It is an OVERRIDE, not the source:
+// the bars themselves are synthesized from the status frame's top-level `vitals` (see
+// SessionStatus.vitals), which is the contract shared with upstream and matron-apple. Note the
+// field names differ from SessionStatus.vitals (`cpu`/`ram` here, `cpu_pct`/`ram_pct` there) —
+// that is the bridge's wire shape for this frame, not a typo. `sampled_at_ms` is the epoch ms of
 // the reading so the staleness dim (status.ts HOST_VITALS_STALE_MS) still ages it if pushes stop.
 export interface HostVitals {
     cpu: number;
@@ -206,7 +210,7 @@ export interface JournalEphemeralFrame {
     tool_stream?: ToolStreamPayload;
     status?: SessionStatus;
     // Present only on the host-global push (no convo_id). Absent on older servers/bridges →
-    // client falls back to the per-status `limits` host entries + existing staleness dim.
+    // the meters still render from `status.vitals`, just at turn-end cadence.
     host_vitals?: HostVitals;
 }
 
@@ -251,6 +255,26 @@ export interface SessionStatus {
         // no staleness logic (current behaviour). See status.ts HOST_VITALS_STALE_MS.
         sampled_at_ms?: number;
     }>;
+    // Host machine vitals (bridge status frame, TOP LEVEL — never a limits[] entry). This is
+    // the upstream #156 contract and the only surface host CPU/RAM is read from: matron-web
+    // (here) and matron-apple (WireModels decodes status["vitals"].cpu_pct / .ram_pct) both
+    // synthesize their host meters from it. limits[] stays the account's subscription-quota
+    // list; a synthetic host entry there renders CPU/RAM twice and displaces a real quota bar
+    // on iOS (limits.prefix(3)). Absent on bridges that don't publish vitals → the host meters
+    // simply don't render (graceful degradation).
+    //
+    // Nullable halves (divergence from upstream's `number`, deliberate): the bridge emits
+    // cpu_pct: null until its CPU sampler has two ticks after boot, so the render path must
+    // narrow before using either value.
+    vitals?: {
+        cpu_pct: number | null;
+        ram_pct: number | null;
+        // Epoch ms of the last real sample. Drives the same staleness muting as the per-meter
+        // field on limits[]: host readings refresh on turn-end and are replayed verbatim to
+        // new viewers, so an idle conversation can show a minutes-old reading as live.
+        // See status.ts HOST_VITALS_STALE_MS.
+        sampled_at_ms: number;
+    };
     email?: string;
 }
 

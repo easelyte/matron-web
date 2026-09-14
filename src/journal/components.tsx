@@ -2448,13 +2448,38 @@ export function buildUsageMeters(
             limit: status.context.window,
         });
     }
-    if (limits?.length) meters.push(...limits);
-    // Host-global vitals override (#529 3-repo feature): when the host-scoped push is present,
-    // it is the authoritative live figure for host_cpu / host_ram across EVERY conversation —
-    // override each host meter's percent + sample stamp (cpu→host_cpu, ram→host_ram). Absent
-    // (older server/bridge, or no push yet) → keep the per-status `limits` host entries verbatim
-    // (existing behaviour). The overridden sampled_at_ms drives isSampleStale, so a healthy 5s
-    // push keeps the bars un-dimmed; if the push stops, the stamp ages out and the dim fires.
+    // Account subscription quotas. Host CPU/RAM are NOT read from here: a bridge that
+    // injects synthetic host_cpu/host_ram limit entries (reverted bridge behaviour, but a
+    // client can still meet one mid-deploy) would double-render CPU and RAM alongside the
+    // vitals-synthesized pair below. Drop those legacy entries whenever `status.vitals` is
+    // present — vitals is the authoritative source. With no vitals (a pre-#156 bridge) they
+    // are kept verbatim, so the meters still render rather than vanishing.
+    if (limits?.length) {
+        const hasVitals = Boolean(status?.vitals);
+        meters.push(...limits.filter((limit) => !(hasVitals && (limit.id === "host_cpu" || limit.id === "host_ram"))));
+    }
+    // Host CPU/RAM ride a TOP-LEVEL `status.vitals` object on the status frame (upstream #156
+    // contract, shared with matron-apple). Synthesize them into the meter row here, carrying
+    // `sampled_at_ms` so the shared staleness muting expires an idle conversation's replayed
+    // reading. Absent `status.vitals` → no host meters, no crash (graceful degradation).
+    // Each half is narrowed individually (the bridge sends cpu_pct: null until its sampler
+    // warms), so a partial vitals object still renders what it can.
+    if (status?.vitals) {
+        const { cpu_pct, ram_pct, sampled_at_ms } = status.vitals;
+        if (typeof cpu_pct === "number" && Number.isFinite(cpu_pct)) {
+            meters.push({ id: "host_cpu", label: "host CPU", percent: cpu_pct, sampled_at_ms });
+        }
+        if (typeof ram_pct === "number" && Number.isFinite(ram_pct)) {
+            meters.push({ id: "host_ram", label: "host RAM", percent: ram_pct, sampled_at_ms });
+        }
+    }
+    // Host-global vitals override (#529, fork-side): the host-scoped ephemeral push arrives on
+    // a ~5s cadence, far fresher than the turn-end status frame, so when present it is the
+    // authoritative live figure for host_cpu / host_ram across EVERY conversation — override
+    // each synthesized meter's percent + sample stamp (cpu→host_cpu, ram→host_ram). Absent
+    // (no push yet, or a bridge without it) → the status.vitals figures stand. The overridden
+    // sampled_at_ms drives isSampleStale, so a healthy push keeps the bars un-dimmed; if the
+    // push stops, the stamp ages out and the dim fires.
     const merged = hostVitals
         ? meters.map((meter) => {
               if (meter.id === "host_cpu")

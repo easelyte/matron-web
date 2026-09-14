@@ -237,6 +237,10 @@ export function mergeSessionStatus(current: SessionStatus | undefined, update: S
         workdir: update.workdir ?? current?.workdir,
         context: update.context ?? current?.context,
         limits: update.limits ?? current?.limits,
+        // Host vitals ride the status frame at top level; carry them through the same
+        // last-known-wins merge as the other fields, or a partial frame (e.g. a limits-only
+        // repaint) blanks the CPU/RAM meters until the next full one.
+        vitals: update.vitals ?? current?.vitals,
         email: update.email ?? current?.email,
     };
 }
