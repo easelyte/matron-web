@@ -21,6 +21,7 @@ import type { FileEntry, FileListing, FilesApiLike } from "../files/filesApi";
 import type { MatronJournalClient } from "../client";
 import type { ClientState } from "../types";
 import { REPLAY_WINDOW_MS } from "../files/limits";
+import { useFileWrites } from "../files/useFileWrites";
 
 // react-window measures its own box; jsdom reports 0 height and would render no rows. Swap it for a
 // plain list so the row affordances are actually in the DOM (the virtualization itself is not what
@@ -1169,5 +1170,199 @@ describe("the replay deadline survives a wall-clock rollback (Codex round 4, F2)
         expect(dialog()).toBeNull();
         expect(upload).toHaveBeenCalledTimes(1);
         expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/no longer be retried safely/i);
+    });
+});
+
+// -- Round 5: a SUCCESSFUL queue step goes behind the same barrier, and the capability is
+//    re-checked at the moment of acting, not only where the affordance was drawn ----------------
+
+describe("a successful upload releases the next file through the barrier (Codex round 5, F1)", () => {
+    it("offers nothing until the post-write re-read lands, then offers the next file", async () => {
+        // The success path had the same hole the expiry path did: it opened the successor the
+        // instant the first upload returned, while the re-read that authorizes it was still out.
+        let release!: (value: FileListing) => void;
+        let call = 0;
+        const listDir = jest.fn(() => {
+            call += 1;
+            if (call === 1) return Promise.resolve(listing(true));
+            return new Promise<FileListing>((resolve) => {
+                release = resolve;
+            });
+        });
+        const upload = jest.fn().mockResolvedValue({ path: `${DIR}/one.png`, bytes: 1, dryRun: false });
+        const api = mockApi({
+            listDir: listDir as unknown as FilesApiLike["listDir"],
+            upload: upload as unknown as FilesApiLike["upload"],
+        });
+        const pane = await mountPane(api);
+        await pickUpload(
+            pane,
+            new File(["a"], "one.png", { type: "image/png" }),
+            new File(["b"], "two.png", { type: "image/png" }),
+        );
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+
+        expect(upload).toHaveBeenCalledTimes(1);
+        expect(dialog()).toBeNull(); // the barrier is up; two.png is parked, not offered
+        expect(pane.querySelector(".mj_FilesToolbar")).toBeNull();
+
+        await act(async () => {
+            release(listing(true));
+            await Promise.resolve();
+        });
+        await flush();
+
+        expect(dialog()).not.toBeNull();
+        expect(dialog()?.textContent).toMatch(/two\.png/);
+    });
+
+    it("drops the rest of the selection when the re-read says the folder is no longer writable", async () => {
+        let release!: (value: FileListing) => void;
+        let call = 0;
+        const listDir = jest.fn(() => {
+            call += 1;
+            if (call === 1) return Promise.resolve(listing(true));
+            return new Promise<FileListing>((resolve) => {
+                release = resolve;
+            });
+        });
+        const upload = jest.fn().mockResolvedValue({ path: `${DIR}/one.png`, bytes: 1, dryRun: false });
+        const api = mockApi({
+            listDir: listDir as unknown as FilesApiLike["listDir"],
+            upload: upload as unknown as FilesApiLike["upload"],
+        });
+        const pane = await mountPane(api);
+        await pickUpload(
+            pane,
+            new File(["a"], "one.png", { type: "image/png" }),
+            new File(["b"], "two.png", { type: "image/png" }),
+        );
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        await act(async () => {
+            release(listing(false));
+            await Promise.resolve();
+        });
+        await flush();
+
+        expect(dialog()).toBeNull();
+        expect(upload).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("the write capability is re-checked where the write is SENT (Codex round 5, F1 backstop)", () => {
+    let writes: ReturnType<typeof useFileWrites> | undefined;
+
+    function Harness({ api, ready }: { api: FilesApiLike; ready: boolean }): null {
+        writes = useFileWrites(api, () => {}, { ready, path: DIR });
+        return null;
+    }
+
+    async function render(api: FilesApiLike, ready: boolean): Promise<void> {
+        await act(async () => {
+            root?.render(<Harness api={api} ready={ready} />);
+        });
+        await flush();
+    }
+
+    afterEach(() => {
+        writes = undefined;
+    });
+
+    it("refuses to send when the directory stopped being writable while the dialog sat open", async () => {
+        // The dialog outlives the listing that opened it. A gate that only decides whether the
+        // affordance RENDERS does not gate the action (P19) — this is the check at the send.
+        const api = mockApi();
+        container = document.createElement("div");
+        document.body.append(container);
+        await act(async () => {
+            root = createRoot(container as HTMLDivElement);
+        });
+        await render(api, true);
+
+        await act(async () => {
+            writes?.begin({ kind: "delete", path: `${DIR}/notes.md`, name: "notes.md", isDir: false });
+        });
+        expect(writes?.state?.phase).toBe("confirming");
+
+        // The capability goes away underneath the open dialog.
+        await render(api, false);
+        await act(async () => {
+            writes?.submit({});
+        });
+        await flush();
+
+        expect(api.deleteEntry).not.toHaveBeenCalled();
+        expect(writes?.state).toBeUndefined();
+        expect(writes?.notice).toMatch(/isn't available in this folder/i);
+    });
+
+    it("still sends normally while the directory is writable", async () => {
+        const api = mockApi();
+        container = document.createElement("div");
+        document.body.append(container);
+        await act(async () => {
+            root = createRoot(container as HTMLDivElement);
+        });
+        await render(api, true);
+
+        await act(async () => {
+            writes?.begin({ kind: "delete", path: `${DIR}/notes.md`, name: "notes.md", isDir: false });
+        });
+        await act(async () => {
+            writes?.submit({});
+        });
+        await flush();
+
+        expect(api.deleteEntry).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("navigating away drops a parked upload queue (Codex round 5, F3)", () => {
+    let writes: ReturnType<typeof useFileWrites> | undefined;
+
+    function Harness({ api, ready, path }: { api: FilesApiLike; ready: boolean; path: string }): null {
+        writes = useFileWrites(api, () => {}, { ready, path });
+        return null;
+    }
+
+    it("clears it on navigation even when the destination never becomes ready", async () => {
+        // A read-only or failing destination leaves `ready` false forever. Checking navigation only
+        // after readiness meant the selection survived the trip and reappeared on the way back.
+        const api = mockApi({ upload: jest.fn().mockResolvedValue({ path: `${DIR}/a`, bytes: 1, dryRun: false }) });
+        container = document.createElement("div");
+        document.body.append(container);
+        await act(async () => {
+            root = createRoot(container as HTMLDivElement);
+        });
+        const show = async (ready: boolean, path: string): Promise<void> => {
+            await act(async () => {
+                root?.render(<Harness api={api} ready={ready} path={path} />);
+            });
+            await flush();
+        };
+        await show(true, DIR);
+
+        // Upload the first of two; the second is parked behind the barrier.
+        await act(async () => {
+            writes?.begin({
+                kind: "upload",
+                dir: DIR,
+                files: [new File(["a"], "one.png"), new File(["b"], "two.png")],
+                index: 0,
+            });
+        });
+        await act(async () => {
+            writes?.submit({});
+        });
+        await flush();
+        expect(writes?.state).toBeUndefined(); // parked, not offered
+
+        // Off to a folder that never loads, and back again.
+        await show(false, "/root/elsewhere");
+        await show(true, DIR);
+
+        expect(writes?.state).toBeUndefined(); // the abandoned selection does not come back
     });
 });

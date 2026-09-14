@@ -109,8 +109,13 @@ export type WriteEvent =
     // Keys are minted by the caller, not here — the reducer stays pure (no crypto.randomUUID).
     | { type: "open"; pending: PendingWrite; idempotencyKey: string }
     | { type: "submit" }
-    /** The request succeeded. `next` carries the remaining upload queue head, if any. */
-    | { type: "settled"; next?: PendingWrite; nextKey?: string }
+    /**
+     * The request succeeded. It carries NO successor: the remaining head of an upload queue is
+     * parked by the hook and released only once the post-write re-read has landed and the
+     * directory is still writable. Opening it from here would put a submittable dialog in front of
+     * the operator while the listing that authorizes it is still in flight.
+     */
+    | { type: "settled" }
     /**
      * `idempotencyKey` is the key to use for the NEXT attempt. The caller retains the current one
      * after an UNCERTAIN failure (so the retry replays) and mints a fresh one after a DEFINITE
@@ -139,9 +144,7 @@ export function writeReducer(state: WriteState | undefined, event: WriteEvent): 
             return { pending: state.pending, phase: "mutating", idempotencyKey: state.idempotencyKey };
         case "settled":
             if (state?.phase !== "mutating") return state;
-            return event.next
-                ? { pending: event.next, phase: "confirming", idempotencyKey: event.nextKey ?? state.idempotencyKey }
-                : undefined;
+            return undefined;
         case "failed":
             if (state?.phase !== "mutating") return state;
             return {

@@ -48,8 +48,8 @@ export interface FileWrites {
 }
 
 interface Outcome {
+    /** The remaining head of an upload queue. PARKED by the caller, never opened directly. */
     next?: PendingWrite;
-    nextKey?: string;
     notice?: string;
 }
 
@@ -89,13 +89,8 @@ async function perform(
             const file = uploadHead(pending);
             if (!file) return {};
             const result = await api.upload(file, { targetDir: pending.dir, name: input.name, idempotencyKey });
-            const next = advanceUpload(pending);
-            return {
-                next,
-                // A new target gets its own key; the current one is never reused for another file.
-                nextKey: next ? newKey() : undefined,
-                notice: result.dryRun ? DRY_RUN_NOTICE : undefined,
-            };
+            // A new target gets its own key when it is released; the current one is never reused.
+            return { next: advanceUpload(pending), notice: result.dryRun ? DRY_RUN_NOTICE : undefined };
         }
         case "edit": {
             // Lost-update guard. The dialog read the file when it opened; an agent may have
@@ -357,9 +352,17 @@ export function useFileWrites(
     const { ready: dirReady, path: dirPath } = directory;
     useEffect(() => {
         const next = held.current;
-        if (next === undefined || !dirReady) return;
+        if (next === undefined) return;
+        // Navigation is checked FIRST and without regard to readiness. A destination that never
+        // becomes ready — a read-only folder, one that fails to load — would otherwise leave the
+        // selection parked, and coming back to the original directory later would resurrect a
+        // dialog the operator had every reason to believe was gone.
+        if (next.kind !== "upload" || next.dir !== dirPath) {
+            held.current = undefined;
+            return;
+        }
+        if (!dirReady) return; // still behind the barrier; wait for the listing that authorizes it
         held.current = undefined;
-        if (next.kind !== "upload" || next.dir !== dirPath) return;
         dispatch({ type: "open", pending: next, idempotencyKey: newKey() });
     }, [dirReady, dirPath]);
 
@@ -372,6 +375,19 @@ export function useFileWrites(
             const current = stateRef.current;
             if (!current || current.phase !== "confirming") return;
             if (inFlight.current) return; // synchronous double-submit guard
+            if (!dirReady) {
+                // The capability is re-checked HERE, at the moment of acting, not only where the
+                // affordance was rendered. The dialog outlives the listing that opened it — a
+                // re-read can be in flight, have failed, or have come back without write access
+                // while it sits there — and a check that gates only the rendering does not gate
+                // the action (P19). Backstop to the barrier above, not a replacement for it.
+                setNotice(
+                    `Writing isn't available in this folder right now, so ${targetLabel(current.pending, current.replay)} wasn't sent.`,
+                );
+                held.current = undefined;
+                dispatch({ type: "cancel" });
+                return;
+            }
             if (replayHasLapsed(current)) {
                 // The timer above normally gets here first, but a backgrounded tab has its timers
                 // throttled — so the deadline is enforced where it matters, on the send.
@@ -406,7 +422,13 @@ export function useFileWrites(
                     const outcome = await perform(api, current.pending, attempt, current.idempotencyKey);
                     if (!alive.current) return;
                     setNotice(outcome.notice);
-                    dispatch({ type: "settled", next: outcome.next, nextKey: outcome.nextKey });
+                    // The rest of the selection goes behind the barrier, exactly like the expiry
+                    // path: this success triggers a re-read, and until that answers there is no
+                    // current listing to authorize the next write. Dispatching it as a successor
+                    // here would leave a live confirm button in front of a directory whose
+                    // capability may have just been revoked.
+                    held.current = outcome.next;
+                    dispatch({ type: "settled" });
                     // Refresh AFTER the transition so the listing and the dialog agree; runs for
                     // every success, including mid-queue uploads.
                     onWritten();
@@ -456,7 +478,7 @@ export function useFileWrites(
                 }
             })();
         },
-        [api, onWritten, reconcile],
+        [api, dirReady, onWritten, reconcile],
     );
 
     return { state, begin, cancel, submit, notice, dismissNotice };

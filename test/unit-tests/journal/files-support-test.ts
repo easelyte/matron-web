@@ -620,13 +620,11 @@ describe("write confirm machine", () => {
         });
     });
 
-    it("success closes, or advances to the next queued upload", () => {
+    it("success always closes — a queued successor is released by the barrier, not the reducer", () => {
+        // The rest of an upload selection is parked by the hook and re-offered only once the
+        // post-write re-read confirms the directory is still writable, so there is deliberately no
+        // way to walk straight from a success into the next confirmation here.
         expect(writeReducer(mutating, { type: "settled" })).toBeUndefined();
-        expect(writeReducer(mutating, { type: "settled", next: mkdir, nextKey: "key-2" })).toEqual({
-            pending: mkdir,
-            phase: "confirming",
-            idempotencyKey: "key-2", // a NEW target gets its own key
-        });
     });
 
     it("marks only the content-destroying writes destructive, and says how to recover them", () => {
