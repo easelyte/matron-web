@@ -25,8 +25,15 @@ import { JournalApiError } from "../api";
 import type { FilesApiLike } from "./filesApi";
 import { messageForFileStatus, readEditableText, sanitizeFileName } from "./filesApi";
 import { joinPath } from "./format";
-import type { WriteInput } from "./FileWriteDialog";
-import { advanceUpload, uploadHead, writeReducer, type PendingWrite, type WriteState } from "./writeActions";
+import {
+    advanceUpload,
+    targetLabel,
+    uploadHead,
+    writeReducer,
+    type PendingWrite,
+    type WriteInput,
+    type WriteState,
+} from "./writeActions";
 
 export interface FileWrites {
     /** Undefined = idle (no dialog). */
@@ -182,7 +189,19 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
         // One key per TARGET, minted here and kept through every retry of that target.
         dispatch({ type: "open", pending, idempotencyKey: newKey() });
     }, []);
-    const cancel = useCallback(() => dispatch({ type: "cancel" }), []);
+    const cancel = useCallback(() => {
+        const current = stateRef.current;
+        dispatch({ type: "cancel" });
+        // Backing out of an UNRESOLVED write is not a no-op: an attempt may have landed. Re-read
+        // the directory and say so, so the operator decides from what is actually there instead of
+        // repeating the write under a fresh key and ending up with two copies.
+        if (current?.phase === "confirming" && current.replay !== undefined) {
+            setNotice(
+                `Couldn't confirm whether ${targetLabel(current.pending, current.replay)} was written. The folder has been refreshed — check it before trying again.`,
+            );
+            onWritten();
+        }
+    }, [onWritten]);
     const dismissNotice = useCallback(() => setNotice(undefined), []);
 
     const submit = useCallback(
@@ -202,10 +221,14 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
                 return;
             }
             inFlight.current = true;
+            // While an outcome is unresolved the payload is PINNED: the retry has to be a replay of
+            // the attempt that may already have committed, never whatever the fields now hold. The
+            // dialog locks its fields for the same reason; this is the enforcement, not the hint.
+            const attempt = current.replay ?? input;
             dispatch({ type: "submit" });
             void (async () => {
                 try {
-                    const outcome = await perform(api, current.pending, input, current.idempotencyKey);
+                    const outcome = await perform(api, current.pending, attempt, current.idempotencyKey);
                     if (!alive.current) return;
                     setNotice(outcome.notice);
                     dispatch({ type: "settled", next: outcome.next, nextKey: outcome.nextKey });
@@ -228,11 +251,15 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
                         onWritten();
                         return;
                     }
+                    const unresolved = outcomeIsUnknown(error);
                     dispatch({
                         type: "failed",
                         message: describeFailure(error),
                         // Uncertain → keep the key so the retry replays. Definite → mint a new one.
-                        idempotencyKey: outcomeIsUnknown(error) ? current.idempotencyKey : newKey(),
+                        idempotencyKey: unresolved ? current.idempotencyKey : newKey(),
+                        // ...and a replay needs the same BODY as well as the same key, or the
+                        // server's key+payload fingerprint refuses it as a conflict.
+                        replay: unresolved ? attempt : undefined,
                     });
                 } finally {
                     inFlight.current = false;

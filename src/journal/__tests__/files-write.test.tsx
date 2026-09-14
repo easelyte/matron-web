@@ -490,3 +490,191 @@ describe("uncertain outcomes (Codex round 2)", () => {
         expect((document.querySelector(".mj_FileWrite_danger") as HTMLButtonElement).disabled).toBe(true);
     });
 });
+
+// -- Confirming round on the round-3 fix (the fix itself left two blockers) -----------------------
+
+/** A jsdom-usable stand-in for the FileList a real <input type="file"> hands back. */
+function fileList(files: File[]): FileList {
+    return {
+        ...files,
+        length: files.length,
+        item: (index: number) => files[index] ?? null,
+        [Symbol.iterator]: function* () {
+            yield* files;
+        },
+    } as unknown as FileList;
+}
+
+async function pickUpload(pane: HTMLDivElement, file: File): Promise<void> {
+    const input = pane.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    Object.defineProperty(input, "files", { value: fileList([file]), configurable: true });
+    await act(async () => {
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        await Promise.resolve();
+    });
+}
+
+/** A promise the test resolves by hand, so a request can be held mid-flight. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => {
+        resolve = done;
+    });
+    return { promise, resolve };
+}
+
+describe("an UNCERTAIN outcome binds the payload (Codex confirming round, F1)", () => {
+    it("locks the upload name while the outcome is unresolved and replays the ORIGINAL payload", async () => {
+        // The upload commits but its response is lost. If the operator may now edit "Save as", the
+        // retry sends a DIFFERENT payload under the RETAINED key; the server fingerprints key+body,
+        // answers 409, the client reads that as definite and mints a fresh key — and the next retry
+        // uploads a SECOND copy alongside the one that silently committed.
+        const upload = jest
+            .fn()
+            .mockRejectedValueOnce(new JournalApiError("timed out", 0, "timeout"))
+            .mockResolvedValue({ path: `${DIR}/shot.png`, bytes: 3, dryRun: false });
+        const api = mockApi({ upload: upload as unknown as FilesApiLike["upload"] });
+        const pane = await mountPane(api);
+        await pickUpload(pane, new File(["abc"], "shot.png", { type: "image/png" }));
+        expect(dialog()).not.toBeNull();
+
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        expect(dialog()).not.toBeNull(); // failed -> back to confirming, with the error
+
+        // The name is no longer the operator's to change: the first attempt may have landed.
+        const field = document.querySelector(".mj_FileWrite_input") as HTMLInputElement;
+        expect(field.disabled).toBe(true);
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).not.toBeNull();
+
+        // Even if something did change it, the retry re-sends what was actually attempted.
+        await setValue(field, "renamed.png");
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+
+        expect(upload).toHaveBeenCalledTimes(2);
+        const first = upload.mock.calls[0][1] as { name?: string; idempotencyKey?: string };
+        const second = upload.mock.calls[1][1] as { name?: string; idempotencyKey?: string };
+        expect(second.name).toBe(first.name);
+        expect(second.idempotencyKey).toBe(first.idempotencyKey);
+    });
+
+    it("refreshes the listing when an unresolved write is dismissed instead of retried", async () => {
+        // Cancel is the escape hatch from the bound payload. It must not drop the operator back
+        // into a stale listing, or they re-upload under a fresh key and duplicate anyway.
+        const api = mockApi({
+            upload: jest.fn().mockRejectedValue(new JournalApiError("timed out", 0, "timeout")),
+        });
+        const pane = await mountPane(api);
+        await pickUpload(pane, new File(["abc"], "shot.png", { type: "image/png" }));
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        const listings = (api.listDir as jest.Mock).mock.calls.length;
+
+        await click(dialog()?.querySelector(".mj_UploadConfirm_skip") ?? null);
+        await flush();
+        expect(dialog()).toBeNull();
+        expect((api.listDir as jest.Mock).mock.calls.length).toBeGreaterThan(listings);
+        expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/couldn't confirm/i);
+    });
+
+    it("still mints a fresh key after a DEFINITE refusal (round-1 behaviour is not regressed)", async () => {
+        const move = jest
+            .fn()
+            .mockRejectedValueOnce(new JournalApiError("exists", 409, "dest-exists"))
+            .mockResolvedValue({ from: `${DIR}/notes.md`, to: `${DIR}/n3.md`, dryRun: false });
+        const api = mockApi({ move: move as unknown as FilesApiLike["move"] });
+        const pane = await mountPane(api);
+        await click(pane.querySelector('[aria-label="Rename notes.md"]'));
+        await setValue(document.querySelector(".mj_FileWrite_input"), "taken.md");
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        // A definite refusal leaves the name editable — nothing happened, so there is nothing to
+        // reconcile and the operator is being ASKED to pick another name.
+        expect((document.querySelector(".mj_FileWrite_input") as HTMLInputElement).disabled).toBe(false);
+        await setValue(document.querySelector(".mj_FileWrite_input"), "n3.md");
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        expect(move.mock.calls[1][1]).toBe(`${DIR}/n3.md`);
+    });
+});
+
+describe("the modal contains focus while a request is in flight (Codex confirming round, F2)", () => {
+    it("holds focus on the card and swallows Tab when every control is disabled", async () => {
+        // Mid-delete every control is disabled, so the trap's focusable list is EMPTY. Returning
+        // without preventing Tab lets focus walk out to the conversation list behind the scrim,
+        // where activating a room closes filesView and unmounts the hook — discarding the outcome,
+        // the refresh and the trash location while the delete may still commit.
+        const held = deferred<unknown>();
+        const api = mockApi({ deleteEntry: jest.fn(() => held.promise) as unknown as FilesApiLike["deleteEntry"] });
+        const pane = await mountPane(api);
+        await click(pane.querySelector('[aria-label="Delete notes.md"]'));
+        await click(document.querySelector(".mj_FileWrite_danger"));
+
+        const card = dialog() as HTMLElement;
+        expect(card.querySelectorAll("button:not([disabled]), input:not([disabled])")).toHaveLength(0);
+        expect(card.contains(document.activeElement)).toBe(true);
+
+        const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+        await act(async () => {
+            document.dispatchEvent(tab);
+        });
+        expect(tab.defaultPrevented).toBe(true);
+        expect(card.contains(document.activeElement)).toBe(true);
+
+        await act(async () => {
+            held.resolve({ path: `${DIR}/notes.md`, trashed: null, alreadyMissing: false, dryRun: false });
+            await Promise.resolve();
+        });
+    });
+
+    it("makes every application sibling behind the scrim inert, and restores them on dismiss", async () => {
+        // The pane's own `inert` is not enough: the conversation sidebar is a sibling of the pane,
+        // not a child of it.
+        const sidebar = document.createElement("div");
+        sidebar.className = "mx_ConversationList";
+        document.body.append(sidebar);
+        const preInert = document.createElement("div");
+        preInert.setAttribute("inert", "");
+        document.body.append(preInert);
+        try {
+            const api = mockApi();
+            const pane = await mountPane(api);
+            expect(sidebar.hasAttribute("inert")).toBe(false);
+
+            await click(pane.querySelector('[aria-label="Delete notes.md"]'));
+            expect(sidebar.hasAttribute("inert")).toBe(true);
+
+            await act(async () => {
+                document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+            });
+            expect(sidebar.hasAttribute("inert")).toBe(false);
+            // Something that was ALREADY inert is left exactly as it was found.
+            expect(preInert.hasAttribute("inert")).toBe(true);
+        } finally {
+            sidebar.remove();
+            preInert.remove();
+        }
+    });
+});
+
+describe("a UTF-8 BOM survives an edit (Codex confirming round, F3)", () => {
+    it("round-trips the leading U+FEFF instead of silently dropping three valid bytes", async () => {
+        const api = mockApi({
+            fileBytes: jest.fn(async () => encode("﻿# notes\n")) as unknown as FilesApiLike["fileBytes"],
+        });
+        const pane = await mountPane(api);
+        await openEditor(pane);
+        const textarea = document.querySelector(".mj_FileWrite_textarea") as HTMLTextAreaElement;
+        expect(textarea.value).toBe("﻿# notes\n");
+
+        await setValue(textarea, "﻿# notes 2\n");
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(api.writeFile).toHaveBeenCalledWith(`${DIR}/notes.md`, "﻿# notes 2\n", {
+            overwrite: true,
+            idempotencyKey: expect.any(String),
+        });
+    });
+});
