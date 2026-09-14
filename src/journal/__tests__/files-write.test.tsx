@@ -20,6 +20,7 @@ import { FilesPane } from "../files/FilesPane";
 import type { FileEntry, FileListing, FilesApiLike } from "../files/filesApi";
 import type { MatronJournalClient } from "../client";
 import type { ClientState } from "../types";
+import { REPLAY_WINDOW_MS } from "../files/limits";
 
 // react-window measures its own box; jsdom reports 0 height and would render no rows. Swap it for a
 // plain list so the row affordances are actually in the DOM (the virtualization itself is not what
@@ -796,5 +797,102 @@ describe("the reconciling re-read is a barrier, not just a message", () => {
         });
         await flush();
         expect(pane.querySelector(".mj_FilesToolbar")).not.toBeNull(); // ...and back once it lands
+    });
+});
+
+// -- Round 2: a gateway 5xx is not a verdict, and a pin is only a replay while the key lives -----
+
+describe("a gateway failure is an unresolved outcome (Codex round 2, F1)", () => {
+    it("does not offer a blind retry when a DELETE comes back 502", async () => {
+        // A proxy that lost an upstream success it never saw is indistinguishable from one that
+        // stopped the request — except that the first one committed. Retrying deletes whatever
+        // now occupies the path.
+        const api = mockApi({
+            deleteEntry: jest.fn().mockRejectedValue(new JournalApiError("bad gateway", 502)),
+        });
+        const pane = await mountPane(api);
+        await click(pane.querySelector('[aria-label="Delete notes.md"]'));
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(dialog()).toBeNull();
+        expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/couldn't confirm/i);
+    });
+
+    it("keeps 507 definite — the journal raises it from write-ahead gates, before anything lands", async () => {
+        // audit-fail-closed / trash-write-failed / metadata-preserve-failed all refuse BEFORE the
+        // irreversible call, so 507 proves non-mutation and the dialog stays retryable.
+        const api = mockApi({
+            deleteEntry: jest.fn().mockRejectedValue(new JournalApiError("no room", 507)),
+        });
+        const pane = await mountPane(api);
+        await click(pane.querySelector('[aria-label="Delete notes.md"]'));
+        await click(document.querySelector(".mj_FileWrite_danger"));
+        await flush();
+        expect(dialog()).not.toBeNull();
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).toBeNull();
+    });
+});
+
+describe("a pinned replay expires before the server forgets the key (Codex round 2, F2)", () => {
+    beforeEach(() => jest.useFakeTimers({ doNotFake: ["queueMicrotask"] }));
+    afterEach(() => jest.useRealTimers());
+
+    async function pinAnUncertainUpload(api: FilesApiLike): Promise<HTMLDivElement> {
+        const pane = await mountPane(api);
+        await pickUpload(pane, new File(["abc"], "shot.png", { type: "image/png" }));
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+        expect(dialog()?.querySelector(".mj_FileWrite_bound")).not.toBeNull();
+        return pane;
+    }
+
+    it("stops offering the retry and reconciles once the replay window lapses", async () => {
+        const upload = jest.fn().mockRejectedValue(new JournalApiError("timed out", 0, "timeout"));
+        const api = mockApi({ upload: upload as unknown as FilesApiLike["upload"] });
+        const pane = await pinAnUncertainUpload(api);
+
+        await act(async () => {
+            jest.advanceTimersByTime(REPLAY_WINDOW_MS + 1);
+            await Promise.resolve();
+        });
+        await flush();
+
+        expect(dialog()).toBeNull(); // the retry is gone, not silently turned into a new mutation
+        expect(upload).toHaveBeenCalledTimes(1);
+        expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/no longer be retried safely/i);
+        expect((api.listDir as jest.Mock).mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it("enforces the deadline on the click too, for a tab whose timers were throttled", async () => {
+        const upload = jest.fn().mockRejectedValue(new JournalApiError("timed out", 0, "timeout"));
+        const api = mockApi({ upload: upload as unknown as FilesApiLike["upload"] });
+        const pane = await pinAnUncertainUpload(api);
+
+        // The clock moves but the timer never runs — exactly what a backgrounded tab does.
+        jest.setSystemTime(Date.now() + REPLAY_WINDOW_MS + 1);
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+
+        expect(upload).toHaveBeenCalledTimes(1); // no second request went out
+        expect(dialog()).toBeNull();
+        expect(pane.querySelector(".mj_FilesPane_notice")?.textContent).toMatch(/no longer be retried safely/i);
+    });
+
+    it("still replays inside the window", async () => {
+        const upload = jest
+            .fn()
+            .mockRejectedValueOnce(new JournalApiError("timed out", 0, "timeout"))
+            .mockResolvedValue({ path: `${DIR}/shot.png`, bytes: 3, dryRun: false });
+        const api = mockApi({ upload: upload as unknown as FilesApiLike["upload"] });
+        await pinAnUncertainUpload(api);
+
+        jest.setSystemTime(Date.now() + REPLAY_WINDOW_MS / 2);
+        await click(document.querySelector(".mj_FileWrite_confirm"));
+        await flush();
+
+        expect(upload).toHaveBeenCalledTimes(2);
+        expect((upload.mock.calls[1][1] as { idempotencyKey?: string }).idempotencyKey).toBe(
+            (upload.mock.calls[0][1] as { idempotencyKey?: string }).idempotencyKey,
+        );
     });
 });

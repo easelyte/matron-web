@@ -22,6 +22,7 @@ Please see LICENSE files in the repository root for full details.
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import { JournalApiError } from "../api";
+import { REPLAY_WINDOW_MS } from "./limits";
 import type { FilesApiLike } from "./filesApi";
 import { messageForFileStatus, readEditableText, sanitizeFileName } from "./filesApi";
 import { joinPath } from "./format";
@@ -169,7 +170,15 @@ const TRANSPORT_CODES = new Set(["timeout", "disposed", "aborted"]);
  *                              the response status). Classifying this as definite is what let a
  *                              delete be blind-retried and a fresh key be minted over a write that
  *                              had already landed.
- *  - 4xx / 5xx              → definite. A server verdict: nothing happened.
+ *  - 507                     → definite. OUR server's explicit "couldn't do this safely": the
+ *                              journal raises it only from write-ahead gates (audit-fail-closed
+ *                              before any irreversible call, trash-write-failed and
+ *                              metadata-preserve-failed before the atomic swap), so it proves
+ *                              non-mutation rather than merely reporting trouble.
+ *  - 408 / other 5xx         → UNKNOWN. A gateway that timed out or lost an upstream success it
+ *                              never saw is indistinguishable from one that stopped the request —
+ *                              except that the first one committed.
+ *  - other 4xx               → definite. An application verdict: nothing happened.
  *  - anything not typed      → UNKNOWN. An unrecognized shape is not evidence of non-mutation.
  */
 function outcomeIsUnknown(error: unknown): boolean {
@@ -177,7 +186,9 @@ function outcomeIsUnknown(error: unknown): boolean {
     if (!(error instanceof JournalApiError)) return true;
     if (error.code === "disposed") return false;
     if (error.status === 0) return true;
-    return error.status >= 200 && error.status < 300;
+    if (error.status >= 200 && error.status < 300) return true;
+    if (error.status === 507) return false;
+    return error.status === 408 || error.status >= 500;
 }
 
 function describeFailure(error: unknown): string {
@@ -187,6 +198,9 @@ function describeFailure(error: unknown): string {
         // direction that matters: the change most likely WENT THROUGH.
         if (error.status >= 200 && error.status < 300) {
             return "The server accepted this but its reply couldn't be read, so the result is unconfirmed.";
+        }
+        if (outcomeIsUnknown(error)) {
+            return "The server didn't confirm this, so it may or may not have gone through.";
         }
         // Client-side refusals (bad name, stale edit, unconfirmed response) carry their own
         // specific, actionable message. Server DENIALS get the uniform, reason-agnostic copy so the
@@ -220,19 +234,50 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
         // One key per TARGET, minted here and kept through every retry of that target.
         dispatch({ type: "open", pending, idempotencyKey: newKey() });
     }, []);
-    const cancel = useCallback(() => {
-        const current = stateRef.current;
-        dispatch({ type: "cancel" });
-        // Backing out of an UNRESOLVED write is not a no-op: an attempt may have landed. Re-read
-        // the directory and say so, so the operator decides from what is actually there instead of
-        // repeating the write under a fresh key and ending up with two copies.
-        if (current?.phase === "confirming" && current.replay !== undefined) {
+    // Give up on an UNRESOLVED write and go and look at the server instead. An attempt may have
+    // landed, so this is not a no-op: re-read the directory and say so, and let the pane's own
+    // `writable`-is-derived-from-the-listing rule take the write affordances away until it answers
+    // (FilesPane.onWritten). The operator decides from what is actually there rather than
+    // repeating the write under a fresh key and ending up with two copies.
+    const reconcile = useCallback(
+        (current: WriteState, expired: boolean) => {
+            const label = targetLabel(current.pending, current.replay);
+            dispatch({ type: "cancel" });
             setNotice(
-                `Couldn't confirm whether ${targetLabel(current.pending, current.replay)} was written. The folder is being re-read — check what is actually there before trying again.`,
+                expired
+                    ? `Couldn't confirm whether ${label} was written, and it can no longer be retried safely. The folder is being re-read — check what is actually there.`
+                    : `Couldn't confirm whether ${label} was written. The folder is being re-read — check what is actually there before trying again.`,
             );
             onWritten();
+        },
+        [onWritten],
+    );
+
+    const cancel = useCallback(() => {
+        const current = stateRef.current;
+        if (current?.phase === "confirming" && current.replay !== undefined) {
+            reconcile(current, false);
+            return;
         }
-    }, [onWritten]);
+        dispatch({ type: "cancel" });
+    }, [reconcile]);
+
+    // A pin is only a replay while the SERVER still remembers the key. Stop offering the retry
+    // before that window closes, rather than letting the confirm button quietly turn into a second
+    // mutation behind copy that still promises a replay.
+    const replayExpiresAt = state?.phase === "confirming" ? state.replayExpiresAt : undefined;
+    useEffect(() => {
+        if (replayExpiresAt === undefined) return;
+        const timer = setTimeout(
+            () => {
+                const current = stateRef.current;
+                if (current?.phase === "confirming" && current.replay !== undefined) reconcile(current, true);
+            },
+            Math.max(0, replayExpiresAt - Date.now()),
+        );
+        return () => clearTimeout(timer);
+    }, [replayExpiresAt, reconcile]);
+
     const dismissNotice = useCallback(() => setNotice(undefined), []);
 
     const submit = useCallback(
@@ -240,6 +285,12 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
             const current = stateRef.current;
             if (!current || current.phase !== "confirming") return;
             if (inFlight.current) return; // synchronous double-submit guard
+            if (current.replayExpiresAt !== undefined && Date.now() >= current.replayExpiresAt) {
+                // The timer above normally gets here first, but a backgrounded tab has its timers
+                // throttled — so the deadline is enforced where it matters, on the send.
+                reconcile(current, true);
+                return;
+            }
             if (!api) {
                 // `failed` is only meaningful from `mutating`, so step through it — otherwise the
                 // reducer drops the event and the dialog sits there with no explanation.
@@ -291,13 +342,14 @@ export function useFileWrites(api: FilesApiLike | undefined, onWritten: () => vo
                         // ...and a replay needs the same BODY as well as the same key, or the
                         // server's key+payload fingerprint refuses it as a conflict.
                         replay: unresolved ? attempt : undefined,
+                        replayExpiresAt: unresolved ? Date.now() + REPLAY_WINDOW_MS : undefined,
                     });
                 } finally {
                     inFlight.current = false;
                 }
             })();
         },
-        [api, onWritten],
+        [api, onWritten, reconcile],
     );
 
     return { state, begin, cancel, submit, notice, dismissNotice };

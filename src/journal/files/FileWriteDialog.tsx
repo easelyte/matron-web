@@ -431,7 +431,7 @@ export function FileWriteDialog({
                         <p className="mj_FileWrite_bound">
                             It may already have gone through, so trying again re-sends exactly the same request instead
                             of making a second one. To change anything, cancel and start again — the folder is re-read
-                            first.
+                            first. If a replay stops being safe, this closes and re-reads it for you.
                         </p>
                     ) : null}
                 </div>

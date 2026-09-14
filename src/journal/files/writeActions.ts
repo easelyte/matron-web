@@ -80,12 +80,20 @@ export interface WriteState {
      * `reserve(key, fingerprint)` throws `idem-key-conflict` when a key returns with a different
      * fingerprint, and `denialToStatus` maps that to 409 with a bare `{error:'denied'}` body — no
      * distinguishing reason, which is exactly why the client cannot classify that 409 and has to
-     * prevent the mismatch instead. RESIDUAL, and not closable from here: the server's replay
-     * window is `IDEM_TTL_MS` (120s). A pinned retry issued after the key has aged out is a NEW
-     * mutation, so an operator who leaves the dialog sitting for minutes and then retries can
-     * still duplicate. Closing that needs a server-side outcome the client can reconcile against.
+     * prevent the mismatch instead. That replay window is FINITE — `IDEM_TTL_MS`, 120s
+     * — so the pin carries an expiry (`replayExpiresAt`) and the write stops being retryable
+     * before the key can age out, rather than quietly becoming a second mutation behind a UI that
+     * still promises a replay. What is left after that is a SERVER-side gap, not a client one:
+     * reconciling an unresolved write against what actually happened needs an outcome the server
+     * can still be asked for.
      */
     replay?: WriteInput;
+    /**
+     * When the pinned replay stops BEING a replay (see limits.REPLAY_WINDOW_MS). Minted by the
+     * caller, like the key — the reducer reads no clock. Past it the write is no longer retryable
+     * and the hook reconciles against the server instead of sending.
+     */
+    replayExpiresAt?: number;
 }
 
 export type WriteEvent =
@@ -100,7 +108,13 @@ export type WriteEvent =
      * refusal — where nothing happened, and where the operator is invited to change the name, so
      * reusing the key would present the server a different payload under the same key.
      */
-    | { type: "failed"; message: string; idempotencyKey: string; replay?: WriteInput }
+    | {
+          type: "failed";
+          message: string;
+          idempotencyKey: string;
+          replay?: WriteInput;
+          replayExpiresAt?: number;
+      }
     | { type: "cancel" };
 
 export function writeReducer(state: WriteState | undefined, event: WriteEvent): WriteState | undefined {
@@ -128,6 +142,7 @@ export function writeReducer(state: WriteState | undefined, event: WriteEvent): 
                 // Present only for an UNCERTAIN failure; a definite refusal clears it, because
                 // nothing happened and the operator is being asked to change the name.
                 replay: event.replay,
+                replayExpiresAt: event.replayExpiresAt,
             };
         case "cancel":
             if (state?.phase === "mutating") return state;
