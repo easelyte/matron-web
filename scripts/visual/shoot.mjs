@@ -149,6 +149,35 @@ const SHOTS_SPEC = [
             await p.waitForSelector(".mj_RoomListCollapsedSubs");
         },
     },
+    // Pinned conversation summary (loop #554). Only two states are reachable from real data —
+    // a "ready" digest and nothing at all — so those are what the sheet shows; the empty-state
+    // box and the "updating" shimmer have no wire field (design 554 §5.4) and stay unit-tested.
+    {
+        comp: "pinned-summary",
+        state: "ready",
+        clip: ".mj_PinnedSummary",
+        setup: async (p) => p.waitForSelector(".mj_PinnedSummary_item"),
+    },
+    {
+        comp: "pinned-summary",
+        state: "expanded-bullet",
+        clip: ".mj_PinnedSummary",
+        setup: async (p) => {
+            await p.waitForSelector(".mj_PinnedSummary_more");
+            await p.locator(".mj_PinnedSummary_more").first().click();
+            await p.locator(".mj_PinnedSummary_item_clamp").waitFor({ state: "detached" });
+        },
+    },
+    {
+        comp: "pinned-summary",
+        state: "collapsed",
+        clip: ".mj_PinnedSummary",
+        setup: async (p) => {
+            await p.waitForSelector(".mj_PinnedSummary_bar");
+            await p.locator(".mj_PinnedSummary_bar").click();
+            await p.waitForSelector('.mj_PinnedSummary[data-collapsed="true"]');
+        },
+    },
     {
         comp: "header",
         state: "usage-align",

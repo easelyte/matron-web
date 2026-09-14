@@ -38,6 +38,15 @@ const SESSION: Session = {
     username: "operator@easelyte.ai",
 };
 
+// The pinned digest (loop #554) arrives as the bridge's raw wire text: one "\u2022 "-prefixed
+// line per pass. The last bullet is deliberately >160 chars so the fixture shows the clamp +
+// Expand affordance alongside short ones. c2/c3 carry none, which is the "renders nothing" case.
+const PINNED_SUMMARY_TEXT = [
+    "\u2022 Reskinned the journal client end to end; bubbles, sidebar and header now share one scale.",
+    "\u2022 Cut the deploy to a versioned release dir with a current-release pointer, so rollback is a repoint.",
+    "\u2022 Restarted nginx after the cert rotation and watched the error rate for ten minutes: it held at 0.02% with no 5xx spike, no upstream resets, and no change to p99 latency, so the rotation is considered clean.",
+].join("\n");
+
 const conversations: Conversation[] = [
     {
         id: "c1",
@@ -48,6 +57,8 @@ const conversations: Conversation[] = [
         snippet: "Restarted nginx; error rate steady at 0.02%",
         created_at: 1,
         read_up_to_seq: 6,
+        summary: PINNED_SUMMARY_TEXT,
+        summary_updated_at: Date.now() - 7 * 60_000,
     },
     {
         id: "c2",
@@ -507,6 +518,26 @@ const patchState = (client as unknown as { patch: (update: Partial<ClientState>)
             events: [],
             pendingMessages: [],
             sessionStatus: state.sessionStatus,
+        }),
+    // Drive the pinned summary (loop #554) by rewriting the selected conversation's stored
+    // digest, which is exactly how the real feed reaches it (snapshot row / convo_meta).
+    // "none" is the renders-nothing case; the empty-state box and the "updating" shimmer have
+    // no wire representation by design and are covered by unit tests instead.
+    setSummary: (kind: "full" | "short" | "none" = "full") =>
+        patchState({
+            conversations: conversations.map((conversation) =>
+                conversation.id === "c1"
+                    ? {
+                          ...conversation,
+                          summary:
+                              kind === "none"
+                                  ? ""
+                                  : kind === "short"
+                                    ? PINNED_SUMMARY_TEXT.split("\n").slice(0, 2).join("\n")
+                                    : PINNED_SUMMARY_TEXT,
+                      }
+                    : conversation,
+            ),
         }),
 };
 

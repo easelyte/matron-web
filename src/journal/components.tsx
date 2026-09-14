@@ -110,6 +110,7 @@ import {
     makeRecentFoldersStore,
     recentFolderArgument,
 } from "./slash-palette";
+import { conversationSummary } from "./summary";
 import {
     compactTokens,
     formatSampleAge,
@@ -6614,9 +6615,14 @@ export function SubagentStrip({
  * Surface A — the pinned conversation summary (design 2026-08). A running,
  * server-generated digest rendered as a bullet list, pinned between the SubagentStrip
  * and the Timeline. The bar IS the expand control; the body is aria-live="polite" so a
- * server refresh is announced without stealing the operator's focus. Net-new surface:
- * the summary feed does not exist yet, so this renders nothing when `summary` is null
- * (see the call site in SignedInApp). Every state is exercised by the visual fixture.
+ * server refresh is announced without stealing the operator's focus. The feed landed in
+ * loop #554: the owning bridge publishes its rolling digest to conversations.summary and
+ * the call site in SignedInApp parses it via `conversationSummary()`. A conversation with
+ * no digest passes null and this renders nothing at all.
+ *
+ * Reachable-state note: the app only ever passes null or a "ready" summary with at least
+ * one bullet. The empty-state box and the "updating" shimmer have no data source on the
+ * wire (design §5.4) and are exercised by unit tests only.
  */
 export type ConversationSummary = {
     /** Condensed bullet lines (each rendered with a • marker). Server-clamped to 20. */
@@ -6839,12 +6845,22 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                     <ChatHeader client={client} state={state} collapse={collapse} />
                                 )}
                                 <SubagentStrip client={client} state={state} mode={childMode ? "child" : "parent"} />
-                                {/* Surface A — pinned conversation summary. Net-new: the server
-                                    summary feed does not exist yet, so this renders nothing. When a
-                                    data source lands, pass it here (styled + fixture-verified). The
-                                    conversation-id key remounts on a room switch so disclosure state
-                                    never carries across conversations. */}
-                                <PinnedSummary key={state.selectedConversationId ?? "no-convo"} summary={null} />
+                                {/* Surface A — pinned conversation summary, fed by the bridge's
+                                    rolling digest (loop #554): conversations.summary on the
+                                    snapshot row, refreshed live by convo_meta. Renders nothing
+                                    when the conversation has no digest — sub-chats never do, and
+                                    neither does any conversation owned by a bridge or server
+                                    without the producer side. The conversation-id key remounts on
+                                    a room switch so disclosure state never carries across
+                                    conversations. */}
+                                <PinnedSummary
+                                    key={state.selectedConversationId ?? "no-convo"}
+                                    summary={conversationSummary(
+                                        state.conversations.find(
+                                            (conversation) => conversation.id === state.selectedConversationId,
+                                        ),
+                                    )}
+                                />
                                 <Timeline client={client} state={state} isReadOnly={childMode} />
                                 {childMode ? (
                                     <ReadOnlyHint />
