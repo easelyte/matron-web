@@ -15,6 +15,8 @@ export const MESSAGE_EVENT_TYPES = new Set([
     "file",
     "image",
     "spawn_outcome",
+    // v1: tracker markers are not unread messages — `item`/`milestone`/`mission` are
+    // deliberately OUT of this set to avoid unread-badge churn (revisit in a later pass).
 ]);
 
 export interface MatronConfig {
@@ -356,12 +358,182 @@ export interface ClientState {
     // selection, and preview are FilesPane-local (like the conversation timeline is RoomView-local).
     // Mirrors how `selectedConversationId` is the only main-region discriminant today.
     filesView?: FilesViewState;
+    // Tracker pane (Missions / Milestones / Decisions-Inbox). `trackerView` is the
+    // main-region discriminant (checked alongside filesView — one surface at a time).
+    // The rest are store-resident so sidebar badges stay live off WS invalidation:
+    //   missions/inboxItems  = the two list views;
+    //   trackerItem          = the open item detail (item + its comment thread), null = none;
+    //   trackerMission       = the open mission detail, null = none.
+    // Undefined = never loaded this session; all reset to undefined via `...blankState()` on logout.
+    trackerView?: TrackerViewState;
+    missions?: Mission[];
+    inboxItems?: TrackerItem[];
+    trackerItem?: { item: TrackerItem; comments: TrackerComment[] } | null;
+    trackerMission?: MissionDetail | null;
+    /** True while ANY tracker fetch is in flight (v1: one detail/list open at a time). */
+    trackerLoading?: boolean;
+    /** Last tracker fetch/mutation error; cleared on the next successful load. */
+    trackerError?: string;
 }
 
 export interface FilesViewState {
     open: boolean;
     /** Last-browsed absolute directory path; seeds FilesPane on (re)open. */
     path?: string;
+}
+
+// ── Tracker (Missions / Milestones / Decisions-Inbox) ──────────────────────────
+// Wire shapes bind EXACTLY to the journal tracker API (src/items.js, src/missions.js
+// @dd9c04a): `id`/`mission_id`/`supersedes`/`origin_convo_id` are opaque TEXT ids
+// (strings); `num` is the human #number (integer); every timestamp is epoch-ms INTEGER
+// (number). Titles can be absent across a privacy boundary — bind defensively at render.
+
+/** Which tracker surface the pane shows; `selected*Id` are #num values (integers). */
+export interface TrackerViewState {
+    open: boolean;
+    view?: "missions" | "inbox";
+    selectedItemId?: number;
+    selectedMissionId?: number;
+}
+
+export type TrackerItemKind = "task" | "question" | "decision";
+export type TrackerItemState = "open" | "closed";
+export type TrackerResolution = "done" | "answered" | "decided" | "reversed" | "cancelled";
+export type TrackerAwaiting = "user" | "agent";
+export type TrackerMilestoneKind = "user_input" | "progress";
+export type TrackerMissionState = "open" | "closed";
+export type TrackerActor = "user" | "agent";
+export type TrackerCommentKind = "comment" | "status";
+
+export interface TrackerLink {
+    url: string;
+    title?: string;
+}
+
+export interface TrackerAttachment {
+    blob_ref: string;
+    mime: string;
+    name: string;
+    size: number;
+    transcript?: string;
+}
+
+/** A resolution/state/awaiting triple; a status comment's text derives from `meta.to`. */
+export interface StatusSnapshot {
+    state: TrackerItemState;
+    resolution: TrackerResolution | null;
+    awaiting: TrackerAwaiting | null;
+}
+
+export interface TrackerItem {
+    id: string;
+    num: number;
+    kind: TrackerItemKind;
+    state: TrackerItemState;
+    resolution: TrackerResolution | null;
+    awaiting: TrackerAwaiting | null;
+    rank: number;
+    title: string;
+    body: string;
+    labels: string[];
+    links: TrackerLink[];
+    supersedes: string | null;
+    origin_convo_id: string;
+    origin_device_id?: number;
+    created_by: TrackerActor;
+    created_at: number;
+    updated_at: number;
+    closed_at: number | null;
+    mission_id: string | null;
+    mission_num: number | null;
+    comment_count: number;
+    last_comment_at: number | null;
+    attachments: TrackerAttachment[];
+    has_image: boolean;
+}
+
+export interface TrackerComment {
+    id: string;
+    item_id: string;
+    author: TrackerActor;
+    device_id: number;
+    kind: TrackerCommentKind;
+    body: string;
+    attachments: TrackerAttachment[];
+    meta?: { from?: StatusSnapshot; to?: StatusSnapshot } | null;
+    created_at: number;
+}
+
+/** The `{num,title,kind,created_at}` digest a mission list-row carries for its newest milestone. */
+export interface MissionLastMilestone {
+    num: number;
+    title: string;
+    kind: TrackerMilestoneKind;
+    created_at: number;
+}
+
+export interface Mission {
+    id: string;
+    num: number;
+    state: TrackerMissionState;
+    title: string;
+    body: string;
+    close_summary: string | null;
+    closed_by: TrackerActor | null;
+    closed_over_open_items: number;
+    origin_convo_id: string;
+    origin_device_id?: number;
+    created_by: TrackerActor;
+    created_at: number;
+    updated_at: number;
+    last_milestone_at: number | null;
+    closed_at: number | null;
+    // List-row counts (present on every list/detail mission row).
+    open_items: number;
+    needs_you: number;
+    conversations: number;
+    milestones: number;
+    last_milestone: MissionLastMilestone | null;
+}
+
+export interface Milestone {
+    id: string;
+    mission_id: string;
+    num: number;
+    kind: TrackerMilestoneKind;
+    title: string;
+    body: string;
+    convo_id: string;
+    seq: number;
+    device_id: number;
+    created_by: TrackerActor;
+    created_at: number;
+}
+
+/** The reduced open-item shape a mission detail lists (awaiting-user first). */
+export interface MissionItemRef {
+    id: string;
+    num: number;
+    kind: TrackerItemKind;
+    state: TrackerItemState;
+    awaiting: TrackerAwaiting | null;
+    title: string;
+    origin_convo_id: string;
+    updated_at: number;
+}
+
+export interface MissionConversation {
+    id: string;
+    title: string;
+    state: string;
+    box: string | null;
+}
+
+export interface MissionDetail {
+    mission: Mission;
+    milestones: Milestone[];
+    items: MissionItemRef[];
+    conversations: MissionConversation[];
 }
 
 export function coerceParentId(x: unknown): string | null {
@@ -689,6 +861,34 @@ export function eventSnippet(type: string, payload: EventPayload): string {
             default:
                 return "[spawn_outcome]";
         }
+    }
+    if (type === "item") {
+        // Tracker item marker (payload: {num,kind,title,action,awaiting?,...}). Titles can be
+        // absent across a privacy boundary — fall back to `#num`. `📌` mirrors the server's own
+        // minted marker text so the sidebar preview reads consistently with the timeline card.
+        const num = asNumber(payload.num);
+        const kind = asString(payload.kind, "item");
+        const title = asString(payload.title).trim();
+        const needsUser = asString(payload.awaiting) === "user";
+        const head = num ? `${kind} #${num}` : kind;
+        const label = needsUser ? `📌 Needs you — ${head}` : `📌 ${head}`;
+        return (title ? `${label}: ${title}` : label).slice(0, 120);
+    }
+    if (type === "milestone") {
+        // Milestone marker (payload: {num,kind,title,...}). user_input milestones are the urgent
+        // "needs you" kind; still preview title-first, falling back to `#num`.
+        const num = asNumber(payload.num);
+        const title = asString(payload.title).trim();
+        const label = num ? `🏁 Milestone #${num}` : "🏁 Milestone";
+        return (title ? `${label}: ${title}` : label).slice(0, 120);
+    }
+    if (type === "mission") {
+        // Mission marker (payload: {num,title,action}). Mirrors MissionNotice's timeline copy at a
+        // sidebar-preview length; title falls back to `#num`.
+        const num = asNumber(payload.num);
+        const title = asString(payload.title).trim();
+        const label = num ? `🏁 Mission #${num}` : "🏁 Mission";
+        return (title ? `${label}: ${title}` : label).slice(0, 120);
     }
     if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);
     if (type === "tool_output" && typeof payload.command === "string") return `$ ${payload.command}`.slice(0, 120);
