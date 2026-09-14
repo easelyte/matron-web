@@ -10,7 +10,14 @@ import { createRoot, type Root } from "react-dom/client";
 
 import type { MatronJournalClient } from "../client";
 import type { EventPayload, JournalEvent } from "../types";
-import { ItemCard, ItemInlineNote, MilestoneCard, MissionNotice, renderItemMarker } from "../tracker/cards";
+import {
+    isRenderableItemMarker,
+    ItemCard,
+    ItemInlineNote,
+    MilestoneCard,
+    MissionNotice,
+    renderItemMarker,
+} from "../tracker/cards";
 
 interface FakeClient {
     openTrackerItem: jest.Mock;
@@ -54,6 +61,24 @@ describe("renderItemMarker dispatch", () => {
         expect(renderItemMarker(event("item", { num: 1, action: "closed" }), client)).not.toBeNull();
         expect(renderItemMarker(event("item", { num: 1, action: "commented" }), client)).not.toBeNull();
         expect(renderItemMarker(event("item", { num: 1, action: "reopened" }), client)).not.toBeNull();
+    });
+
+    // F5: rendering and timeline suppression share ONE classifier (isRenderableItemMarker). If they
+    // could diverge, an unknown/version-skew action would render null yet survive suppression, leaving
+    // a ghost row (empty avatar/bubble). Assert the lock-step: renderItemMarker returns content iff the
+    // classifier says renderable, so the suppressor (isSuppressedTrackerEvent = !isRenderableItemMarker)
+    // suppresses exactly the null-rendering markers.
+    it("keeps isRenderableItemMarker in lock-step with renderItemMarker (no ghost rows)", () => {
+        for (const action of ["created", "closed", "commented", "reopened", "reordered", "updated", "who-knows"]) {
+            const renders = renderItemMarker(event("item", { num: 1, action }), client) !== null;
+            expect(isRenderableItemMarker(event("item", { num: 1, action }))).toBe(renders);
+        }
+        // The quiet/unknown actions are explicitly non-renderable (→ suppressed, no ghost row).
+        expect(isRenderableItemMarker(event("item", { num: 1, action: "reordered" }))).toBe(false);
+        expect(isRenderableItemMarker(event("item", { num: 1, action: "updated" }))).toBe(false);
+        expect(isRenderableItemMarker(event("item", { num: 1, action: "who-knows" }))).toBe(false);
+        // A non-item event is never a renderable item marker.
+        expect(isRenderableItemMarker(event("text", { body: "hi" }))).toBe(false);
     });
 });
 

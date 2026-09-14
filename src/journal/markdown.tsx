@@ -28,7 +28,7 @@ import React, {
     type ComponentPropsWithoutRef,
     type ReactNode,
 } from "react";
-import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -240,6 +240,16 @@ function parseTrackerHref(href: string): { kind: "item" | "mission"; num: number
     return { kind: match[1] as "item" | "mission", num };
 }
 
+/**
+ * react-markdown's default URL sanitizer strips any non-safelisted scheme to "" — including our
+ * `matron://` in-app deep links, which would arrive at the `a()` renderer as an empty href and
+ * render inert BEFORE onTrackerLink could ever fire (F6). Preserve exactly the strict tracker-link
+ * shape; delegate everything else (so javascript:, data:, etc. stay stripped).
+ */
+function trackerUrlTransform(url: string): string {
+    return /^matron:\/\/(?:item|mission)\/[0-9]+$/.test(url) ? url : defaultUrlTransform(url);
+}
+
 interface CodeBlockProps extends ComponentPropsWithoutRef<"pre">, ExtraProps {
     source: string;
 }
@@ -427,6 +437,7 @@ function MarkdownBodyComponent({
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={streaming ? [] : [capCodeBlockHighlighting, [rehypeHighlight, HIGHLIGHT_OPTIONS]]}
+                urlTransform={onTrackerLink ? trackerUrlTransform : defaultUrlTransform}
                 components={componentsFor(text, onTrackerLink)}
             >
                 {text}

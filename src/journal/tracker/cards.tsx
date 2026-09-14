@@ -106,7 +106,11 @@ export function ItemCard({ client, event }: { client: MatronJournalClient; event
                 <div className="mj_TrackerCard_comment">
                     {comment.body ? (
                         <div className="mj_TrackerProse">
-                            <MarkdownBody text={comment.body} label={`item-card-${num}`} />
+                            <MarkdownBody
+                                text={comment.body}
+                                label={`item-card-${num}`}
+                                onTrackerLink={(kind, target) => client.openTrackerLink(kind, target)}
+                            />
                         </div>
                     ) : null}
                     {comment.attachmentNames.map((name, index) => (
@@ -147,19 +151,37 @@ export function ItemInlineNote({
             </span>
             {comment?.body ? (
                 <div className="mj_TrackerProse mj_TrackerInlineNote_body">
-                    <MarkdownBody text={comment.body} label={`item-note-${num}`} />
+                    <MarkdownBody
+                        text={comment.body}
+                        label={`item-note-${num}`}
+                        onTrackerLink={(kind, target) => client.openTrackerLink(kind, target)}
+                    />
                 </div>
             ) : null}
         </button>
     );
 }
 
+// The item-marker actions that render visible timeline content. Any action NOT in this set — the
+// quiet invalidation-only `reordered`/`updated`, plus any unknown action under server/client version
+// skew — renders null and MUST also be suppressed from the timeline, or it leaves a ghost row (an
+// empty avatar/bubble shell). This is the SINGLE classifier shared by renderItemMarker (below) and
+// the timeline suppressor (isSuppressedTrackerEvent, components.tsx) so the two can never diverge (F5).
+const RENDERABLE_ITEM_ACTIONS: ReadonlySet<string> = new Set(["created", "closed", "commented", "reopened"]);
+
+/** True when this `item` marker renders a visible card/note (and so must occupy a timeline row). */
+export function isRenderableItemMarker(event: JournalEvent): boolean {
+    return event.type === "item" && RENDERABLE_ITEM_ACTIONS.has(asString(event.payload.action));
+}
+
 /**
  * Dispatch an `item` marker to its card. `created`/`closed` → ItemCard; `commented`/`reopened` →
- * ItemInlineNote. `reordered`/`updated` are quiet invalidation-only markers that never render — and
- * any unknown action returns null too, so a future action can't crash the timeline.
+ * ItemInlineNote. Anything else (quiet invalidation-only `reordered`/`updated`, or an unknown future
+ * action) is non-renderable per the shared classifier and returns null, so a future action can't
+ * crash the timeline — and, being suppressed in lock-step, can't leave a ghost row either.
  */
 export function renderItemMarker(event: JournalEvent, client: MatronJournalClient): React.ReactElement | null {
+    if (!isRenderableItemMarker(event)) return null;
     switch (asString(event.payload.action)) {
         case "created":
         case "closed":

@@ -140,15 +140,21 @@ export function MissionDetail({
         else void client.selectConversation(milestone.convo_id);
     };
 
+    // matron://item / matron://mission deep links inside the mission body + close summary open the
+    // target tracker surface in-app (F6) — same handler the timeline uses.
+    const onTrackerLink = (kind: "item" | "mission", num: number): void => client.openTrackerLink(kind, num);
+
     const doClose = async (): Promise<void> => {
         const body = summary.trim();
         if (!body || busy) return;
         setBusy(true);
         try {
-            await client.closeTrackerMission(mission.id, body);
+            // Dismiss the confirm dialog ONLY on a confirmed successful close — a failed close
+            // (offline/auth/5xx) keeps the dialog and the typed summary so nothing is lost (F2).
+            const ok = await client.closeTrackerMission(mission.id, body);
+            if (ok) setConfirming(false);
         } finally {
             setBusy(false);
-            setConfirming(false);
         }
     };
 
@@ -175,7 +181,11 @@ export function MissionDetail({
                     </div>
                     {mission.body.trim() ? (
                         <div className="mj_TrackerProse">
-                            <MarkdownBody text={mission.body} label={`mission-${mission.num}`} />
+                            <MarkdownBody
+                                text={mission.body}
+                                label={`mission-${mission.num}`}
+                                onTrackerLink={onTrackerLink}
+                            />
                         </div>
                     ) : null}
                     {closed && mission.close_summary ? (
@@ -183,7 +193,11 @@ export function MissionDetail({
                             <hr className="mj_TrackerDivider" />
                             <p className="mj_TrackerCaption">Closed</p>
                             <div className="mj_TrackerProse">
-                                <MarkdownBody text={mission.close_summary} label={`mission-close-${mission.num}`} />
+                                <MarkdownBody
+                                    text={mission.close_summary}
+                                    label={`mission-close-${mission.num}`}
+                                    onTrackerLink={onTrackerLink}
+                                />
                             </div>
                             {mission.closed_over_open_items > 0 ? (
                                 <p className="mj_TrackerClosedOver">

@@ -154,6 +154,44 @@ describe("MatronJournalClient tracker view state", () => {
 
         expect(client.getSnapshot().trackerView).toBeUndefined();
     });
+
+    // F1: selecting a DIFFERENT row must invalidate the previously loaded detail up front, so its
+    // action handlers (reply/close/reopen) can never fire against the new selection's num.
+    it("openTrackerItem clears a cached detail when selecting a different item", () => {
+        const { client } = makeClient({
+            trackerView: { open: true, view: "inbox", selectedItemId: 7 },
+            trackerItem: { item: item({ num: 7 }), comments: [] },
+        });
+
+        client.openTrackerItem(9);
+
+        expect(client.getSnapshot().trackerItem).toBeNull();
+        expect(client.getSnapshot().trackerView?.selectedItemId).toBe(9);
+    });
+
+    it("openTrackerItem keeps the cached detail when re-selecting the same item", () => {
+        const detail = { item: item({ num: 7 }), comments: [] };
+        const { client } = makeClient({
+            trackerView: { open: true, view: "inbox", selectedItemId: 7 },
+            trackerItem: detail,
+        });
+
+        client.openTrackerItem(7);
+
+        expect(client.getSnapshot().trackerItem).toEqual(detail);
+    });
+
+    it("openTrackerMission clears a cached detail when selecting a different mission", () => {
+        const { client } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail({ num: 5 }),
+        });
+
+        client.openTrackerMission(8);
+
+        expect(client.getSnapshot().trackerMission).toBeNull();
+        expect(client.getSnapshot().trackerView?.selectedMissionId).toBe(8);
+    });
 });
 
 describe("MatronJournalClient tracker loaders", () => {
@@ -178,6 +216,31 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().inboxItems).toEqual([item()]);
     });
 
+    // F3: the item list is cursor-paginated. loadInbox must follow next_cursor to the end and dedupe,
+    // or the inbox (and its "Needs you" section) silently drops every open item past the first page.
+    it("loadInbox follows next_cursor across pages and dedupes by id", async () => {
+        const { client, state } = makeClient();
+        const items = jest
+            .fn()
+            .mockResolvedValueOnce({
+                items: [item({ id: "it_1", num: 1 }), item({ id: "it_2", num: 2 })],
+                next_cursor: "cursor-2",
+            })
+            .mockResolvedValueOnce({
+                // it_2 repeats across the page boundary — must be deduped, not double-counted.
+                items: [item({ id: "it_2", num: 2 }), item({ id: "it_3", num: 3 })],
+                next_cursor: null,
+            });
+        state.api = { items };
+
+        await client.loadInbox();
+
+        expect(items).toHaveBeenCalledTimes(2);
+        expect(items).toHaveBeenNthCalledWith(1, { state: "open" });
+        expect(items).toHaveBeenNthCalledWith(2, { state: "open", cursor: "cursor-2" });
+        expect((client.getSnapshot().inboxItems ?? []).map((row) => row.id)).toEqual(["it_1", "it_2", "it_3"]);
+    });
+
     it("loadItem populates the open item detail", async () => {
         const { client, state } = makeClient();
         const detail = { item: item({ num: 7 }), comments: [] };
@@ -187,6 +250,27 @@ describe("MatronJournalClient tracker loaders", () => {
 
         expect(state.api.item).toHaveBeenCalledWith(7);
         expect(client.getSnapshot().trackerItem).toEqual(detail);
+    });
+
+    // F1: a superseded (out-of-order) response must not overwrite a newer selection's detail. The
+    // first (older) request resolves LAST, but the request-generation guard drops its result.
+    it("loadItem ignores a superseded out-of-order response", async () => {
+        const { client, state } = makeClient();
+        const stale = { item: item({ num: 7 }), comments: [] };
+        const current = { item: item({ num: 9 }), comments: [] };
+        let resolveStale!: (value: typeof stale) => void;
+        const stalePending = new Promise<typeof stale>((resolve) => {
+            resolveStale = resolve;
+        });
+        state.api = { item: jest.fn().mockReturnValueOnce(stalePending).mockResolvedValueOnce(current) };
+
+        const first = client.loadItem(7); // older request, still pending
+        await client.loadItem(9); // newer request resolves first → wins
+        expect(client.getSnapshot().trackerItem).toEqual(current);
+
+        resolveStale(stale); // older request finally resolves — must be ignored
+        await first;
+        expect(client.getSnapshot().trackerItem).toEqual(current);
     });
 
     it("loadMission populates the open mission detail", async () => {
@@ -260,6 +344,21 @@ describe("MatronJournalClient tracker mutations", () => {
         expect(state.api.closeMission).toHaveBeenCalledWith("ms_1", { summary: "wrapped up" }, expect.any(String));
         expect(state.api.mission).toHaveBeenCalledWith("ms_1");
         expect(state.api.missions).toHaveBeenCalled();
+    });
+
+    // F2: the draft-preservation contract lives in the return value — true only on a confirmed write,
+    // false on any handled failure — so ItemDetail.send can clear the reply only when it truly landed.
+    it("commentItem resolves true on success and false on a handled failure", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            postItemComment: jest.fn().mockResolvedValueOnce({}).mockRejectedValueOnce(new Error("offline")),
+            item: jest.fn().mockResolvedValue({ item: item(), comments: [] }),
+            items: jest.fn(),
+        };
+
+        await expect(client.commentItem(1, { body: "landed" })).resolves.toBe(true);
+        await expect(client.commentItem(1, { body: "failed" })).resolves.toBe(false);
+        expect(client.getSnapshot().trackerError).toBe("offline");
     });
 
     it("records a tracker error and skips the refetch when the mutation itself rejects", async () => {

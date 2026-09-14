@@ -58,7 +58,11 @@ export function TrackerPane({
     };
 
     const body = ((): React.ReactElement => {
-        if (selectedItemId != null && state.trackerItem) {
+        // Render a cached detail ONLY when it belongs to the current selection. A detail loaded for
+        // a previously selected row is cleared to null on selection change (openTracker*), but the
+        // id/num match here is the belt-and-braces guard so a stale record can never drive the detail
+        // (whose action handlers close/reopen by that record's num) against the new selection (F1).
+        if (selectedItemId != null && state.trackerItem && state.trackerItem.item.num === selectedItemId) {
             return (
                 <ItemDetail
                     item={state.trackerItem.item}
@@ -68,7 +72,11 @@ export function TrackerPane({
                 />
             );
         }
-        if (selectedMissionId != null && state.trackerMission) {
+        if (
+            selectedMissionId != null &&
+            state.trackerMission &&
+            state.trackerMission.mission?.num === selectedMissionId
+        ) {
             return (
                 <MissionDetail
                     detail={state.trackerMission}

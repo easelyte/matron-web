@@ -90,7 +90,7 @@ function isElectronRuntime(): boolean {
     return typeof window !== "undefined" && Boolean((window as Window & { electron?: unknown }).electron);
 }
 import { MarkdownBody, markdownToPlainText } from "./markdown";
-import { MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
+import { isRenderableItemMarker, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
 import { TrackerPane } from "./tracker/TrackerPane";
 import {
     buildMediaCorpus,
@@ -4357,16 +4357,14 @@ export function isPermissionDecisionReply(event: JournalEvent, permissionRequest
  * Tracker events that EventContent renders as null and so must not occupy a timeline row at all —
  * otherwise EventRow still wraps the null content in an avatar + sender bubble (a ghost message).
  * Two families: the plain-text `fallback_for` mirror the bridge emits for old clients (this client
- * renders the real `item` marker instead), and the quiet invalidation-only `item` markers
- * (reordered / updated) that carry no visible card. Kept in lock-step with EventContent's null
- * returns; the created/closed/commented/reopened item actions still render their cards.
+ * renders the real `item` marker instead), and every `item` marker that renders no card — the quiet
+ * invalidation-only reordered/updated AND any unknown action under version skew. The item test
+ * delegates to the SAME classifier renderItemMarker uses (isRenderableItemMarker), so rendering and
+ * suppression can never diverge and an unsupported action can never leave a ghost row (F5).
  */
 function isSuppressedTrackerEvent(event: JournalEvent): boolean {
     if (event.type === "text") return asString(event.payload.fallback_for).length > 0;
-    if (event.type === "item") {
-        const action = asString(event.payload.action);
-        return action === "reordered" || action === "updated";
-    }
+    if (event.type === "item") return !isRenderableItemMarker(event);
     return false;
 }
 
@@ -4437,9 +4435,7 @@ export function EventContent({
                     <MarkdownBody
                         text={asString(event.payload.body)}
                         label={String(event.seq)}
-                        onTrackerLink={(kind, num) =>
-                            kind === "item" ? client.openTrackerItem(num) : client.openTrackerMission(num)
-                        }
+                        onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
                     />
                 </div>
             );

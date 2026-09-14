@@ -326,6 +326,12 @@ export class MatronJournalClient {
     // Every explicit conversation selection supersedes all earlier selection work, including a
     // deep link to another sequence in the same conversation (where an id-only guard is insufficient).
     private selectionEpoch = 0;
+    // Monotonic guards so only the latest tracker detail request writes its result — an earlier slow
+    // response (out-of-order load, or a superseded selection) can never clobber a newer one. Mirrors
+    // searchSeq. Bumped on every loadItem/loadMission call; the resolved response checks it before
+    // patching (F1 stale-response guard).
+    private trackerItemGen = 0;
+    private trackerMissionGen = 0;
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
@@ -1711,12 +1717,30 @@ export class MatronJournalClient {
 
     // Deep-link / row-tap entry points: select the row (last-tap-wins) and switch to its view.
     // The pane's own effect issues the matching load* call when the selection changes.
+    // Selecting a DIFFERENT row invalidates the cached detail up front (→ null) so the previously
+    // loaded record can never be rendered — nor have its action handlers (reply/close/reopen) fire —
+    // against the new selection before the loader replaces it (F1). Re-selecting the same row keeps
+    // the cache so it doesn't flash.
     public openTrackerItem(num: number): void {
+        if (this.state.trackerItem && this.state.trackerItem.item.num !== num) {
+            this.patch({ trackerItem: null });
+        }
         this.openTrackerView({ view: "inbox", itemId: num });
     }
 
     public openTrackerMission(num: number): void {
+        if (this.state.trackerMission && this.state.trackerMission.mission?.num !== num) {
+            this.patch({ trackerMission: null });
+        }
         this.openTrackerView({ view: "missions", missionId: num });
+    }
+
+    // One in-app handler for `matron://item/<N>` / `matron://mission/<N>` markdown deep links, shared
+    // by the timeline and every tracker Markdown call site so a valid tracker link is always
+    // activatable (F6) — never rendered inert or stripped.
+    public openTrackerLink(kind: "item" | "mission", num: number): void {
+        if (kind === "item") this.openTrackerItem(num);
+        else this.openTrackerMission(num);
     }
 
     // ── Tracker data loaders (fetch → patch; the SAME trackerLoading/trackerError pair as the
@@ -1743,10 +1767,28 @@ export class MatronJournalClient {
         this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             // App-wide open items; the inbox sorts "needs you" (open && awaiting==user) first
-            // client-side, so a single open-state fetch feeds every section.
-            const { items } = await api.items({ state: "open" });
-            if (this.api !== api) return;
-            this.patch({ inboxItems: items, trackerLoading: false });
+            // client-side, so a single open-state fetch feeds every section. The list is
+            // cursor-paginated (server clamps limit ≤500), so follow next_cursor to exhaustion —
+            // the inbox and its "Needs you" section reason over ALL open items, and a partial first
+            // page reads as a false "nothing needs you" / drops user-blocking rows (F3). Bounded to
+            // MAX_PAGES / MAX_ITEMS as a runaway guard; deduped by item id across pages.
+            const MAX_PAGES = 20;
+            const MAX_ITEMS = 10_000;
+            const accumulated: TrackerItem[] = [];
+            const seen = new Set<string>();
+            let cursor: string | undefined;
+            for (let page = 0; page < MAX_PAGES; page += 1) {
+                const { items, next_cursor } = await api.items({ state: "open", ...(cursor ? { cursor } : {}) });
+                if (this.api !== api) return;
+                for (const item of items) {
+                    if (seen.has(item.id)) continue;
+                    seen.add(item.id);
+                    accumulated.push(item);
+                }
+                if (!next_cursor || accumulated.length >= MAX_ITEMS) break;
+                cursor = next_cursor;
+            }
+            this.patch({ inboxItems: accumulated, trackerLoading: false });
         } catch (error) {
             if (this.api !== api) return;
             this.patch({ trackerError: errorMessage(error), trackerLoading: false });
@@ -1756,13 +1798,16 @@ export class MatronJournalClient {
     public async loadItem(id: number | string): Promise<void> {
         const api = this.api;
         if (!api) return;
+        const gen = ++this.trackerItemGen;
         this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             const detail = await api.item(id);
-            if (this.api !== api) return;
+            // Guard both API identity (logout/re-login) AND request identity: a superseded/out-of-
+            // order response must never patch a newer selection's detail (F1).
+            if (this.api !== api || this.trackerItemGen !== gen) return;
             this.patch({ trackerItem: detail, trackerLoading: false });
         } catch (error) {
-            if (this.api !== api) return;
+            if (this.api !== api || this.trackerItemGen !== gen) return;
             this.patch({ trackerError: errorMessage(error), trackerLoading: false });
         }
     }
@@ -1770,13 +1815,14 @@ export class MatronJournalClient {
     public async loadMission(id: number | string): Promise<void> {
         const api = this.api;
         if (!api) return;
+        const gen = ++this.trackerMissionGen;
         this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             const detail = await api.mission(id);
-            if (this.api !== api) return;
+            if (this.api !== api || this.trackerMissionGen !== gen) return;
             this.patch({ trackerMission: detail, trackerLoading: false });
         } catch (error) {
-            if (this.api !== api) return;
+            if (this.api !== api || this.trackerMissionGen !== gen) return;
             this.patch({ trackerError: errorMessage(error), trackerLoading: false });
         }
     }
@@ -1784,79 +1830,92 @@ export class MatronJournalClient {
     // ── Tracker mutations (fresh Idempotency-Key per call → refetch the affected row + patch).
     // On failure they surface trackerError but leave the loaded data intact (await-refetch, no
     // optimistic outbox in v1). The inbox / missions list are refetched only when already loaded,
-    // so a mutation from a detail view keeps their badges live without forcing a cold load. ──
+    // so a mutation from a detail view keeps their badges live without forcing a cold load.
+    // Each resolves `true` only on a CONFIRMED successful write and `false` on any handled failure
+    // (offline/auth-expiry/timeout/5xx, or signed-out) — callers gate destructive UI resets (e.g.
+    // clearing a reply draft) on that flag so a failed mutation never silently drops user input (F2).
+    // A write that lands but races a logout still resolves true (the write happened). ──
 
     public async commentItem(
         id: number | string,
         body: { body?: string; attachments?: TrackerItem["attachments"] },
-    ): Promise<void> {
+    ): Promise<boolean> {
         const api = this.api;
-        if (!api) return;
+        if (!api) return false;
         try {
             await api.postItemComment(id, body, crypto.randomUUID());
         } catch (error) {
             if (this.api === api) this.patch({ trackerError: errorMessage(error) });
-            return;
+            return false;
         }
-        if (this.api !== api) return;
+        if (this.api !== api) return true;
         await this.loadItem(id);
         if (this.state.inboxItems) await this.loadInbox();
+        return true;
     }
 
-    public async closeTrackerItem(id: number | string, resolution: TrackerResolution, comment?: string): Promise<void> {
+    public async closeTrackerItem(
+        id: number | string,
+        resolution: TrackerResolution,
+        comment?: string,
+    ): Promise<boolean> {
         const api = this.api;
-        if (!api) return;
+        if (!api) return false;
         try {
             await api.closeItem(id, { resolution, comment }, crypto.randomUUID());
         } catch (error) {
             if (this.api === api) this.patch({ trackerError: errorMessage(error) });
-            return;
+            return false;
         }
-        if (this.api !== api) return;
+        if (this.api !== api) return true;
         await this.loadItem(id);
         if (this.state.inboxItems) await this.loadInbox();
+        return true;
     }
 
-    public async reopenTrackerItem(id: number | string, comment?: string): Promise<void> {
+    public async reopenTrackerItem(id: number | string, comment?: string): Promise<boolean> {
         const api = this.api;
-        if (!api) return;
+        if (!api) return false;
         try {
             await api.reopenItem(id, { comment }, crypto.randomUUID());
         } catch (error) {
             if (this.api === api) this.patch({ trackerError: errorMessage(error) });
-            return;
+            return false;
         }
-        if (this.api !== api) return;
+        if (this.api !== api) return true;
         await this.loadItem(id);
         if (this.state.inboxItems) await this.loadInbox();
+        return true;
     }
 
-    public async saveMissionEdits(id: number | string, fields: { title?: string; body?: string }): Promise<void> {
+    public async saveMissionEdits(id: number | string, fields: { title?: string; body?: string }): Promise<boolean> {
         const api = this.api;
-        if (!api) return;
+        if (!api) return false;
         try {
             await api.patchMission(id, fields, crypto.randomUUID());
         } catch (error) {
             if (this.api === api) this.patch({ trackerError: errorMessage(error) });
-            return;
+            return false;
         }
-        if (this.api !== api) return;
+        if (this.api !== api) return true;
         await this.loadMission(id);
         if (this.state.missions) await this.loadMissions();
+        return true;
     }
 
-    public async closeTrackerMission(id: number | string, summary: string): Promise<void> {
+    public async closeTrackerMission(id: number | string, summary: string): Promise<boolean> {
         const api = this.api;
-        if (!api) return;
+        if (!api) return false;
         try {
             await api.closeMission(id, { summary }, crypto.randomUUID());
         } catch (error) {
             if (this.api === api) this.patch({ trackerError: errorMessage(error) });
-            return;
+            return false;
         }
-        if (this.api !== api) return;
+        if (this.api !== api) return true;
         await this.loadMission(id);
         if (this.state.missions) await this.loadMissions();
+        return true;
     }
 
     // WS invalidation for tracker markers (`item` / `mission` / `milestone` journal frames).

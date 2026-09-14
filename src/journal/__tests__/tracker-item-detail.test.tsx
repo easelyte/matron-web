@@ -20,16 +20,18 @@ interface FakeClient {
     reopenTrackerItem: jest.Mock;
     closeTrackerView: jest.Mock;
     selectConversation: jest.Mock;
+    openTrackerLink: jest.Mock;
 }
 
 function fakeClient(): FakeClient {
     return {
         getSnapshot: jest.fn().mockReturnValue({ selectedConversationId: "c1", conversations: [] }),
-        commentItem: jest.fn().mockResolvedValue(undefined),
-        closeTrackerItem: jest.fn().mockResolvedValue(undefined),
-        reopenTrackerItem: jest.fn().mockResolvedValue(undefined),
+        commentItem: jest.fn().mockResolvedValue(true),
+        closeTrackerItem: jest.fn().mockResolvedValue(true),
+        reopenTrackerItem: jest.fn().mockResolvedValue(true),
         closeTrackerView: jest.fn(),
         selectConversation: jest.fn().mockResolvedValue(undefined),
+        openTrackerLink: jest.fn(),
     };
 }
 
@@ -207,6 +209,59 @@ describe("ItemDetail", () => {
         });
 
         expect(client.commentItem).toHaveBeenCalledWith(12, { body: "on it, deploying now" });
+    });
+
+    // F2: a failed send (mutator resolves false) must NOT clear the composer — the typed text is the
+    // user's only copy, and destroying it on offline/auth/5xx is silent data loss.
+    it("keeps the reply draft intact when the send fails", async () => {
+        const client = fakeClient();
+        client.commentItem.mockResolvedValue(false);
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({ num: 12 })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+
+        const textarea = container.querySelector<HTMLTextAreaElement>(".mj_TrackerComposer_input")!;
+        const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+        await act(async () => {
+            setValue.call(textarea, "important context I do not want to lose");
+            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        await act(async () => {
+            container.querySelector<HTMLButtonElement>(".mj_TrackerComposer_send")!.click();
+        });
+
+        expect(client.commentItem).toHaveBeenCalledWith(12, { body: "important context I do not want to lose" });
+        expect(container.querySelector<HTMLTextAreaElement>(".mj_TrackerComposer_input")!.value).toBe(
+            "important context I do not want to lose",
+        );
+    });
+
+    // F6: a matron://item deep link inside the item body must render as an activatable in-app link
+    // (tap → openTrackerLink), not be stripped/inert as it was before the handler was threaded in.
+    it("renders a matron://item link in the body as an activatable in-app link", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({ num: 12, body: "follow up on [item thirty-four](matron://item/34)" })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+
+        const link = container.querySelector<HTMLAnchorElement>(".mj_TrackerItemBody a.mj_TrackerLink");
+        expect(link).not.toBeNull();
+        expect(link?.textContent).toBe("item thirty-four");
+
+        await act(async () => {
+            link!.click();
+        });
+        expect(client.openTrackerLink).toHaveBeenCalledWith("item", 34);
     });
 
     it("renders a status comment as a centered derived line, never its raw body", async () => {

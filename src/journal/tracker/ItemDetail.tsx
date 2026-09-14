@@ -44,7 +44,13 @@ function AttachmentChips({ comment }: { comment: TrackerComment }): React.ReactE
     );
 }
 
-function CommentRow({ comment }: { comment: TrackerComment }): React.ReactElement {
+function CommentRow({
+    comment,
+    onTrackerLink,
+}: {
+    comment: TrackerComment;
+    onTrackerLink: (kind: "item" | "mission", num: number) => void;
+}): React.ReactElement {
     if (comment.kind === "status") {
         const text = statusRowText(comment);
         if (text) {
@@ -65,7 +71,7 @@ function CommentRow({ comment }: { comment: TrackerComment }): React.ReactElemen
             </div>
             {comment.body.trim() ? (
                 <div className="mj_TrackerProse">
-                    <MarkdownBody text={comment.body} label={`comment-${comment.id}`} />
+                    <MarkdownBody text={comment.body} label={`comment-${comment.id}`} onTrackerLink={onTrackerLink} />
                 </div>
             ) : null}
             <AttachmentChips comment={comment} />
@@ -104,8 +110,10 @@ export function ItemDetail({
         if (!body || busy) return;
         setBusy(true);
         try {
-            await client.commentItem(item.num, { body });
-            setReply("");
+            // Clear the draft ONLY on a confirmed successful post — a failed send (offline/auth/5xx)
+            // resolves false and keeps the typed text so it isn't silently lost (F2).
+            const ok = await client.commentItem(item.num, { body });
+            if (ok) setReply("");
         } finally {
             setBusy(false);
         }
@@ -139,6 +147,10 @@ export function ItemDetail({
     };
 
     const showMenu = item.state === "closed" || resolutions.length > 0;
+
+    // matron://item / matron://mission deep links inside the item body + comment threads open the
+    // target tracker surface in-app (F6) — same handler the timeline uses.
+    const onTrackerLink = (kind: "item" | "mission", num: number): void => client.openTrackerLink(kind, num);
 
     return (
         <div className="mj_TrackerDetail">
@@ -240,14 +252,14 @@ export function ItemDetail({
 
                 {item.body.trim() ? (
                     <div className="mj_TrackerProse mj_TrackerItemBody">
-                        <MarkdownBody text={item.body} label={`item-${item.num}`} />
+                        <MarkdownBody text={item.body} label={`item-${item.num}`} onTrackerLink={onTrackerLink} />
                     </div>
                 ) : null}
 
                 {comments.length > 0 ? (
                     <div className="mj_TrackerThread">
                         {comments.map((comment) => (
-                            <CommentRow key={comment.id} comment={comment} />
+                            <CommentRow key={comment.id} comment={comment} onTrackerLink={onTrackerLink} />
                         ))}
                     </div>
                 ) : null}
