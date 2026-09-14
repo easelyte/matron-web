@@ -9,7 +9,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { buildUsageMeters, UsageCluster } from "../../../src/journal/components";
-import { worstLimit } from "../../../src/journal/status";
+import { mergeSessionStatus, worstLimit } from "../../../src/journal/status";
 import { type SessionStatus } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
@@ -186,12 +186,9 @@ describe("UsageCluster", () => {
     });
 });
 
-describe("buildUsageMeters host-vitals override (#529)", () => {
-    const perStatusLimits: Limits = [
-        { id: "host_cpu", label: "Host CPU", percent: 10, sampled_at_ms: 1_000 },
-        { id: "host_ram", label: "Host RAM", percent: 20, sampled_at_ms: 1_000 },
-        { id: "session_5h", label: "Session", percent: 41 },
-    ];
+describe("buildUsageMeters host vitals (status.vitals source + #529 live override)", () => {
+    const vitals = { cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1_000 };
+    const accountLimits: Limits = [{ id: "session_5h", label: "Session", percent: 41 }];
 
     function byId(meters: Limits, id: string): Limits[number] {
         const found = meters.find((meter) => meter.id === id);
@@ -199,8 +196,170 @@ describe("buildUsageMeters host-vitals override (#529)", () => {
         return found;
     }
 
-    it("overrides host_cpu / host_ram percent + sampled_at_ms from the global value", () => {
-        const meters = buildUsageMeters(undefined, perStatusLimits, {
+    it("synthesizes host_cpu / host_ram from the TOP-LEVEL status.vitals (upstream #156 contract)", () => {
+        const meters = buildUsageMeters({ vitals }, accountLimits);
+
+        expect(byId(meters, "host_cpu")).toMatchObject({
+            id: "host_cpu",
+            label: "host CPU",
+            percent: 10,
+            sampled_at_ms: 1_000,
+        });
+        expect(byId(meters, "host_ram")).toMatchObject({
+            id: "host_ram",
+            label: "host RAM",
+            percent: 20,
+            sampled_at_ms: 1_000,
+        });
+        expect(byId(meters, "session_5h").percent).toBe(41);
+    });
+
+    it("renders EXACTLY ONE cpu and one ram meter when a bridge also injects them into limits[]", () => {
+        // The reverted bridge behaviour (and any client that meets an un-updated bridge
+        // mid-deploy) puts synthetic host_cpu/host_ram entries in limits[]. Those must not
+        // double-render alongside the vitals-derived pair. Here vitals carries the newer
+        // stamp (1000 vs 5), so freshness resolves to it.
+        const meters = buildUsageMeters({ vitals }, [
+            { id: "host_cpu", label: "Host CPU", percent: 99, sampled_at_ms: 5 },
+            { id: "host_ram", label: "Host RAM", percent: 85, sampled_at_ms: 5 },
+            ...accountLimits,
+        ]);
+
+        expect(meters.filter((meter) => meter.id === "host_cpu")).toHaveLength(1);
+        expect(meters.filter((meter) => meter.id === "host_ram")).toHaveLength(1);
+        // The surviving pair is the vitals one, not the injected limits one.
+        expect(byId(meters, "host_cpu").percent).toBe(10);
+        expect(byId(meters, "host_ram").percent).toBe(20);
+        // The real account quota is not displaced.
+        expect(byId(meters, "session_5h").percent).toBe(41);
+    });
+
+    it("lets a NEWER limits[] host entry win over a retained stale vitals (bridge rollback)", () => {
+        // Composed path, which neither half's tests covered on their own. mergeSessionStatus
+        // otherwise carries `vitals` across an update that omits it, so after a rollback to a
+        // bridge that sends host meters in limits[] again, a stale reading would sit there
+        // forever masking every newer legacy sample and pinning the header to a frozen number.
+        const afterRollback = mergeSessionStatus(
+            { vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1_000 } },
+            { limits: [{ id: "host_cpu", label: "Host CPU", percent: 66, sampled_at_ms: 9_000 }] },
+        );
+
+        expect(afterRollback.vitals).toBeUndefined();
+
+        const meters = buildUsageMeters(afterRollback, afterRollback.limits);
+
+        expect(meters.filter((meter) => meter.id === "host_cpu")).toHaveLength(1);
+        expect(byId(meters, "host_cpu")).toMatchObject({ percent: 66, sampled_at_ms: 9_000 });
+    });
+
+    it("hands the meters back to UNSTAMPED legacy entries after a rollback (vitals evicted)", () => {
+        // The pre-#156 wire shape had no sampled_at_ms on host meters at all, so freshness has
+        // nothing to rank them on. mergeSessionStatus therefore evicts the retained vitals when
+        // an update asserts the legacy contract, rather than leaving a stale stamped reading to
+        // outrank every unstamped sample that follows it.
+        const afterRollback = mergeSessionStatus(
+            { vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1_000 } },
+            { limits: [{ id: "host_cpu", label: "Host CPU", percent: 66 }] },
+        );
+
+        expect(afterRollback.vitals).toBeUndefined();
+
+        const meters = buildUsageMeters(afterRollback, afterRollback.limits);
+
+        expect(meters.filter((meter) => meter.id === "host_cpu")).toHaveLength(1);
+        expect(byId(meters, "host_cpu")).toMatchObject({ percent: 66 });
+        // The evicted vitals takes its ram half with it — the legacy producer is now the source.
+        expect(meters.some((meter) => meter.id === "host_ram")).toBe(false);
+    });
+
+    it("does NOT evict vitals when the bridge sends both (forward deploy window)", () => {
+        const merged = mergeSessionStatus(undefined, {
+            vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1_000 },
+            limits: [{ id: "host_cpu", label: "Host CPU", percent: 99, sampled_at_ms: 5 }],
+        });
+
+        expect(merged.vitals).toEqual({ cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1_000 });
+        expect(byId(buildUsageMeters(merged, merged.limits), "host_cpu").percent).toBe(10);
+    });
+
+    it("lets a warmed CPU push fill a half that status.vitals reported as null", () => {
+        // The bridge sends cpu_pct: null until its sampler has two ticks, and status only
+        // republishes at turn end — so a conversation opened during warm-up must still pick up
+        // the CPU bar from the ~5s push rather than waiting for the next turn to end.
+        const meters = buildUsageMeters({ vitals: { cpu_pct: null, ram_pct: 20, sampled_at_ms: 1_000 } }, undefined, {
+            cpu: 44,
+            ram: 21,
+            sampled_at_ms: 2_000,
+        });
+
+        expect(byId(meters, "host_cpu")).toMatchObject({ percent: 44, sampled_at_ms: 2_000 });
+    });
+
+    it("still ranks normally when the CLIENT clock runs minutes behind the bridge", () => {
+        // Both stamps are ahead of local time here. A skew-relative plausibility bound would
+        // reject both and freeze the meter on the turn-end reading; an absolute one lets the
+        // newer push win, because the comparison between candidates is purely relative.
+        const ahead = Date.now() + 6 * 60_000;
+        const meters = buildUsageMeters({ vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: ahead } }, undefined, {
+            cpu: 44,
+            ram: 21,
+            sampled_at_ms: ahead + 5_000,
+        });
+
+        expect(byId(meters, "host_cpu")).toMatchObject({ percent: 44, sampled_at_ms: ahead + 5_000 });
+    });
+
+    it("ignores an implausibly-future stamp for ranking instead of pinning the meter", () => {
+        const meters = buildUsageMeters({ vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1e308 } }, [
+            { id: "host_cpu", label: "Host CPU", percent: 66, sampled_at_ms: Date.now() },
+        ]);
+
+        // The bogus stamp cannot outrank a real sample, so the legacy reading wins.
+        expect(byId(meters, "host_cpu").percent).toBe(66);
+    });
+
+    it("prefers a legacy limits[] entry that is stamped when vitals carries no stamp at all", () => {
+        // An unstamped candidate has no freshness to compare, so it must not outrank a real
+        // sample just by being the "newer" contract.
+        const meters = buildUsageMeters(
+            { vitals: { cpu_pct: 10, ram_pct: 20, sampled_at_ms: undefined as unknown as number } },
+            [{ id: "host_cpu", label: "Host CPU", percent: 66, sampled_at_ms: 9_000 }],
+        );
+
+        expect(byId(meters, "host_cpu")).toMatchObject({ percent: 66, sampled_at_ms: 9_000 });
+    });
+
+    it("keeps limits[] host entries when the bridge sends no vitals (pre-#156 fallback)", () => {
+        const meters = buildUsageMeters(undefined, [
+            { id: "host_cpu", label: "Host CPU", percent: 10, sampled_at_ms: 1_000 },
+            { id: "host_ram", label: "Host RAM", percent: 20, sampled_at_ms: 1_000 },
+            ...accountLimits,
+        ]);
+
+        expect(byId(meters, "host_cpu")).toMatchObject({ percent: 10, sampled_at_ms: 1_000 });
+        expect(byId(meters, "host_ram")).toMatchObject({ percent: 20, sampled_at_ms: 1_000 });
+    });
+
+    it("skips a null / non-finite vitals half individually", () => {
+        // The bridge emits cpu_pct: null until its CPU sampler has two ticks after boot.
+        const warming = buildUsageMeters({ vitals: { cpu_pct: null, ram_pct: 20, sampled_at_ms: 1_000 } }, undefined);
+        expect(warming.some((meter) => meter.id === "host_cpu")).toBe(false);
+        expect(byId(warming, "host_ram").percent).toBe(20);
+
+        const broken = buildUsageMeters(
+            { vitals: { cpu_pct: Number.NaN, ram_pct: Number.POSITIVE_INFINITY, sampled_at_ms: 1_000 } },
+            undefined,
+        );
+        expect(broken.some((meter) => meter.id === "host_cpu" || meter.id === "host_ram")).toBe(false);
+    });
+
+    it("renders no host meters at all when status.vitals is absent (graceful degradation)", () => {
+        const meters = buildUsageMeters({ context: { tokens: 100, window: 1_000, pct: 10 } }, accountLimits);
+        expect(meters.some((meter) => meter.id === "host_cpu" || meter.id === "host_ram")).toBe(false);
+    });
+
+    it("overrides the synthesized host percent + sampled_at_ms from the global push (#529)", () => {
+        const meters = buildUsageMeters({ vitals }, accountLimits, {
             cpu: 77,
             ram: 88,
             sampled_at_ms: 9_999,
@@ -212,17 +371,16 @@ describe("buildUsageMeters host-vitals override (#529)", () => {
         expect(byId(meters, "session_5h").percent).toBe(41);
     });
 
-    it("falls back to per-status limits host entries when the global value is absent", () => {
+    it("falls back to the status.vitals figures when the global push is absent", () => {
         for (const absent of [undefined, null]) {
-            const meters = buildUsageMeters(undefined, perStatusLimits, absent);
+            const meters = buildUsageMeters({ vitals }, accountLimits, absent);
             expect(byId(meters, "host_cpu")).toMatchObject({ percent: 10, sampled_at_ms: 1_000 });
             expect(byId(meters, "host_ram")).toMatchObject({ percent: 20, sampled_at_ms: 1_000 });
         }
     });
 
-    it("does not synthesize host meters that are absent from the per-status limits", () => {
-        // Override semantics only: with no host_* entry to override, nothing is added.
-        const meters = buildUsageMeters(undefined, [{ id: "session_5h", label: "Session", percent: 41 }], {
+    it("does not synthesize host meters from the global push alone (vitals is the source)", () => {
+        const meters = buildUsageMeters(undefined, accountLimits, {
             cpu: 77,
             ram: 88,
             sampled_at_ms: 9_999,
@@ -232,16 +390,34 @@ describe("buildUsageMeters host-vitals override (#529)", () => {
 
     it("an overridden FRESH sampled_at_ms renders the host bar un-dimmed (staleness safety net)", async () => {
         const now = 1_000_000_000_000;
-        // Per-status stamp is ancient (would be stale), but the global push is fresh → override wins.
-        const meters = buildUsageMeters(
-            undefined,
-            [{ id: "host_cpu", label: "Host CPU", percent: 12, sampled_at_ms: now - 240_000 }],
-            { cpu: 55, ram: 60, sampled_at_ms: now - 3_000 },
-        );
+        // The status.vitals stamp is ancient (would be stale), but the global push is fresh → override wins.
+        const meters = buildUsageMeters({ vitals: { cpu_pct: 12, ram_pct: 20, sampled_at_ms: now - 240_000 } }, [], {
+            cpu: 55,
+            ram: 60,
+            sampled_at_ms: now - 3_000,
+        });
 
-        await renderUsage(meters, now);
+        await renderUsage(
+            meters.filter((meter) => meter.id === "host_cpu"),
+            now,
+        );
         const row = container.querySelector(".mj_UsageRow")!;
         expect(row.classList.contains("mj_UsageRow_stale")).toBe(false);
         expect(row.querySelector(".mj_UsagePercent")?.textContent).toBe("55%");
+    });
+
+    it("a stale status.vitals stamp with no push still dims the bar", async () => {
+        const now = 1_000_000_000_000;
+        const meters = buildUsageMeters(
+            { vitals: { cpu_pct: 12, ram_pct: 20, sampled_at_ms: now - 240_000 } },
+            undefined,
+        );
+
+        await renderUsage(
+            meters.filter((meter) => meter.id === "host_cpu"),
+            now,
+        );
+        const row = container.querySelector(".mj_UsageRow")!;
+        expect(row.classList.contains("mj_UsageRow_stale")).toBe(true);
     });
 });

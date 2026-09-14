@@ -209,6 +209,19 @@ describe("journal session status presentation", () => {
         });
     });
 
+    it("carries top-level vitals through a partial status update", () => {
+        // Host CPU/RAM live on status.vitals; a limits-only repaint must not blank them.
+        const vitals = { cpu_pct: 12, ram_pct: 47, sampled_at_ms: 1_753_000_000_000 };
+        expect(
+            mergeSessionStatus({ model: "claude-fable-5", vitals }, { limits: [{ label: "Session", percent: 39 }] })
+                .vitals,
+        ).toEqual(vitals);
+
+        // A fresh reading replaces the held one.
+        const next = { cpu_pct: 80, ram_pct: 50, sampled_at_ms: 1_753_000_060_000 };
+        expect(mergeSessionStatus({ vitals }, { vitals: next }).vitals).toEqual(next);
+    });
+
     it("ages and expires host-vital samples via sampled_at_ms", () => {
         const now = 1_000_000_000_000;
         // No sampled_at_ms → no age, never stale (non-host meters / older bridges).

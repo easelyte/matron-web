@@ -299,9 +299,10 @@ export class MatronJournalClient {
     private readonly activities = new Map<string, JournalEphemeralFrame["activity"]>();
     private readonly statuses = new Map<string, NonNullable<JournalEphemeralFrame["status"]>>();
     // Host-global vitals (#529): ONE value for the whole app, keyed to no conversation. Set from
-    // the host-scoped ephemeral push and threaded into every UsageCluster via ClientState.hostVitals
-    // to override the per-status host_cpu / host_ram meters. Null until the first push (or on an
-    // older server that never sends it) → buildUsageMeters falls back to the per-status limits.
+    // the host-scoped ephemeral push (~5s) and threaded into every UsageCluster via
+    // ClientState.hostVitals to OVERRIDE the host_cpu / host_ram meters buildUsageMeters
+    // synthesizes from the turn-end `status.vitals`. Null until the first push (or on a server
+    // that never sends it) → the status.vitals figures stand.
     private hostVitals: HostVitals | null = null;
     private readonly textStreams = new Map<string, Record<string, string>>();
     private readonly toolStreams = new Map<string, Record<string, ToolStreamState>>();
