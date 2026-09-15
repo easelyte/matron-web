@@ -36,14 +36,34 @@ describe("an indeterminate outcome does not claim nothing changed", () => {
     it("names the doubt and points at the listing", () => {
         const copy = messageForFileStatus(507, "indeterminate");
         expect(copy).not.toMatch(/nothing was changed/i);
-        expect(copy).toMatch(/can't tell whether it was applied/i);
-        expect(copy).toMatch(/refresh/i);
+        expect(copy).toMatch(/couldn't confirm whether this change was applied/i);
+        expect(copy).toMatch(/refresh and check/i);
     });
 
-    it("leaves the write-ahead 507 saying exactly what it said before", () => {
-        // A bare 507 from the gate really does prove non-mutation, and that copy is correct.
-        expect(messageForFileStatus(507)).toMatch(/nothing was changed/i);
-        expect(messageForFileStatus(507, "storage")).toMatch(/nothing was changed/i);
+    it("keeps the definite copy only where the server earned it", () => {
+        // The journal's storage-side refusals (trash-write-failed / audit-fail-closed /
+        // metadata-preserve-failed) all answer `denied`, and they really did refuse before touching
+        // anything. That is the ONLY 507 allowed to claim nothing changed.
+        expect(messageForFileStatus(507, "denied")).toMatch(/nothing was changed/i);
+    });
+
+    it("falls to ambiguity when the body is unreadable or the code is unknown", () => {
+        // The failure this inverts: a truncated or non-JSON error body leaves `code` undefined, and
+        // defaulting THAT to "nothing was changed" recreates the exact false certainty the branch
+        // exists to remove — a 507 from an intermediary may already have let the write through.
+        for (const code of [undefined, "", "some-future-reason", "indeterminate"]) {
+            expect(messageForFileStatus(507, code)).not.toMatch(/nothing was changed/i);
+            expect(messageForFileStatus(507, code)).toMatch(/refresh and check/i);
+        }
+    });
+
+    it("does not let a response body rename its own status", () => {
+        // `timeout` is minted locally and always with status 0. Once server-supplied `error` strings
+        // reach this helper, honouring the code first would let a 401 carrying {"error":"timeout"}
+        // read as a slow load rather than an expired session, and invite a futile retry.
+        expect(messageForFileStatus(0, "timeout")).toMatch(/took too long/i);
+        expect(messageForFileStatus(401, "timeout")).toMatch(/session expired/i);
+        expect(messageForFileStatus(403, "timeout")).toMatch(/can't be accessed/i);
     });
 
     it("carries the honest copy on the thrown error, not just at the render site", () => {
@@ -65,6 +85,7 @@ describe("an indeterminate outcome does not claim nothing changed", () => {
                 expect(api_error.status).toBe(507);
                 expect(api_error.code).toBe("indeterminate");
                 expect(api_error.message).not.toMatch(/nothing was changed/i);
+                expect(api_error.message).toMatch(/refresh and check/i);
             },
         );
     });
@@ -89,5 +110,24 @@ describe("DELETE carries an Idempotency-Key", () => {
         expect(String(url)).toContain("/files?");
         expect(init.method).toBe("DELETE");
         expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe("delete-key-1");
+    });
+});
+
+describe("no delete reaches the wire unkeyed", () => {
+    it("mints a key when the caller supplies none", async () => {
+        // The UI hook always passes one, but `FilesApi` is exported: a future consumer omitting the
+        // option should not silently get the old unprotected behaviour back.
+        const fetchMock = jest
+            .fn()
+            .mockResolvedValue(reply(200, { path: "/w/notes.md", trashed: null, already_missing: true }));
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+        const api = new FilesApi("https://journal.example", "tok");
+        await api.deleteEntry("/w/notes.md", { confirm: true });
+
+        const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+        const key = (init.headers as Record<string, string>)["Idempotency-Key"];
+        expect(typeof key).toBe("string");
+        expect(key).not.toBe("");
     });
 });

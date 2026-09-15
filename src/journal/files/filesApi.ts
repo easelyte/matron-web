@@ -493,9 +493,15 @@ export class FilesApi implements FilesApiLike {
         // response was lost re-executed instead of replaying — and if another actor had recreated
         // the path in the gap, it deleted the REPLACEMENT. The journal's delete route has run under
         // `withIdempotency` since Phase 2 and reads this header today.
+        //
+        // A caller that supplies no key gets one minted here, as `upload` already does. A minted
+        // key cannot make a RETRY replay — the caller would have to pass the same one back for that
+        // — but it does make a single call idempotent against the server's own duplicate delivery,
+        // and it means no delete can reach the wire unkeyed just because a future consumer of this
+        // exported API forgot the option.
         const raw = await this.fetchJson(`/files?${query.toString()}`, opts.signal, {
             method: "DELETE",
-            idempotencyKey: opts.idempotencyKey,
+            idempotencyKey: opts.idempotencyKey ?? newIdempotencyKey(),
         });
         const result = parseDeleteResult(raw);
         return result.dryRun ? { ...result, path } : result;
@@ -642,7 +648,12 @@ export type EditableText = { ok: true; text: string } | { ok: false };
 // Uniform, reason-agnostic operator-facing copy. The server deliberately does not leak WHY a path
 // was denied (sensitive vs outside-scope both map to 403), so the client mustn't either.
 export function messageForFileStatus(status: number, code?: string): string {
-    if (code === "timeout") return "This took too long to load. Try again.";
+    // `timeout` is minted LOCALLY and always with status 0. Now that server-supplied `error`
+    // strings reach this function, honouring the code ahead of the status would let a response body
+    // rename its own status: a 401 carrying `{"error":"timeout"}` would read as a slow load rather
+    // than an expired session, and invite a retry that cannot work. Transport codes only apply to
+    // transport failures.
+    if (code === "timeout" && status === 0) return "This took too long to load. Try again.";
     switch (status) {
         case 403:
             return "This file or folder can't be accessed.";
@@ -657,13 +668,20 @@ export function messageForFileStatus(status: number, code?: string): string {
             return "This file is too large to preview — download it instead.";
         case 507:
             // 507 covers two opposite situations, and saying "nothing was changed" for both is how
-            // an operator gets told a delete did not happen when it may well have. The server
-            // distinguishes them: `indeterminate` means it reserved the operation, lost the process
-            // executing it, and cannot prove either way — so the honest answer names the doubt and
-            // points at the listing, which is the only place the truth is now visible.
-            return code === "indeterminate"
-                ? "The server lost track of this change and can't tell whether it was applied. Refresh and check before trying again."
-                : "The server couldn't complete this safely. Nothing was changed.";
+            // an operator gets told a delete did not happen when it may well have.
+            //
+            // The DEFINITE reading is the one that has to be earned. Only the journal's storage-side
+            // refusals (trash-write-failed / audit-fail-closed / metadata-preserve-failed, all of
+            // which answer `denied`) refused before touching anything. Everything else — the
+            // `indeterminate` reservation whose executor was lost, a 507 from an intermediary that
+            // may already have let the write through, an unknown code, or a body too damaged to
+            // parse at all — leaves the outcome genuinely unknown.
+            //
+            // So the fallback is ambiguity, not certainty: a body we could not read is degraded
+            // evidence, and degraded evidence must not be upgraded into "nothing happened".
+            return code === "denied"
+                ? "The server couldn't complete this safely. Nothing was changed."
+                : "The server couldn't confirm whether this change was applied. Refresh and check before trying again.";
         case 401:
             return "Your session expired. Sign in again.";
         default:

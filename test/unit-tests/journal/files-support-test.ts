@@ -502,7 +502,12 @@ describe("FilesApi writes", () => {
 
     it("gives 409 and 507 their own operator copy (never the generic fallback)", () => {
         expect(messageForFileStatus(409)).toMatch(/conflicts/i);
-        expect(messageForFileStatus(507)).toMatch(/Nothing was changed/i);
+        // A 507 still gets its own copy rather than the generic fallback — but WHICH copy now
+        // depends on whether the server earned the definite reading. `denied` (the storage-side
+        // refusals) did refuse before touching anything; a bare 507 does not prove that, so it
+        // falls to the ambiguous wording rather than claiming nothing changed.
+        expect(messageForFileStatus(507, "denied")).toMatch(/Nothing was changed/i);
+        expect(messageForFileStatus(507)).toMatch(/couldn't confirm/i);
         expect(messageForFileStatus(409)).not.toBe(messageForFileStatus(500));
         expect(messageForFileStatus(507)).not.toBe(messageForFileStatus(500));
     });
