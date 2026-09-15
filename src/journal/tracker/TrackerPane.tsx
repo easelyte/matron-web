@@ -7,7 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 /*
  * The Tracker pane — the main-region surface (Phase 3 renders it alongside the Files pane and the
- * conversation view, one at a time). A header with a Missions/Inbox segmented switch and a close
+ * conversation view, one at a time). A header with a Missions/Inbox/Work segmented switch and a close
  * button; the body follows the store's selection precedence: an open item detail wins, then an open
  * mission detail, then the list for the active view. Loads are issued from effects and the data is
  * store-resident, so WS invalidation keeps every surface live. Presentational composition only —
@@ -23,6 +23,7 @@ import { ItemDetail } from "./ItemDetail";
 import { ItemsInbox } from "./ItemsInbox";
 import { MissionDetail } from "./MissionDetail";
 import { MissionsList } from "./MissionsList";
+import { WorkView } from "./WorkView";
 
 export function TrackerPane({
     client,
@@ -52,7 +53,7 @@ export function TrackerPane({
     // The view switch (and the detail back buttons) clear any open detail selection. openTrackerView
     // merges with the previous view, so it can't clear a selected id on its own; closing first resets
     // the view, then reopening on the wanted tab lands on a clean list.
-    const switchView = (next: "missions" | "inbox"): void => {
+    const switchView = (next: "missions" | "inbox" | "work"): void => {
         client.closeTrackerView();
         client.openTrackerView({ view: next });
     };
@@ -97,6 +98,9 @@ export function TrackerPane({
                 <MissionsList missions={state.missions ?? []} onOpenMission={(num) => client.openTrackerMission(num)} />
             );
         }
+        if (view === "work") {
+            return <WorkView api={client} />;
+        }
         return (
             <ItemsInbox
                 items={state.inboxItems ?? []}
@@ -136,6 +140,15 @@ export function TrackerPane({
                         onClick={() => switchView("inbox")}
                     >
                         Inbox
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={view === "work"}
+                        className={`mj_TrackerViewSwitch_tab${view === "work" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
+                        onClick={() => switchView("work")}
+                    >
+                        Work
                     </button>
                 </div>
                 {state.trackerLoading ? <span className="mj_TrackerPane_spinner" aria-label="Loading" /> : null}

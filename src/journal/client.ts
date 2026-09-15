@@ -1696,7 +1696,7 @@ export class MatronJournalClient {
         this.patch({ filesView: { open: true, path } });
     }
 
-    // ── Tracker pane (Missions / Milestones / Decisions-Inbox) ──────────────────────
+    // ── Tracker pane (Missions / Milestones / Decisions-Inbox / Work) ───────────────
     // The tracker shares the main region with the Files pane and the conversation view —
     // one surface at a time — so opening it closes Files (mirrors how Files closes over the
     // conversation view). `trackerView` is the discriminant; the list/detail data is
@@ -1706,7 +1706,7 @@ export class MatronJournalClient {
     // (mutual exclusion — see openTrackerItem/openTrackerMission); `undefined` preserves the prev
     // selection. `null ?? prev` would resolve to prev, so the clear needs the explicit === null arm.
     public openTrackerView(
-        opts: { view?: "missions" | "inbox"; itemId?: number | null; missionId?: number | null } = {},
+        opts: { view?: "missions" | "inbox" | "work"; itemId?: number | null; missionId?: number | null } = {},
     ): void {
         this.closeFilesView();
         const prev = this.state.trackerView;

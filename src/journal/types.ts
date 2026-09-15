@@ -385,7 +385,7 @@ export interface ClientState {
     // selection, and preview are FilesPane-local (like the conversation timeline is RoomView-local).
     // Mirrors how `selectedConversationId` is the only main-region discriminant today.
     filesView?: FilesViewState;
-    // Tracker pane (Missions / Milestones / Decisions-Inbox). `trackerView` is the
+    // Tracker pane (Missions / Milestones / Decisions-Inbox / Work). `trackerView` is the
     // main-region discriminant (checked alongside filesView — one surface at a time).
     // The rest are store-resident so sidebar badges stay live off WS invalidation:
     //   missions/inboxItems  = the two list views;
@@ -409,7 +409,7 @@ export interface FilesViewState {
     path?: string;
 }
 
-// ── Tracker (Missions / Milestones / Decisions-Inbox) ──────────────────────────
+// ── Tracker (Missions / Milestones / Decisions-Inbox / Work) ───────────────────
 // Wire shapes bind EXACTLY to the journal tracker API (src/items.js, src/missions.js
 // @dd9c04a): `id`/`mission_id`/`supersedes`/`origin_convo_id` are opaque TEXT ids
 // (strings); `num` is the human #number (integer); every timestamp is epoch-ms INTEGER
@@ -418,7 +418,7 @@ export interface FilesViewState {
 /** Which tracker surface the pane shows; `selected*Id` are #num values (integers). */
 export interface TrackerViewState {
     open: boolean;
-    view?: "missions" | "inbox";
+    view?: "missions" | "inbox" | "work";
     selectedItemId?: number;
     selectedMissionId?: number;
 }

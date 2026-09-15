@@ -5703,6 +5703,155 @@ button.mj_File {
     box-shadow: var(--cpd-shadow-sm);
 }
 
+/* — Work surface — */
+.mj_WorkGroups {
+    display: flex;
+    flex-direction: column;
+}
+
+.mj_WorkGroup {
+    display: flex;
+    flex-direction: column;
+    padding: var(--cpd-space-2x) 0;
+}
+
+.mj_WorkGroup_header {
+    margin: 0;
+    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+    font: var(--cpd-font-body-xs-semibold, 600 12px/16px Inter, sans-serif);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_WorkLoop {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--cpd-space-1x);
+    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+}
+
+.mj_WorkLoop_head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--cpd-space-1x) var(--cpd-space-2x);
+    width: 100%;
+}
+
+.mj_WorkLoop_title {
+    flex: 1 1 20ch;
+    margin: 0;
+    font: var(--cpd-font-body-strong);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_WorkPriority,
+.mj_WorkStatus,
+.mj_WorkClaimBadge {
+    border-radius: var(--cpd-radius-pill);
+    font: var(--cpd-font-meta);
+}
+
+.mj_WorkPriority,
+.mj_WorkStatus {
+    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_WorkPriority {
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_WorkStatus_active {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_WorkStatus_blocked {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_WorkStatus_parked,
+.mj_WorkStatus_paused {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_WorkLoop_description {
+    margin: 0;
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.mj_WorkLoop_expand {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    color: var(--cpd-color-text-action-accent);
+    font: var(--cpd-font-meta);
+    cursor: pointer;
+}
+
+.mj_WorkLoop_expand:focus-visible,
+.mj_TrackerToggleTab:focus-visible {
+    outline: none;
+    box-shadow: var(--cpd-focus-ring);
+}
+
+.mj_WorkClaimBadge {
+    margin-top: var(--cpd-space-1x);
+    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_WorkClaimBadge_live {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_WorkClaimBadge_stale {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_WorkClaimBadge_unknown {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_WorkLoading,
+.mj_WorkError {
+    padding: var(--cpd-space-12x) var(--cpd-space-6x);
+    text-align: center;
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_WorkLoading {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_WorkError {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_WorkError_title {
+    margin: 0;
+    font: var(--cpd-font-title);
+}
+
+.mj_WorkError_message {
+    margin: var(--cpd-space-2x) 0 0;
+}
+
+.mj_WorkError_code {
+    display: block;
+    margin-bottom: var(--cpd-space-1x);
+    font-family: "Fira Code", monospace;
+    font-size: var(--cpd-font-size-xs);
+}
+
 /* — Detail shell — */
 .mj_TrackerDetail {
     display: flex;
