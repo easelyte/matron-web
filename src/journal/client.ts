@@ -40,6 +40,7 @@ import {
     type ToolStreamState,
     utf8Length,
 } from "./types";
+import type { WorkViewEnvelope, WorkViewGroupBy } from "./work-view";
 
 const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
@@ -1695,7 +1696,7 @@ export class MatronJournalClient {
         this.patch({ filesView: { open: true, path } });
     }
 
-    // ── Tracker pane (Missions / Milestones / Decisions-Inbox) ──────────────────────
+    // ── Tracker pane (Missions / Milestones / Decisions-Inbox / Work) ───────────────
     // The tracker shares the main region with the Files pane and the conversation view —
     // one surface at a time — so opening it closes Files (mirrors how Files closes over the
     // conversation view). `trackerView` is the discriminant; the list/detail data is
@@ -1705,7 +1706,7 @@ export class MatronJournalClient {
     // (mutual exclusion — see openTrackerItem/openTrackerMission); `undefined` preserves the prev
     // selection. `null ?? prev` would resolve to prev, so the clear needs the explicit === null arm.
     public openTrackerView(
-        opts: { view?: "missions" | "inbox"; itemId?: number | null; missionId?: number | null } = {},
+        opts: { view?: "missions" | "inbox" | "work"; itemId?: number | null; missionId?: number | null } = {},
     ): void {
         this.closeFilesView();
         const prev = this.state.trackerView;
@@ -1762,6 +1763,12 @@ export class MatronJournalClient {
     // ── Tracker data loaders (fetch → patch; the SAME trackerLoading/trackerError pair as the
     // messageSearch precedent). Each guards on the api instance so a response that races a
     // logout / re-login can never write into a newer session's store. ──────────────────────
+
+    /** Data seam used by the mounted Work view; the hook owns refresh cancellation and ordering. */
+    public work(groupBy: WorkViewGroupBy, signal?: AbortSignal): Promise<WorkViewEnvelope> {
+        if (!this.api) return Promise.reject(new Error("Not signed in"));
+        return this.api.work(groupBy, signal);
+    }
 
     public async loadMissions(): Promise<void> {
         const api = this.api;

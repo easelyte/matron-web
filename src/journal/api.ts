@@ -25,6 +25,7 @@ import {
     type TrackerLink,
     type TrackerResolution,
 } from "./types";
+import { parseWorkViewEnvelope, type WorkViewEnvelope, type WorkViewGroupBy } from "./work-view";
 
 interface ElectronJournalResponse {
     status: number;
@@ -299,6 +300,26 @@ export class JournalApi {
         if (filter.cursor) query.set("cursor", filter.cursor);
         const suffix = query.toString();
         return this.json<{ items: TrackerItem[]; next_cursor: string | null }>(`/items${suffix ? `?${suffix}` : ""}`);
+    }
+
+    /** GET /work?group_by= — the live, read-only loop-store projection. */
+    public async work(groupBy: WorkViewGroupBy = "repo", signal?: AbortSignal): Promise<WorkViewEnvelope> {
+        const raw = await this.json<unknown>(`/work?group_by=${encodeURIComponent(groupBy)}`, { signal });
+        try {
+            const envelope = parseWorkViewEnvelope(raw);
+            // The parser only checks that `group_by` is a member of the enum, which is not the
+            // same as it being the grouping we ASKED for. A producer bug, a stale cache or
+            // version skew can return a structurally valid repo-grouped envelope for a domain
+            // request; the pane's tab is driven by local state, so it would render repo groups
+            // under the Domain tab with no warning. Silently showing one grouping as another is
+            // a wrong operational view, which is worse than an error.
+            if (envelope.status !== "error" && envelope.group_by !== groupBy) {
+                throw new Error(`Work response grouped by "${envelope.group_by}" but "${groupBy}" was requested.`);
+            }
+            return envelope;
+        } catch (error) {
+            throw new JournalApiError(error instanceof Error ? error.message : "Malformed Work response.", 200);
+        }
     }
 
     /** GET /items/:id — the item plus its comment thread (status rows carry `meta.from`/`meta.to`). */
