@@ -40,6 +40,7 @@ import {
     type ToolStreamState,
     utf8Length,
 } from "./types";
+import type { WorkViewEnvelope, WorkViewGroupBy } from "./work-view";
 
 const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
@@ -1762,6 +1763,12 @@ export class MatronJournalClient {
     // ── Tracker data loaders (fetch → patch; the SAME trackerLoading/trackerError pair as the
     // messageSearch precedent). Each guards on the api instance so a response that races a
     // logout / re-login can never write into a newer session's store. ──────────────────────
+
+    /** Data seam used by the mounted Work view; the hook owns refresh cancellation and ordering. */
+    public work(groupBy: WorkViewGroupBy, signal?: AbortSignal): Promise<WorkViewEnvelope> {
+        if (!this.api) return Promise.reject(new Error("Not signed in"));
+        return this.api.work(groupBy, signal);
+    }
 
     public async loadMissions(): Promise<void> {
         const api = this.api;

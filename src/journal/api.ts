@@ -25,6 +25,7 @@ import {
     type TrackerLink,
     type TrackerResolution,
 } from "./types";
+import { parseWorkViewEnvelope, type WorkViewEnvelope, type WorkViewGroupBy } from "./work-view";
 
 interface ElectronJournalResponse {
     status: number;
@@ -299,6 +300,16 @@ export class JournalApi {
         if (filter.cursor) query.set("cursor", filter.cursor);
         const suffix = query.toString();
         return this.json<{ items: TrackerItem[]; next_cursor: string | null }>(`/items${suffix ? `?${suffix}` : ""}`);
+    }
+
+    /** GET /work?group_by= — the live, read-only loop-store projection. */
+    public async work(groupBy: WorkViewGroupBy = "repo", signal?: AbortSignal): Promise<WorkViewEnvelope> {
+        const raw = await this.json<unknown>(`/work?group_by=${encodeURIComponent(groupBy)}`, { signal });
+        try {
+            return parseWorkViewEnvelope(raw);
+        } catch (error) {
+            throw new JournalApiError(error instanceof Error ? error.message : "Malformed Work response.", 200);
+        }
     }
 
     /** GET /items/:id — the item plus its comment thread (status rows carry `meta.from`/`meta.to`). */

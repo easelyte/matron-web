@@ -1,0 +1,10 @@
+{
+    "schema_version": 1,
+    "status": "error",
+    "group_by": "repo",
+    "groups": [],
+    "error": {
+        "code": "builder_timeout",
+        "message": "Work payload builder timed out."
+    }
+}

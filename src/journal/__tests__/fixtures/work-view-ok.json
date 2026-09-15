@@ -1,0 +1,27 @@
+{
+    "schema_version": 1,
+    "status": "ok",
+    "group_by": "repo",
+    "groups": [
+        {
+            "key": "matron-web",
+            "loops": [
+                {
+                    "id": 701,
+                    "title": "Add the Work pane",
+                    "repo": "matron-web",
+                    "domain": "infra",
+                    "priority": 5,
+                    "description": "Project active work into the tracker.",
+                    "status": "active",
+                    "claim": {
+                        "convo_id": "convo-work-701",
+                        "holder_label": null,
+                        "claimed_at": "2026-09-15T12:34:56Z",
+                        "liveness": "unknown"
+                    }
+                }
+            ]
+        }
+    ]
+}
