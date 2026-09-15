@@ -160,7 +160,14 @@ export function TrackerPane({
                         Work
                     </button>
                 </div>
-                {state.trackerLoading ? <span className="mj_TrackerPane_spinner" aria-label="Loading" /> : null}
+                {state.trackerLoading && view !== "work" ? (
+                    // Same isolation as the error banner below, and for the same
+                    // reason: `trackerLoading` belongs to missions/inbox, which
+                    // Work never reads. Gating one without the other would leave a
+                    // healthy Work view showing an unrelated tab's spinner
+                    // indefinitely if that request hangs.
+                    <span className="mj_TrackerPane_spinner" aria-label="Loading" />
+                ) : null}
             </div>
 
             {state.trackerError && view !== "work" ? (

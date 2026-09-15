@@ -51,7 +51,10 @@ export function useWorkView(
     const [state, setState] = useState<WorkViewLoadState>({ status: "loading" });
     const requestRef = useRef<AbortController | undefined>(undefined);
     const generationRef = useRef(0);
-    const inFlightRef = useRef(false);
+    // True while an underlying transport call is still outstanding. On Electron
+    // that call is uncancellable, so this is latched until the call settles --
+    // deliberately NOT until the UI deadline fires. See `run` below.
+    const occupiedRef = useRef(false);
 
     /**
      * `force` distinguishes intent from housekeeping.
@@ -64,23 +67,43 @@ export function useWorkView(
      * safe because the abort + generation guard below already stops a late
      * response from overwriting a newer one.
      *
-     * Note the interval guard is deliberately belt-and-braces: WORK_VIEW_REQUEST_
-     * TIMEOUT_MS is shorter than WORK_VIEW_REFRESH_INTERVAL_MS, so every request
-     * has already settled by the time the next tick is due.
+     * TRANSPORT OCCUPANCY IS NOT THE UI DEADLINE. These are two different
+     * questions and conflating them reintroduces the very accumulation this
+     * guards against:
+     *
+     *   - the UI deadline decides when to stop showing "Loading" and surface a
+     *     timeout. It fires at `requestTimeoutMs`.
+     *   - transport occupancy decides whether an UNCANCELLABLE call is still
+     *     outstanding. On Electron the abort frees nothing, so the call can
+     *     still be live long after the deadline rejected the race.
+     *
+     * Releasing occupancy when the deadline fires would let the next interval
+     * tick start another uncancellable IPC while the first is still pending --
+     * one more every tick, forever. So `occupiedRef` is latched until `call`
+     * ITSELF settles, independently of the deadline.
      */
     const run = useCallback(
         (force: boolean) => {
-            if (!force && inFlightRef.current) return;
+            if (!force && occupiedRef.current) return;
             requestRef.current?.abort();
             const generation = ++generationRef.current;
             const controller = new AbortController();
             requestRef.current = controller;
-            inFlightRef.current = true;
+            occupiedRef.current = true;
 
             const call = api.work(groupBy, controller.signal);
-            // The deadline below rejects the race, not this promise; swallow its own
-            // rejection so a late transport failure cannot surface as unhandled.
-            void call.catch(() => undefined);
+            // Occupancy is released ONLY here -- when the transport actually
+            // settles -- not when the deadline below fires. The catch also
+            // swallows a late transport failure that the race already rejected,
+            // so it cannot surface as an unhandled rejection.
+            void call.then(
+                () => {
+                    occupiedRef.current = false;
+                },
+                () => {
+                    occupiedRef.current = false;
+                },
+            );
 
             let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
             const deadline = new Promise<never>((_resolve, reject) => {
@@ -93,9 +116,6 @@ export function useWorkView(
 
             const settle = (apply: () => void) => {
                 if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
-                // Release the slot on every path, including a superseded generation,
-                // or one stale response would wedge the loop permanently.
-                inFlightRef.current = false;
                 if (generationRef.current !== generation) return;
                 apply();
             };
@@ -124,7 +144,7 @@ export function useWorkView(
             // Unmount invalidates every outstanding generation, so a response
             // that lands after teardown can never setState on a dead component.
             generationRef.current += 1;
-            inFlightRef.current = false;
+            occupiedRef.current = false;
         };
     }, [run, refreshIntervalMs]);
 

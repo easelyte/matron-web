@@ -21,6 +21,7 @@ import {
 } from "../use-work-view";
 import { parseWorkViewEnvelope, type WorkViewEnvelope } from "../work-view";
 import emptyFixture from "./fixtures/work-view-empty.json";
+import okDomainFixture from "./fixtures/work-view-ok-domain.json";
 import errorFixture from "./fixtures/work-view-error.json";
 import okFixture from "./fixtures/work-view-ok.json";
 
@@ -171,6 +172,33 @@ describe("Work-view wire contract", () => {
         );
     });
 
+    it("parses the producer's domain-grouped envelope, not just the repo one", async () => {
+        // Both groupings are real producer output over the same store, so this
+        // asserts the second axis is actually exercised rather than shipped
+        // unparsed. Domain grouping is a different partition of the same loops,
+        // so the loop count matches while the group keys differ.
+        const repo = parseWorkViewEnvelope(okFixture);
+        const domain = parseWorkViewEnvelope(okDomainFixture);
+
+        expect(domain.status).toBe("ok");
+        expect(domain.group_by).toBe("domain");
+        const keys = domain.status === "ok" ? domain.groups.map((group) => group.key) : [];
+        expect(keys).toContain("unassigned");
+        expect(keys).not.toEqual(repo.status === "ok" ? repo.groups.map((group) => group.key) : []);
+
+        const count = (envelope: WorkViewEnvelope) =>
+            envelope.status === "ok" ? envelope.groups.reduce((n, group) => n + group.loops.length, 0) : -1;
+        expect(count(domain)).toBe(count(repo));
+    });
+
+    it("requests the domain grouping and accepts the matching producer response", async () => {
+        fetchMock.mockResolvedValue(jsonResponse(okDomainFixture));
+        const api = new JournalApi("https://journal.example", "device-token");
+
+        await expect(api.work("domain")).resolves.toMatchObject({ status: "ok", group_by: "domain" });
+        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/work?group_by=domain");
+    });
+
     it("rejects a structurally valid envelope grouped by something other than what was requested", async () => {
         // A producer bug, a stale cache or version skew can return a valid
         // repo-grouped envelope for a domain request. The pane's tab is driven by
@@ -288,6 +316,48 @@ describe("mounted Work-view refresh", () => {
             jest.advanceTimersByTime(15_000);
         });
         expect(container.textContent).toContain("timed out");
+        await unmount(root);
+    });
+
+    it("does not resume unattended ticks after the UI deadline while the transport is still pending", async () => {
+        // The sharp case: the deadline fires at 15s and the pane correctly shows
+        // a timeout, but on Electron the underlying IPC is uncancellable and
+        // still live. If occupancy were released by the DEADLINE rather than by
+        // the call settling, the 20s tick would start another uncancellable
+        // request -- one more every interval, forever. Advances well past BOTH
+        // the deadline and several intervals.
+        const work = jest.fn().mockReturnValue(new Promise<never>(() => {}));
+        const { container, root } = await mount(
+            <WorkHarness api={{ work }} refreshIntervalMs={20_000} requestTimeoutMs={15_000} />,
+        );
+        expect(work).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            jest.advanceTimersByTime(15_000);
+        });
+        expect(container.textContent).toContain("timed out");
+
+        await act(async () => {
+            jest.advanceTimersByTime(80_000);
+        });
+        expect(work).toHaveBeenCalledTimes(1);
+        await unmount(root);
+    });
+
+    it("resumes unattended ticks once the transport actually settles", async () => {
+        // The other half of the same contract: occupancy must not latch forever.
+        const settled = deferred<WorkViewEnvelope>();
+        const work = jest.fn().mockReturnValueOnce(settled.promise).mockResolvedValue(parseWorkViewEnvelope(okFixture));
+        const { root } = await mount(
+            <WorkHarness api={{ work }} refreshIntervalMs={20_000} requestTimeoutMs={15_000} />,
+        );
+        expect(work).toHaveBeenCalledTimes(1);
+
+        await act(async () => settled.resolve(parseWorkViewEnvelope(okFixture)));
+        await act(async () => {
+            jest.advanceTimersByTime(20_000);
+        });
+        expect(work).toHaveBeenCalledTimes(2);
         await unmount(root);
     });
 
