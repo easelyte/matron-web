@@ -1,10 +1,1 @@
-{
-    "schema_version": 1,
-    "status": "error",
-    "group_by": "repo",
-    "groups": [],
-    "error": {
-        "code": "builder_timeout",
-        "message": "Work payload builder timed out."
-    }
-}
+{"schema_version":1,"status":"error","group_by":"repo","groups":[],"error":{"code":"store_missing","message":"The canonical loop store is missing."}}

@@ -36,11 +36,20 @@ export function TrackerPane({
     const selectedItemId = state.trackerView?.selectedItemId;
     const selectedMissionId = state.trackerView?.selectedMissionId;
 
-    // Opening the pane primes both list views so the sidebar badges + either tab are ready.
+    // Prime the two tracker list views, but NOT while Work is the active tab.
+    // Work is served by a different endpoint and shares none of this state, yet
+    // priming would fetch /missions and walk the paginated /items inbox (up to
+    // 20 pages) on its behalf -- and any failure of those lands in the shared
+    // `trackerError`, which renders as an error banner ABOVE a perfectly
+    // healthy Work view. Work would look degraded because a dependency it never
+    // uses failed. The inbox/missions tabs still prime both, so their badges
+    // stay warm exactly as before; switching to one of them from Work primes on
+    // arrival.
     useEffect(() => {
+        if (view === "work") return;
         void client.loadMissions();
         void client.loadInbox();
-    }, [client]);
+    }, [client, view]);
 
     useEffect(() => {
         if (selectedItemId != null) void client.loadItem(selectedItemId);
@@ -154,7 +163,10 @@ export function TrackerPane({
                 {state.trackerLoading ? <span className="mj_TrackerPane_spinner" aria-label="Loading" /> : null}
             </div>
 
-            {state.trackerError ? (
+            {state.trackerError && view !== "work" ? (
+                // `trackerError` belongs to missions/inbox. Work surfaces its own
+                // failures inline (fail-loud, never a blank list), so showing this
+                // banner over it would attribute an unrelated tab's failure to Work.
                 <div className="mj_TrackerErrorBanner" role="alert">
                     {state.trackerError}
                 </div>

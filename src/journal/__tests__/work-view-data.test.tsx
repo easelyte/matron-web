@@ -63,8 +63,16 @@ function renderState(state: WorkViewLoadState): string {
     }
 }
 
-function WorkHarness({ api }: { api: WorkViewLoader }): React.ReactElement {
-    const { state } = useWorkView(api, "repo");
+function WorkHarness({
+    api,
+    refreshIntervalMs,
+    requestTimeoutMs,
+}: {
+    api: WorkViewLoader;
+    refreshIntervalMs?: number;
+    requestTimeoutMs?: number;
+}): React.ReactElement {
+    const { state } = useWorkView(api, "repo", refreshIntervalMs, requestTimeoutMs);
     return <div>{renderState(state)}</div>;
 }
 
@@ -107,10 +115,15 @@ describe("Work-view wire contract", () => {
         const error = parseWorkViewEnvelope(errorFixture);
 
         expect(ok.status).toBe("ok");
-        expect(ok.status === "ok" ? ok.groups[0].loops[0].claim?.holder_label : "wrong").toBeNull();
+        // Loop 901 carries a label; 902 is the default two-argument claim_loop
+        // call, which the producer serialises with holder_label: null. Both
+        // variants are asserted because the null one drives the pane's
+        // convo_id-derived fallback copy.
+        expect(ok.status === "ok" ? ok.groups[0].loops[0].claim?.holder_label : "wrong").toBe("matron-web wave");
+        expect(ok.status === "ok" ? ok.groups[0].loops[1].claim?.holder_label : "wrong").toBeNull();
         expect(empty).toEqual({ schema_version: 1, status: "empty", group_by: "repo", groups: [] });
         expect(error.status).toBe("error");
-        expect(error.status === "error" ? error.error.code : "wrong").toBe("builder_timeout");
+        expect(error.status === "error" ? error.error.code : "wrong").toBe("store_missing");
     });
 
     it("rejects schema drift instead of passing an untyped response downstream", () => {
@@ -140,12 +153,15 @@ describe("Work-view wire contract", () => {
     });
 
     it("GETs the Bearer-authenticated Work endpoint with grouping and cancellation", async () => {
+        // The fixture is real producer output grouped by repo, so ask for repo:
+        // requesting "domain" here would (correctly) be rejected as a grouping
+        // mismatch by the guard exercised in the next test.
         fetchMock.mockResolvedValue(jsonResponse(okFixture));
         const api = new JournalApi("https://journal.example", "device-token");
         const controller = new AbortController();
 
-        await expect(api.work("domain", controller.signal)).resolves.toMatchObject({ status: "ok" });
-        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/work?group_by=domain");
+        await expect(api.work("repo", controller.signal)).resolves.toMatchObject({ status: "ok" });
+        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/work?group_by=repo");
         expect(fetchMock.mock.calls[0][1]).toEqual(
             expect.objectContaining({
                 method: "GET",
@@ -153,6 +169,26 @@ describe("Work-view wire contract", () => {
                 headers: expect.objectContaining({ Authorization: "Bearer device-token" }),
             }),
         );
+    });
+
+    it("rejects a structurally valid envelope grouped by something other than what was requested", async () => {
+        // A producer bug, a stale cache or version skew can return a valid
+        // repo-grouped envelope for a domain request. The pane's tab is driven by
+        // local state, so accepting it would render repo groups under the Domain
+        // tab with no warning -- a silently wrong operational view, worse than an
+        // error. Asserted for `ok` and for `empty`; an `error` envelope is already
+        // a failure signal and carries group_by only incidentally.
+        const api = new JournalApi("https://journal.example", "device-token");
+
+        fetchMock.mockResolvedValue(jsonResponse(okFixture));
+        await expect(api.work("domain")).rejects.toThrow(/grouped by "repo" but "domain" was requested/);
+
+        fetchMock.mockResolvedValue(jsonResponse(emptyFixture));
+        await expect(api.work("domain")).rejects.toThrow(/grouped by "repo" but "domain" was requested/);
+
+        // The matching grouping still resolves, so the guard is not blanket-rejecting.
+        fetchMock.mockResolvedValue(jsonResponse(okFixture));
+        await expect(api.work("repo")).resolves.toMatchObject({ status: "ok", group_by: "repo" });
     });
 
     it("turns a malformed successful Work response into a typed API error", async () => {
@@ -199,7 +235,7 @@ describe("mounted Work-view refresh", () => {
             .mockResolvedValueOnce(parseWorkViewEnvelope(changedFixture));
         const { container, root } = await mount(<WorkHarness api={{ work }} />);
 
-        expect(container.textContent).toContain("Add the Work pane");
+        expect(container.textContent).toContain("work-view-fixture-claimed-with-label");
         await act(async () => jest.advanceTimersByTime(WORK_VIEW_REFRESH_INTERVAL_MS));
 
         expect(work).toHaveBeenCalledTimes(2);
@@ -233,7 +269,62 @@ describe("mounted Work-view refresh", () => {
 
         await act(async () => stale.resolve(parseWorkViewEnvelope(okFixture)));
         expect(container.textContent).toContain("Newest work");
-        expect(container.textContent).not.toContain("Add the Work pane");
+        expect(container.textContent).not.toContain("work-view-fixture-claimed-with-label");
+        await unmount(root);
+    });
+
+    it("bounds a request the transport never settles, instead of loading forever", async () => {
+        // Electron's journalRequest IPC bridge observes no AbortSignal, so an
+        // aborted request can still be in flight there. Without a deadline that
+        // settles regardless of transport, the pane sits on "Loading Work..."
+        // indefinitely.
+        const work = jest.fn().mockReturnValue(new Promise<never>(() => {}));
+        const { container, root } = await mount(
+            <WorkHarness api={{ work }} refreshIntervalMs={20_000} requestTimeoutMs={15_000} />,
+        );
+        expect(container.textContent).toContain("Loading");
+
+        await act(async () => {
+            jest.advanceTimersByTime(15_000);
+        });
+        expect(container.textContent).toContain("timed out");
+        await unmount(root);
+    });
+
+    it("does not let unattended interval ticks stack live requests on a wedged transport", async () => {
+        // The failure this guards: one live request accumulating per interval for
+        // as long as the transport hangs, none of which the renderer can cancel.
+        const work = jest.fn().mockReturnValue(new Promise<never>(() => {}));
+        const { root } = await mount(
+            // Interval deliberately SHORTER than the request deadline so several
+            // ticks land while the first request is still outstanding -- the
+            // production values cannot overlap, and this proves the backpressure
+            // rather than relying on that ordering.
+            <WorkHarness api={{ work }} refreshIntervalMs={1_000} requestTimeoutMs={60_000} />,
+        );
+        expect(work).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            jest.advanceTimersByTime(5_000);
+        });
+        expect(work).toHaveBeenCalledTimes(1);
+        await unmount(root);
+    });
+
+    it("still lets a focus refresh supersede an in-flight request", async () => {
+        // Backpressure applies to unattended ticks only. Focus is the user asking
+        // for current data; dropping it would leave the pane stale with no
+        // feedback. Superseding is safe because of the abort + generation guard.
+        const work = jest.fn().mockReturnValue(new Promise<never>(() => {}));
+        const { root } = await mount(
+            <WorkHarness api={{ work }} refreshIntervalMs={1_000} requestTimeoutMs={60_000} />,
+        );
+        expect(work).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            window.dispatchEvent(new Event("focus"));
+        });
+        expect(work).toHaveBeenCalledTimes(2);
         await unmount(root);
     });
 
@@ -241,7 +332,7 @@ describe("mounted Work-view refresh", () => {
         const work = jest.fn().mockResolvedValue(parseWorkViewEnvelope(errorFixture));
         const { container, root } = await mount(<WorkHarness api={{ work }} />);
 
-        expect(container.textContent).toContain("builder_timeout");
+        expect(container.textContent).toContain("store_missing");
         expect(container.textContent).not.toContain("No active work");
         await unmount(root);
     });

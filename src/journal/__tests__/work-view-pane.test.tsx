@@ -136,6 +136,10 @@ describe("WorkView", () => {
                         claim: {
                             convo_id: "live-conversation",
                             holder_label: "Session Alpha",
+                            // liveness is the ONE field a consumer may author: the producer CLI cannot reach
+                            // the journal's DB handle, so it always emits "unknown" and the /work route
+                            // fills it per request. Every other field in these payloads matches the
+                            // generated fixtures. See fixtures/WORK-VIEW-FIXTURES.md.
                             claimed_at: claimedAt,
                             liveness: "live",
                         },

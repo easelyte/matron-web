@@ -133,3 +133,74 @@ describe("TrackerPane", () => {
         expect(client.work).toHaveBeenCalledWith("repo", expect.any(AbortSignal));
     });
 });
+
+describe("TrackerPane — Work tab isolation", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("does not prime missions or the paginated inbox while Work is the active tab", async () => {
+        // Work is served by a different endpoint and shares none of this state.
+        // Priming would fetch /missions and walk /items (up to 20 pages / 10,000
+        // items) purely as a side effect of opening a tab that never reads them.
+        const client = fakeClient();
+        await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "work" } })}
+            />,
+        );
+
+        expect(client.loadMissions).not.toHaveBeenCalled();
+        expect(client.loadInbox).not.toHaveBeenCalled();
+        expect(client.work).toHaveBeenCalled();
+    });
+
+    it("still primes both list views on the tabs that actually use them", async () => {
+        // The backpressure above must not cost the inbox/missions tabs their
+        // warm badges.
+        const client = fakeClient();
+        await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "inbox" } })}
+            />,
+        );
+
+        expect(client.loadMissions).toHaveBeenCalled();
+        expect(client.loadInbox).toHaveBeenCalled();
+    });
+
+    it("does not show a missions/inbox error banner over a healthy Work view", async () => {
+        // trackerError belongs to missions/inbox. Work fails loud inline, so this
+        // banner would attribute an unrelated tab's failure to Work and make a
+        // working pane look degraded.
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "work" },
+                    trackerError: "Could not load the inbox.",
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerErrorBanner")).toBeNull();
+    });
+
+    it("still shows the error banner on the tabs the error belongs to", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "inbox" },
+                    trackerError: "Could not load the inbox.",
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerErrorBanner")).not.toBeNull();
+    });
+});
