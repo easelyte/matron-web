@@ -134,7 +134,11 @@ async function perform(
             return { notice: result.dryRun ? DRY_RUN_NOTICE : undefined };
         }
         case "delete": {
-            const result = await api.deleteEntry(pending.path, { confirm: true, recursive: pending.isDir });
+            const result = await api.deleteEntry(pending.path, {
+                confirm: true,
+                recursive: pending.isDir,
+                idempotencyKey,
+            });
             if (result.dryRun) return { notice: DRY_RUN_NOTICE };
             if (result.alreadyMissing) return { notice: `${pending.name} was already gone.` };
             return {
@@ -459,12 +463,13 @@ export function useFileWrites(
                 } catch (error) {
                     if (!alive.current) return;
                     if (current.pending.kind === "delete" && outcomeIsUnknown(error)) {
-                        // DELETE is the one write the frozen wire contract gives no
-                        // `Idempotency-Key`, so a blind in-dialog retry is not a replay — if the
-                        // first request actually committed and another actor recreated the path in
-                        // the gap, the retry would delete the REPLACEMENT. Treat an unknown outcome
-                        // as unknown: close the dialog, re-read the listing, and make the operator
-                        // look at what is actually there before deciding to delete again.
+                        // DELETE now carries an `Idempotency-Key`, so a retry CAN be a replay — but
+                        // only against a journal whose reservation survived, and nothing on the
+                        // wire proves this 5xx even came from the journal rather than an
+                        // intermediary that already let the write through. Making the operator's
+                        // safety depend on which journal build is deployed is the wrong trade, so
+                        // the conservative reading stands: close the dialog, re-read the listing,
+                        // and let them look at what is actually there before deleting again.
                         setNotice(
                             `Couldn't confirm whether ${current.pending.name} was deleted. The folder has been refreshed — check it before trying again.`,
                         );

@@ -168,7 +168,7 @@ export interface FilesApiLike {
      */
     deleteEntry(
         path: string,
-        opts: { confirm: true; recursive?: boolean; signal?: AbortSignal },
+        opts: { confirm: true; recursive?: boolean; idempotencyKey?: string; signal?: AbortSignal },
     ): Promise<DeleteResult>;
     /** Abort every in-flight request and revoke every object URL. Called on sign-out / teardown. */
     dispose(): void;
@@ -486,10 +486,17 @@ export class FilesApi implements FilesApiLike {
 
     public async deleteEntry(
         path: string,
-        opts: { confirm: true; recursive?: boolean; signal?: AbortSignal },
+        opts: { confirm: true; recursive?: boolean; idempotencyKey?: string; signal?: AbortSignal },
     ): Promise<DeleteResult> {
         const query = new URLSearchParams({ path, recursive: opts.recursive ? "1" : "0", confirm: "1" });
-        const raw = await this.fetchJson(`/files?${query.toString()}`, opts.signal, { method: "DELETE" });
+        // DELETE is the most destructive write and was the only one sending no key, so a retry whose
+        // response was lost re-executed instead of replaying — and if another actor had recreated
+        // the path in the gap, it deleted the REPLACEMENT. The journal's delete route has run under
+        // `withIdempotency` since Phase 2 and reads this header today.
+        const raw = await this.fetchJson(`/files?${query.toString()}`, opts.signal, {
+            method: "DELETE",
+            idempotencyKey: opts.idempotencyKey,
+        });
         const result = parseDeleteResult(raw);
         return result.dryRun ? { ...result, path } : result;
     }
@@ -586,7 +593,7 @@ export class FilesApi implements FilesApiLike {
                 } catch {
                     // Non-JSON error body — fall back to the status-only message.
                 }
-                throw new JournalApiError(messageForFileStatus(response.status), response.status, code);
+                throw new JournalApiError(messageForFileStatus(response.status, code), response.status, code);
             }
             return await consume(response);
         } catch (error) {
@@ -649,7 +656,14 @@ export function messageForFileStatus(status: number, code?: string): string {
         case 413:
             return "This file is too large to preview — download it instead.";
         case 507:
-            return "The server couldn't complete this safely. Nothing was changed.";
+            // 507 covers two opposite situations, and saying "nothing was changed" for both is how
+            // an operator gets told a delete did not happen when it may well have. The server
+            // distinguishes them: `indeterminate` means it reserved the operation, lost the process
+            // executing it, and cannot prove either way — so the honest answer names the doubt and
+            // points at the listing, which is the only place the truth is now visible.
+            return code === "indeterminate"
+                ? "The server lost track of this change and can't tell whether it was applied. Refresh and check before trying again."
+                : "The server couldn't complete this safely. Nothing was changed.";
         case 401:
             return "Your session expired. Sign in again.";
         default:

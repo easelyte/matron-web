@@ -193,7 +193,11 @@ describe("destructive writes require the confirm dialog", () => {
 
         await click(document.querySelector(".mj_FileWrite_danger"));
         await flush();
-        expect(api.deleteEntry).toHaveBeenCalledWith(`${DIR}/notes.md`, { confirm: true, recursive: false });
+        expect(api.deleteEntry).toHaveBeenCalledWith(`${DIR}/notes.md`, {
+            confirm: true,
+            recursive: false,
+            idempotencyKey: expect.any(String),
+        });
         expect(dialog()).toBeNull();
         // The listing is re-read from the server and the trash destination is reported.
         expect((api.listDir as jest.Mock).mock.calls.length).toBeGreaterThan(1);
@@ -206,7 +210,11 @@ describe("destructive writes require the confirm dialog", () => {
         await click(pane.querySelector('[aria-label="Delete src"]'));
         await click(document.querySelector(".mj_FileWrite_danger"));
         await flush();
-        expect(api.deleteEntry).toHaveBeenCalledWith(`${DIR}/src`, { confirm: true, recursive: true });
+        expect(api.deleteEntry).toHaveBeenCalledWith(`${DIR}/src`, {
+            confirm: true,
+            recursive: true,
+            idempotencyKey: expect.any(String),
+        });
     });
 
     it("Escape cancels while confirming, and issues no request", async () => {
