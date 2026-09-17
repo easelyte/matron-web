@@ -35,6 +35,20 @@ export type WorkScope = "active" | "all";
 /** Statuses treated as set-aside rather than in play. */
 const SET_ASIDE_STATUSES: ReadonlySet<string> = new Set(["parked", "paused"]);
 
+/**
+ * The collapsed row's one-line summary.
+ *
+ * Takes the FIRST PARAGRAPH rather than the whole description flattened. For a description written
+ * as a lead sentence followed by detail, that is the summary the author intended -- and for the
+ * older single-paragraph descriptions it is the entire text, i.e. exactly what this used to do, so
+ * nothing regresses. Flattening everything instead jams headings and bullets into the preview,
+ * which is what made structured descriptions read worse than unstructured ones.
+ */
+export function summaryLine(description: string): string {
+    const [first = ""] = description.trim().split(/\n\s*\n/, 1);
+    return oneLine(first);
+}
+
 function claimHolder(claim: WorkViewClaim): string {
     const label = claim.holder_label?.trim();
     if (label) return label;
@@ -59,7 +73,7 @@ function WorkLoop({ loop }: { loop: WorkViewLoop }): React.ReactElement {
     // rather than cut at a fixed character count mid-word. Expanded: the original text with its
     // paragraph breaks intact, because a 5k-character description reflowed into one block is
     // unreadable.
-    const preview = oneLine(loop.description);
+    const preview = summaryLine(loop.description);
     // Expandability is a property of the DESCRIPTION alone, never of the expanded flag. Deriving it
     // from `expanded` made a description-less row silently expandable: it rendered no preview, no
     // affordance and no aria-expanded, yet clicking it revealed a placeholder out of nowhere.
