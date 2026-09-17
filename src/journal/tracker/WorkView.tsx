@@ -60,7 +60,12 @@ function WorkLoop({ loop }: { loop: WorkViewLoop }): React.ReactElement {
     // paragraph breaks intact, because a 5k-character description reflowed into one block is
     // unreadable.
     const preview = oneLine(loop.description);
-    const hasMore = expanded || preview.length > 0;
+    // Expandability is a property of the DESCRIPTION alone, never of the expanded flag. Deriving it
+    // from `expanded` made a description-less row silently expandable: it rendered no preview, no
+    // affordance and no aria-expanded, yet clicking it revealed a placeholder out of nowhere.
+    // Eight of thirty live loops have an empty description, so that is a quarter of the board.
+    const expandable = preview.length > 0;
+    const isOpen = expandable && expanded;
 
     const label = [
         `loop ${loop.id}`,
@@ -68,19 +73,28 @@ function WorkLoop({ loop }: { loop: WorkViewLoop }): React.ReactElement {
         `priority ${loop.priority}`,
         loop.status,
         loop.claim ? claimCopy(loop.claim) : "",
-        preview ? (expanded ? "collapse description" : "expand description") : "",
+        expandable ? (isOpen ? "collapse description" : "expand description") : "",
     ]
         .filter(Boolean)
         .join(", ");
 
+    // A row with nothing to reveal is not a control: render it as static content rather than a
+    // button that looks actionable and does nothing.
+    const RowTag = expandable ? "button" : "div";
+    const rowProps = expandable
+        ? ({
+              type: "button",
+              "aria-expanded": isOpen,
+              onClick: () => setExpanded((value) => !value),
+          } as const)
+        : ({} as const);
+
     return (
         <div className="mj_TrackerWorkRow_wrap">
-            <button
-                type="button"
-                className="mj_TrackerItemRow mj_TrackerWorkRow"
+            <RowTag
+                className={`mj_TrackerItemRow mj_TrackerWorkRow${expandable ? "" : " mj_TrackerWorkRow_static"}`}
                 aria-label={label}
-                aria-expanded={preview ? expanded : undefined}
-                onClick={() => setExpanded((value) => !value)}
+                {...rowProps}
             >
                 <span className="mj_TrackerItemRow_glyph" aria-hidden="true">
                     <TaskGlyph />
@@ -90,7 +104,12 @@ function WorkLoop({ loop }: { loop: WorkViewLoop }): React.ReactElement {
                         <span className="mj_TrackerItemRow_num">#{loop.id}</span>
                         {loop.title}
                     </span>
-                    {preview && !expanded ? <span className="mj_TrackerItemRow_body">{preview}</span> : null}
+                    {/* The placeholder stays visible in the collapsed row, so a description-less
+                        loop reads as "nothing written here" rather than as a blank, contentless
+                        row whose emptiness might be a rendering bug. */}
+                    {!isOpen ? (
+                        <span className="mj_TrackerItemRow_body">{preview || "No description provided."}</span>
+                    ) : null}
                     <span className="mj_TrackerItemRow_meta">
                         <span className="mj_TrackerWorkRow_priority">P{loop.priority}</span>
                         {/* ONE status token, matching ItemRow's rule that the ordinary case shows
@@ -116,10 +135,8 @@ function WorkLoop({ loop }: { loop: WorkViewLoop }): React.ReactElement {
                         ) : null}
                     </span>
                 </span>
-            </button>
-            {expanded && hasMore ? (
-                <p className="mj_TrackerWorkRow_full">{loop.description || "No description provided."}</p>
-            ) : null}
+            </RowTag>
+            {isOpen ? <p className="mj_TrackerWorkRow_full">{loop.description}</p> : null}
         </div>
     );
 }

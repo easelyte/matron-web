@@ -6473,6 +6473,15 @@ button.mj_File {
     align-items: flex-start;
 }
 
+/* A description-less row has nothing to reveal, so it is rendered as static content rather than a
+   button. Neutralise the row's interactive affordances so it does not look clickable. */
+.mj_TrackerWorkRow_static {
+    cursor: default;
+}
+.mj_TrackerWorkRow_static:hover {
+    background: transparent;
+}
+
 /* Priority leads the meta line and is the one number worth scanning down a column, so give it
    tabular figures like every other number in the tracker. */
 .mj_TrackerWorkRow_priority {

@@ -11,6 +11,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { WorkView } from "../tracker/WorkView";
 import type { WorkViewLoader } from "../use-work-view";
 import type { WorkViewEnvelope, WorkViewGroup, WorkViewGroupBy, WorkViewLoop } from "../work-view";
+import okFixture from "./fixtures/work-view-ok.json";
+import { parseWorkViewEnvelope } from "../work-view";
 
 function loop(over: Partial<WorkViewLoop> = {}): WorkViewLoop {
     return {
@@ -297,6 +299,81 @@ describe("WorkView", () => {
         expect(container.querySelector("[role='alert']")?.textContent).toContain("Work unavailable");
         expect(container.textContent).toContain("The Work request failed.");
         expect(container.textContent).not.toContain("No active work");
+        await unmount(root);
+    });
+});
+
+describe("WorkView — description-less loops", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("shows the placeholder in the collapsed row and is not expandable", async () => {
+        // An empty description is valid on the wire and is the case for 8 of 30 live loops.
+        // Previously such a row rendered no preview, no affordance and no aria-expanded, yet
+        // clicking it revealed a placeholder out of nowhere -- an undisclosed action.
+        const work = jest.fn().mockResolvedValue(ok("repo", [group("matron-web", [loop({ id: 1, description: "" })])]));
+        const { container, root } = await mount(<WorkView api={loader(work)} />);
+
+        const row = container.querySelector(".mj_TrackerWorkRow")!;
+        // Not a control: nothing to reveal, so it is not a button and advertises no expansion.
+        expect(row.tagName).toBe("DIV");
+        expect(row.getAttribute("aria-expanded")).toBeNull();
+        expect(row.className).toContain("mj_TrackerWorkRow_static");
+        // The placeholder is visible WITHOUT interaction, not hidden behind one.
+        expect(row.querySelector(".mj_TrackerItemRow_body")?.textContent).toBe("No description provided.");
+
+        await act(async () => (row as HTMLElement).click());
+        expect(container.querySelector(".mj_TrackerWorkRow_full")).toBeNull();
+        await unmount(root);
+    });
+
+    it("keeps a described loop expandable", async () => {
+        const work = jest
+            .fn()
+            .mockResolvedValue(ok("repo", [group("matron-web", [loop({ id: 1, description: "Real detail." })])]));
+        const { container, root } = await mount(<WorkView api={loader(work)} />);
+
+        const row = container.querySelector<HTMLButtonElement>(".mj_TrackerWorkRow")!;
+        expect(row.tagName).toBe("BUTTON");
+        expect(row.getAttribute("aria-expanded")).toBe("false");
+        await act(async () => row.click());
+        expect(container.querySelector(".mj_TrackerWorkRow_full")?.textContent).toBe("Real detail.");
+        await unmount(root);
+    });
+});
+
+describe("WorkView — against real producer output", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("applies the default scope to a genuinely producer-generated payload", async () => {
+        // The statuses elsewhere in this file are consumer-authored. This one is not: the fixture
+        // is raw output from `scripts.work_view_cli` over a synthetic store (see
+        // fixtures/WORK-VIEW-FIXTURES.md), so it proves the pane's set-aside semantics agree with
+        // what the producer actually emits rather than with our own idea of it.
+        const envelope = parseWorkViewEnvelope(okFixture);
+        const work = jest.fn().mockResolvedValue(envelope);
+        const { container, root } = await mount(<WorkView api={loader(work)} />);
+
+        // #905 is parked in the producer's output and must be hidden by default.
+        expect(container.textContent).toContain("work-view-fixture-claimed-with-label");
+        expect(container.textContent).not.toContain("work-view-fixture-parked");
+
+        // #906 has an empty description straight from the producer: visible, with the placeholder,
+        // and not an expandable control.
+        expect(container.textContent).toContain("work-view-fixture-no-description");
+        const rows = Array.from(container.querySelectorAll(".mj_TrackerWorkRow"));
+        const descriptionless = rows.find((row) => row.textContent?.includes("work-view-fixture-no-description"))!;
+        expect(descriptionless.tagName).toBe("DIV");
+        expect(descriptionless.textContent).toContain("No description provided.");
+
+        const all = Array.from(container.querySelectorAll<HTMLButtonElement>(".mj_TrackerToggleTab")).find(
+            (node) => node.textContent === "All",
+        )!;
+        await act(async () => all.click());
+        expect(container.textContent).toContain("work-view-fixture-parked");
         await unmount(root);
     });
 });
