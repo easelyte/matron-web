@@ -5732,32 +5732,6 @@ button.mj_File {
     color: var(--cpd-color-text-tertiary);
 }
 
-.mj_WorkLoop {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--cpd-space-1x);
-    padding: var(--cpd-space-3x) var(--cpd-space-4x);
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
-}
-
-.mj_WorkLoop_head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--cpd-space-1x) var(--cpd-space-2x);
-    width: 100%;
-}
-
-.mj_WorkLoop_title {
-    flex: 1 1 20ch;
-    margin: 0;
-    font: var(--cpd-font-body-strong);
-    color: var(--cpd-color-text-primary);
-}
-
-.mj_WorkPriority,
-.mj_WorkStatus,
 .mj_WorkClaimBadge {
     border-radius: var(--cpd-radius-pill);
     font: var(--cpd-font-meta);
@@ -5785,29 +5759,6 @@ button.mj_File {
 .mj_WorkStatus_parked,
 .mj_WorkStatus_paused {
     color: var(--cpd-color-text-tertiary);
-}
-
-.mj_WorkLoop_description {
-    margin: 0;
-    font: var(--cpd-font-body-sm-regular);
-    color: var(--cpd-color-text-secondary);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-}
-
-.mj_WorkLoop_expand {
-    border: 0;
-    background: transparent;
-    padding: 0;
-    color: var(--cpd-color-text-action-accent);
-    font: var(--cpd-font-meta);
-    cursor: pointer;
-}
-
-.mj_WorkLoop_expand:focus-visible,
-.mj_TrackerToggleTab:focus-visible {
-    outline: none;
-    box-shadow: var(--cpd-focus-ring);
 }
 
 .mj_WorkClaimBadge {
@@ -6505,4 +6456,62 @@ button.mj_File {
     .mj_TrackerComposer {
         max-width: 100%;
     }
+}
+
+/* Work rows reuse .mj_TrackerItemRow wholesale (border, hover, focus ring, glyph/main/title/body/
+   meta sub-elements) so the Work tab reads as the same surface as Inbox and Missions. Only the
+   genuinely Work-specific bits live here. */
+.mj_TrackerWorkRow_wrap {
+    display: flex;
+    flex-direction: column;
+}
+
+.mj_TrackerWorkRow {
+    display: flex;
+    gap: var(--cpd-space-3x);
+    width: 100%;
+    align-items: flex-start;
+}
+
+/* A description-less row has nothing to reveal, so it is rendered as static content rather than a
+   button. Neutralise the row's interactive affordances so it does not look clickable. */
+.mj_TrackerWorkRow_static {
+    cursor: default;
+}
+.mj_TrackerWorkRow_static:hover {
+    background: transparent;
+}
+
+/* Priority leads the meta line and is the one number worth scanning down a column, so give it
+   tabular figures like every other number in the tracker. */
+.mj_TrackerWorkRow_priority {
+    color: var(--cpd-color-text-tertiary);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+}
+
+/* The expanded body. Loop descriptions are machine-written and run to a ~1.1k-character median,
+   so preserve their paragraph breaks and cap the measure -- a 5k-character wall set to full pane
+   width is why this needed rethinking. */
+.mj_TrackerWorkRow_full {
+    margin: 0;
+    padding: 0 var(--cpd-space-4x) var(--cpd-space-3x) calc(var(--cpd-space-4x) + 18px + var(--cpd-space-3x));
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    max-width: 78ch;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+}
+
+/* Second toggle row sits tighter under the first. */
+.mj_WorkGroupToggle {
+    padding-top: 0;
+}
+
+.mj_WorkGroup_count {
+    margin-left: var(--cpd-space-2x);
+    color: var(--cpd-color-text-tertiary);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
 }
