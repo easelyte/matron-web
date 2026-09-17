@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { WorkView } from "../tracker/WorkView";
+import { WorkView, summaryLine } from "../tracker/WorkView";
 import type { WorkViewLoader } from "../use-work-view";
 import type { WorkViewEnvelope, WorkViewGroup, WorkViewGroupBy, WorkViewLoop } from "../work-view";
 import okFixture from "./fixtures/work-view-ok.json";
@@ -375,5 +375,28 @@ describe("WorkView — against real producer output", () => {
         await act(async () => all.click());
         expect(container.textContent).toContain("work-view-fixture-parked");
         await unmount(root);
+    });
+});
+
+describe("summaryLine", () => {
+    it("previews the lead paragraph of a structured description", () => {
+        const structured = "A one-line summary that stands alone.\n\n**Detail**\n- a bullet\n- another bullet";
+        expect(summaryLine(structured)).toBe("A one-line summary that stands alone.");
+    });
+
+    it("falls back to the whole text for an unstructured description", () => {
+        // The existing 20-of-22 single-paragraph descriptions must preview exactly as before, so
+        // the convention can be adopted gradually instead of needing a backfill first.
+        const legacy = "One long unbroken paragraph. Second sentence. Third sentence.";
+        expect(summaryLine(legacy)).toBe(legacy);
+    });
+
+    it("collapses newlines inside the lead paragraph", () => {
+        expect(summaryLine("wrapped\nlead line\n\nrest")).toBe("wrapped lead line");
+    });
+
+    it("is empty for an empty description, so the row stays non-expandable", () => {
+        expect(summaryLine("")).toBe("");
+        expect(summaryLine("   \n\n  ")).toBe("");
     });
 });
