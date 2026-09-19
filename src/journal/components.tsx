@@ -2774,7 +2774,7 @@ export function HeaderShell({
     // short-tag heuristic as a fallback for older/cached frames that lack ids.
     const ctxMeter = limits?.find((meter) => meter.id === "context" || (!meter.id && usageShortLabel(meter) === "ctx"));
     const sessionMeter = limits?.find(
-        (meter) => meter.id === "session_5h" || (!meter.id && usageShortLabel(meter) === "5h"),
+        (meter) => meter.id === "session" || (!meter.id && usageShortLabel(meter) === "5h"),
     );
     // ctx first, then 5h — pinned by id above. If a degenerate frame carries neither
     // (limits present but no ctx/5h), fall back to the first meter so the collapsed
@@ -2894,11 +2894,22 @@ function HeaderOverflowMenu({
     const [open, setOpen] = useState(false);
     const openerRef = useRef<HTMLButtonElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
+    const restoreFrameRef = useRef<number | undefined>(undefined);
     const close = useCallback(() => setOpen(false), []);
     useDismissablePopover(open, close, { openerRef, panelRef });
     useLayoutEffect(() => {
         if (open) panelRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     }, [open]);
+    // Cancel any pending focus-restore frame on unmount so a leaked callback
+    // can't fire after this menu is gone and steal focus (upstream's guard,
+    // lost on a prior fork-sync — the act() rAF below had regressed to a bare,
+    // uncancellable frame).
+    useEffect(
+        () => () => {
+            if (restoreFrameRef.current != null) cancelAnimationFrame(restoreFrameRef.current);
+        },
+        [],
+    );
 
     const id = conversation.id;
     const isPinned = state.pinnedIds.has(id);
@@ -2912,7 +2923,11 @@ function HeaderOverflowMenu({
         // Defer past the re-render: a non-navigating action (pin/favorite/read) keeps the
         // opener mounted → restore focus to it; archiving the selected conversation clears
         // selection and unmounts this whole header, so skip rather than focus a dead node.
-        requestAnimationFrame(() => {
+        // Cancel any in-flight frame before scheduling a new one and clear the ref when it
+        // runs, so rapid actions can't leave a stale callback to fire after unmount.
+        if (restoreFrameRef.current != null) cancelAnimationFrame(restoreFrameRef.current);
+        restoreFrameRef.current = requestAnimationFrame(() => {
+            restoreFrameRef.current = undefined;
             if (opener?.isConnected) opener.focus();
         });
     };
@@ -3093,7 +3108,7 @@ function hasResetTime(limit: NonNullable<SessionStatus["limits"]>[number]): bool
 function pickResetLimit(
     limits: NonNullable<SessionStatus["limits"]>,
 ): NonNullable<SessionStatus["limits"]>[number] | undefined {
-    const session = limits.find((limit) => limit.id === "session_5h" && hasResetTime(limit));
+    const session = limits.find((limit) => limit.id === "session" && hasResetTime(limit));
     if (session) return session;
     return limits.find(
         (limit) => limit.id !== "context" && limit.id !== "host_cpu" && limit.id !== "host_ram" && hasResetTime(limit),
@@ -3116,7 +3131,7 @@ function pickWeekResetLimit(
 function pick5hResetLimit(
     limits: NonNullable<SessionStatus["limits"]>,
 ): NonNullable<SessionStatus["limits"]>[number] | undefined {
-    return limits.find((limit) => limit.id === "session_5h" && hasResetTime(limit));
+    return limits.find((limit) => limit.id === "session" && hasResetTime(limit));
 }
 
 // Header subtitle countdown that replaces the workdir path (loop #628): shows BOTH usage
