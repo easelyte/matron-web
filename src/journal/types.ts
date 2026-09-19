@@ -231,7 +231,7 @@ export interface SessionStatus {
         pct: number;
     };
     limits?: Array<{
-        // Stable machine key from the bridge (v5+): `session_5h`, `week_all`, `week_fable`,
+        // Stable machine key from the bridge (v5+): `session`, `week_all`, `week_fable`,
         // `week_<slug>` (e.g. `week_sonnet_5`), and host meters `host_cpu` / `host_ram`.
         // Absent on older/cached frames — the client falls back to parsing `label`.
         id?: string;

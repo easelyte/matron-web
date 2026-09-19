@@ -51,7 +51,7 @@ describe("journal session status presentation", () => {
     it("prefers the stable id for the short tag, retiring the relabel map", () => {
         // id wins over label; a mislabelled server label doesn't matter.
         expect(usageShortLabel({ id: "context", label: "anything" })).toBe("ctx");
-        expect(usageShortLabel({ id: "session_5h", label: "Session" })).toBe("5h");
+        expect(usageShortLabel({ id: "session", label: "Session" })).toBe("5h");
         expect(usageShortLabel({ id: "week_fable", label: "Week (Fable)" })).toBe("fbl");
         expect(usageShortLabel({ id: "week_all", label: "Week (all models)" })).toBe("wk");
         expect(usageShortLabel({ id: "host_cpu", label: "Host CPU" })).toBe("cpu");
@@ -65,7 +65,7 @@ describe("journal session status presentation", () => {
 
     it("maps id → long accessible name, falling back to the raw label", () => {
         expect(usageAccessibleLabel({ id: "context", label: "context" })).toBe("context");
-        expect(usageAccessibleLabel({ id: "session_5h", label: "Session" })).toBe("5-hour session");
+        expect(usageAccessibleLabel({ id: "session", label: "Session" })).toBe("5-hour session");
         expect(usageAccessibleLabel({ id: "week_all", label: "Week (all models)" })).toBe("weekly, all models");
         expect(usageAccessibleLabel({ id: "week_fable", label: "Week (Fable)" })).toBe("weekly, Fable");
         expect(usageAccessibleLabel({ id: "host_cpu", label: "Host CPU" })).toBe("host CPU");
@@ -82,7 +82,7 @@ describe("journal session status presentation", () => {
             { id: "week_all", label: "Week (all models)" },
             { id: "week_sonnet_5", label: "Week (Sonnet 5)" },
             { id: "host_cpu", label: "Host CPU" },
-            { id: "session_5h", label: "Session" },
+            { id: "session", label: "Session" },
             { id: "week_fable", label: "Week (Fable)" },
             { id: "context", label: "context" },
         ];
@@ -92,7 +92,7 @@ describe("journal session status presentation", () => {
             "host_cpu",
             "host_ram",
             "context",
-            "session_5h",
+            "session",
             "week_sonnet_5",
             "week_fable",
             "week_all",

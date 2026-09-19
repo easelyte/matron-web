@@ -81,7 +81,7 @@ describe("UsageCluster", () => {
     it("renders id-driven short tags and long accessible names (ctx/5h/fbl/wk/cpu/ram)", async () => {
         await renderUsage([
             { id: "context", label: "context", percent: 72, used: 144_000, limit: 200_000 },
-            { id: "session_5h", label: "Session", percent: 41 },
+            { id: "session", label: "Session", percent: 41 },
             { id: "week_fable", label: "Week (Fable)", percent: 22 },
             { id: "week_all", label: "Week (all models)", percent: 63 },
             { id: "host_cpu", label: "Host CPU", percent: 34 },
@@ -120,7 +120,7 @@ describe("UsageCluster", () => {
     });
 
     it("omits the raw pair for meters without used/limit", async () => {
-        await renderUsage([{ id: "session_5h", label: "Session", percent: 41 }]);
+        await renderUsage([{ id: "session", label: "Session", percent: 41 }]);
         const row = container.querySelector(".mj_UsageRow")!;
         expect(row.classList.contains("mj_UsageRow_raw")).toBe(false);
         expect(row.querySelector(".mj_UsageRaw")).toBeNull();
@@ -161,7 +161,7 @@ describe("UsageCluster", () => {
         const now = 1_000_000_000_000;
         await renderUsage(
             [
-                { id: "session_5h", label: "Session", percent: 41 },
+                { id: "session", label: "Session", percent: 41 },
                 { id: "week_all", label: "Week (all models)", percent: 63 },
             ],
             now,
@@ -188,7 +188,7 @@ describe("UsageCluster", () => {
 
 describe("buildUsageMeters host vitals (status.vitals source + #529 live override)", () => {
     const vitals = { cpu_pct: 10, ram_pct: 20, sampled_at_ms: 1_000 };
-    const accountLimits: Limits = [{ id: "session_5h", label: "Session", percent: 41 }];
+    const accountLimits: Limits = [{ id: "session", label: "Session", percent: 41 }];
 
     function byId(meters: Limits, id: string): Limits[number] {
         const found = meters.find((meter) => meter.id === id);
@@ -211,7 +211,7 @@ describe("buildUsageMeters host vitals (status.vitals source + #529 live overrid
             percent: 20,
             sampled_at_ms: 1_000,
         });
-        expect(byId(meters, "session_5h").percent).toBe(41);
+        expect(byId(meters, "session").percent).toBe(41);
     });
 
     it("renders EXACTLY ONE cpu and one ram meter when a bridge also injects them into limits[]", () => {
@@ -231,7 +231,7 @@ describe("buildUsageMeters host vitals (status.vitals source + #529 live overrid
         expect(byId(meters, "host_cpu").percent).toBe(10);
         expect(byId(meters, "host_ram").percent).toBe(20);
         // The real account quota is not displaced.
-        expect(byId(meters, "session_5h").percent).toBe(41);
+        expect(byId(meters, "session").percent).toBe(41);
     });
 
     it("lets a NEWER limits[] host entry win over a retained stale vitals (bridge rollback)", () => {
@@ -368,7 +368,7 @@ describe("buildUsageMeters host vitals (status.vitals source + #529 live overrid
         expect(byId(meters, "host_cpu")).toMatchObject({ percent: 77, sampled_at_ms: 9_999 });
         expect(byId(meters, "host_ram")).toMatchObject({ percent: 88, sampled_at_ms: 9_999 });
         // Non-host meters are untouched by the override.
-        expect(byId(meters, "session_5h").percent).toBe(41);
+        expect(byId(meters, "session").percent).toBe(41);
     });
 
     it("falls back to the status.vitals figures when the global push is absent", () => {
