@@ -16,6 +16,13 @@ export interface AsyncResource<T> {
     error?: string;
     /** HTTP status when the error was a server denial (403/413/404) — lets a renderer branch. */
     errorStatus?: number;
+    /**
+     * The `key` this status/data belongs to. Because the transition to "loading" is scheduled from a
+     * passive effect (not synchronously on key change), a render that just changed `key` still reads
+     * the PRIOR key's settled state for one commit — a consumer that must not act on a superseded
+     * payload can gate on `resource.key === <its current key>`. Undefined only before the first load.
+     */
+    key?: string;
     /** Re-run the loader (retry after a transient failure). */
     reload: () => void;
 }
@@ -32,10 +39,13 @@ export function useAsyncResource<T>(loader: (signal: AbortSignal) => Promise<T>,
     useEffect(() => {
         const controller = new AbortController();
         let cancelled = false;
-        setResource({ status: "loading" });
+        // Stamp every transition with the key that produced it, so a consumer can tell a fresh
+        // payload from the previous key's still-settled state during the one-commit window before
+        // this "loading" set takes effect.
+        setResource({ status: "loading", key });
         loader(controller.signal).then(
             (data) => {
-                if (!cancelled) setResource({ status: "loaded", data });
+                if (!cancelled) setResource({ status: "loaded", data, key });
             },
             (error: unknown) => {
                 if (cancelled) return;
@@ -49,7 +59,7 @@ export function useAsyncResource<T>(loader: (signal: AbortSignal) => Promise<T>,
                         : error instanceof Error
                           ? error.message
                           : "Something went wrong.";
-                setResource({ status: "error", error: message, errorStatus: status });
+                setResource({ status: "error", error: message, errorStatus: status, key });
             },
         );
         return () => {

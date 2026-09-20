@@ -153,10 +153,15 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
     const [dir, setDir] = useState(() => state.filesView?.path ?? DEFAULT_FILES_PATH);
     const [selected, setSelected] = useState<Selected | undefined>(undefined);
     const [showHidden, setShowHidden] = useState(false);
+    // Deep-link freshness nonce (see the auto-preview effect). Folded into the listing key so a deep
+    // link ALWAYS re-runs listDir for the target directory before we select — even when the pane is
+    // already browsing that directory with a stale listing (an agent may have just created the file).
+    const [deepLinkNonce, setDeepLinkNonce] = useState<number | undefined>(undefined);
 
+    const listingKey = `list:${dir}:${showHidden ? 1 : 0}:${deepLinkNonce ?? ""}`;
     const listing = useAsyncResource<FileListing>(
         (signal) => (api ? api.listDir(dir, showHidden, signal) : Promise.reject(new Error("Not signed in."))),
-        `list:${dir}:${showHidden ? 1 : 0}`,
+        listingKey,
     );
 
     // Keep app-global filesView.path in sync with the server-normalized path so a reopen returns
@@ -173,6 +178,66 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
         (entry: FileEntry) => setSelected({ path: joinPath(dir, entry.name), name: entry.name, at: Date.now() }),
         [dir],
     );
+
+    // ── Files deep link (#files=<abs>) auto-preview ─────────────────────────────────────────────
+    // A bridge doc-handoff link opens the pane with filesView.targetFile = the absolute file path
+    // and a per-invocation targetToken. Steps, fire-once per TOKEN (not per path, so re-clicking the
+    // same link after browsing away is a fresh invocation, not a dedup no-op):
+    //   1. Browse to the target's directory (setDir), and
+    //   2. Force a FRESH listing for it by setting deepLinkNonce = the token — that nonce is part of
+    //      the listing key, so the resource re-runs listDir even when we were already in that
+    //      directory (the file may have just been created; a stale in-memory listing would miss it).
+    //   3. Once dir === targetDir AND the listing keyed with THIS token's nonce has loaded, select
+    //      the matching entry. We correlate by (dir, nonce) — the request identity — NOT by
+    //      comparing listing.data.path to a lexically-derived directory string, because the server
+    //      returns realpath-canonical paths that can differ from the requested path (symlinks,
+    //      `..`), which would otherwise wedge a valid link forever. Re-keying flips the resource to
+    //      "loading" before this effect observes it (the listing hook runs before this one), so a
+    //      stale prior listing is never consumed — no wrong-file-edit hazard.
+    const targetFile = state.filesView?.targetFile;
+    const targetToken = state.filesView?.targetToken;
+    const targetDir = useMemo(
+        () => (targetFile ? targetFile.slice(0, Math.max(1, targetFile.lastIndexOf("/"))) : undefined),
+        [targetFile],
+    );
+    const targetName = useMemo(
+        () => (targetFile ? targetFile.slice(targetFile.lastIndexOf("/") + 1) : undefined),
+        [targetFile],
+    );
+    const deepLinkTokenRef = useRef<number | undefined>(undefined);
+    useEffect(() => {
+        if (!targetFile || !targetDir || targetToken === undefined) return;
+        if (deepLinkTokenRef.current === targetToken) return; // already handled this invocation
+        // Steps 1-2: get to the target dir AND request a fresh listing keyed to this token.
+        if (dir !== targetDir || deepLinkNonce !== targetToken) {
+            setSelected(undefined);
+            if (dir !== targetDir) setDir(targetDir);
+            if (deepLinkNonce !== targetToken) setDeepLinkNonce(targetToken);
+            return;
+        }
+        // Step 3: consume ONLY the listing produced by the CURRENT request key. After Step 2 re-keys
+        // the resource, useAsyncResource schedules its "loading" transition in a passive effect, so
+        // for one commit `listing` still holds the PRIOR key's loaded payload — consuming it here
+        // would select a stale (possibly different-directory) entry. Gating on
+        // `listing.key === listingKey` waits for the fresh response tied to this exact request.
+        if (listing.status !== "loaded" || !listing.data || listing.key !== listingKey) return;
+        deepLinkTokenRef.current = targetToken; // handled (found or not) — do not retry this token
+        const entry = listing.data.entries.find(
+            (candidate) => candidate.name === targetName && candidate.kind !== "dir",
+        );
+        if (entry) setSelected({ path: joinPath(listing.data.path, entry.name), name: entry.name, at: Date.now() });
+    }, [
+        targetFile,
+        targetToken,
+        targetDir,
+        targetName,
+        dir,
+        deepLinkNonce,
+        listingKey,
+        listing.status,
+        listing.data,
+        listing.key,
+    ]);
 
     // ── Writes (Phase 2) ──────────────────────────────────────────────────────────────────────
     // `writable` is whatever the SERVER said for THIS directory. Writes off, dry-run, or a dir
