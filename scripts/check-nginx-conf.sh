@@ -54,26 +54,35 @@ extract_block() {
 
 missing=()
 
-# Block 1: .mjs served as JS (pdf.js ES-module worker). The `location ~ \.mjs$`
-# block must set application/javascript, or the browser refuses to import() the
+# Block 1: .mjs served as JS (pdf.js ES-module worker). The header is anchored to
+# exactly `\.mjs$` (a near-match like `\.mjsfoo$` is a valid regex nginx would
+# accept but that never matches a real .mjs request, so it must NOT satisfy the
+# guard), and the MIME must appear in a real `types {}`/`default_type` directive —
+# not just as a loose substring. Without this the browser refuses to import() the
 # worker ("Failed to fetch dynamically imported module").
-mjs_block=$(extract_block 'location[[:space:]]*~[[:space:]]*.*mjs')
-if [[ -z $mjs_block ]] || ! grep -q 'application/javascript' <<<"$mjs_block"; then
+mjs_block=$(extract_block 'location[[:space:]]*~[[:space:]]*.*mjs[$][[:space:]]*[{]')
+if [[ -z $mjs_block ]] ||
+    ! grep -Eq '(default_type[[:space:]]+application/javascript|types[[:space:]]*[{][^}]*application/javascript)' <<<"$mjs_block"; then
     missing+=(".mjs MIME block (location ~ \\.mjs\$ serving application/javascript)")
 fi
 
-# Block 2: hashed, content-addressed /assets/ cached forever (immutable).
+# Block 2: hashed, content-addressed /assets/ cached forever (immutable). Require
+# `immutable` inside an actual Cache-Control add_header directive, so an unrelated
+# header value cannot satisfy it.
 assets_block=$(extract_block 'location[[:space:]]+/assets/[[:space:]]*[{]')
-if [[ -z $assets_block ]] || ! grep -q 'immutable' <<<"$assets_block"; then
-    missing+=("/assets/ immutable long-cache block (location /assets/ with immutable)")
+if [[ -z $assets_block ]] ||
+    ! grep -Eq 'add_header[[:space:]]+Cache-Control[[:space:]]+"[^"]*immutable[^"]*"' <<<"$assets_block"; then
+    missing+=("/assets/ immutable long-cache block (location /assets/ with Cache-Control immutable)")
 fi
 
 # Block 3: the SPA `location /` block (serving index.html directly + via fallback)
 # must revalidate every load, or the browser heuristically caches index.html and
 # keeps requesting a stale (possibly pruned) hashed bundle after each deploy. The
-# pattern matches `location / {` only, not /assets/ or /journal/.
+# header matches `location / {` only (not /assets/ or /journal/), and the value
+# must be a real Cache-Control add_header directive.
 spa_block=$(extract_block 'location[[:space:]]+/[[:space:]]*[{]')
-if [[ -z $spa_block ]] || ! grep -Eq 'Cache-Control[[:space:]]+"no-cache"' <<<"$spa_block"; then
+if [[ -z $spa_block ]] ||
+    ! grep -Eq 'add_header[[:space:]]+Cache-Control[[:space:]]+"no-cache"' <<<"$spa_block"; then
     missing+=("index.html/SPA no-cache block (location / with Cache-Control \"no-cache\")")
 fi
 
