@@ -2006,6 +2006,24 @@ export class MatronJournalClient {
         return true;
     }
 
+    /** PATCH an item's labels — the seam the route-elsewhere toggle uses. Generic on purpose (the
+     *  reserved-label constant lives in the tracker UI, not here). Returns false on failure, leaving
+     *  state untouched so the caller can keep its optimistic UI honest. */
+    public async setItemLabels(id: number | string, labels: string[]): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.patchItem(id, { labels });
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        await this.loadItem(id);
+        if (this.state.inboxItems) await this.loadInbox();
+        return true;
+    }
+
     public async saveMissionEdits(id: number | string, fields: { title?: string; body?: string }): Promise<boolean> {
         const api = this.api;
         if (!api) return false;

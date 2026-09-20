@@ -24,6 +24,7 @@ export function trackerItem(over: Partial<TrackerItem> = {}): TrackerItem {
         links: [],
         supersedes: null,
         origin_convo_id: "c1",
+        origin_convo_title: "Brand chat",
         created_by: "agent",
         created_at: 1,
         updated_at: 1,
