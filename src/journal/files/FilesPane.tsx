@@ -175,14 +175,22 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
     );
 
     // ── Files deep link (#files=<abs>) auto-preview ─────────────────────────────────────────────
-    // A bridge doc-handoff link opens the pane with filesView.targetFile = the absolute file path.
-    // Two-step: (1) navigate to the file's directory (on a fresh mount `dir` is already seeded from
-    // filesView.path, so this is a no-op; it matters only when a link fires into an already-open
-    // pane), then (2) once THAT directory's listing lands, auto-select the matching entry so its
-    // preview opens. Fire-once per target value (`deepLinkTargetRef`), so ordinary navigation after
-    // the select never re-triggers, and a target whose file is absent is abandoned rather than
-    // retried on every listing. `selected` stays purely local — this only seeds the initial preview.
+    // A bridge doc-handoff link opens the pane with filesView.targetFile = the absolute file path
+    // and a per-invocation targetToken. Two-step: (1) navigate to the file's directory (on a fresh
+    // mount `dir` is already seeded from filesView.path, so this is a no-op; it matters when a link
+    // fires into an already-open pane, incl. re-clicking the SAME link after browsing away — a new
+    // token), then (2) once THAT directory's listing lands, auto-select the matching entry so its
+    // preview opens. Fire-once per TOKEN (not per path), so ordinary navigation after the select
+    // never re-triggers, yet a repeat click is a fresh invocation.
+    //
+    // The select is gated on `listing.data.path === targetDir`: after setDir(targetDir) the async
+    // resource can still be holding the PREVIOUS directory's loaded payload for a render or two, and
+    // selecting off that stale listing would record a selection whose path points at the old
+    // directory (basename-only row correlation would then show the new file "selected" while preview
+    // and Edit target the old one — a wrong-file-edit hazard). Requiring the loaded listing to BE
+    // the target directory closes that race; the token stays unhandled until the right listing lands.
     const targetFile = state.filesView?.targetFile;
+    const targetToken = state.filesView?.targetToken;
     const targetDir = useMemo(
         () => (targetFile ? targetFile.slice(0, Math.max(1, targetFile.lastIndexOf("/"))) : undefined),
         [targetFile],
@@ -191,22 +199,22 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
         () => (targetFile ? targetFile.slice(targetFile.lastIndexOf("/") + 1) : undefined),
         [targetFile],
     );
-    const deepLinkTargetRef = useRef<string | undefined>(undefined);
+    const deepLinkTokenRef = useRef<number | undefined>(undefined);
     useEffect(() => {
-        if (!targetFile || !targetDir) return;
-        if (deepLinkTargetRef.current === targetFile) return; // already handled this target
-        // Step 1: make sure we are browsing the target's directory before we try to select in it.
+        if (!targetFile || !targetDir || targetToken === undefined) return;
+        if (deepLinkTokenRef.current === targetToken) return; // already handled this invocation
+        // Step 1: browse to the target's directory before trying to select within it.
         if (dir !== targetDir) {
             setSelected(undefined);
             setDir(targetDir);
             return;
         }
-        // Step 2: wait for THIS directory's listing, then select the entry (fire once either way).
-        if (listing.status !== "loaded" || !listing.data) return;
-        deepLinkTargetRef.current = targetFile;
+        // Step 2: act only on the TARGET directory's own loaded listing (never a stale prior one).
+        if (listing.status !== "loaded" || !listing.data || listing.data.path !== targetDir) return;
+        deepLinkTokenRef.current = targetToken; // handled (found or not) — do not retry this token
         const entry = listing.data.entries.find((candidate) => candidate.name === targetName && candidate.kind !== "dir");
         if (entry) setSelected({ path: joinPath(listing.data.path, entry.name), name: entry.name, at: Date.now() });
-    }, [targetFile, targetDir, targetName, dir, listing.status, listing.data]);
+    }, [targetFile, targetToken, targetDir, targetName, dir, listing.status, listing.data]);
 
     // ── Writes (Phase 2) ──────────────────────────────────────────────────────────────────────
     // `writable` is whatever the SERVER said for THIS directory. Writes off, dry-run, or a dir

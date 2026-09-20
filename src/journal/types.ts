@@ -411,10 +411,15 @@ export interface FilesViewState {
      * Deep-link target: an ABSOLUTE file path the pane should auto-open a preview for once its
      * containing directory listing lands (see FilesPane's auto-select effect). Set only by a
      * `#files=<abs>` deep link (client.applyFilesDeepLink); `path` is then that file's directory.
-     * Left in place after the one-shot select fires — FilesPane guards on it firing once per value,
-     * so ordinary navigation never re-triggers it.
      */
     targetFile?: string;
+    /**
+     * Monotonic per-invocation token bumped by openFilesView every time a `targetFile` is supplied.
+     * FilesPane keys its fire-once auto-select on THIS, not on `targetFile`, so re-clicking the SAME
+     * link after navigating away re-navigates and re-selects (a new token) rather than being
+     * permanently deduped by an unchanged path string.
+     */
+    targetToken?: number;
 }
 
 // ── Tracker (Missions / Milestones / Decisions-Inbox / Work) ───────────────────

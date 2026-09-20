@@ -442,6 +442,10 @@ export class MatronJournalClient {
         localStorage.setItem(SESSION_KEY, JSON.stringify(session));
         localStorage.setItem(LAST_SERVER_KEY, serverUrl);
         await this.startSession(session);
+        // A deep link followed WITHOUT a stored session lands here (interactive login), not in
+        // initialise's stored-session branch, and no hashchange fires — apply it now so the linked
+        // file opens instead of being stranded behind the conversation view.
+        this.applyFilesDeepLink();
     }
 
     public async logout(message?: string): Promise<void> {
@@ -1697,7 +1701,11 @@ export class MatronJournalClient {
         // Symmetric to openTrackerView closing Files: one main-region surface at a time, so
         // opening Files closes the tracker (the tracker takes render precedence otherwise).
         this.closeTrackerView();
-        this.patch({ filesView: { open: true, path: path ?? this.state.filesView?.path, targetFile } });
+        // Bump the invocation token whenever a target is supplied, so re-opening the SAME file (e.g.
+        // the operator clicks the same deep link again after browsing elsewhere) is a distinct
+        // invocation FilesPane will act on, not a no-op deduped by the unchanged path string.
+        const targetToken = targetFile ? (this.state.filesView?.targetToken ?? 0) + 1 : undefined;
+        this.patch({ filesView: { open: true, path: path ?? this.state.filesView?.path, targetFile, targetToken } });
     }
 
     public closeFilesView(): void {
@@ -1711,7 +1719,14 @@ export class MatronJournalClient {
     public setFilesPath(path: string): void {
         if (!this.state.filesView?.open) return;
         if (this.state.filesView.path === path) return;
-        this.patch({ filesView: { open: true, path, targetFile: this.state.filesView.targetFile } });
+        this.patch({
+            filesView: {
+                open: true,
+                path,
+                targetFile: this.state.filesView.targetFile,
+                targetToken: this.state.filesView.targetToken,
+            },
+        });
     }
 
     // Hash-based deep link into the Files pane: `#files=<url-encoded-absolute-path>`. Opens the
