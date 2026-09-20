@@ -48,7 +48,11 @@ export function itemProvenance(
     item: Pick<TrackerItem, "labels" | "origin_convo_id" | "origin_convo_title">,
     currentConvoId: string | null | undefined,
 ): ItemProvenance {
-    const title = item.origin_convo_title?.trim() || null;
+    // Defensive: the field is typed string | null, but it crosses a JSON boundary from the journal
+    // producer — narrow before .trim() so a contract-drifted non-string degrades to "no title"
+    // rather than throwing during a render.
+    const raw = item.origin_convo_title;
+    const title = typeof raw === "string" ? raw.trim() || null : null;
     if (isRouteElsewhere(item)) return { kind: "elsewhere", title };
     if (currentConvoId && item.origin_convo_id === currentConvoId) return { kind: "here" };
     return { kind: "other", title };
