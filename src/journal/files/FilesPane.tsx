@@ -158,9 +158,10 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
     // already browsing that directory with a stale listing (an agent may have just created the file).
     const [deepLinkNonce, setDeepLinkNonce] = useState<number | undefined>(undefined);
 
+    const listingKey = `list:${dir}:${showHidden ? 1 : 0}:${deepLinkNonce ?? ""}`;
     const listing = useAsyncResource<FileListing>(
         (signal) => (api ? api.listDir(dir, showHidden, signal) : Promise.reject(new Error("Not signed in."))),
-        `list:${dir}:${showHidden ? 1 : 0}:${deepLinkNonce ?? ""}`,
+        listingKey,
     );
 
     // Keep app-global filesView.path in sync with the server-normalized path so a reopen returns
@@ -214,12 +215,16 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
             if (deepLinkNonce !== targetToken) setDeepLinkNonce(targetToken);
             return;
         }
-        // Step 3: the listing keyed with (targetDir, this token) has settled — consume it.
-        if (listing.status !== "loaded" || !listing.data) return;
+        // Step 3: consume ONLY the listing produced by the CURRENT request key. After Step 2 re-keys
+        // the resource, useAsyncResource schedules its "loading" transition in a passive effect, so
+        // for one commit `listing` still holds the PRIOR key's loaded payload — consuming it here
+        // would select a stale (possibly different-directory) entry. Gating on
+        // `listing.key === listingKey` waits for the fresh response tied to this exact request.
+        if (listing.status !== "loaded" || !listing.data || listing.key !== listingKey) return;
         deepLinkTokenRef.current = targetToken; // handled (found or not) — do not retry this token
         const entry = listing.data.entries.find((candidate) => candidate.name === targetName && candidate.kind !== "dir");
         if (entry) setSelected({ path: joinPath(listing.data.path, entry.name), name: entry.name, at: Date.now() });
-    }, [targetFile, targetToken, targetDir, targetName, dir, deepLinkNonce, listing.status, listing.data]);
+    }, [targetFile, targetToken, targetDir, targetName, dir, deepLinkNonce, listingKey, listing.status, listing.data, listing.key]);
 
     // ── Writes (Phase 2) ──────────────────────────────────────────────────────────────────────
     // `writable` is whatever the SERVER said for THIS directory. Writes off, dry-run, or a dir

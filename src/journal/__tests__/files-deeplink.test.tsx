@@ -105,9 +105,12 @@ async function flush(): Promise<void> {
     });
 }
 
+let currentApi: FilesApiLike | undefined;
+
 async function mountPane(api: FilesApiLike, filesView: FilesViewState): Promise<HTMLDivElement> {
     container = document.createElement("div");
     document.body.append(container);
+    currentApi = api;
     const state = { filesView } as unknown as ClientState;
     await act(async () => {
         root = createRoot(container as HTMLDivElement);
@@ -115,6 +118,14 @@ async function mountPane(api: FilesApiLike, filesView: FilesViewState): Promise<
     });
     await flush();
     return container;
+}
+
+async function rerenderPane(filesView: FilesViewState): Promise<void> {
+    const state = { filesView } as unknown as ClientState;
+    await act(async () => {
+        root!.render(<FilesPane client={mockClient(currentApi as FilesApiLike)} state={state} />);
+    });
+    await flush();
 }
 
 // Force a signed-in phase without standing up a session — applyFilesDeepLink gates on it.
@@ -223,6 +234,37 @@ describe("FilesPane deep-link auto-preview", () => {
         });
         const pane = await mountPane(api, { open: true, path: DIR, targetFile: `${DIR}/dan-offer.md`, targetToken: 1 });
         expect((api.listDir as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(2); // forced a refresh
+        const selectedRow = pane.querySelector(".mj_FilesRow_selected");
+        expect(selectedRow).not.toBeNull();
+        expect(selectedRow?.textContent).toContain("dan-offer.md");
+    });
+
+    it("does not consume the prior listing when a deep link arrives at an already-loaded pane (key-generation guard)", async () => {
+        // Mount plain at DIR: the first listing contains ONLY old.md (no dan-offer.md). Then a deep
+        // link for DIR/dan-offer.md arrives via rerender. The fresh (nonce-keyed) listDir returns a
+        // listing WITH dan-offer.md. If the pane consumed the stale first listing (the one-commit
+        // window), it would find no dan-offer.md and give up; the key guard makes it wait for the
+        // fresh response and select dan-offer.md.
+        const withOld: FileListing = {
+            path: DIR,
+            root: DIR,
+            parent: null,
+            entries: [{ name: "old.md", kind: "file", size: 9, mtime: 1, mime: "text/markdown" }],
+            truncated: false,
+            writable: false,
+        };
+        let calls = 0;
+        const api = mockApi({
+            listDir: jest.fn(() => {
+                calls += 1;
+                return Promise.resolve(calls === 1 ? withOld : listing());
+            }),
+        });
+        // Mount with NO target — first listing (old.md) settles.
+        const pane = await mountPane(api, { open: true, path: DIR });
+        expect(pane.querySelector(".mj_FilesRow_selected")).toBeNull();
+        // Deep link arrives at the already-loaded pane.
+        await rerenderPane({ open: true, path: DIR, targetFile: `${DIR}/dan-offer.md`, targetToken: 1 });
         const selectedRow = pane.querySelector(".mj_FilesRow_selected");
         expect(selectedRow).not.toBeNull();
         expect(selectedRow?.textContent).toContain("dan-offer.md");
