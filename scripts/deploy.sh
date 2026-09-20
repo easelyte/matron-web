@@ -189,7 +189,26 @@ restore_nginx_conf() {
 install_nginx_conf() {
     local src=$WEB/ops/nginx/matron-web-journal.conf
     local dest=${DEPLOY_NGINX_CONF_DEST:-/etc/nginx/conf.d/matron-web-journal.conf}
-    local nginx_bin=${DEPLOY_NGINX_BIN:-nginx}
+    # Resolve the nginx binary. Bare `nginx` is not on root's non-login PATH on the
+    # production VPS (admin binaries live in sbin dirs kept off PATH), so a default of
+    # `nginx` makes `nginx -t` fail with command-not-found and aborts every deploy.
+    # Prefer an explicit override, then PATH, then the standard sbin locations.
+    local nginx_bin=""
+    if [[ -n ${DEPLOY_NGINX_BIN:-} ]]; then
+        nginx_bin=$DEPLOY_NGINX_BIN
+    elif nginx_bin=$(command -v nginx 2>/dev/null); then
+        :
+    else
+        local cand
+        for cand in /usr/sbin/nginx /sbin/nginx /usr/local/sbin/nginx; do
+            if [[ -x $cand ]]; then nginx_bin=$cand; break; fi
+        done
+    fi
+    if [[ -z $nginx_bin ]]; then
+        echo "nginx binary not found on PATH or in standard sbin dirs; set DEPLOY_NGINX_BIN" >&2
+        log_event nginx-bin-missing
+        return 1
+    fi
     local guard=$WEB/scripts/check-nginx-conf.sh
     local backup=""
     local staged=""
