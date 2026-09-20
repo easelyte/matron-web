@@ -222,9 +222,22 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
         // `listing.key === listingKey` waits for the fresh response tied to this exact request.
         if (listing.status !== "loaded" || !listing.data || listing.key !== listingKey) return;
         deepLinkTokenRef.current = targetToken; // handled (found or not) — do not retry this token
-        const entry = listing.data.entries.find((candidate) => candidate.name === targetName && candidate.kind !== "dir");
+        const entry = listing.data.entries.find(
+            (candidate) => candidate.name === targetName && candidate.kind !== "dir",
+        );
         if (entry) setSelected({ path: joinPath(listing.data.path, entry.name), name: entry.name, at: Date.now() });
-    }, [targetFile, targetToken, targetDir, targetName, dir, deepLinkNonce, listingKey, listing.status, listing.data, listing.key]);
+    }, [
+        targetFile,
+        targetToken,
+        targetDir,
+        targetName,
+        dir,
+        deepLinkNonce,
+        listingKey,
+        listing.status,
+        listing.data,
+        listing.key,
+    ]);
 
     // ── Writes (Phase 2) ──────────────────────────────────────────────────────────────────────
     // `writable` is whatever the SERVER said for THIS directory. Writes off, dry-run, or a dir

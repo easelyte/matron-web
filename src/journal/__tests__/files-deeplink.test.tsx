@@ -164,7 +164,12 @@ describe("client.applyFilesDeepLink", () => {
         window.location.hash = `#files=${encodeURIComponent("/etc-note.txt")}`;
         const client = signedInClient();
         client.applyFilesDeepLink();
-        expect(client.getSnapshot().filesView).toEqual({ open: true, path: "/", targetFile: "/etc-note.txt", targetToken: 1 });
+        expect(client.getSnapshot().filesView).toEqual({
+            open: true,
+            path: "/",
+            targetFile: "/etc-note.txt",
+            targetToken: 1,
+        });
     });
 
     it("ignores a foreign hash and leaves it intact", () => {
@@ -194,7 +199,12 @@ describe("client.applyFilesDeepLink", () => {
 
 describe("FilesPane deep-link auto-preview", () => {
     it("auto-selects the target file once its directory listing lands", async () => {
-        const pane = await mountPane(mockApi(), { open: true, path: DIR, targetFile: `${DIR}/dan-offer.md`, targetToken: 1 });
+        const pane = await mountPane(mockApi(), {
+            open: true,
+            path: DIR,
+            targetFile: `${DIR}/dan-offer.md`,
+            targetToken: 1,
+        });
         const selectedRow = pane.querySelector(".mj_FilesRow_selected");
         expect(selectedRow).not.toBeNull();
         expect(selectedRow?.textContent).toContain("dan-offer.md");
@@ -202,7 +212,12 @@ describe("FilesPane deep-link auto-preview", () => {
     });
 
     it("selects nothing when the target file is absent from the listing", async () => {
-        const pane = await mountPane(mockApi(), { open: true, path: DIR, targetFile: `${DIR}/missing.md`, targetToken: 1 });
+        const pane = await mountPane(mockApi(), {
+            open: true,
+            path: DIR,
+            targetFile: `${DIR}/missing.md`,
+            targetToken: 1,
+        });
         expect(pane.querySelector(".mj_FilesRow_selected")).toBeNull();
         // The read-only listing itself is untouched.
         expect(pane.querySelectorAll(".mj_FilesRow")).toHaveLength(ENTRIES.length);
@@ -287,7 +302,12 @@ describe("FilesPane deep-link auto-preview", () => {
             listDir: jest.fn((p: string) => Promise.resolve(p === OTHER ? otherListing : listing())),
         });
         // Mount already browsing OTHER (path), but the deep link points into DIR.
-        const pane = await mountPane(api, { open: true, path: OTHER, targetFile: `${DIR}/dan-offer.md`, targetToken: 1 });
+        const pane = await mountPane(api, {
+            open: true,
+            path: OTHER,
+            targetFile: `${DIR}/dan-offer.md`,
+            targetToken: 1,
+        });
         const selectedRow = pane.querySelector(".mj_FilesRow_selected");
         // It navigated to DIR and selected DIR's dan-offer.md — not OTHER's.
         expect(selectedRow).not.toBeNull();
