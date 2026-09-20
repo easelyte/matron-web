@@ -518,7 +518,7 @@ describe("HeaderShell", () => {
                 { id: "host_cpu", label: "Host CPU", percent: 34 },
                 { id: "host_ram", label: "Host RAM", percent: 55 },
                 { id: "context", label: "context", percent: 72, used: 144_000, limit: 200_000 },
-                { id: "session_5h", label: "Session", percent: 41 },
+                { id: "session", label: "Session", percent: 41 },
                 { id: "week_fable", label: "Week (Fable)", percent: 22 },
                 { id: "week_all", label: "Week (all models)", percent: 63 },
             ],

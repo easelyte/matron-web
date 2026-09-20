@@ -216,7 +216,7 @@ describe("header compact + limits-reset (fork features)", () => {
                 workdir: "/some/workspace/path",
                 limits: [
                     {
-                        id: "session_5h",
+                        id: "session",
                         label: "Session",
                         percent: 20,
                         resets_at_ms: Date.now() + 3 * 60 * 60_000,
@@ -245,7 +245,7 @@ describe("header compact + limits-reset (fork features)", () => {
                 model: "claude-opus-4-8",
                 limits: [
                     {
-                        id: "session_5h",
+                        id: "session",
                         label: "Session",
                         percent: 20,
                         resets_at_ms: Date.now() + 3 * 60 * 60_000,

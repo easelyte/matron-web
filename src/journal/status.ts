@@ -53,6 +53,9 @@ export function usageBarLabel(label: string): string {
 const USAGE_SHORT_LABELS: Record<string, string> = {
     context: "ctx",
     Session: "5h",
+    // Lowercase tolerance: a bridge may label the session limit "session" (post-#156).
+    // Keep both so the label fallback (no `id`) still resolves either casing.
+    session: "5h",
     "Week (all models)": "wk",
     Week: "wk",
     fable: "fbl",
@@ -67,7 +70,7 @@ export type UsageMeterLike = { id?: string; label: string };
 // Canonical id → short tag. Owns the id path; retires the label relabel-map for it.
 const USAGE_ID_SHORT_LABELS: Record<string, string> = {
     context: "ctx",
-    session_5h: "5h",
+    session: "5h",
     week_fable: "fbl",
     week_all: "wk",
     host_cpu: "cpu",
@@ -81,7 +84,7 @@ const USAGE_ID_RANKS: Record<string, number> = {
     host_cpu: 0,
     host_ram: 1,
     context: 2,
-    session_5h: 3,
+    session: 3,
     week_fable: 4,
     week_all: 5,
 };
@@ -89,7 +92,7 @@ const USAGE_ID_RANKS: Record<string, number> = {
 // Canonical id → long accessible name. Unknown ids fall back to the raw `label`.
 const USAGE_ID_LONG_LABELS: Record<string, string> = {
     context: "context",
-    session_5h: "5-hour session",
+    session: "5-hour session",
     week_all: "weekly, all models",
     week_fable: "weekly, Fable",
     host_cpu: "host CPU",
