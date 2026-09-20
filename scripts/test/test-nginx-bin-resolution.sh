@@ -7,9 +7,11 @@
 
 # Unit test for resolve_nginx_bin (deploy.sh, loop #740). deploy.sh runs the
 # resolved binary as root, so it accepts ONLY an explicit absolute override or a
-# binary under the known standard sbin locations, never PATH (whose earlier entries
-# a non-root user could control), and rejects any candidate in a group/other-
-# writable location.
+# binary under the known standard sbin locations, never PATH; and every candidate
+# (binary + parent dir) must be root-owned and not group/other-writable. A non-root
+# test cannot create a root-owned fixture, so the ACCEPT path is exercised against
+# the real /usr/sbin/nginx when present and root-owned, and skipped otherwise; the
+# security-critical REJECTION paths are all deterministic.
 
 set -euo pipefail
 
@@ -34,83 +36,74 @@ check() {
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 
-# A fake "standard sbin" dir (0755, not group/other-writable) with an executable
-# nginx, and a separate PATH dir with a DIFFERENT (untrusted) nginx that must NEVER
-# be selected — PATH is not consulted for this root-run step.
-std_dir=$work/sbin
+# Make a path non-root-owned regardless of who runs the test: as root, chown to an
+# unprivileged uid; under non-root CI the file is already non-root-owned and the
+# chown simply fails (ignored). Without this, a root-run test would own its own
+# fixtures and the ownership-rejection cases could not be constructed.
+make_untrusted() {
+    [[ $EUID -eq 0 ]] && chown 65534 "$1" 2>/dev/null || true
+}
+
+# Non-root-owned fixtures — every one of these must be REFUSED, because a non-root
+# account could swap the binary that then runs as root.
+user_dir=$work/userdir
+mkdir -p "$user_dir"; chmod 755 "$user_dir"
+printf '#!/bin/sh\necho x\n' >"$user_dir/nginx"; chmod +x "$user_dir/nginx"
+make_untrusted "$user_dir/nginx"
+
+# --- Rejection cases (deterministic, run as non-root) ---
+
+# 1. A relative override is refused (must be absolute).
+set +e; got=$(cd "$work" && DEPLOY_NGINX_BIN=userdir/nginx resolve_nginx_bin 2>/dev/null); rc=$?; set -e
+check "relative override refused" "1" "$rc"
+
+# 2. An absolute but non-root-owned override is refused (ownership guard).
+set +e; got=$(DEPLOY_NGINX_BIN=$user_dir/nginx resolve_nginx_bin 2>/dev/null); rc=$?; set -e
+check "non-root-owned override refused" "1" "$rc"
+check "non-root-owned override => empty stdout" "" "$got"
+
+# 3. A group/other-writable location is refused even if it existed root-owned:
+writable_dir=$work/writable
+mkdir -p "$writable_dir"; chmod 757 "$writable_dir"
+printf '#!/bin/sh\necho w\n' >"$writable_dir/nginx"; chmod +x "$writable_dir/nginx"
+set +e; got=$(DEPLOY_NGINX_BIN=$writable_dir/nginx resolve_nginx_bin 2>/dev/null); rc=$?; set -e
+check "writable-dir override refused" "1" "$rc"
+
+# 4. A world-writable binary is refused.
+ww_dir=$work/wwbin
+mkdir -p "$ww_dir"; chmod 755 "$ww_dir"
+printf '#!/bin/sh\necho ww\n' >"$ww_dir/nginx"; chmod 777 "$ww_dir/nginx"
+set +e; got=$(DEPLOY_NGINX_BIN=$ww_dir/nginx resolve_nginx_bin 2>/dev/null); rc=$?; set -e
+check "world-writable binary override refused" "1" "$rc"
+
+# 5. Non-root-owned standard dir => no candidate resolves => nonzero.
+set +e; got=$(DEPLOY_NGINX_STD_DIRS=$user_dir resolve_nginx_bin 2>/dev/null); rc=$?; set -e
+check "non-root-owned std dir => nonzero" "1" "$rc"
+
+# 6. PATH is never consulted: an nginx on PATH with no override/std candidate fails.
 path_dir=$work/evilpath
-mkdir -p "$std_dir" "$path_dir"
-chmod 755 "$std_dir"
-printf '#!/bin/sh\necho std\n' >"$std_dir/nginx"
-printf '#!/bin/sh\necho evil\n' >"$path_dir/nginx"
-chmod +x "$std_dir/nginx" "$path_dir/nginx"
+mkdir -p "$path_dir"; printf '#!/bin/sh\necho evil\n' >"$path_dir/nginx"; chmod +x "$path_dir/nginx"
+set +e; got=$(DEPLOY_NGINX_STD_DIRS=$work/none PATH=$path_dir:$PATH resolve_nginx_bin 2>/dev/null); rc=$?; set -e
+check "PATH nginx never consulted => nonzero" "1" "$rc"
 
-# An override target in its own trusted (0755) dir.
-override_dir=$work/override
-mkdir -p "$override_dir"
-chmod 755 "$override_dir"
-printf '#!/bin/sh\necho override\n' >"$override_dir/nginx"
-chmod +x "$override_dir/nginx"
-
-# 1. Explicit (trusted, absolute) override wins over everything.
-got=$(DEPLOY_NGINX_BIN=$override_dir/nginx DEPLOY_NGINX_STD_DIRS=$std_dir PATH=$path_dir:$PATH resolve_nginx_bin)
-check "trusted override wins" "$override_dir/nginx" "$got"
-
-# 2. A standard sbin dir resolves; an nginx on PATH is NEVER consulted (security case).
-got=$(DEPLOY_NGINX_STD_DIRS=$std_dir PATH=$path_dir:$PATH resolve_nginx_bin)
-check "standard sbin resolves, PATH ignored" "$std_dir/nginx" "$got"
-
-# 3. No standard dir has nginx and no override => FAIL (PATH is NOT a fallback).
-set +e
-got=$(DEPLOY_NGINX_STD_DIRS=$work/none PATH=$path_dir:$PATH resolve_nginx_bin 2>/dev/null)
-rc=$?
-set -e
-check "no std nginx + PATH has nginx => nonzero (no PATH fallback)" "1" "$rc"
-check "no std nginx + PATH has nginx => empty stdout" "" "$got"
-
-# 4. Nothing anywhere -> nonzero and no output.
-set +e
-got=$(DEPLOY_NGINX_STD_DIRS=$work/none resolve_nginx_bin 2>/dev/null)
-rc=$?
-set -e
+# 7. Nothing anywhere => nonzero and empty stdout.
+set +e; got=$(DEPLOY_NGINX_STD_DIRS=$work/none resolve_nginx_bin 2>/dev/null); rc=$?; set -e
 check "no binary => nonzero" "1" "$rc"
 check "no binary => empty stdout" "" "$got"
 
-# 5. A non-executable file in a standard dir is skipped (must be -x).
-noexec_dir=$work/noexec
-mkdir -p "$noexec_dir"; chmod 755 "$noexec_dir"
-printf 'not executable\n' >"$noexec_dir/nginx"
-got=$(DEPLOY_NGINX_STD_DIRS="$noexec_dir $std_dir" resolve_nginx_bin)
-check "non-executable std candidate skipped" "$std_dir/nginx" "$got"
-
-# 6. A group/other-writable location is refused (root-code-execution guard).
-writable_dir=$work/writable
-mkdir -p "$writable_dir"; chmod 757 "$writable_dir"
-printf '#!/bin/sh\necho writable\n' >"$writable_dir/nginx"
-chmod +x "$writable_dir/nginx"
-set +e
-got=$(DEPLOY_NGINX_STD_DIRS=$writable_dir resolve_nginx_bin 2>/dev/null)
-rc=$?
-set -e
-check "writable-dir candidate refused => nonzero" "1" "$rc"
-
-# 7. A world-writable BINARY (in an otherwise-fine dir) is refused.
-ww_dir=$work/wwbin
-mkdir -p "$ww_dir"; chmod 755 "$ww_dir"
-printf '#!/bin/sh\necho ww\n' >"$ww_dir/nginx"
-chmod 777 "$ww_dir/nginx"
-set +e
-got=$(DEPLOY_NGINX_STD_DIRS=$ww_dir resolve_nginx_bin 2>/dev/null)
-rc=$?
-set -e
-check "world-writable binary refused => nonzero" "1" "$rc"
-
-# 8. A writable override is refused (override is validated too).
-set +e
-got=$(DEPLOY_NGINX_BIN=$writable_dir/nginx resolve_nginx_bin 2>/dev/null)
-rc=$?
-set -e
-check "writable override refused => nonzero" "1" "$rc"
+# --- Accept case: only meaningful against a genuinely root-owned binary ---
+# CI runners without nginx skip this; on the deploy host /usr/sbin/nginx is
+# root:root 0755 and must resolve.
+real=/usr/sbin/nginx
+if [[ -x $real ]] && [[ $(stat -c '%u' "$real" 2>/dev/null) == 0 ]] \
+    && [[ $(stat -c '%u' /usr/sbin 2>/dev/null) == 0 ]]; then
+    got=$(DEPLOY_NGINX_STD_DIRS="/usr/sbin" resolve_nginx_bin)
+    check "root-owned /usr/sbin/nginx resolves" "$real" "$got"
+    got=$(DEPLOY_NGINX_BIN=$real resolve_nginx_bin)
+    check "root-owned absolute override resolves" "$real" "$got"
+else
+    printf 'skip - no root-owned /usr/sbin/nginx present (accept-path coverage)\n'
+fi
 
 if [[ $fails -gt 0 ]]; then
     printf '\n%d test(s) failed\n' "$fails" >&2

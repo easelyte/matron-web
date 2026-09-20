@@ -186,26 +186,37 @@ restore_nginx_conf() {
     fi
 }
 
-# Reject an nginx candidate that a non-root user could have swapped: it must be a
-# regular executable file, and neither the file nor its parent directory may be
-# writable by group or other. `nginx -t`/`-s reload` run this as root, so a binary
-# in a writable location is a root-code-execution vector. Prints nothing on
-# success; logs why and returns nonzero on rejection.
+# Reject an nginx candidate that a non-root user could have swapped. `nginx -t`/
+# `-s reload` run this binary as root, so a candidate a non-root account could
+# replace is a root-code-execution vector. Require: an absolute path (a relative
+# one resolves against CWD); a regular executable file; and, for the binary AND its
+# parent directory, root ownership (uid 0) and no group/other write bit. Prints
+# nothing on success; logs why and returns nonzero on rejection.
 _nginx_bin_is_trusted() {
     local bin=$1
+    if [[ $bin != /* ]]; then
+        echo "nginx path must be absolute: $bin" >&2
+        return 1
+    fi
     if [[ ! -f $bin || ! -x $bin ]]; then
         echo "nginx candidate is not a regular executable: $bin" >&2
         return 1
     fi
-    local parent bmode pmode
+    local parent target owner mode
     parent=$(dirname -- "$bin")
-    bmode=$(stat -c '%a' -- "$bin" 2>/dev/null) || return 1
-    pmode=$(stat -c '%a' -- "$parent" 2>/dev/null) || return 1
-    # Octal permission bits 022 = group-write + other-write.
-    if (( (8#$bmode & 8#022) != 0 || (8#$pmode & 8#022) != 0 )); then
-        echo "refusing nginx in a group/other-writable location: $bin" >&2
-        return 1
-    fi
+    for target in "$bin" "$parent"; do
+        owner=$(stat -c '%u' -- "$target" 2>/dev/null) || return 1
+        mode=$(stat -c '%a' -- "$target" 2>/dev/null) || return 1
+        if [[ $owner != 0 ]]; then
+            echo "refusing non-root-owned nginx path: $target (uid $owner)" >&2
+            return 1
+        fi
+        # Octal permission bits 022 = group-write + other-write.
+        if (( (8#$mode & 8#022) != 0 )); then
+            echo "refusing group/other-writable nginx path: $target (mode $mode)" >&2
+            return 1
+        fi
+    done
     return 0
 }
 
