@@ -100,6 +100,16 @@ export default (_environment, arguments_) => {
                     { from: "res/icons", to: "icons", noErrorOnMissing: true },
                     { from: "res/opengraph.png", noErrorOnMissing: true },
                     { from: "config.json", noErrorOnMissing: true },
+                    // pdf.js worker, copied VERBATIM. `minimized: true` tells Terser to leave
+                    // it alone — re-minifying pdfjs-dist's already-minified worker produces a
+                    // build that throws "Private field '#T' must be declared in an enclosing
+                    // class" in pdf.js's fake-worker eval (see src/journal/pdf-render.ts).
+                    // NOT noErrorOnMissing: fail the build loudly if the vendor path moves.
+                    {
+                        from: "node_modules/pdfjs-dist/build/pdf.worker.min.mjs",
+                        to: "assets/pdf.worker.min.mjs",
+                        info: { minimized: true },
+                    },
                 ],
             }),
             new webpack.DefinePlugin({ "process.env.VERSION": JSON.stringify(version) }),

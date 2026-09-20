@@ -21,13 +21,18 @@ Please see LICENSE files in the repository root for full details.
 // longer exist in the engine, so there is nothing left to opt out of.)
 import * as pdfjs from "pdfjs-dist";
 
-// Webpack resolves this bare specifier against node_modules and emits the worker as a
-// separate asset inside the pdf lazy chunk. In any bundler that can't, pdf.js falls back to
-// an in-thread "fake worker" (slower but functional).
+// Point at the worker that CopyWebpackPlugin copies VERBATIM to assets/ (see
+// webpack.config.mjs). Do NOT use `new URL("…/pdf.worker.min.mjs", import.meta.url)`:
+// that makes webpack re-run its Terser over pdfjs-dist's already-minified worker, and the
+// double-minified result throws `Setting up fake worker failed: "Private field '#T' must be
+// declared in an enclosing class"` in pdf.js's in-thread fake-worker eval (reproduced in
+// headless Chromium 2026-09-20; pristine worker renders fine). The copied asset is marked
+// `{ info: { minimized: true } }` so Terser leaves it exactly as pdfjs-dist ships it.
+// document.baseURI keeps the URL correct regardless of the app's base path.
 try {
-    pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL("assets/pdf.worker.min.mjs", document.baseURI).toString();
 } catch {
-    // No import.meta / URL support (non-bundler runtime) — leave workerSrc unset so pdf.js
+    // Non-browser runtime (jsdom/jest mock this module) — leave workerSrc unset so pdf.js
     // uses its in-thread fallback rather than throwing at module-eval time.
 }
 
