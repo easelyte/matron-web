@@ -186,26 +186,42 @@ restore_nginx_conf() {
     fi
 }
 
+# Resolve the nginx binary to an absolute, trusted path. Bare `nginx` is not on
+# root's non-login PATH on the production VPS (admin binaries live in sbin dirs
+# kept off PATH), so defaulting to `nginx` makes `nginx -t` fail with
+# command-not-found and aborts every deploy. This runs as root, so a wrapper or
+# attacker-controlled `nginx` earlier in PATH must not be able to validate/reload
+# the config — prefer an explicit override, THEN the known root-owned standard
+# sbin locations, and only then fall back to PATH. Prints the resolved path;
+# returns nonzero (nothing printed) if none is found. DEPLOY_NGINX_STD_DIRS
+# overrides the standard candidate dirs (a test seam).
+resolve_nginx_bin() {
+    if [[ -n ${DEPLOY_NGINX_BIN:-} ]]; then
+        printf '%s\n' "$DEPLOY_NGINX_BIN"
+        return 0
+    fi
+    local dirs=${DEPLOY_NGINX_STD_DIRS:-/usr/sbin /sbin /usr/local/sbin}
+    local d
+    for d in $dirs; do
+        if [[ -x $d/nginx ]]; then
+            printf '%s\n' "$d/nginx"
+            return 0
+        fi
+    done
+    local from_path
+    if from_path=$(command -v nginx 2>/dev/null) && [[ -n $from_path ]]; then
+        printf '%s\n' "$from_path"
+        return 0
+    fi
+    return 1
+}
+
 install_nginx_conf() {
     local src=$WEB/ops/nginx/matron-web-journal.conf
     local dest=${DEPLOY_NGINX_CONF_DEST:-/etc/nginx/conf.d/matron-web-journal.conf}
-    # Resolve the nginx binary. Bare `nginx` is not on root's non-login PATH on the
-    # production VPS (admin binaries live in sbin dirs kept off PATH), so a default of
-    # `nginx` makes `nginx -t` fail with command-not-found and aborts every deploy.
-    # Prefer an explicit override, then PATH, then the standard sbin locations.
-    local nginx_bin=""
-    if [[ -n ${DEPLOY_NGINX_BIN:-} ]]; then
-        nginx_bin=$DEPLOY_NGINX_BIN
-    elif nginx_bin=$(command -v nginx 2>/dev/null); then
-        :
-    else
-        local cand
-        for cand in /usr/sbin/nginx /sbin/nginx /usr/local/sbin/nginx; do
-            if [[ -x $cand ]]; then nginx_bin=$cand; break; fi
-        done
-    fi
-    if [[ -z $nginx_bin ]]; then
-        echo "nginx binary not found on PATH or in standard sbin dirs; set DEPLOY_NGINX_BIN" >&2
+    local nginx_bin
+    if ! nginx_bin=$(resolve_nginx_bin); then
+        echo "nginx binary not found (checked DEPLOY_NGINX_BIN, standard sbin dirs, PATH); set DEPLOY_NGINX_BIN" >&2
         log_event nginx-bin-missing
         return 1
     fi
@@ -677,4 +693,8 @@ main() {
     exit 1
 }
 
-main "$@"
+# Run main only when executed directly, so tests can source this file to unit-test
+# individual functions (e.g. resolve_nginx_bin) without triggering a deploy.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
