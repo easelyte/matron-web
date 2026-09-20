@@ -186,10 +186,78 @@ restore_nginx_conf() {
     fi
 }
 
+# Reject an nginx candidate that a non-root user could have swapped. `nginx -t`/
+# `-s reload` run this binary as root, so a candidate a non-root account could
+# replace is a root-code-execution vector. Require: an absolute path (a relative
+# one resolves against CWD); a regular executable file; and, for the binary AND its
+# parent directory, root ownership (uid 0) and no group/other write bit. Prints
+# nothing on success; logs why and returns nonzero on rejection.
+_nginx_bin_is_trusted() {
+    local bin=$1
+    if [[ $bin != /* ]]; then
+        echo "nginx path must be absolute: $bin" >&2
+        return 1
+    fi
+    if [[ ! -f $bin || ! -x $bin ]]; then
+        echo "nginx candidate is not a regular executable: $bin" >&2
+        return 1
+    fi
+    local parent target owner mode
+    parent=$(dirname -- "$bin")
+    for target in "$bin" "$parent"; do
+        owner=$(stat -c '%u' -- "$target" 2>/dev/null) || return 1
+        mode=$(stat -c '%a' -- "$target" 2>/dev/null) || return 1
+        if [[ $owner != 0 ]]; then
+            echo "refusing non-root-owned nginx path: $target (uid $owner)" >&2
+            return 1
+        fi
+        # Octal permission bits 022 = group-write + other-write.
+        if (( (8#$mode & 8#022) != 0 )); then
+            echo "refusing group/other-writable nginx path: $target (mode $mode)" >&2
+            return 1
+        fi
+    done
+    return 0
+}
+
+# Resolve the nginx binary to an absolute, trusted path. Bare `nginx` is not on
+# root's non-login PATH on the production VPS (admin binaries live in sbin dirs
+# kept off PATH), so defaulting to `nginx` makes `nginx -t` fail with
+# command-not-found and aborts every deploy. This runs the resolved binary as root,
+# so it is resolved ONLY from an explicit absolute override or the known standard
+# sbin locations — never from PATH, whose earlier entries a non-root user could
+# control. Every candidate is trust-checked (regular executable, not in a
+# group/other-writable location). Prints the resolved path; returns nonzero
+# (nothing printed) if none resolves. DEPLOY_NGINX_STD_DIRS overrides the standard
+# candidate dirs (a test seam).
+resolve_nginx_bin() {
+    local candidate=""
+    if [[ -n ${DEPLOY_NGINX_BIN:-} ]]; then
+        candidate=$DEPLOY_NGINX_BIN
+        _nginx_bin_is_trusted "$candidate" || return 1
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    local dirs=${DEPLOY_NGINX_STD_DIRS:-/usr/sbin /sbin /usr/local/sbin}
+    local d
+    for d in $dirs; do
+        if [[ -x $d/nginx ]] && _nginx_bin_is_trusted "$d/nginx"; then
+            printf '%s\n' "$d/nginx"
+            return 0
+        fi
+    done
+    return 1
+}
+
 install_nginx_conf() {
     local src=$WEB/ops/nginx/matron-web-journal.conf
     local dest=${DEPLOY_NGINX_CONF_DEST:-/etc/nginx/conf.d/matron-web-journal.conf}
-    local nginx_bin=${DEPLOY_NGINX_BIN:-nginx}
+    local nginx_bin
+    if ! nginx_bin=$(resolve_nginx_bin); then
+        echo "no trusted nginx binary found (checked DEPLOY_NGINX_BIN and standard sbin dirs; PATH is not consulted for this root-run step); set DEPLOY_NGINX_BIN to an absolute path" >&2
+        log_event nginx-bin-missing
+        return 1
+    fi
     local guard=$WEB/scripts/check-nginx-conf.sh
     local backup=""
     local staged=""
@@ -658,4 +726,8 @@ main() {
     exit 1
 }
 
-main "$@"
+# Run main only when executed directly, so tests can source this file to unit-test
+# individual functions (e.g. resolve_nginx_bin) without triggering a deploy.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
