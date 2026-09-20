@@ -153,6 +153,128 @@ release_has_referenced_bundles() {
     )
 }
 
+# Re-assert the templated nginx config (loop #740) so its loop-#568 hardening
+# blocks (.mjs MIME, index.html no-cache, /assets/ immutable) cannot silently
+# regress by hand-editing the live conf. Guards the repo conf, installs it,
+# validates with `nginx -t`, and reloads — restoring the prior conf and failing
+# the deploy if anything goes wrong. Runs only for the production checkout (or when
+# DEPLOY_NGINX_CONF_DEST is set, e.g. a test), so the deploy harness is unaffected.
+should_install_nginx() {
+    [[ ${DEPLOY_SKIP_NGINX:-0} == 1 ]] && return 1
+    [[ $WEB == /opt/matron/web-journal ]] && return 0
+    [[ -n ${DEPLOY_NGINX_CONF_DEST:-} ]] && return 0
+    return 1
+}
+
+# Atomically restore the prior nginx conf (mv the retained backup back into
+# place), or remove the freshly installed conf if there was no prior. Both use a
+# same-directory rename/unlink, so they cannot leave a half-written file. Returns
+# nonzero WITHOUT destroying the backup if restoration itself fails, so a later
+# operator recovery still has the known-good conf on disk.
+restore_nginx_conf() {
+    local dest=$1
+    local backup=$2
+
+    if [[ -n $backup ]]; then
+        if ! mv -f -- "$backup" "$dest"; then
+            echo "CRITICAL: could not restore prior nginx conf from $backup to $dest; backup preserved" >&2
+            return 1
+        fi
+    elif ! rm -f -- "$dest"; then
+        echo "CRITICAL: could not remove freshly installed nginx conf $dest" >&2
+        return 1
+    fi
+}
+
+install_nginx_conf() {
+    local src=$WEB/ops/nginx/matron-web-journal.conf
+    local dest=${DEPLOY_NGINX_CONF_DEST:-/etc/nginx/conf.d/matron-web-journal.conf}
+    local nginx_bin=${DEPLOY_NGINX_BIN:-nginx}
+    local guard=$WEB/scripts/check-nginx-conf.sh
+    local backup=""
+    local staged=""
+
+    if [[ ! -f $src ]]; then
+        echo "nginx conf source not found: $src" >&2
+        log_event nginx-src-missing
+        return 1
+    fi
+
+    # Guard the repo conf BEFORE touching the live one — a dropped hardening block
+    # aborts the deploy instead of shipping a regressed conf.
+    if ! bash "$guard" "$src"; then
+        echo "nginx conf failed the hardening guard: $src" >&2
+        log_event nginx-guard-fail
+        return 1
+    fi
+
+    # Back up the live conf and keep it until BOTH validation and reload succeed.
+    if [[ -f $dest ]]; then
+        if ! backup=$(mktemp -- "${dest}.bak.XXXXXX"); then
+            echo "could not create nginx conf backup" >&2
+            log_event fs-assert-fail
+            return 1
+        fi
+        if ! cp -p -- "$dest" "$backup"; then
+            echo "could not back up the current nginx conf" >&2
+            rm -f -- "$backup"
+            log_event fs-assert-fail
+            return 1
+        fi
+    fi
+
+    # Stage into a sibling temp, then atomically rename into place, so a failed or
+    # killed copy can never leave the live conf partially written.
+    if ! staged=$(mktemp -- "${dest}.new.XXXXXX"); then
+        echo "could not stage nginx conf next to $dest" >&2
+        [[ -n $backup ]] && rm -f -- "$backup"
+        log_event fs-assert-fail
+        return 1
+    fi
+    if ! cp -- "$src" "$staged"; then
+        echo "could not write staged nginx conf: $staged" >&2
+        rm -f -- "$staged"
+        [[ -n $backup ]] && rm -f -- "$backup"
+        log_event fs-assert-fail
+        return 1
+    fi
+    if ! mv -f -- "$staged" "$dest"; then
+        echo "could not install nginx conf to $dest" >&2
+        rm -f -- "$staged"
+        [[ -n $backup ]] && rm -f -- "$backup"
+        log_event fs-assert-fail
+        return 1
+    fi
+
+    # Validate, then reload. On any failure restore the retained prior conf; a
+    # failed restore is a distinct fatal event that keeps the backup on disk.
+    if ! "$nginx_bin" -t; then
+        echo "nginx -t failed for the installed conf; restoring prior conf" >&2
+        if ! restore_nginx_conf "$dest" "$backup"; then
+            log_event nginx-restore-fail
+            return 1
+        fi
+        log_event nginx-test-fail
+        return 1
+    fi
+
+    if ! "$nginx_bin" -s reload; then
+        echo "nginx reload failed; restoring prior conf" >&2
+        if ! restore_nginx_conf "$dest" "$backup"; then
+            log_event nginx-restore-fail
+            return 1
+        fi
+        if "$nginx_bin" -t >/dev/null 2>&1; then
+            "$nginx_bin" -s reload >/dev/null 2>&1 || true
+        fi
+        log_event nginx-reload-fail
+        return 1
+    fi
+
+    [[ -n $backup ]] && rm -f -- "$backup"
+    log_event nginx-reloaded
+}
+
 # Callers must hold the shared fd-9 deployment lock.
 rollback_to() {
     local requested_target=${1-}
@@ -469,6 +591,14 @@ main() {
     if ! release_has_referenced_bundles; then
         echo "release failed the referenced-bundle sanity gate" >&2
         log_event sanity-fail
+        exit 1
+    fi
+
+    # Re-assert the templated nginx hardening (loop #740) before flipping the
+    # release, so a broken/regressed conf aborts the deploy while the prior release
+    # keeps serving with its restored, known-good conf.
+    if should_install_nginx && ! install_nginx_conf; then
+        echo "nginx conf install failed; aborting deploy before release flip" >&2
         exit 1
     fi
 
