@@ -345,6 +345,8 @@ export class MatronJournalClient {
     private rpcCreateWatchdogConvo?: string;
     private rpcCreateWatchdogGen?: number;
     private storageListener?: (event: StorageEvent) => void;
+    /** Guards the one-time `hashchange` binding for the Files deep link (see initialise). */
+    private deepLinkListenerBound = false;
     private storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
     private storeWritable = { archive: true, pinned: true, favorite: true, unread: true };
 
@@ -393,6 +395,14 @@ export class MatronJournalClient {
         }
         this.patch({ config });
 
+        // Re-apply the Files deep link on every hash change so a bridge link clicked into an
+        // already-open app deep-links with no reload. Bound once, before sign-in, so a link that
+        // arrives while the session is still restoring is honoured on the next hashchange.
+        if (!this.deepLinkListenerBound && typeof window !== "undefined") {
+            this.deepLinkListenerBound = true;
+            window.addEventListener("hashchange", () => this.applyFilesDeepLink());
+        }
+
         const session = storedSession();
         if (!session) {
             this.patch({ phase: "signed-out" });
@@ -401,6 +411,9 @@ export class MatronJournalClient {
 
         try {
             await this.startSession(session);
+            // Signed in: honour a `#files=<abs>` fragment present at load (the common flow — the
+            // operator followed a bridge link into a fresh tab with a stored session).
+            this.applyFilesDeepLink();
         } catch (error) {
             localStorage.removeItem(SESSION_KEY);
             this.patch({
@@ -1677,11 +1690,14 @@ export class MatronJournalClient {
 
     // Open the Files pane (main-region discriminant). Preserves the selected conversation so
     // closing returns to it. `path` seeds the browsed directory; defaults to the remembered one.
-    public openFilesView(path?: string): void {
+    // `targetFile` (absolute) asks FilesPane to auto-open a preview for that file once its
+    // directory listing lands — used by the `#files=<abs>` deep link; omit for a plain open (it
+    // then clears any stale target so a later plain open doesn't re-trigger a previous deep link).
+    public openFilesView(path?: string, targetFile?: string): void {
         // Symmetric to openTrackerView closing Files: one main-region surface at a time, so
         // opening Files closes the tracker (the tracker takes render precedence otherwise).
         this.closeTrackerView();
-        this.patch({ filesView: { open: true, path: path ?? this.state.filesView?.path } });
+        this.patch({ filesView: { open: true, path: path ?? this.state.filesView?.path, targetFile } });
     }
 
     public closeFilesView(): void {
@@ -1690,10 +1706,44 @@ export class MatronJournalClient {
     }
 
     // Persist the last-browsed directory so a reopen returns there. No-op when the pane is closed.
+    // Preserves the deep-link `targetFile` so persisting the server-normalized directory does not
+    // wipe a target that FilesPane has not yet had a chance to select.
     public setFilesPath(path: string): void {
         if (!this.state.filesView?.open) return;
         if (this.state.filesView.path === path) return;
-        this.patch({ filesView: { open: true, path } });
+        this.patch({ filesView: { open: true, path, targetFile: this.state.filesView.targetFile } });
+    }
+
+    // Hash-based deep link into the Files pane: `#files=<url-encoded-absolute-path>`. Opens the
+    // pane at the file's directory and asks FilesPane to auto-preview it, then CLEARS the hash so a
+    // refresh or back-button does not re-trigger. No token — auth is the operator's existing web
+    // session, exactly like every other Files read. Called at bootstrap (after sign-in) and on
+    // every `hashchange`, so clicking a bridge-minted link into an already-open app just works with
+    // no reload. A malformed or non-absolute payload is ignored (hash left as-is for inspection).
+    public applyFilesDeepLink(): void {
+        if (typeof window === "undefined") return;
+        const hash = window.location.hash || "";
+        const match = /^#files=(.*)$/.exec(hash);
+        if (!match) return;
+        let abs: string;
+        try {
+            abs = decodeURIComponent(match[1]);
+        } catch {
+            return; // malformed percent-encoding — leave the hash for the operator to see
+        }
+        if (!abs || !abs.startsWith("/")) return;
+        // Only meaningful once signed in (the pane renders only then); leave the hash otherwise so
+        // it can be re-applied on the next hashchange once the session is up.
+        if (this.state.phase !== "signed-in") return;
+        const slash = abs.lastIndexOf("/");
+        const dir = abs.slice(0, Math.max(1, slash));
+        this.openFilesView(dir, abs);
+        // Clear the fragment without a history entry so refresh/back does not re-fire the deep link.
+        try {
+            window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        } catch {
+            window.location.hash = "";
+        }
     }
 
     // ── Tracker pane (Missions / Milestones / Decisions-Inbox / Work) ───────────────

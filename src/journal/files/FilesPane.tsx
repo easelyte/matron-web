@@ -174,6 +174,40 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
         [dir],
     );
 
+    // ── Files deep link (#files=<abs>) auto-preview ─────────────────────────────────────────────
+    // A bridge doc-handoff link opens the pane with filesView.targetFile = the absolute file path.
+    // Two-step: (1) navigate to the file's directory (on a fresh mount `dir` is already seeded from
+    // filesView.path, so this is a no-op; it matters only when a link fires into an already-open
+    // pane), then (2) once THAT directory's listing lands, auto-select the matching entry so its
+    // preview opens. Fire-once per target value (`deepLinkTargetRef`), so ordinary navigation after
+    // the select never re-triggers, and a target whose file is absent is abandoned rather than
+    // retried on every listing. `selected` stays purely local — this only seeds the initial preview.
+    const targetFile = state.filesView?.targetFile;
+    const targetDir = useMemo(
+        () => (targetFile ? targetFile.slice(0, Math.max(1, targetFile.lastIndexOf("/"))) : undefined),
+        [targetFile],
+    );
+    const targetName = useMemo(
+        () => (targetFile ? targetFile.slice(targetFile.lastIndexOf("/") + 1) : undefined),
+        [targetFile],
+    );
+    const deepLinkTargetRef = useRef<string | undefined>(undefined);
+    useEffect(() => {
+        if (!targetFile || !targetDir) return;
+        if (deepLinkTargetRef.current === targetFile) return; // already handled this target
+        // Step 1: make sure we are browsing the target's directory before we try to select in it.
+        if (dir !== targetDir) {
+            setSelected(undefined);
+            setDir(targetDir);
+            return;
+        }
+        // Step 2: wait for THIS directory's listing, then select the entry (fire once either way).
+        if (listing.status !== "loaded" || !listing.data) return;
+        deepLinkTargetRef.current = targetFile;
+        const entry = listing.data.entries.find((candidate) => candidate.name === targetName && candidate.kind !== "dir");
+        if (entry) setSelected({ path: joinPath(listing.data.path, entry.name), name: entry.name, at: Date.now() });
+    }, [targetFile, targetDir, targetName, dir, listing.status, listing.data]);
+
     // ── Writes (Phase 2) ──────────────────────────────────────────────────────────────────────
     // `writable` is whatever the SERVER said for THIS directory. Writes off, dry-run, or a dir
     // outside the write-roots ⇒ false ⇒ nothing below renders. The client never infers it.
