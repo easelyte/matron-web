@@ -5,10 +5,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 # Please see LICENSE files in the repository root for full details.
 
-# Unit test for resolve_nginx_bin (deploy.sh, loop #740). deploy.sh runs as root,
-# so binary resolution must prefer an explicit override, then the known root-owned
-# standard sbin locations, and only then PATH — a wrapper or attacker-controlled
-# `nginx` earlier in PATH must never be selected to validate/reload the config.
+# Unit test for resolve_nginx_bin (deploy.sh, loop #740). deploy.sh runs the
+# resolved binary as root, so it accepts ONLY an explicit absolute override or a
+# binary under the known standard sbin locations, never PATH (whose earlier entries
+# a non-root user could control), and rejects any candidate in a group/other-
+# writable location.
 
 set -euo pipefail
 
@@ -33,30 +34,43 @@ check() {
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 
-# A fake "standard sbin" dir with an executable nginx, and a separate PATH dir with
-# a DIFFERENT (untrusted) nginx that must lose to the standard one.
+# A fake "standard sbin" dir (0755, not group/other-writable) with an executable
+# nginx, and a separate PATH dir with a DIFFERENT (untrusted) nginx that must NEVER
+# be selected — PATH is not consulted for this root-run step.
 std_dir=$work/sbin
 path_dir=$work/evilpath
 mkdir -p "$std_dir" "$path_dir"
+chmod 755 "$std_dir"
 printf '#!/bin/sh\necho std\n' >"$std_dir/nginx"
 printf '#!/bin/sh\necho evil\n' >"$path_dir/nginx"
 chmod +x "$std_dir/nginx" "$path_dir/nginx"
 
-# 1. Explicit override wins over everything.
-got=$(DEPLOY_NGINX_BIN=/opt/custom/nginx DEPLOY_NGINX_STD_DIRS=$std_dir PATH=$path_dir:$PATH resolve_nginx_bin)
-check "override beats std dirs and PATH" "/opt/custom/nginx" "$got"
+# An override target in its own trusted (0755) dir.
+override_dir=$work/override
+mkdir -p "$override_dir"
+chmod 755 "$override_dir"
+printf '#!/bin/sh\necho override\n' >"$override_dir/nginx"
+chmod +x "$override_dir/nginx"
 
-# 2. Standard sbin dir is preferred over an nginx earlier on PATH (the security case).
+# 1. Explicit (trusted, absolute) override wins over everything.
+got=$(DEPLOY_NGINX_BIN=$override_dir/nginx DEPLOY_NGINX_STD_DIRS=$std_dir PATH=$path_dir:$PATH resolve_nginx_bin)
+check "trusted override wins" "$override_dir/nginx" "$got"
+
+# 2. A standard sbin dir resolves; an nginx on PATH is NEVER consulted (security case).
 got=$(DEPLOY_NGINX_STD_DIRS=$std_dir PATH=$path_dir:$PATH resolve_nginx_bin)
-check "standard sbin beats PATH nginx" "$std_dir/nginx" "$got"
+check "standard sbin resolves, PATH ignored" "$std_dir/nginx" "$got"
 
-# 3. Falls back to PATH only when no standard dir has nginx.
-got=$(DEPLOY_NGINX_STD_DIRS=$work/none PATH=$path_dir:$PATH resolve_nginx_bin)
-check "PATH fallback when std dirs empty" "$path_dir/nginx" "$got"
-
-# 4. Nothing found -> nonzero and no output.
+# 3. No standard dir has nginx and no override => FAIL (PATH is NOT a fallback).
 set +e
-got=$(DEPLOY_NGINX_STD_DIRS=$work/none PATH=$work/empty resolve_nginx_bin 2>/dev/null)
+got=$(DEPLOY_NGINX_STD_DIRS=$work/none PATH=$path_dir:$PATH resolve_nginx_bin 2>/dev/null)
+rc=$?
+set -e
+check "no std nginx + PATH has nginx => nonzero (no PATH fallback)" "1" "$rc"
+check "no std nginx + PATH has nginx => empty stdout" "" "$got"
+
+# 4. Nothing anywhere -> nonzero and no output.
+set +e
+got=$(DEPLOY_NGINX_STD_DIRS=$work/none resolve_nginx_bin 2>/dev/null)
 rc=$?
 set -e
 check "no binary => nonzero" "1" "$rc"
@@ -64,10 +78,39 @@ check "no binary => empty stdout" "" "$got"
 
 # 5. A non-executable file in a standard dir is skipped (must be -x).
 noexec_dir=$work/noexec
-mkdir -p "$noexec_dir"
+mkdir -p "$noexec_dir"; chmod 755 "$noexec_dir"
 printf 'not executable\n' >"$noexec_dir/nginx"
-got=$(DEPLOY_NGINX_STD_DIRS="$noexec_dir $std_dir" PATH=$work/empty resolve_nginx_bin)
+got=$(DEPLOY_NGINX_STD_DIRS="$noexec_dir $std_dir" resolve_nginx_bin)
 check "non-executable std candidate skipped" "$std_dir/nginx" "$got"
+
+# 6. A group/other-writable location is refused (root-code-execution guard).
+writable_dir=$work/writable
+mkdir -p "$writable_dir"; chmod 757 "$writable_dir"
+printf '#!/bin/sh\necho writable\n' >"$writable_dir/nginx"
+chmod +x "$writable_dir/nginx"
+set +e
+got=$(DEPLOY_NGINX_STD_DIRS=$writable_dir resolve_nginx_bin 2>/dev/null)
+rc=$?
+set -e
+check "writable-dir candidate refused => nonzero" "1" "$rc"
+
+# 7. A world-writable BINARY (in an otherwise-fine dir) is refused.
+ww_dir=$work/wwbin
+mkdir -p "$ww_dir"; chmod 755 "$ww_dir"
+printf '#!/bin/sh\necho ww\n' >"$ww_dir/nginx"
+chmod 777 "$ww_dir/nginx"
+set +e
+got=$(DEPLOY_NGINX_STD_DIRS=$ww_dir resolve_nginx_bin 2>/dev/null)
+rc=$?
+set -e
+check "world-writable binary refused => nonzero" "1" "$rc"
+
+# 8. A writable override is refused (override is validated too).
+set +e
+got=$(DEPLOY_NGINX_BIN=$writable_dir/nginx resolve_nginx_bin 2>/dev/null)
+rc=$?
+set -e
+check "writable override refused => nonzero" "1" "$rc"
 
 if [[ $fails -gt 0 ]]; then
     printf '\n%d test(s) failed\n' "$fails" >&2
