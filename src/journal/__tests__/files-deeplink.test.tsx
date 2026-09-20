@@ -202,6 +202,32 @@ describe("FilesPane deep-link auto-preview", () => {
         expect(pane.querySelector(".mj_FilesRow_selected")).toBeNull();
     });
 
+    it("re-fetches the target directory so a file created after the first listing is still selected (same-dir refresh)", async () => {
+        // The pane is already at DIR, but its first listing does NOT contain the handed-off file
+        // (the agent created it afterward). The deep link must force a fresh listDir, whose result
+        // includes the file, and select it — not give up on the stale in-memory listing.
+        const without: FileListing = {
+            path: DIR,
+            root: DIR,
+            parent: null,
+            entries: [{ name: "src", kind: "dir", size: 0, mtime: 1, mime: "" }],
+            truncated: false,
+            writable: false,
+        };
+        let calls = 0;
+        const api = mockApi({
+            listDir: jest.fn(() => {
+                calls += 1;
+                return Promise.resolve(calls === 1 ? without : listing());
+            }),
+        });
+        const pane = await mountPane(api, { open: true, path: DIR, targetFile: `${DIR}/dan-offer.md`, targetToken: 1 });
+        expect((api.listDir as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(2); // forced a refresh
+        const selectedRow = pane.querySelector(".mj_FilesRow_selected");
+        expect(selectedRow).not.toBeNull();
+        expect(selectedRow?.textContent).toContain("dan-offer.md");
+    });
+
     it("does not auto-select from a STALE listing when the target directory differs (wrong-file guard)", async () => {
         // The pane is browsing OTHER_DIR (its listing contains a same-named file), but the deep link
         // targets DIR. listDir is asked for OTHER_DIR first, then DIR. The effect must wait for DIR's
