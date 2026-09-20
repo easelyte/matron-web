@@ -5595,6 +5595,13 @@ button.mj_File {
     color: var(--cpd-color-text-secondary);
 }
 
+/* The route-elsewhere chip is actionable, not informational — accent it so it reads apart from the
+ * muted "from «chat»" origin note (#213). */
+.mj_TrackerItemRow_routeElsewhere {
+    color: var(--cpd-color-text-action-accent);
+    font-weight: 600;
+}
+
 .mj_TrackerItemRow_missionChip {
     display: inline-flex;
     align-items: center;
@@ -6224,6 +6231,12 @@ button.mj_File {
     background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-secondary);
     font: var(--cpd-font-meta);
+}
+.mj_TrackerLabel_routeElsewhere {
+    background: transparent;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    color: var(--cpd-color-text-action-accent);
+    font-weight: 600;
 }
 .mj_TrackerLinkChip {
     padding: 1px var(--cpd-space-2x);

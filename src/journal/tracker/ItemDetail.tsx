@@ -22,10 +22,12 @@ import type { TrackerComment, TrackerItem, TrackerResolution } from "../types";
 import {
     availableResolutions,
     formatRelativeTime,
+    isRouteElsewhere,
     itemStatusText,
     kindLabel,
     needsUser,
     resolveActionLabel,
+    ROUTE_ELSEWHERE_LABEL,
     statusRowText,
 } from "./format";
 import { TrackerGlyph } from "./glyphs";
@@ -159,7 +161,26 @@ export function ItemDetail({
         void client.selectConversation(item.origin_convo_id);
     };
 
-    const showMenu = item.state === "closed" || resolutions.length > 0;
+    // Set / clear the explicit "handle elsewhere" routing label (#213). Distinct from the
+    // informational "opened from another chat" line: this is the operator saying the item belongs in
+    // a different session's context, not just noting where it came from.
+    const toggleRouteElsewhere = async (): Promise<void> => {
+        if (busy) return;
+        setMenuOpen(false);
+        setBusy(true);
+        try {
+            const labels = isRouteElsewhere(item)
+                ? item.labels.filter((label) => label !== ROUTE_ELSEWHERE_LABEL)
+                : [...item.labels, ROUTE_ELSEWHERE_LABEL];
+            await client.setItemLabels(item.num, labels);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    // Always show the kebab now: even an item with no close/reopen action can toggle the
+    // route-elsewhere routing label.
+    const showMenu = true;
 
     // matron://item / matron://mission deep links inside the item body + comment threads open the
     // target tracker surface in-app (F6) — same handler the timeline uses.
@@ -222,6 +243,14 @@ export function ItemDetail({
                                         </button>
                                     ))
                                 )}
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="mj_TrackerMenu_item"
+                                    onClick={() => void toggleRouteElsewhere()}
+                                >
+                                    {isRouteElsewhere(item) ? "Handle here" : "Route elsewhere"}
+                                </button>
                             </div>
                         ) : null}
                     </div>
@@ -237,13 +266,21 @@ export function ItemDetail({
                     </button>
                 ) : null}
 
-                {item.labels.length > 0 ? (
+                {/* The route-elsewhere flag renders as its own actionable chip, not a raw label. */}
+                {isRouteElsewhere(item) ? (
                     <div className="mj_TrackerLabels">
-                        {item.labels.map((label) => (
-                            <span key={label} className="mj_TrackerLabel">
-                                {label}
-                            </span>
-                        ))}
+                        <span className="mj_TrackerLabel mj_TrackerLabel_routeElsewhere">↪ Handle elsewhere</span>
+                    </div>
+                ) : null}
+                {item.labels.some((label) => label !== ROUTE_ELSEWHERE_LABEL) ? (
+                    <div className="mj_TrackerLabels">
+                        {item.labels
+                            .filter((label) => label !== ROUTE_ELSEWHERE_LABEL)
+                            .map((label) => (
+                                <span key={label} className="mj_TrackerLabel">
+                                    {label}
+                                </span>
+                            ))}
                     </div>
                 ) : null}
 

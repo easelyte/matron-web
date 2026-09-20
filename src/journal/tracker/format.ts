@@ -24,6 +24,40 @@ export function needsUser(item: Pick<TrackerItem, "state" | "awaiting">): boolea
     return item.state === "open" && item.awaiting === "user";
 }
 
+/** The reserved label that marks an item as "handle elsewhere" — the explicit, actionable routing
+ *  state (spec #213). Set/cleared via the item's labels; distinct from the informational "this came
+ *  from another session" state so an operator can say "route this to its home" without collapsing
+ *  the two. */
+export const ROUTE_ELSEWHERE_LABEL = "route-elsewhere";
+
+export function isRouteElsewhere(item: Pick<TrackerItem, "labels">): boolean {
+    return item.labels.includes(ROUTE_ELSEWHERE_LABEL);
+}
+
+/** An item's relationship to the session currently viewing it (spec #213): `here` (same origin as
+ *  the viewer — no badge), `other` (a different session — informational "from «title»"), or
+ *  `elsewhere` (the explicit route-elsewhere label — actionable). */
+export type ItemProvenance =
+    { kind: "here" } | { kind: "other"; title: string | null } | { kind: "elsewhere"; title: string | null };
+
+// The route-elsewhere label is ACTIONABLE and wins over the origin comparison: an item flagged
+// "handle elsewhere" reads that way even when viewed from its own origin. Otherwise same origin as
+// the viewer is "here"; a different (or unknown) viewer is "other". An unknown viewer therefore
+// degrades to labelling everything "other" — the pre-#213 all-scope behaviour, never a wrong "here".
+export function itemProvenance(
+    item: Pick<TrackerItem, "labels" | "origin_convo_id" | "origin_convo_title">,
+    currentConvoId: string | null | undefined,
+): ItemProvenance {
+    // Defensive: the field is typed string | null, but it crosses a JSON boundary from the journal
+    // producer — narrow before .trim() so a contract-drifted non-string degrades to "no title"
+    // rather than throwing during a render.
+    const raw = item.origin_convo_title;
+    const title = typeof raw === "string" ? raw.trim() || null : null;
+    if (isRouteElsewhere(item)) return { kind: "elsewhere", title };
+    if (currentConvoId && item.origin_convo_id === currentConvoId) return { kind: "here" };
+    return { kind: "other", title };
+}
+
 /** Human label for a resolution (title case). */
 export function resolutionLabel(resolution: TrackerResolution): string {
     switch (resolution) {

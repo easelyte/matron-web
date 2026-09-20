@@ -87,6 +87,7 @@ export function ItemsInbox({
                             item={item}
                             scope="all"
                             originTitle={originTitles.get(item.origin_convo_id) ?? "Another chat"}
+                            currentConvoId={client.getSnapshot().selectedConversationId}
                             onOpen={onOpenItem}
                         />
                     ))}

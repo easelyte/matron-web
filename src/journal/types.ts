@@ -479,6 +479,10 @@ export interface TrackerItem {
     links: TrackerLink[];
     supersedes: string | null;
     origin_convo_id: string;
+    /** Title of the origin conversation, for provenance labelling (this session / another session).
+     *  Null when the origin conversation row is gone, or on a marker/shape from a journal that
+     *  predates the field. */
+    origin_convo_title: string | null;
     origin_device_id?: number;
     created_by: TrackerActor;
     created_at: number;

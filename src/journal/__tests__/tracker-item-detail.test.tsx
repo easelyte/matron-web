@@ -18,6 +18,7 @@ interface FakeClient {
     commentItem: jest.Mock;
     closeTrackerItem: jest.Mock;
     reopenTrackerItem: jest.Mock;
+    setItemLabels: jest.Mock;
     closeTrackerView: jest.Mock;
     selectConversation: jest.Mock;
     openTrackerLink: jest.Mock;
@@ -29,6 +30,7 @@ function fakeClient(): FakeClient {
         commentItem: jest.fn().mockResolvedValue(true),
         closeTrackerItem: jest.fn().mockResolvedValue(true),
         reopenTrackerItem: jest.fn().mockResolvedValue(true),
+        setItemLabels: jest.fn().mockResolvedValue(true),
         closeTrackerView: jest.fn(),
         selectConversation: jest.fn().mockResolvedValue(undefined),
         openTrackerLink: jest.fn(),
@@ -103,7 +105,7 @@ describe("ItemDetail", () => {
         );
 
         await openMenu(container);
-        expect(menuLabels(container)).toEqual(["Mark done", "Dismiss"]);
+        expect(menuLabels(container)).toEqual(["Mark done", "Dismiss", "Route elsewhere"]);
     });
 
     it("offers only Dismiss for a question until the user has replied", async () => {
@@ -118,7 +120,7 @@ describe("ItemDetail", () => {
         );
 
         await openMenu(container);
-        expect(menuLabels(container)).toEqual(["Dismiss"]);
+        expect(menuLabels(container)).toEqual(["Dismiss", "Route elsewhere"]);
     });
 
     it("unlocks Mark answered for a question once a user comment exists", async () => {
@@ -133,7 +135,7 @@ describe("ItemDetail", () => {
         );
 
         await openMenu(container);
-        expect(menuLabels(container)).toEqual(["Mark answered", "Dismiss"]);
+        expect(menuLabels(container)).toEqual(["Mark answered", "Dismiss", "Route elsewhere"]);
     });
 
     it("offers Reverse, Mark decided and Dismiss for a decision", async () => {
@@ -148,7 +150,7 @@ describe("ItemDetail", () => {
         );
 
         await openMenu(container);
-        expect(menuLabels(container)).toEqual(["Reverse", "Mark decided", "Dismiss"]);
+        expect(menuLabels(container)).toEqual(["Reverse", "Mark decided", "Dismiss", "Route elsewhere"]);
     });
 
     it("offers Reopen for a closed item", async () => {
@@ -163,7 +165,7 @@ describe("ItemDetail", () => {
         );
 
         await openMenu(container);
-        expect(menuLabels(container)).toEqual(["Reopen"]);
+        expect(menuLabels(container)).toEqual(["Reopen", "Route elsewhere"]);
     });
 
     it("routes a resolve click through client.closeTrackerItem", async () => {
@@ -352,5 +354,56 @@ describe("ItemDetail", () => {
         const statusRow = container.querySelector(".mj_TrackerStatusRow");
         expect(statusRow?.textContent).toBe("Agent closed this as done");
         expect(container.textContent).not.toContain("PRIVATE-ELIDED-BODY");
+    });
+
+    describe("route-elsewhere label (#213)", () => {
+        it("sets the route-elsewhere label from the menu when unset", async () => {
+            const client = fakeClient();
+            const { container } = await mount(
+                <ItemDetail
+                    item={trackerItem({ num: 12, labels: [] })}
+                    comments={[]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+            await openMenu(container);
+            expect(menuLabels(container)).toContain("Route elsewhere");
+            await act(async () => {
+                Array.from(container.querySelectorAll<HTMLButtonElement>(".mj_TrackerMenu_item"))
+                    .find((node) => node.textContent === "Route elsewhere")!
+                    .click();
+            });
+            expect(client.setItemLabels).toHaveBeenCalledWith(12, ["route-elsewhere"]);
+        });
+
+        it("clears the label via a Handle-here toggle and renders the actionable chip, not a raw label", async () => {
+            const client = fakeClient();
+            const { container } = await mount(
+                <ItemDetail
+                    item={trackerItem({ num: 12, labels: ["urgent", "route-elsewhere"] })}
+                    comments={[]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+            // The reserved label renders as its own accented chip, and the raw "route-elsewhere"
+            // string never appears as a plain label.
+            const chip = container.querySelector(".mj_TrackerLabel_routeElsewhere");
+            expect(chip?.textContent).toContain("Handle elsewhere");
+            const rawLabels = Array.from(container.querySelectorAll(".mj_TrackerLabel"))
+                .filter((n) => !n.classList.contains("mj_TrackerLabel_routeElsewhere"))
+                .map((n) => n.textContent);
+            expect(rawLabels).toEqual(["urgent"]);
+            // The toggle now reads "Handle here" and removes the label, preserving the others.
+            await openMenu(container);
+            expect(menuLabels(container)).toContain("Handle here");
+            await act(async () => {
+                Array.from(container.querySelectorAll<HTMLButtonElement>(".mj_TrackerMenu_item"))
+                    .find((node) => node.textContent === "Handle here")!
+                    .click();
+            });
+            expect(client.setItemLabels).toHaveBeenCalledWith(12, ["urgent"]);
+        });
     });
 });
