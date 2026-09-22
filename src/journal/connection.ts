@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import { decodeServerFrame } from "./frame-decode";
 import { type ConnectionState, type RpcReply, type ServerFrame, websocketUrl } from "./types";
 
 interface JournalConnectionCallbacks {
@@ -155,21 +156,7 @@ export class JournalConnection {
 
         socket.onmessage = (message) => {
             if (typeof message.data !== "string") return;
-            let frame: ServerFrame;
-            try {
-                frame = JSON.parse(message.data) as ServerFrame;
-            } catch {
-                return;
-            }
-
-            if (this.isFastPathFrame(frame)) {
-                void this.handleFrame(frame, socket).catch((error) => this.handleProcessingError(error, socket));
-                return;
-            }
-
-            this.processing = this.processing
-                .then(() => this.handleFrame(frame, socket))
-                .catch((error) => this.handleProcessingError(error, socket));
+            this.ingestMessage(message.data, socket);
         };
 
         socket.onerror = () => {
@@ -335,6 +322,42 @@ export class JournalConnection {
     private handleProcessingError(error: unknown, socket: WebSocket): void {
         this.callbacks.onState("offline", error instanceof Error ? error.message : "Sync failed");
         socket.close();
+    }
+
+    // Parse, runtime-decode, and dispatch one raw text frame (#753). Decoding
+    // happens HERE, at the boundary, so a structurally-broken frame is dropped
+    // (the caches keep their last good value) and a malformed ephemeral sub-shape
+    // is stripped before it reaches the store — both with a diagnostic. A frame
+    // that survives decoding takes the same fast-path / serialized-queue split as
+    // before.
+    private ingestMessage(raw: string, socket: WebSocket): void {
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(raw);
+        } catch {
+            return;
+        }
+
+        const decoded = decodeServerFrame(parsed);
+        if (!decoded.ok) {
+            this.logFrameDiag(decoded.reason);
+            return;
+        }
+        if (decoded.narrowed) this.logFrameDiag(`narrowed:${decoded.narrowed.join(",")}`);
+        const frame = decoded.frame;
+
+        if (this.isFastPathFrame(frame)) {
+            void this.handleFrame(frame, socket).catch((error) => this.handleProcessingError(error, socket));
+            return;
+        }
+
+        this.processing = this.processing
+            .then(() => this.handleFrame(frame, socket))
+            .catch((error) => this.handleProcessingError(error, socket));
+    }
+
+    private logFrameDiag(reason: string): void {
+        console.warn("matron:frame", { reason });
     }
 
     private logRpcDiag(event: string, requestId?: string): void {
