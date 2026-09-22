@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import CopyWebpackPlugin from "copy-webpack-plugin";
 import HtmlWebpackPlugin from "html-webpack-plugin";
 import MiniCssExtractPlugin from "mini-css-extract-plugin";
+import MinimizerPlugin from "minimizer-webpack-plugin";
 import postcssPresetEnv from "postcss-preset-env";
 import webpack from "webpack";
 import "webpack-dev-server";
@@ -57,6 +58,17 @@ export default (_environment, arguments_) => {
         },
         resolve: {
             extensions: [".js", ".json", ".ts", ".tsx"],
+        },
+        optimization: {
+            // pdf.js ships pdf.worker.min.mjs already minified; re-running Terser over it breaks
+            // its private fields ("Private field '#T' must be declared in an enclosing class"),
+            // so exclude it. Same plugin + options as webpack's default minimizer.
+            minimizer: [
+                new MinimizerPlugin({
+                    exclude: /pdf\.worker\.min\..*\.mjs$/,
+                    terserOptions: { compress: { passes: 2 } },
+                }),
+            ],
         },
         module: {
             rules: [
