@@ -1,0 +1,257 @@
+{
+    "_note": "Producer-generated conformance fixtures for src/journal/frame-decode.ts (#753). Do NOT hand-tune these to satisfy the decoder — they are anchored to the real producers so a schema drift there fails frame-decode-test loud instead of at runtime. See README.md in this directory for provenance and regeneration.",
+    "valid": [
+        {
+            "name": "journal.text",
+            "source": "matron-journal src/ws.js:13 journalFrame + src/journal.js:321",
+            "frame": {
+                "kind": "journal",
+                "seq": 42,
+                "convo_id": "c1",
+                "ts": 1790050000000,
+                "sender": "agent:box",
+                "type": "text",
+                "payload": { "body": "hi" }
+            }
+        },
+        {
+            "name": "journal.session_status",
+            "source": "matron-journal src/ws.js:1585 emits payload.state; consumed at src/journal/database.ts:400",
+            "frame": {
+                "kind": "journal",
+                "seq": 43,
+                "convo_id": "c1",
+                "ts": 1790050000100,
+                "sender": "system",
+                "type": "session_status",
+                "payload": { "state": "running" }
+            }
+        },
+        {
+            "name": "control.hello_ok",
+            "source": "matron-journal src/ws.js:473",
+            "frame": { "kind": "control", "op": "hello_ok", "seq": 100, "device_id": 5, "name": "web" }
+        },
+        {
+            "name": "control.snapshot_required",
+            "source": "matron-journal src/ws.js:480",
+            "frame": { "kind": "control", "op": "snapshot_required" }
+        },
+        {
+            "name": "control.error.revoked",
+            "source": "matron-journal src/ws.js:390",
+            "frame": { "kind": "control", "op": "error", "code": "revoked" }
+        },
+        {
+            "name": "control.error.request_scoped",
+            "source": "matron-journal src/ws.js:652",
+            "frame": {
+                "kind": "control",
+                "op": "error",
+                "code": "not_ready",
+                "ref": "agent_request",
+                "request_id": "r1"
+            }
+        },
+        {
+            "name": "rpc.ok",
+            "source": "matron-journal src/rpc-broker.js:41; matches test/unit-tests/journal/connection-test.ts",
+            "frame": {
+                "kind": "rpc",
+                "response": { "request_id": "r1", "agent_device_id": 7, "ok": true, "result": { "convo_id": "c1" } }
+            }
+        },
+        {
+            "name": "rpc.error",
+            "source": "matron-journal src/rpc-broker.js:41",
+            "frame": {
+                "kind": "rpc",
+                "response": {
+                    "request_id": "r1",
+                    "agent_device_id": 7,
+                    "ok": false,
+                    "error": { "code": "not_found", "detail": "no such session" }
+                }
+            }
+        },
+        {
+            "name": "ephemeral.host_vitals",
+            "source": "matron-journal src/ws.js:567 re-emitting matron-bridge index.js:12389-12391 { cpu, ram, sampled_at_ms }",
+            "frame": { "kind": "ephemeral", "host_vitals": { "cpu": 12, "ram": 48, "sampled_at_ms": 1790050497685 } }
+        },
+        {
+            "name": "ephemeral.host_vitals.cpu_warming",
+            "source": "matron-bridge index.js:12390 — cpu is OMITTED (not null) until the sampler has two ticks",
+            "frame": { "kind": "ephemeral", "host_vitals": { "ram": 48, "sampled_at_ms": 1790050497685 } }
+        },
+        {
+            "name": "ephemeral.status.minimal",
+            "source": "matron-bridge buildSessionStatus (captured live 2026-09-22)",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "claude-opus-4-8",
+                    "vitals": { "cpu_pct": 12, "ram_pct": 47, "sampled_at_ms": 1790050497694 }
+                }
+            }
+        },
+        {
+            "name": "ephemeral.status.cpu_pct_null",
+            "source": "matron-bridge buildSessionStatus — cpu_pct is null until the CPU sampler has two ticks (fork divergence from upstream number)",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "claude-opus-4-8",
+                    "vitals": { "cpu_pct": null, "ram_pct": 48, "sampled_at_ms": 1790050497685 }
+                }
+            }
+        },
+        {
+            "name": "ephemeral.status.rich",
+            "source": "matron-bridge buildSessionStatus with limits[] + context",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": {
+                    "model": "claude-opus-4-8",
+                    "workdir": "/root/.openclaw/workspace",
+                    "context": { "tokens": 144000, "window": 200000, "pct": 72 },
+                    "limits": [
+                        { "id": "session", "label": "Session", "percent": 40 },
+                        { "id": "week_all", "label": "Weekly", "percent": 18 }
+                    ]
+                }
+            }
+        },
+        {
+            "name": "ephemeral.activity.thinking",
+            "source": "matron-bridge activity frame; state consumed at client.ts handleEphemeral:2664",
+            "frame": { "kind": "ephemeral", "convo_id": "c1", "activity": { "state": "thinking" } }
+        },
+        {
+            "name": "ephemeral.activity.tool",
+            "source": "matron-bridge activity frame",
+            "frame": { "kind": "ephemeral", "convo_id": "c1", "activity": { "state": "tool", "detail": "Bash" } }
+        },
+        {
+            "name": "ephemeral.tool_stream.append",
+            "source": "matron-journal src/ws.js:643/789 ephemeral relay; ToolStreamPayload types.ts:171",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "message_ref": "m1",
+                "tool_stream": { "event": "append", "chunk": "line\n", "offset": 0 }
+            }
+        },
+        {
+            "name": "ephemeral.text_stream",
+            "source": "matron-journal src/ws.js:643 ephemeral relay; consumed at client.ts handleEphemeral:2674",
+            "frame": { "kind": "ephemeral", "convo_id": "c1", "message_ref": "m1", "text": "partial output" }
+        }
+    ],
+    "narrowing": [
+        {
+            "name": "host_vitals.cpu_out_of_range",
+            "frame": { "kind": "ephemeral", "host_vitals": { "cpu": 250, "ram": 48, "sampled_at_ms": 1 } },
+            "expect": ["host_vitals"]
+        },
+        {
+            "name": "host_vitals.cpu_string",
+            "frame": { "kind": "ephemeral", "host_vitals": { "cpu": "12", "ram": 48, "sampled_at_ms": 1 } },
+            "expect": ["host_vitals"]
+        },
+        {
+            "name": "host_vitals.missing_sample",
+            "frame": { "kind": "ephemeral", "host_vitals": { "cpu": 12, "ram": 48 } },
+            "expect": ["host_vitals"]
+        },
+        {
+            "name": "status.vitals.cpu_pct_string",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": { "model": "x", "vitals": { "cpu_pct": "12", "ram_pct": 47, "sampled_at_ms": 1 } }
+            },
+            "expect": ["status.vitals"]
+        },
+        {
+            "name": "status.vitals.out_of_range",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": { "model": "x", "vitals": { "cpu_pct": 150, "ram_pct": 47, "sampled_at_ms": 1 } }
+            },
+            "expect": ["status.vitals"]
+        },
+        {
+            "name": "status.context_broken",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": { "model": "x", "context": { "tokens": "lots", "window": 200000, "pct": 72 } }
+            },
+            "expect": ["status.context"]
+        },
+        {
+            "name": "status.limits_not_array",
+            "frame": { "kind": "ephemeral", "convo_id": "c1", "status": { "model": "x", "limits": { "session": 40 } } },
+            "expect": ["status.limits"]
+        },
+        {
+            "name": "status.limits_null_element",
+            "frame": { "kind": "ephemeral", "convo_id": "c1", "status": { "model": "x", "limits": [null] } },
+            "expect": ["status.limits"]
+        },
+        {
+            "name": "status.limits_missing_percent",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": { "model": "x", "limits": [{ "id": "session", "label": "Session" }] }
+            },
+            "expect": ["status.limits"]
+        },
+        {
+            "name": "status.not_object",
+            "frame": { "kind": "ephemeral", "convo_id": "c1", "status": "broken" },
+            "expect": ["status"]
+        },
+        {
+            "name": "activity.unknown_state",
+            "frame": { "kind": "ephemeral", "convo_id": "c1", "activity": { "state": "dreaming" } },
+            "expect": ["activity"]
+        },
+        {
+            "name": "tool_stream.unknown_event",
+            "frame": { "kind": "ephemeral", "convo_id": "c1", "message_ref": "m1", "tool_stream": { "event": "boom" } },
+            "expect": ["tool_stream"]
+        },
+        {
+            "name": "convo_id.non_string",
+            "frame": { "kind": "ephemeral", "convo_id": 123, "activity": { "state": "idle" } },
+            "expect": ["convo_id"]
+        },
+        {
+            "name": "multiple_sub_shapes",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "host_vitals": { "cpu": 12, "ram": 48, "sampled_at_ms": 1 },
+                "activity": { "state": "spinning" }
+            },
+            "expect": ["activity"]
+        }
+    ],
+    "invalid": [
+        { "name": "number", "value": 42, "reason": "not_object" },
+        { "name": "null", "value": null, "reason": "not_object" },
+        { "name": "string", "value": "x", "reason": "not_object" },
+        { "name": "array", "value": [], "reason": "not_object" },
+        { "name": "unknown_kind", "value": { "kind": "wat" }, "reason": "unknown_kind" },
+        { "name": "missing_kind", "value": { "seq": 1, "convo_id": "c1" }, "reason": "unknown_kind" },
+        { "name": "control.missing_op", "value": { "kind": "control", "code": "x" }, "reason": "control:op" }
+    ],
+    "_journal_passthrough_note": "Journal events are intentionally NOT rejected or narrowed (they are sequenced — dropping one would gap the durable cursor). A malformed journal frame passes through unchanged; see decodeJournalEvent and the frame-decode-test 'passes a journal frame through unvalidated' case. That is why there are no journal:* entries here."
+}
