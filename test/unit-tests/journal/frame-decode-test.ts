@@ -131,21 +131,26 @@ describe("JournalConnection.ingestMessage — frame boundary", () => {
         expect(warn).toHaveBeenCalledWith("matron:frame", { reason: "unknown_kind" });
     });
 
-    it("passes a journal frame through unvalidated — sequenced frames must never be dropped at the boundary", async () => {
-        // A malformed journal frame is NOT rejected: dropping one would gap the
-        // durable cursor permanently (applyJournal has no gap detection). It flows
-        // to onFrame like any journal frame; the cursor/dedup + defensive payload
-        // consumption downstream own its correctness.
+    it("does not reject a journal frame at the boundary — regression guard against re-adding the cursor-gap bug", async () => {
+        // Regression guard: the decoder must NOT reject/drop journal frames.
+        // Dropping a sequenced frame and continuing would advance the durable
+        // cursor past it and lose the row permanently (applyJournal has no gap
+        // detection). This asserts ONLY the boundary contract (frame forwarded,
+        // no matron:frame diagnostic) — it does NOT claim malformed sequenced
+        // frames are handled safely downstream. A malformed seq still poisons
+        // last_seq/cursor exactly as on origin/main (pre-existing; robust handling
+        // needs resync-based recovery, tracked separately). A well-formed seq is
+        // used here so the test asserts the guard, not the latent issue.
         const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
         const { callbacks, internal, socket } = harness();
         internal.ingestMessage(
             JSON.stringify({
                 kind: "journal",
-                seq: "bad",
+                seq: 7,
                 convo_id: "c1",
                 ts: 1,
                 sender: "a",
-                type: "text",
+                type: "custom_type",
                 payload: {},
             }),
             socket,
