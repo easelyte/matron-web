@@ -4459,8 +4459,8 @@ function Composer({
         }
         // Detach handlers on final release: after finalize the recorder object
         // can still emit a late onerror (e.g. during track teardown), which
-        // would otherwise flip a finalized/sent note to a false error state
-        // (#511 edge 2). finalizedRef guards the onerror body too; detaching is
+        // would otherwise flip a finalized/sent note to a false error state.
+        // finalizedRef guards the onerror body too; detaching is
         // belt-and-suspenders and also drops the reference for GC.
         const recorder = mediaRecorder.current;
         if (recorder) {
@@ -4625,8 +4625,7 @@ function Composer({
                 recorder.onerror = () => {
                     // finalizedRef: a late error after the note was already
                     // finalized+sent (notably via the onstop-absent watchdog)
-                    // must not overwrite the sent/idle state with a false error
-                    // (#511 edge 2).
+                    // must not overwrite the sent/idle state with a false error.
                     if (rid !== recordingIdRef.current || localChunks !== chunksRef.current || finalizedRef.current)
                         return;
                     releaseMedia();
@@ -4694,7 +4693,7 @@ function Composer({
         // Bind mic acquisition to the session generation at REQUEST time
         // (finalize/send are already session-bound via recordingSessionGenRef).
         // A getUserMedia pending across a logout / session replacement must not
-        // be adopted by the replacement session (#511 edge 1): recordingSessionGenRef
+        // be adopted by the replacement session: recordingSessionGenRef
         // is set at resolve time inside startRecording, so without this guard a
         // request that resolves after the session changed would bind to the NEW
         // gen and let the note send under the wrong session.
@@ -4717,6 +4716,9 @@ function Composer({
                 if (acquireTimer.current === localTimer) acquireTimer.current = null;
                 if (gen !== genRef.current || !mountedRef.current || client.sessionGeneration !== acquireSessionGen) {
                     stream.getTracks().forEach((track) => track.stop());
+                    // A session-replaced request is cancelled, not hung: the 20 s timeout was just
+                    // cleared, so without this the button would stay locked in "requesting".
+                    if (gen === genRef.current && mountedRef.current) setVoiceState("idle");
                     return;
                 }
                 startRecording(stream);
