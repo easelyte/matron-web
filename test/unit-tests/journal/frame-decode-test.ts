@@ -122,7 +122,20 @@ describe("JournalConnection.ingestMessage — frame boundary", () => {
         expect(callbacks.onFrame).toHaveBeenCalledTimes(1);
     });
 
-    it("drops a structurally-broken journal frame and emits a diagnostic (cache keeps last good)", async () => {
+    it("drops a frame with an unrecognised discriminant and emits a diagnostic (cache keeps last good)", async () => {
+        const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { callbacks, internal, socket } = harness();
+        internal.ingestMessage(JSON.stringify({ kind: "wat", seq: 1 }), socket);
+        await internal.processing;
+        expect(callbacks.onFrame).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith("matron:frame", { reason: "unknown_kind" });
+    });
+
+    it("passes a journal frame through unvalidated — sequenced frames must never be dropped at the boundary", async () => {
+        // A malformed journal frame is NOT rejected: dropping one would gap the
+        // durable cursor permanently (applyJournal has no gap detection). It flows
+        // to onFrame like any journal frame; the cursor/dedup + defensive payload
+        // consumption downstream own its correctness.
         const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
         const { callbacks, internal, socket } = harness();
         internal.ingestMessage(
@@ -138,8 +151,8 @@ describe("JournalConnection.ingestMessage — frame boundary", () => {
             socket,
         );
         await internal.processing;
-        expect(callbacks.onFrame).not.toHaveBeenCalled();
-        expect(warn).toHaveBeenCalledWith("matron:frame", { reason: "journal:seq" });
+        expect(callbacks.onFrame).toHaveBeenCalledTimes(1);
+        expect(warn).not.toHaveBeenCalledWith("matron:frame", expect.anything());
     });
 
     it("drops an unparseable frame without throwing", () => {

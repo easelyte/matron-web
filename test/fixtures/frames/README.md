@@ -45,3 +45,10 @@ edit it to fit the decoder. Then run `pnpm test frame-decode` and, if a real
 shape now fails, update `frame-decode.ts` to accept it (or narrow the genuinely
 invalid field). The `narrowing` and `invalid` arrays are decoder contract cases,
 not producer output — extend them when the decoder gains a rule.
+
+Note: journal (`kind:"journal"`) frames are **sequenced**, so the decoder never
+rejects or narrows them — dropping one at the boundary would advance the durable
+cursor past it and lose the row permanently (`applyJournal` has no gap detection).
+That is why `invalid` has no `journal:*` entries; a malformed journal frame passes
+through, and its correctness is owned by the cursor/dedup path plus the defensive
+payload consumption downstream. See `decodeJournalEvent`.

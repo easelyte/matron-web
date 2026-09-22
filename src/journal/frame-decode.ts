@@ -20,17 +20,23 @@ import {
 // host-vitals gauge — trusted field names, nullability and units on faith. This
 // module narrows each frame shape BEFORE it reaches those caches:
 //
-//   • A structurally-broken frame (bad discriminant, a journal event whose
-//     store-bound fields are the wrong type) is REJECTED — connection.ts drops
-//     it, so the cache keeps its last good value rather than ingesting garbage.
+//   • A frame with no recognised discriminant is REJECTED — connection.ts drops
+//     it. Such a frame is never a real sequenced journal row (the producer always
+//     stamps kind:"journal"), so dropping it cannot gap the durable cursor.
 //   • A conversation-scoped ephemeral frame whose OPTIONAL sub-shape is malformed
-//     (an out-of-range vitals reading, an unknown activity state) has just that
-//     sub-shape stripped. Every store branch is guarded (`if (frame.host_vitals)`)
-//     or a sticky merge (mergeSessionStatus), so an absent sub-shape means "no
-//     update" — the last good value survives.
+//     (an out-of-range vitals reading, an unknown activity state, a limits entry
+//     that would throw in the merge) has just that sub-shape stripped. Every store
+//     branch is guarded (`if (frame.host_vitals)`) or a sticky merge
+//     (mergeSessionStatus), so an absent sub-shape means "no update" — the last
+//     good value survives.
 //   • Every rejection or narrowing emits a diagnostic via connection.ts, so a
 //     producer schema drift surfaces in the console instead of silently painting
 //     stale or blank UI.
+//
+// Journal events are the exception and pass through unvalidated — they are
+// SEQUENCED, and dropping one at the boundary would advance the cursor past it
+// and lose the row permanently (applyJournal has no gap detection). See
+// decodeJournalEvent for the full rationale.
 //
 // Wire shapes are anchored to the producers: journal events/control/rpc from
 // matron-journal `src/ws.js`, ephemeral status/host_vitals from matron-bridge
@@ -88,6 +94,25 @@ function isValidStatusContext(value: unknown): boolean {
     return isObject(value) && isFiniteNumber(value.tokens) && isFiniteNumber(value.window) && isFiniteNumber(value.pct);
 }
 
+// status.limits: an array of meter entries. Array.isArray alone is not enough —
+// mergeSessionStatus/suppliesLegacyHostMeters dereferences `limit.id` on EVERY
+// element (status.ts), so a single null/non-object entry throws, the queue error
+// handler closes the socket, and because the server caches and replays status the
+// same payload disconnects the client on every reconnect. Each entry must be an
+// object with the two fields every consumer relies on (label:string,
+// percent:finite); id, when present, must be a string. Any bad entry fails the
+// whole array so the sub-shape is stripped and the last good limits survive.
+function isValidLimitsArray(value: unknown): boolean {
+    if (!Array.isArray(value)) return false;
+    return value.every(
+        (entry) =>
+            isObject(entry) &&
+            isString(entry.label) &&
+            isFiniteNumber(entry.percent) &&
+            (entry.id === undefined || isString(entry.id)),
+    );
+}
+
 const ACTIVITY_STATES = new Set(["thinking", "tool", "idle"]);
 
 // activity: { state: "thinking"|"tool"|"idle", detail? }. state is read directly
@@ -109,16 +134,21 @@ function isValidToolStream(value: unknown): boolean {
     return isObject(value) && isString(value.event) && TOOL_STREAM_EVENTS.has(value.event);
 }
 
-// A journal event flows straight into IndexedDB via database.applyJournal with no
-// further validation, so its store-bound fields must be the right type or the
-// durable mirror is corrupted. This is the highest-value structural check.
+// Journal events are the SEQUENCED frames, and that changes what "reject" can
+// safely mean. database.applyJournal advances the durable cursor to each applied
+// event's seq with NO gap detection (it only skips seq <= cursor as a duplicate),
+// so silently DROPPING a rejected journal frame and continuing would apply the
+// next event, push the cursor past the dropped seq, and lose that row from the
+// mirror permanently — a worse outcome than the malformed frame itself. Narrowing
+// (drop-a-sub-shape) is meaningless for a sequenced row too: the whole row is one
+// ordered unit. So this decoder deliberately does NOT reject or narrow journal
+// events — it passes them through. They are not unprotected: applyJournal owns the
+// cursor/dedup invariants, and every payload consumer (eventSnippet, the
+// database applier) already narrows fields defensively via asString/asNumber/
+// isObject because journal payloads have always been untrusted. Strict journal
+// validation would need resync-based recovery (halt + re-snapshot on an invalid
+// row), not a boundary drop; that is a larger, separate change (#753 follow-up).
 function decodeJournalEvent(raw: Record<string, unknown>): FrameDecodeResult {
-    if (!isFiniteNumber(raw.seq)) return { ok: false, reason: "journal:seq" };
-    if (!isString(raw.convo_id)) return { ok: false, reason: "journal:convo_id" };
-    if (!isFiniteNumber(raw.ts)) return { ok: false, reason: "journal:ts" };
-    if (!isString(raw.sender)) return { ok: false, reason: "journal:sender" };
-    if (!isString(raw.type)) return { ok: false, reason: "journal:type" };
-    if (!isObject(raw.payload)) return { ok: false, reason: "journal:payload" };
     return { ok: true, frame: raw as unknown as JournalEvent };
 }
 
@@ -170,7 +200,7 @@ function decodeEphemeral(raw: Record<string, unknown>): FrameDecodeResult {
                 delete status.context;
                 narrowed.push("status.context");
             }
-            if (status.limits !== undefined && !Array.isArray(status.limits)) {
+            if (status.limits !== undefined && !isValidLimitsArray(status.limits)) {
                 delete status.limits;
                 narrowed.push("status.limits");
             }
@@ -196,9 +226,10 @@ function decodeEphemeral(raw: Record<string, unknown>): FrameDecodeResult {
 /**
  * Decode and narrow a raw parsed WebSocket message into a ServerFrame. Returns
  * `{ ok: false, reason }` for a frame that must be dropped (non-object, unknown
- * discriminant, or a journal event with the wrong-typed store-bound fields), or
- * `{ ok: true, frame, narrowed? }` for a frame safe to forward — `narrowed`
- * lists any ephemeral sub-shapes that were stripped as invalid.
+ * discriminant, or a control frame with no `op`), or `{ ok: true, frame,
+ * narrowed? }` for a frame safe to forward — `narrowed` lists any ephemeral
+ * sub-shapes that were stripped as invalid. Journal events pass through
+ * unvalidated (they are sequenced; see decodeJournalEvent).
  */
 export function decodeServerFrame(raw: unknown): FrameDecodeResult {
     if (!isObject(raw)) return { ok: false, reason: "not_object" };
