@@ -31,6 +31,12 @@ function hasValidSessionOutcome(value: unknown): value is Conversation["session_
 
 function validateSnapshotRows(snapshot: SnapshotResponse): void {
     if (!snapshot || !Array.isArray(snapshot.conversations)) throw new Error("malformed snapshot");
+    // #766: the durable cursor is set to snapshot.seq (replaceWithSnapshot writes it to CURSOR_KEY),
+    // and the whole malformed-live-frame recovery depends on that cursor being clean. A snapshot
+    // whose own seq is not a usable cursor value (NaN / non-integer / negative) would re-poison the
+    // cursor at the exact boundary the resync exists to sanitize, so reject it before any
+    // destructive replace rather than write the poison and ack it to the server on reconnect.
+    if (!Number.isSafeInteger(snapshot.seq) || snapshot.seq < 0) throw new Error("malformed snapshot seq");
     for (const summary of snapshot.conversations) {
         if (!summary || typeof summary.id !== "string") throw new Error("malformed snapshot element");
         if (
