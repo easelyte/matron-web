@@ -18,7 +18,7 @@ import type { RendererProps } from "./types";
 // paints to canvas; the bytes are NEVER handed to a document/plugin context, so no JS-in-PDF, form
 // actions, or external fetches execute — the exact hardening `pdf-render.ts` + the media viewer
 // rely on. A native `<object>`/`<iframe>` blob embed (which DOES execute the document) is not used.
-export function PdfPreview({ api, path, filename, meta }: RendererProps): React.ReactElement {
+export function PdfPreview({ api, path, meta }: RendererProps): React.ReactElement {
     const pagesRef = useRef<HTMLDivElement>(null);
     const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
     const [error, setError] = useState<string | undefined>(undefined);
@@ -78,16 +78,7 @@ export function PdfPreview({ api, path, filename, meta }: RendererProps): React.
         };
     }, [api, path, meta.mtime, reloadTick]);
 
-    if (status === "error")
-        return (
-            <MediaError
-                api={api}
-                path={path}
-                filename={filename}
-                error={error}
-                onRetry={() => setReloadTick((value) => value + 1)}
-            />
-        );
+    if (status === "error") return <MediaError error={error} onRetry={() => setReloadTick((value) => value + 1)} />;
 
     return (
         <div className="mj_FilesPdf">

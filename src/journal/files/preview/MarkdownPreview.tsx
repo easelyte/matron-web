@@ -27,7 +27,7 @@ export function MarkdownPreview({ api, path, filename, meta }: RendererProps): R
             </PreviewStatus>
         );
     const source = text.data ?? "";
-    if (source.length > INLINE_TEXT_MAX) return <TooLargePreview api={api} path={path} filename={filename} />;
+    if (source.length > INLINE_TEXT_MAX) return <TooLargePreview />;
     // `mj_Markdown` inherits the message renderer's element styling; `mj_FilesMarkdown` adds
     // pane-scoped padding + a readable max measure.
     return (

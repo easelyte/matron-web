@@ -11,7 +11,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { JournalApiError } from "../api";
 import type { FileMeta, FilesApiLike } from "../files/filesApi";
 import { FilePreview } from "../files/preview/FilePreview";
-import { GenericPreview } from "../files/preview/GenericPreview";
 import { pickPreviewKind } from "../files/previewKind";
 
 // PdfPreview lazily imports this; stub it so a PDF mounts in jsdom without real pdf.js — mirrors the
@@ -136,19 +135,14 @@ describe("FilePreview dispatch (DOM)", () => {
 });
 
 // F5: a failed download surfaces a visible error instead of a silent reset / unhandled rejection.
+// The single download control now lives in FilePreview (above every renderer), so this exercises it
+// through the real dispatch path.
 describe("download error visibility", () => {
     it("shows the uniform status message when download rejects", async () => {
         const api = mockApi(meta({ mime: "application/zip" }), {
             download: jest.fn().mockRejectedValue(new JournalApiError("denied", 403, "forbidden")),
         });
-        const { container } = await mount(
-            <GenericPreview
-                api={api}
-                path="/r/archive.zip"
-                filename="archive.zip"
-                meta={meta({ mime: "application/zip" })}
-            />,
-        );
+        const { container } = await mount(<FilePreview api={api} path="/r/archive.zip" filename="archive.zip" />);
         const button = container.querySelector<HTMLButtonElement>(".mj_FilesDownload");
         expect(button).not.toBeNull();
         await act(async () => {

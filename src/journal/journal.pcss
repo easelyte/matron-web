@@ -4930,6 +4930,20 @@ button.mj_File {
     font: var(--cpd-font-body-sm-regular);
 }
 
+/* Single download affordance rendered by FilePreview above every renderer. Right-aligned so it
+   sits consistently regardless of the preview content below it, and stacks its button + error
+   vertically (DownloadControl renders both). */
+.mj_FilesPreview_downloadRow {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    margin-bottom: var(--cpd-space-2x);
+}
+
+.mj_FilesPreview_downloadRow .mj_FilesDownload {
+    margin-top: 0;
+}
+
 .mj_FilesDownload {
     display: inline-flex;
     align-items: center;
