@@ -16,6 +16,7 @@ import React, { useMemo, useRef, useState } from "react";
 
 import type { MatronJournalClient } from "../client";
 import { humanizeSize } from "../files/format";
+import { filesDeepLinkHash, handleFilesLinkClick } from "../files-link";
 import { ChevronLeftIcon, KebabIcon, SendIcon } from "../icons";
 import { MarkdownBody } from "../markdown";
 import type { TrackerComment, TrackerItem, TrackerResolution } from "../types";
@@ -286,17 +287,25 @@ export function ItemDetail({
 
                 {item.links.length > 0 ? (
                     <div className="mj_TrackerLinks">
-                        {item.links.map((link) => (
-                            <a
-                                key={link.url}
-                                className="mj_TrackerLinkChip"
-                                href={link.url}
-                                target="_blank"
-                                rel="noreferrer noopener"
-                            >
-                                {link.title?.trim() || link.url}
-                            </a>
-                        ))}
+                        {item.links.map((link) => {
+                            // A Files deep link opens the pane in this window; anything else is a new tab.
+                            const filesHash = filesDeepLinkHash(link.url);
+                            return (
+                                <a
+                                    key={link.url}
+                                    className="mj_TrackerLinkChip"
+                                    href={link.url}
+                                    {...(filesHash
+                                        ? {
+                                              onClick: (clickEvent: React.MouseEvent<HTMLAnchorElement>) =>
+                                                  handleFilesLinkClick(clickEvent, filesHash),
+                                          }
+                                        : { target: "_blank", rel: "noreferrer noopener" })}
+                                >
+                                    {link.title?.trim() || link.url}
+                                </a>
+                            );
+                        })}
                     </div>
                 ) : null}
 

@@ -406,4 +406,37 @@ describe("ItemDetail", () => {
             expect(client.setItemLabels).toHaveBeenCalledWith(12, ["urgent"]);
         });
     });
+    it("opens a Files deep-link chip in-app and keeps other link chips as new tabs", async () => {
+        const client = fakeClient();
+        const filesUrl = `${window.location.origin}/#files=${encodeURIComponent("/root/a/plan.md")}`;
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({
+                    links: [
+                        { url: filesUrl, title: "plan" },
+                        { url: "https://github.com/easelyte/matron-web/pull/1", title: "PR" },
+                    ],
+                })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+        const [filesChip, prChip] = Array.from(container.querySelectorAll<HTMLAnchorElement>(".mj_TrackerLinkChip"));
+        const hashes: string[] = [];
+        const onHashChange = (): void => void hashes.push(window.location.hash);
+        window.addEventListener("hashchange", onHashChange);
+        const click = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+
+        await act(async () => {
+            filesChip.dispatchEvent(click);
+        });
+        window.removeEventListener("hashchange", onHashChange);
+        window.history.replaceState(null, "", "/");
+
+        expect(filesChip.hasAttribute("target")).toBe(false);
+        expect(click.defaultPrevented).toBe(true);
+        expect(hashes).toEqual([`#files=${encodeURIComponent("/root/a/plan.md")}`]);
+        expect(prChip.getAttribute("target")).toBe("_blank");
+    });
 });
