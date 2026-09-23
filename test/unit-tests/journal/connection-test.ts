@@ -473,4 +473,98 @@ describe("JournalConnection.forceResync (#766)", () => {
         connection.stop();
         websocket.mockRestore();
     });
+
+    it("reconnects even when the re-snapshot fails, so a transient error cannot wedge sync (F2)", async () => {
+        const connectionCallbacks = callbacks();
+        connectionCallbacks.onSnapshotRequired.mockRejectedValue(new Error("offline"));
+        const newSocket = { close: jest.fn() } as unknown as WebSocket;
+        const websocket = jest.spyOn(globalThis, "WebSocket").mockImplementation(() => newSocket);
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const connection = new JournalConnection("https://journal.example", "token", connectionCallbacks, () => "id-1");
+        const internal = connection as unknown as ConnectionInternals & {
+            stopped: boolean;
+            replacingSnapshot: boolean;
+        };
+        internal.stopped = false;
+        internal.socket = { close: jest.fn() } as unknown as WebSocket;
+
+        // forceResync must swallow the snapshot rejection (not throw) and still clear the flag.
+        await expect(connection.forceResync()).resolves.toBeUndefined();
+        expect(connectionCallbacks.onSnapshotRequired).toHaveBeenCalledTimes(1);
+        expect(internal.replacingSnapshot).toBe(false);
+
+        // A reconnect is scheduled despite the failure — the socket-less/no-timer wedge is avoided.
+        jest.advanceTimersByTime(0);
+        expect(websocket).toHaveBeenCalledTimes(1);
+
+        connection.stop();
+        websocket.mockRestore();
+    });
+
+    it("ignores a delayed close from the superseded socket so it cannot disable the replacement (F4)", async () => {
+        const connectionCallbacks = callbacks();
+        type FakeSocket = {
+            close: jest.Mock;
+            send: jest.Mock;
+            onopen: (() => void) | null;
+            onmessage: ((event: MessageEvent) => void) | null;
+            onclose: ((event: CloseEvent) => void) | null;
+            onerror: (() => void) | null;
+            readyState: number;
+        };
+        const made: FakeSocket[] = [];
+        const factory = (): FakeSocket => {
+            const socket: FakeSocket = {
+                close: jest.fn(),
+                send: jest.fn(),
+                onopen: null,
+                onmessage: null,
+                onclose: null,
+                onerror: null,
+                readyState: WebSocket.OPEN,
+            };
+            made.push(socket);
+            return socket;
+        };
+        const websocket = jest
+            .spyOn(globalThis, "WebSocket")
+            .mockImplementation(() => factory() as unknown as WebSocket);
+        const connection = new JournalConnection("https://journal.example", "token", connectionCallbacks, () => "id-1");
+        const internal = connection as unknown as ConnectionInternals & { welcomed: boolean; socket?: WebSocket };
+
+        const welcome = async (socket: FakeSocket): Promise<void> => {
+            socket.onopen?.();
+            await Promise.resolve();
+            await Promise.resolve();
+            socket.onmessage?.(
+                new MessageEvent("message", { data: JSON.stringify({ kind: "control", op: "hello_ok" }) }),
+            );
+            await Promise.resolve();
+        };
+
+        connection.start();
+        const socketA = made[0];
+        await welcome(socketA);
+        expect(internal.welcomed).toBe(true);
+
+        // Client resync: closes socket A, clears this.socket, reconnects to socket B.
+        await connection.forceResync();
+        jest.advanceTimersByTime(0);
+        const socketB = made[1];
+        expect(socketB).toBeDefined();
+        await welcome(socketB);
+        expect(internal.welcomed).toBe(true);
+        expect(internal.socket).toBe(socketB as unknown as WebSocket);
+
+        // The discarded socket A finally fires its (stale) close event. It must be a no-op: no
+        // welcomed=false, no state regression, socket B stays current.
+        connectionCallbacks.onState.mockClear();
+        socketA.onclose?.(new CloseEvent("close", { code: 1000 }));
+        expect(internal.welcomed).toBe(true);
+        expect(internal.socket).toBe(socketB as unknown as WebSocket);
+        expect(connectionCallbacks.onState).not.toHaveBeenCalled();
+
+        connection.stop();
+        websocket.mockRestore();
+    });
 });

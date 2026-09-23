@@ -81,9 +81,7 @@ type ClientInternals = {
     handleReady(): Promise<void>;
 };
 
-async function makeClient(
-    seedCursor: number,
-): Promise<{
+async function makeClient(seedCursor: number): Promise<{
     client: MatronJournalClient;
     internal: ClientInternals;
     database: JournalDatabase;
@@ -172,32 +170,59 @@ describe("#766 malformed-seq resync", () => {
         expect((internal as unknown as { pendingAck: number }).pendingAck).toBe(6);
     });
 
-    it("halts auto-resync after more than the limit of rapid malformed frames, then surfaces an error", async () => {
+    it("halts and stops the connection after more than the limit of rapid malformed frames", async () => {
         const { internal, conn } = await makeClient(5);
 
         // Three malformed frames inside the window each resync (a single one always recovers).
         for (let i = 0; i < 3; i++) await internal.handleJournal(journalEvent(Number.NaN));
         expect(conn.forceResync).toHaveBeenCalledTimes(3);
         expect(internal.state.connectionError).toBeUndefined();
+        expect(conn.stop).not.toHaveBeenCalled();
 
-        // The fourth trips the guard: no further resync, and a connectionError is surfaced instead.
+        // The fourth trips the guard: no further resync, the connection is stopped, and the halt
+        // error is surfaced.
         await internal.handleJournal(journalEvent(Number.NaN));
         expect(conn.forceResync).toHaveBeenCalledTimes(3);
+        expect(conn.stop).toHaveBeenCalledTimes(1);
         expect(internal.state.connectionError).toBe(MALFORMED_SEQ_HALTED_ERROR);
     });
 
-    it("resets the loop guard and clears the halt banner after a well-formed frame", async () => {
-        const { internal, conn } = await makeClient(5);
+    it("ignores every later frame once halted — no apply, no ack, no cursor advance", async () => {
+        const { internal, database, conn } = await makeClient(5);
 
         for (let i = 0; i < 4; i++) await internal.handleJournal(journalEvent(Number.NaN));
         expect(internal.state.connectionError).toBe(MALFORMED_SEQ_HALTED_ERROR);
         expect(conn.forceResync).toHaveBeenCalledTimes(3);
 
-        // A well-formed frame proves the server recovered: banner cleared, budget restored.
+        // A later WELL-FORMED frame must NOT resume processing: applying it would advance the cursor
+        // past the unrecovered malformed row (silent gap) and re-arming the guard would let an
+        // alternating good/malformed server evade the bound. It is dropped: cursor stays clean, no
+        // ack, no further resync.
         await internal.handleJournal(journalEvent(6));
-        expect(internal.state.connectionError).toBeUndefined();
+        expect(await database.cursor()).toBe(5);
+        expect(conn.forceResync).toHaveBeenCalledTimes(3);
+        expect(conn.send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "ack" }));
 
-        // A later malformed frame gets its full resync budget again.
+        // A later malformed frame is likewise ignored (no additional resync).
+        await internal.handleJournal(journalEvent(Number.NaN));
+        expect(conn.forceResync).toHaveBeenCalledTimes(3);
+    });
+
+    it("lifts the halt on a fresh session (resetTransientSyncState) so processing can resume", async () => {
+        const { client, internal, database, conn } = await makeClient(5);
+
+        for (let i = 0; i < 4; i++) await internal.handleJournal(journalEvent(Number.NaN));
+        expect((internal as unknown as { journalHalted: boolean }).journalHalted).toBe(true);
+
+        // A new session / snapshot transition re-establishes a clean cursor and lifts the halt.
+        (client as unknown as { resetTransientSyncState(): void }).resetTransientSyncState();
+        expect((internal as unknown as { journalHalted: boolean }).journalHalted).toBe(false);
+
+        // Processing resumes: a well-formed frame applies and advances the cursor again.
+        await internal.handleJournal(journalEvent(6));
+        expect(await database.cursor()).toBe(6);
+
+        // And the malformed-seq budget is restored — a malformed frame resyncs once more.
         await internal.handleJournal(journalEvent(Number.NaN));
         expect(conn.forceResync).toHaveBeenCalledTimes(4);
     });

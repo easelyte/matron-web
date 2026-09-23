@@ -348,9 +348,16 @@ export class MatronJournalClient {
     private ackTimer?: number;
     private pendingAck = 0;
     // #766: timestamps (ms) of recent malformed-seq-triggered resyncs, for the reconnect-loop
-    // guard in handleMalformedJournalFrame. Pruned to MALFORMED_SEQ_RESYNC_WINDOW_MS on each hit
-    // and reset to empty on the next well-formed frame.
+    // guard in handleMalformedJournalFrame. Pruned to MALFORMED_SEQ_RESYNC_WINDOW_MS on each hit —
+    // the sliding window IS the "clean period" reset, so a burst inside the window trips the guard
+    // while a genuinely transient blip ages out on its own. Deliberately NOT reset on a single good
+    // frame: that would let a server alternating good/malformed frames resync unbounded.
     private malformedSeqResyncs: number[] = [];
+    // #766: once the reconnect-loop guard trips, journal processing is HALTED — the connection is
+    // stopped and every subsequent frame is ignored so no later frame can advance/ack the cursor
+    // past the unrecovered malformed row (applyJournal has no gap detection). Cleared only by a
+    // fresh session (resetTransientSyncState on logout / snapshot transition, or a reload).
+    private journalHalted = false;
     private historyError?: string;
     private startSessionRequest?: Promise<StartOutcome>;
     private rpcCreateWatchdog?: number;
@@ -2575,6 +2582,12 @@ export class MatronJournalClient {
 
     private async handleJournal(event: JournalEvent): Promise<void> {
         if (!this.database) return;
+        // #766: once the reconnect-loop guard has halted journal processing, ignore every frame
+        // (well-formed or not) until the session is reset. Applying a later frame here would advance
+        // the cursor past the malformed row that was never recovered — the exact silent gap this
+        // recovery exists to prevent — and re-arming the guard on a good frame would let an
+        // alternating good/malformed server evade the bound.
+        if (this.journalHalted) return;
         // #766: frame-decode passes journal (sequenced) frames through UNVALIDATED by design — a
         // boundary drop would advance the cursor past the dropped seq and lose the row silently
         // (applyJournal has no gap detection). But a frame whose `seq` is not a usable cursor value
@@ -2594,13 +2607,6 @@ export class MatronJournalClient {
         ) {
             this.handleMalformedJournalFrame(event);
             return;
-        }
-        // A well-formed frame proves the server recovered: clear the reconnect-loop guard so a
-        // later transient blip gets its full resync budget again, and drop the halt banner if it is
-        // still showing.
-        if (this.malformedSeqResyncs.length > 0) {
-            this.malformedSeqResyncs = [];
-            if (this.state.connectionError === MALFORMED_SEQ_HALTED_ERROR) this.patch({ connectionError: undefined });
         }
         // Tracker markers (item/mission/milestone) drive a live refetch of any loaded tracker
         // data regardless of whether this event is newly applied below — fire-and-forget so it
@@ -2699,9 +2705,16 @@ export class MatronJournalClient {
         this.malformedSeqResyncs = this.malformedSeqResyncs.filter((ts) => now - ts < MALFORMED_SEQ_RESYNC_WINDOW_MS);
         this.malformedSeqResyncs.push(now);
         if (this.malformedSeqResyncs.length > MALFORMED_SEQ_RESYNC_LIMIT) {
-            // Loop guard tripped: stop auto-resyncing and surface the halt instead of looping. The
-            // socket is left as-is (a subsequent well-formed frame clears the guard and banner).
+            // Loop guard tripped: this is a pathological server (each clean resync cursor is
+            // immediately re-poisoned). Enter a real HALT rather than looping OR leaving the socket
+            // live: mark journal processing halted (handleJournal now ignores every frame, so no
+            // later frame can silently advance the cursor past the unrecovered malformed row), stop
+            // the connection so frames stop arriving, and surface the error. Recovery is a reload,
+            // which builds a fresh session/connection and clears journalHalted. stop() fires
+            // onState("offline") which clears connectionError, so patch the halt banner AFTER it.
             console.warn("matron:journal", { event: "malformed_seq_resync_halted" });
+            this.journalHalted = true;
+            this.connection?.stop();
             this.patch({ connectionError: MALFORMED_SEQ_HALTED_ERROR });
             return;
         }
@@ -3040,6 +3053,10 @@ export class MatronJournalClient {
         this.readHighWater.clear();
         this.ackTimer = undefined;
         this.pendingAck = 0;
+        // #766: a new session / snapshot transition re-establishes a clean cursor, so clear the
+        // malformed-seq reconnect-loop guard and lift the halt.
+        this.malformedSeqResyncs = [];
+        this.journalHalted = false;
         this.historyError = undefined;
         this.history.clear();
         this.activities.clear();

@@ -113,10 +113,17 @@ export class JournalConnection {
         this.socket = undefined;
         try {
             await this.callbacks.onSnapshotRequired();
+        } catch (error) {
+            // A transient snapshot failure (offline, timeout, HTTP, storage) must NOT wedge the
+            // connection socket-less with no retry timer. Swallow it and fall through to the
+            // reconnect below, which resumes from the last good (still-clean) cursor — the client's
+            // malformed-seq guard bounds a snapshot that keeps failing, so this cannot loop forever.
+            console.warn("matron:resync", { event: "snapshot_failed" });
         } finally {
             this.replacingSnapshot = false;
         }
-        this.scheduleReconnect(0);
+        // Reconnect on BOTH the success and the swallowed-failure path (unless stopped meanwhile).
+        if (!this.stopped) this.scheduleReconnect(0);
     }
 
     public async agentRequest(
@@ -199,7 +206,14 @@ export class JournalConnection {
         };
 
         socket.onclose = (event) => {
-            if (this.socket === socket) this.socket = undefined;
+            // #766: guard the ENTIRE handler by socket identity. forceResync clears this.socket and
+            // reconnects at delay 0, so a superseded socket's (late) close event can fire after the
+            // replacement socket is open and welcomed. Without this guard the stale close would set
+            // the shared `welcomed` flag false and publish "connecting", disabling sends/acks on an
+            // otherwise-live socket, and its scheduled retry would no-op (open() sees the new
+            // socket). A stale close carries no state that applies to the current socket, so drop it.
+            if (this.socket !== socket) return;
+            this.socket = undefined;
             this.welcomed = false;
             if (this.stopped || this.replacingSnapshot) return;
             const reason = event.code === 1000 ? undefined : event.reason || "Connection interrupted";
