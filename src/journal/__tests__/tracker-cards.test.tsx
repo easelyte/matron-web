@@ -352,12 +352,19 @@ describe("modified clicks on a Files link inside a tracker card", () => {
         );
         const click = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, metaKey: true });
         const link = container.querySelector("a")!;
+        // Cancel jsdom's fragment navigation (a browser opens a tab); runs after React's root handler.
+        let claimedByApp: boolean | undefined;
+        container.addEventListener("click", (clickEvent) => {
+            claimedByApp = clickEvent.defaultPrevented;
+            clickEvent.preventDefault();
+        });
         await act(async () => {
             link.dispatchEvent(click);
         });
         await act(async () => root.unmount());
         container.remove();
-        window.history.replaceState(null, "", "/"); // jsdom follows the fragment; a browser opens a tab
+
+        expect(claimedByApp).toBe(false);
 
         expect(client.openTrackerItem).not.toHaveBeenCalled();
     });
