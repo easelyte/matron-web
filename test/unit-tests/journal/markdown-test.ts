@@ -360,3 +360,104 @@ test("resets a tripped boundary when the same row receives new text", async () =
     expect(container.querySelector("strong")?.textContent).toBe("recovered");
     consoleError.mockRestore();
 });
+
+describe("Files deep links (#files=<abs>) open in the current window", () => {
+    const FILE = "/root/.openclaw/workspace/docs/plan.md";
+    const HREF = `${window.location.origin}/#files=${encodeURIComponent(FILE)}`;
+    let hashchanges: string[];
+    const onHashChange = (): void => {
+        hashchanges.push(window.location.hash);
+    };
+
+    beforeEach(() => {
+        hashchanges = [];
+        window.addEventListener("hashchange", onHashChange);
+    });
+
+    afterEach(() => {
+        window.removeEventListener("hashchange", onHashChange);
+        window.history.replaceState(null, "", "/");
+    });
+
+    test("an absolute same-origin Files link renders without target=_blank", async () => {
+        const container = await renderMarkdown(`[plan](${HREF})`);
+        const link = container.querySelector("a");
+
+        expect(link?.getAttribute("href")).toBe(HREF);
+        expect(link?.hasAttribute("target")).toBe(false);
+    });
+
+    test("a plain click routes the hash in-app without navigating or adding history", async () => {
+        const container = await renderMarkdown(`see ${HREF}`);
+        const link = container.querySelector("a")!;
+        const historyLength = window.history.length;
+        const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+
+        await act(async () => {
+            link.dispatchEvent(event);
+        });
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(hashchanges).toEqual([`#files=${encodeURIComponent(FILE)}`]);
+        expect(window.history.length).toBe(historyLength);
+    });
+
+    test.each([{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { button: 1 }])(
+        "a modified or non-primary click (%o) keeps the browser default",
+        async (init) => {
+            const container = await renderMarkdown(`[plan](${HREF})`);
+            const link = container.querySelector("a")!;
+            const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...init });
+            // Record whether the app claimed the click, then stop jsdom's own fragment navigation
+            // (a real browser would open the new tab/window here instead).
+            let claimedByApp: boolean | undefined;
+            const recorder = (clickEvent: Event): void => {
+                claimedByApp = clickEvent.defaultPrevented;
+                clickEvent.preventDefault();
+            };
+            document.addEventListener("click", recorder);
+
+            await act(async () => {
+                link.dispatchEvent(event);
+            });
+            document.removeEventListener("click", recorder);
+
+            expect(claimedByApp).toBe(false);
+            expect(hashchanges).toEqual([]);
+        },
+    );
+
+    test("a relative #files= link is handled in-app too", async () => {
+        const container = await renderMarkdown(`[plan](#files=${encodeURIComponent(FILE)})`);
+        const link = container.querySelector("a")!;
+        const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+
+        await act(async () => {
+            link.dispatchEvent(event);
+        });
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(hashchanges).toEqual([`#files=${encodeURIComponent(FILE)}`]);
+    });
+
+    test("a Files-shaped link on a foreign origin stays an external new-tab link", async () => {
+        const foreign = `https://elsewhere.example/#files=${encodeURIComponent(FILE)}`;
+        const container = await renderMarkdown(`[plan](${foreign})`);
+        const link = container.querySelector("a")!;
+        const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+        link.addEventListener("click", (clickEvent) => clickEvent.preventDefault()); // jsdom: no navigation
+
+        await act(async () => {
+            link.dispatchEvent(event);
+        });
+
+        expect(link.getAttribute("target")).toBe("_blank");
+        expect(hashchanges).toEqual([]);
+    });
+
+    test("an ordinary same-origin https link is unchanged (still a new tab)", async () => {
+        const container = await renderMarkdown(`[root](${window.location.origin}/#other)`);
+
+        expect(container.querySelector("a")?.getAttribute("target")).toBe("_blank");
+    });
+});
