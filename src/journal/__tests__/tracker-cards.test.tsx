@@ -339,3 +339,26 @@ describe("Files deep links inside clickable tracker cards", () => {
         expect(client.openTrackerItem).not.toHaveBeenCalled();
     });
 });
+
+describe("modified clicks on a Files link inside a tracker card", () => {
+    it("leave the browser default and do not open the item", async () => {
+        const client = fakeClient();
+        const body = `see [plan](${window.location.origin}/#files=${encodeURIComponent("/root/a/plan.md")})`;
+        const { container, root } = await mount(
+            <ItemCard
+                client={client as unknown as MatronJournalClient}
+                event={event("item", { num: 4, kind: "task", title: "t", action: "closed", comment: { body } })}
+            />,
+        );
+        const click = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, metaKey: true });
+        const link = container.querySelector("a")!;
+        await act(async () => {
+            link.dispatchEvent(click);
+        });
+        await act(async () => root.unmount());
+        container.remove();
+        window.history.replaceState(null, "", "/"); // jsdom follows the fragment; a browser opens a tab
+
+        expect(client.openTrackerItem).not.toHaveBeenCalled();
+    });
+});

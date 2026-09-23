@@ -408,22 +408,18 @@ describe("Files deep links (#files=<abs>) open in the current window", () => {
             const container = await renderMarkdown(`[plan](${HREF})`);
             const link = container.querySelector("a")!;
             const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...init });
-            // Record whether the app claimed the click, then stop jsdom's own fragment navigation
-            // (a real browser would open the new tab/window here instead).
-            let claimedByApp: boolean | undefined;
-            const recorder = (clickEvent: Event): void => {
-                claimedByApp = clickEvent.defaultPrevented;
-                clickEvent.preventDefault();
-            };
-            document.addEventListener("click", recorder);
+            const replaceState = jest.spyOn(window.history, "replaceState");
 
             await act(async () => {
                 link.dispatchEvent(event);
             });
-            document.removeEventListener("click", recorder);
+            // jsdom follows the unclaimed fragment (a real browser would open a new tab); let its
+            // async hashchange land here rather than leak into the next test.
+            await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
 
-            expect(claimedByApp).toBe(false);
-            expect(hashchanges).toEqual([]);
+            expect(event.defaultPrevented).toBe(false);
+            expect(replaceState).not.toHaveBeenCalled();
+            replaceState.mockRestore();
         },
     );
 

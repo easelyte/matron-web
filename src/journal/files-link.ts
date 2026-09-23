@@ -60,10 +60,12 @@ function isPlainPrimaryClick(event: ReactMouseEvent): boolean {
  * in the current window without a reload; anything else falls through to the browser.
  */
 export function handleFilesLinkClick(event: ReactMouseEvent<HTMLAnchorElement>, hash: string): void {
+    // The link may sit inside a clickable surface (a tracker card is a <button> that opens the
+    // item). A link click is never also a click on that surface: a plain click would have the
+    // card close the Files pane again, and a cmd/ctrl-click would switch this tab to the item
+    // while the link opens in another.
+    event.stopPropagation();
     if (!isPlainPrimaryClick(event)) return;
     event.preventDefault();
-    // The link may sit inside a clickable surface (a tracker card is a <button> that opens the
-    // item, which would close the Files pane again) — the click is fully handled here.
-    event.stopPropagation();
     openFilesDeepLink(hash);
 }
