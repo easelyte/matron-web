@@ -75,6 +75,14 @@ describe("ItemRow", () => {
         expect(container.querySelectorAll(".mj_TrackerItemRow_status")).toHaveLength(1);
     });
 
+    it("renders a mission chip only when the item is attached to a mission", async () => {
+        const withMission = await mount(<ItemRow item={trackerItem({ mission_num: 8 })} onOpen={jest.fn()} />);
+        expect(withMission.container.querySelector(".mj_TrackerItemRow_missionChip")?.textContent).toContain("#8");
+
+        const without = await mount(<ItemRow item={trackerItem({ mission_num: null })} onOpen={jest.fn()} />);
+        expect(without.container.querySelector(".mj_TrackerItemRow_missionChip")).toBeNull();
+    });
+
     it("renders the comment count only when there are comments", async () => {
         const withComments = await mount(<ItemRow item={trackerItem({ comment_count: 3 })} onOpen={jest.fn()} />);
         expect(withComments.container.querySelector(".mj_TrackerItemRow_comments")?.textContent).toContain("3");

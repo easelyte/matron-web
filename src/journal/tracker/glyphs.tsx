@@ -17,7 +17,7 @@ Please see LICENSE files in the repository root for full details.
 
 import React from "react";
 
-import type { TrackerItemKind } from "../types";
+import type { TrackerItemKind, TrackerMilestoneKind, TrackerMissionState } from "../types";
 
 type GlyphProps = React.SVGProps<SVGSVGElement> & { className?: string };
 
@@ -74,6 +74,38 @@ export function DecisionGlyph(props: GlyphProps): React.ReactElement {
     );
 }
 
+/** Mission — a flag. Accent when open, secondary when closed (set by class). */
+export function MissionGlyph({
+    state = "open",
+    ...props
+}: GlyphProps & { state?: TrackerMissionState }): React.ReactElement {
+    return (
+        <Glyph
+            {...props}
+            className={`mj_TrackerGlyph mj_TrackerGlyph_mission_${state} ${props.className ?? ""}`.trim()}
+        >
+            <path d="M6 4v16" />
+            <path d="M6 5h11l-2 3.5L17 12H6z" />
+        </Glyph>
+    );
+}
+
+/** Milestone — a milestone marker. user_input is orange (needs-you), progress is secondary. */
+export function MilestoneGlyph({
+    kind = "progress",
+    ...props
+}: GlyphProps & { kind?: TrackerMilestoneKind }): React.ReactElement {
+    return (
+        <Glyph
+            {...props}
+            className={`mj_TrackerGlyph mj_TrackerGlyph_milestone_${kind} ${props.className ?? ""}`.trim()}
+        >
+            <circle cx="12" cy="10" r="3" />
+            <path d="M12 13v7M8 20h8" />
+        </Glyph>
+    );
+}
+
 /** A comment-count bubble glyph (secondary). */
 export function CommentBubbleGlyph(props: GlyphProps): React.ReactElement {
     return (
@@ -105,19 +137,25 @@ export function ImagePlaceholderGlyph(props: GlyphProps): React.ReactElement {
 }
 
 /**
- * Unified dispatcher — draw the glyph for an item kind. The discrete components above stay
- * available for call sites that already know which they want; this is the single-prop convenience
- * the rows use.
+ * Unified dispatcher — draw the glyph for exactly one of an item kind, a mission state, or a
+ * milestone kind. Discrete components above stay available for call sites that already know which
+ * they want; this is the single-prop convenience the rows use.
  */
 export function TrackerGlyph({
     kind,
+    mission,
+    milestone,
     ...props
 }: GlyphProps & {
     kind?: TrackerItemKind;
+    mission?: TrackerMissionState;
+    milestone?: TrackerMilestoneKind;
 }): React.ReactElement | null {
     if (kind === "question") return <QuestionGlyph {...props} />;
     if (kind === "task") return <TaskGlyph {...props} />;
     if (kind === "decision") return <DecisionGlyph {...props} />;
+    if (mission) return <MissionGlyph state={mission} {...props} />;
+    if (milestone) return <MilestoneGlyph kind={milestone} {...props} />;
     return null;
 }
 

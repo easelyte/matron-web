@@ -11,24 +11,30 @@ import { createRoot, type Root } from "react-dom/client";
 import type { MatronJournalClient } from "../client";
 import type { ClientState } from "../types";
 import { TrackerPane } from "../tracker/TrackerPane";
-import { trackerItem } from "./tracker-fixtures";
+import { trackerItem, trackerMissionDetail } from "./tracker-fixtures";
 
 interface FakeClient {
+    loadMissions: jest.Mock;
     loadInbox: jest.Mock;
     loadItem: jest.Mock;
+    loadMission: jest.Mock;
     closeTrackerView: jest.Mock;
     openTrackerView: jest.Mock;
     openTrackerItem: jest.Mock;
+    openTrackerMission: jest.Mock;
     getSnapshot: jest.Mock;
 }
 
 function fakeClient(): FakeClient {
     return {
+        loadMissions: jest.fn().mockResolvedValue(undefined),
         loadInbox: jest.fn().mockResolvedValue(undefined),
         loadItem: jest.fn().mockResolvedValue(undefined),
+        loadMission: jest.fn().mockResolvedValue(undefined),
         closeTrackerView: jest.fn(),
         openTrackerView: jest.fn(),
         openTrackerItem: jest.fn(),
+        openTrackerMission: jest.fn(),
         getSnapshot: jest.fn().mockReturnValue({ selectedConversationId: "c1", conversations: [] }),
     };
 }
@@ -84,5 +90,22 @@ describe("TrackerPane selection/detail matching (F1)", () => {
         );
 
         expect(container.querySelector(".mj_TrackerComposer")).not.toBeNull();
+    });
+
+    it("does NOT render a cached mission detail whose num differs from the current selection", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    // Selection moved to #8 but the store still holds #5's mission detail.
+                    trackerView: { open: true, view: "missions", selectedMissionId: 8 },
+                    trackerMission: trackerMissionDetail(),
+                })}
+            />,
+        );
+
+        // Falls through to the missions list, not the (stale #5) mission detail head.
+        expect(container.querySelector(".mj_TrackerMissionHead")).toBeNull();
     });
 });

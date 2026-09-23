@@ -42,6 +42,25 @@ describe("JournalApi tracker routes", () => {
 
     const api = (): JournalApi => new JournalApi("https://journal.example", "token");
 
+    // ── Missions ──────────────────────────────────────────────────────────────────────────────
+
+    it("GET /missions with no state filter", async () => {
+        await api().missions();
+        expect(url()).toBe("https://journal.example/missions");
+        expect(init().method ?? "GET").toBe("GET");
+        expect(init().headers).toEqual(expect.objectContaining({ Authorization: "Bearer token" }));
+    });
+
+    it("GET /missions?state= carries the encoded state filter", async () => {
+        await api().missions("closed");
+        expect(url()).toBe("https://journal.example/missions?state=closed");
+    });
+
+    it("GET /missions/:id for a mission detail", async () => {
+        await api().mission(42);
+        expect(url()).toBe("https://journal.example/missions/42");
+    });
+
     // ── Items list + detail ────────────────────────────────────────────────────────────────────
 
     it("GET /items with no filter omits the query string entirely", async () => {
@@ -82,9 +101,11 @@ describe("JournalApi tracker routes", () => {
         expect(url()).toBe("https://journal.example/items/12");
     });
 
-    it("passes an opaque it_ id through unchanged", async () => {
+    it("passes an opaque it_/ms_ id through unchanged", async () => {
         await api().item("it_abc123");
         expect(url()).toBe("https://journal.example/items/it_abc123");
+        await api().mission("ms_def456");
+        expect(url(1)).toBe("https://journal.example/missions/ms_def456");
     });
 
     it("stringifies a bare numeric id", async () => {
@@ -127,6 +148,24 @@ describe("JournalApi tracker routes", () => {
         expect(init().method).toBe("POST");
         expect(init().headers).toEqual(expect.objectContaining({ "Idempotency-Key": "idem-reopen" }));
         expect(JSON.parse(init().body as string)).toEqual({});
+    });
+
+    // ── Mission mutations ──────────────────────────────────────────────────────────────────────
+
+    it("PATCH /missions/:id edits the mission and carries the Idempotency-Key", async () => {
+        await api().patchMission(3, { title: "New name", body: "why" }, "idem-mission");
+        expect(url()).toBe("https://journal.example/missions/3");
+        expect(init().method).toBe("PATCH");
+        expect(init().headers).toEqual(expect.objectContaining({ "Idempotency-Key": "idem-mission" }));
+        expect(JSON.parse(init().body as string)).toEqual({ title: "New name", body: "why" });
+    });
+
+    it("POST /missions/:id/close sends the summary and carries the Idempotency-Key", async () => {
+        await api().closeMission(3, { summary: "wrapped up" }, "idem-mclose");
+        expect(url()).toBe("https://journal.example/missions/3/close");
+        expect(init().method).toBe("POST");
+        expect(init().headers).toEqual(expect.objectContaining({ "Idempotency-Key": "idem-mclose" }));
+        expect(JSON.parse(init().body as string)).toEqual({ summary: "wrapped up" });
     });
 
     it("omits the Idempotency-Key header when a mutation is called without a key", async () => {

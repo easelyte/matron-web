@@ -5,11 +5,18 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-// Pure display helpers for the tracker item inbox. Unit-testable; no DOM, no React.
+// Pure display helpers for the tracker (missions + item inbox). Unit-testable; no DOM, no React.
 // Status text ALWAYS derives from the structured item/comment fields (never a raw comment body),
 // so a privacy-elided body never leaks and the labels stay consistent across surfaces.
 
-import type { TrackerComment, TrackerItem, TrackerItemKind, TrackerResolution } from "../types";
+import type {
+    Mission,
+    TrackerComment,
+    TrackerItem,
+    TrackerItemKind,
+    TrackerMilestoneKind,
+    TrackerResolution,
+} from "../types";
 
 /** An open item that is waiting on the user — the one urgent "needs you" state (orange). */
 export function needsUser(item: Pick<TrackerItem, "state" | "awaiting">): boolean {
@@ -97,6 +104,11 @@ export function statusRowText(comment: Pick<TrackerComment, "author" | "meta">):
     return null;
 }
 
+/** A mission's display label — its title, or `#num` when the title is blank/elided. */
+export function missionLabel(mission: Pick<Mission, "title" | "num">): string {
+    return mission.title?.trim() || `#${mission.num}`;
+}
+
 /** Human label for an item kind. */
 export function kindLabel(kind: TrackerItemKind): string {
     switch (kind) {
@@ -107,6 +119,11 @@ export function kindLabel(kind: TrackerItemKind): string {
         case "decision":
             return "Decision";
     }
+}
+
+/** Human label for a milestone kind. */
+export function milestoneKindLabel(kind: TrackerMilestoneKind): string {
+    return kind === "user_input" ? "Your input" : "Progress";
 }
 
 /**

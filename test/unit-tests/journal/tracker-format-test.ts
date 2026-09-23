@@ -9,6 +9,8 @@ import {
     availableResolutions,
     itemStatusText,
     kindLabel,
+    milestoneKindLabel,
+    missionLabel,
     needsUser,
     oneLine,
     resolutionLabel,
@@ -159,6 +161,16 @@ describe("statusRowText", () => {
     });
 });
 
+describe("missionLabel", () => {
+    it("uses the title when present", () => {
+        expect(missionLabel({ title: "Ship the tracker", num: 7 })).toBe("Ship the tracker");
+    });
+    it("falls back to #num when the title is blank or whitespace", () => {
+        expect(missionLabel({ title: "", num: 7 })).toBe("#7");
+        expect(missionLabel({ title: "   ", num: 12 })).toBe("#12");
+    });
+});
+
 describe("kindLabel", () => {
     it.each<[TrackerItemKind, string]>([
         ["question", "Question"],
@@ -166,6 +178,13 @@ describe("kindLabel", () => {
         ["decision", "Decision"],
     ])("labels %s as %s", (kind, label) => {
         expect(kindLabel(kind)).toBe(label);
+    });
+});
+
+describe("milestoneKindLabel", () => {
+    it("labels user_input as Your input and everything else as Progress", () => {
+        expect(milestoneKindLabel("user_input")).toBe("Your input");
+        expect(milestoneKindLabel("progress")).toBe("Progress");
     });
 });
 

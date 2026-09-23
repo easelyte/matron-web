@@ -5,9 +5,9 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-// Shared builders for the tracker component tests — minimal, wire-shaped items/comments.
+// Shared builders for the tracker component tests — minimal, wire-shaped items/missions/comments.
 
-import type { TrackerComment, TrackerItem } from "../types";
+import type { Mission, MissionDetail, TrackerComment, TrackerItem } from "../types";
 
 export function trackerItem(over: Partial<TrackerItem> = {}): TrackerItem {
     return {
@@ -49,6 +49,41 @@ export function trackerComment(over: Partial<TrackerComment> = {}): TrackerComme
         attachments: [],
         meta: null,
         created_at: 2,
+        ...over,
+    };
+}
+
+export function trackerMission(over: Partial<Mission> = {}): Mission {
+    return {
+        id: "ms_1",
+        num: 5,
+        state: "open",
+        title: "Ship the tracker",
+        body: "",
+        close_summary: null,
+        closed_by: null,
+        closed_over_open_items: 0,
+        origin_convo_id: "c1",
+        created_by: "agent",
+        created_at: 1,
+        updated_at: 1,
+        last_milestone_at: null,
+        closed_at: null,
+        open_items: 0,
+        needs_you: 0,
+        conversations: 0,
+        milestones: 0,
+        last_milestone: null,
+        ...over,
+    };
+}
+
+export function trackerMissionDetail(over: Partial<MissionDetail> = {}): MissionDetail {
+    return {
+        mission: trackerMission(),
+        milestones: [],
+        items: [],
+        conversations: [],
         ...over,
     };
 }

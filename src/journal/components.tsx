@@ -80,7 +80,7 @@ import {
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
-import { isRenderableItemMarker, renderItemMarker } from "./tracker/cards";
+import { isRenderableItemMarker, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
 import { TrackerPane } from "./tracker/TrackerPane";
 import {
     buildMediaCorpus,
@@ -3573,6 +3573,10 @@ export function EventContent({
         case "item":
             // Quiet invalidation-only markers (reordered/updated) and unknown actions render null.
             return renderItemMarker(event, client);
+        case "milestone":
+            return <MilestoneCard client={client} event={event} />;
+        case "mission":
+            return <MissionNotice client={client} event={event} />;
         case "prompt":
             if (asString(event.payload.kind) === "queued_release") {
                 return (

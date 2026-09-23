@@ -49,7 +49,7 @@ function CommentRow({
     onTrackerLink,
 }: {
     comment: TrackerComment;
-    onTrackerLink: (kind: "item", num: number) => void;
+    onTrackerLink: (kind: "item" | "mission", num: number) => void;
 }): React.ReactElement {
     if (comment.kind === "status") {
         const text = statusRowText(comment);
@@ -163,7 +163,7 @@ export function ItemDetail({
 
     // matron://item / matron://mission deep links inside the item body + comment threads open the
     // target tracker surface in-app (F6) — same handler the timeline uses.
-    const onTrackerLink = (kind: "item", num: number): void => client.openTrackerLink(kind, num);
+    const onTrackerLink = (kind: "item" | "mission", num: number): void => client.openTrackerLink(kind, num);
 
     return (
         <div className="mj_TrackerDetail">

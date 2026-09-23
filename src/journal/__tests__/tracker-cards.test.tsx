@@ -10,14 +10,22 @@ import { createRoot, type Root } from "react-dom/client";
 
 import type { MatronJournalClient } from "../client";
 import type { EventPayload, JournalEvent } from "../types";
-import { isRenderableItemMarker, ItemCard, ItemInlineNote, renderItemMarker } from "../tracker/cards";
+import {
+    isRenderableItemMarker,
+    ItemCard,
+    ItemInlineNote,
+    MilestoneCard,
+    MissionNotice,
+    renderItemMarker,
+} from "../tracker/cards";
 
 interface FakeClient {
     openTrackerItem: jest.Mock;
+    openTrackerMission: jest.Mock;
 }
 
 function fakeClient(): FakeClient {
-    return { openTrackerItem: jest.fn() };
+    return { openTrackerItem: jest.fn(), openTrackerMission: jest.fn() };
 }
 
 function event(type: string, payload: EventPayload): JournalEvent {
@@ -192,5 +200,93 @@ describe("ItemInlineNote", () => {
 
         expect(container.querySelector(".mj_TrackerInlineNote_line")?.textContent).toContain("Agent reopened #4 · #4");
         expect(container.querySelector(".mj_TrackerInlineNote_body")).toBeNull();
+    });
+});
+
+describe("MilestoneCard", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("shows the kind + mission subtitle and the orange border for a user_input milestone", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <MilestoneCard
+                client={client as unknown as MatronJournalClient}
+                event={event("milestone", {
+                    num: 7,
+                    mission_num: 5,
+                    kind: "user_input",
+                    title: "Approved the plan",
+                    body: "go for it",
+                    mission_title: "Ship the tracker",
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerCard_needsyou")).not.toBeNull();
+        expect(container.querySelector(".mj_TrackerCard_subtitle")?.textContent).toBe("Your input · Ship the tracker");
+        expect(container.querySelector(".mj_TrackerCard_milestoneBody")?.textContent).toBe("go for it");
+    });
+
+    it("shows no orange border for a progress milestone and jumps to the mission when clicked", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <MilestoneCard
+                client={client as unknown as MatronJournalClient}
+                event={event("milestone", { num: 7, mission_num: 5, kind: "progress", title: "Landed schema" })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerCard_needsyou")).toBeNull();
+        expect(container.querySelector(".mj_TrackerCard_subtitle")?.textContent).toBe("Progress · #5");
+
+        await act(async () => {
+            container.querySelector<HTMLButtonElement>(".mj_TrackerCard")!.click();
+        });
+        expect(client.openTrackerMission).toHaveBeenCalledWith(5);
+    });
+});
+
+describe("MissionNotice", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("renders the started one-liner with the title", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <MissionNotice
+                client={client as unknown as MatronJournalClient}
+                event={event("mission", { num: 5, action: "created", title: "Ship the tracker" })}
+            />,
+        );
+        expect(container.querySelector(".mj_TrackerMissionNotice")?.textContent).toContain(
+            "Mission #5 started · Ship the tracker",
+        );
+    });
+
+    it("renders the closed-over-open-items one-liner", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <MissionNotice
+                client={client as unknown as MatronJournalClient}
+                event={event("mission", { num: 5, action: "closed", open_item_nums: [7, 8] })}
+            />,
+        );
+        expect(container.querySelector(".mj_TrackerMissionNotice")?.textContent).toContain(
+            "Mission #5 closed over #7, #8",
+        );
+    });
+
+    it("renders a bare closed one-liner when nothing was left open", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <MissionNotice
+                client={client as unknown as MatronJournalClient}
+                event={event("mission", { num: 5, action: "closed" })}
+            />,
+        );
+        expect(container.querySelector(".mj_TrackerMissionNotice")?.textContent).toContain("Mission #5 closed");
     });
 });

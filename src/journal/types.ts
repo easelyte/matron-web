@@ -300,38 +300,44 @@ export interface ClientState {
     dragActive: boolean;
     stagedUploads?: StagedUploads;
     sendTick: number;
-    // Tracker pane (Decisions / Items inbox). `trackerView` is the main-region discriminant
-    // (checked ahead of selectedConversationId — one surface at a time). The rest are
+    // Tracker pane (Missions / Milestones / Decisions-Inbox). `trackerView` is the main-region
+    // discriminant (checked ahead of selectedConversationId — one surface at a time). The rest are
     // store-resident so sidebar badges stay live off WS invalidation:
-    //   inboxItems  = the inbox list view;
-    //   trackerItem = the open item detail (item + its comment thread), null = none.
+    //   missions/inboxItems  = the two list views;
+    //   trackerItem          = the open item detail (item + its comment thread), null = none;
+    //   trackerMission       = the open mission detail, null = none.
     // Undefined = never loaded this session.
     trackerView?: TrackerViewState;
+    missions?: Mission[];
     inboxItems?: TrackerItem[];
     trackerItem?: { item: TrackerItem; comments: TrackerComment[] } | null;
+    trackerMission?: MissionDetail | null;
     /** True while ANY tracker fetch is in flight (v1: one detail/list open at a time). */
     trackerLoading?: boolean;
     /** Last tracker fetch/mutation error; cleared on the next successful load. */
     trackerError?: string;
 }
 
-// ── Tracker (Decisions / Items inbox) ──────────────────────────────────────────
-// Wire shapes bind EXACTLY to the journal items API (src/items.js @dd9c04a):
-// `id`/`mission_id`/`supersedes`/`origin_convo_id` are opaque TEXT ids
+// ── Tracker (Missions / Milestones / Decisions-Inbox) ──────────────────────────
+// Wire shapes bind EXACTLY to the journal tracker API (src/items.js, src/missions.js
+// @dd9c04a): `id`/`mission_id`/`supersedes`/`origin_convo_id` are opaque TEXT ids
 // (strings); `num` is the human #number (integer); every timestamp is epoch-ms INTEGER
 // (number). Titles can be absent across a privacy boundary — bind defensively at render.
 
-/** Which tracker surface the pane shows; `selectedItemId` is a #num value (integer). */
+/** Which tracker surface the pane shows; `selected*Id` are #num values (integers). */
 export interface TrackerViewState {
     open: boolean;
-    view?: "inbox";
+    view?: "missions" | "inbox";
     selectedItemId?: number;
+    selectedMissionId?: number;
 }
 
 export type TrackerItemKind = "task" | "question" | "decision";
 export type TrackerItemState = "open" | "closed";
 export type TrackerResolution = "done" | "answered" | "decided" | "reversed" | "cancelled";
 export type TrackerAwaiting = "user" | "agent";
+export type TrackerMilestoneKind = "user_input" | "progress";
+export type TrackerMissionState = "open" | "closed";
 export type TrackerActor = "user" | "agent";
 export type TrackerCommentKind = "comment" | "status";
 
@@ -392,6 +398,78 @@ export interface TrackerComment {
     attachments: TrackerAttachment[];
     meta?: { from?: StatusSnapshot; to?: StatusSnapshot } | null;
     created_at: number;
+}
+
+/** The `{num,title,kind,created_at}` digest a mission list-row carries for its newest milestone. */
+export interface MissionLastMilestone {
+    num: number;
+    title: string;
+    kind: TrackerMilestoneKind;
+    created_at: number;
+}
+
+export interface Mission {
+    id: string;
+    num: number;
+    state: TrackerMissionState;
+    title: string;
+    body: string;
+    close_summary: string | null;
+    closed_by: TrackerActor | null;
+    closed_over_open_items: number;
+    origin_convo_id: string;
+    origin_device_id?: number;
+    created_by: TrackerActor;
+    created_at: number;
+    updated_at: number;
+    last_milestone_at: number | null;
+    closed_at: number | null;
+    // List-row counts (present on every list/detail mission row).
+    open_items: number;
+    needs_you: number;
+    conversations: number;
+    milestones: number;
+    last_milestone: MissionLastMilestone | null;
+}
+
+export interface Milestone {
+    id: string;
+    mission_id: string;
+    num: number;
+    kind: TrackerMilestoneKind;
+    title: string;
+    body: string;
+    convo_id: string;
+    seq: number;
+    device_id: number;
+    created_by: TrackerActor;
+    created_at: number;
+}
+
+/** The reduced open-item shape a mission detail lists (awaiting-user first). */
+export interface MissionItemRef {
+    id: string;
+    num: number;
+    kind: TrackerItemKind;
+    state: TrackerItemState;
+    awaiting: TrackerAwaiting | null;
+    title: string;
+    origin_convo_id: string;
+    updated_at: number;
+}
+
+export interface MissionConversation {
+    id: string;
+    title: string;
+    state: string;
+    box: string | null;
+}
+
+export interface MissionDetail {
+    mission: Mission;
+    milestones: Milestone[];
+    items: MissionItemRef[];
+    conversations: MissionConversation[];
 }
 
 export function coerceParentId(x: unknown): string | null {
@@ -727,6 +805,22 @@ export function eventSnippet(type: string, payload: EventPayload): string {
         const needsUser = asString(payload.awaiting) === "user";
         const head = num ? `${kind} #${num}` : kind;
         const label = needsUser ? `📌 Needs you — ${head}` : `📌 ${head}`;
+        return (title ? `${label}: ${title}` : label).slice(0, 120);
+    }
+    if (type === "milestone") {
+        // Milestone marker (payload: {num,kind,title,...}). user_input milestones are the urgent
+        // "needs you" kind; still preview title-first, falling back to `#num`.
+        const num = asNumber(payload.num);
+        const title = asString(payload.title).trim();
+        const label = num ? `🏁 Milestone #${num}` : "🏁 Milestone";
+        return (title ? `${label}: ${title}` : label).slice(0, 120);
+    }
+    if (type === "mission") {
+        // Mission marker (payload: {num,title,action}). Mirrors MissionNotice's timeline copy at a
+        // sidebar-preview length; title falls back to `#num`.
+        const num = asNumber(payload.num);
+        const title = asString(payload.title).trim();
+        const label = num ? `🏁 Mission #${num}` : "🏁 Mission";
         return (title ? `${label}: ${title}` : label).slice(0, 120);
     }
     if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);

@@ -16,6 +16,7 @@ Please see LICENSE files in the repository root for full details.
 import React from "react";
 
 import type { MatronJournalClient } from "../client";
+import { ChevronRightIcon } from "../icons";
 import { MarkdownBody } from "../markdown";
 import {
     asNumber,
@@ -24,10 +25,11 @@ import {
     type EventPayload,
     type JournalEvent,
     type TrackerItemKind,
+    type TrackerMilestoneKind,
     type TrackerResolution,
 } from "../types";
-import { itemStatusText, kindLabel } from "./format";
-import { TrackerGlyph } from "./glyphs";
+import { itemStatusText, kindLabel, milestoneKindLabel, oneLine } from "./format";
+import { MilestoneGlyph, TrackerGlyph } from "./glyphs";
 
 const ITEM_KINDS: readonly TrackerItemKind[] = ["task", "question", "decision"];
 const RESOLUTIONS: readonly TrackerResolution[] = ["done", "answered", "decided", "reversed", "cancelled"];
@@ -190,4 +192,84 @@ export function renderItemMarker(event: JournalEvent, client: MatronJournalClien
         default:
             return null;
     }
+}
+
+/** `milestone` marker — a card that jumps to its parent mission. */
+export function MilestoneCard({
+    client,
+    event,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+}): React.ReactElement {
+    const payload = event.payload;
+    const num = asNumber(payload.num);
+    const missionNum = asNumber(payload.mission_num);
+    const kind: TrackerMilestoneKind = asString(payload.kind) === "user_input" ? "user_input" : "progress";
+    const title = asString(payload.title).trim() || `#${num}`;
+    const body = oneLine(asString(payload.body));
+    const missionLabelText = asString(payload.mission_title).trim() || `#${missionNum}`;
+    const userInput = kind === "user_input";
+
+    return (
+        <button
+            type="button"
+            className={`mj_PromptCard mj_TrackerCard${userInput ? " mj_TrackerCard_needsyou" : ""}`}
+            onClick={() => client.openTrackerMission(missionNum)}
+        >
+            <div className="mj_TrackerCard_row">
+                <span className="mj_TrackerCard_glyph" aria-hidden="true">
+                    <MilestoneGlyph kind={kind} />
+                </span>
+                <span className="mj_TrackerCard_num">#{num}</span>
+                <span className="mj_TrackerCard_title">{title}</span>
+                <ChevronRightIcon className="mj_TrackerCard_chevron" aria-hidden="true" />
+            </div>
+            {body ? <p className="mj_TrackerCard_milestoneBody">{body}</p> : null}
+            <p className="mj_TrackerCard_subtitle">
+                {milestoneKindLabel(kind)} · {missionLabelText}
+            </p>
+        </button>
+    );
+}
+
+/** `mission` marker — a one-line notice. */
+export function MissionNotice({
+    client,
+    event,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+}): React.ReactElement {
+    const payload = event.payload;
+    const num = asNumber(payload.num);
+    const title = asString(payload.title).trim();
+    const action = asString(payload.action);
+
+    let text: string;
+    if (action === "created") {
+        text = `Mission #${num} started${title ? ` · ${title}` : ""}`;
+    } else if (action === "joined") {
+        text = `Joined mission #${num}`;
+    } else if (action === "updated") {
+        text = `Mission #${num} renamed`;
+    } else if (action === "closed") {
+        const nums = Array.isArray(payload.open_item_nums)
+            ? payload.open_item_nums.filter((value): value is number => typeof value === "number")
+            : [];
+        text = nums.length
+            ? `Mission #${num} closed over ${nums.map((value) => `#${value}`).join(", ")}`
+            : `Mission #${num} closed`;
+    } else {
+        text = `Mission #${num}`;
+    }
+
+    return (
+        <button type="button" className="mj_TrackerMissionNotice" onClick={() => client.openTrackerMission(num)}>
+            <span className="mj_TrackerMissionNotice_flag" aria-hidden="true">
+                🏁
+            </span>
+            {text}
+        </button>
+    );
 }

@@ -12,6 +12,8 @@ import {
     type LoginResponse,
     type MatronConfig,
     type MessagesResponse,
+    type Mission,
+    type MissionDetail,
     type SnapshotResponse,
     type TrackerAttachment,
     type TrackerAwaiting,
@@ -49,6 +51,9 @@ interface UploadMediaResponse {
     size: number;
     content_type: string;
 }
+
+/** `GET /missions?state=` filter. */
+type TrackerMissionListState = "open" | "closed";
 
 /** `GET /items` query params (all optional; server clamps `limit` to ≤500). */
 interface ItemsFilter {
@@ -267,7 +272,18 @@ export class JournalApi {
         });
     }
 
-    // ── Tracker: Decisions / Items inbox (all at journal root, Bearer-auth, user-global) ──
+    // ── Tracker: missions / milestones / items (all at journal root, Bearer-auth, user-global) ──
+
+    /** GET /missions?state= — the mission list rows (counts + last-milestone digest baked in). */
+    public missions(state?: TrackerMissionListState): Promise<{ missions: Mission[] }> {
+        const query = state ? `?state=${encodeURIComponent(state)}` : "";
+        return this.json<{ missions: Mission[] }>(`/missions${query}`);
+    }
+
+    /** GET /missions/:id — full detail (mission + milestones newest-first + open items + convos). */
+    public mission(id: string | number): Promise<MissionDetail> {
+        return this.json<MissionDetail>(`/missions/${encodeTrackerId(id)}`);
+    }
 
     /** GET /items — the filtered/sorted item list (`next_cursor` paginates; server clamps limit ≤500). */
     public items(filter: ItemsFilter = {}): Promise<{ items: TrackerItem[]; next_cursor: string | null }> {
@@ -327,6 +343,32 @@ export class JournalApi {
         idemKey?: string,
     ): Promise<{ item: TrackerItem; comment: TrackerComment }> {
         return this.json<{ item: TrackerItem; comment: TrackerComment }>(`/items/${encodeTrackerId(id)}/reopen`, {
+            method: "POST",
+            body,
+            ...idempotencyHeader(idemKey),
+        });
+    }
+
+    /** PATCH /missions/:id — edit the mission title/body. */
+    public patchMission(
+        id: string | number,
+        body: { title?: string; body?: string },
+        idemKey?: string,
+    ): Promise<{ mission: Mission }> {
+        return this.json<{ mission: Mission }>(`/missions/${encodeTrackerId(id)}`, {
+            method: "PATCH",
+            body,
+            ...idempotencyHeader(idemKey),
+        });
+    }
+
+    /** POST /missions/:id/close — close the mission with a summary (client CAN force over open items). */
+    public closeMission(
+        id: string | number,
+        body: { summary: string },
+        idemKey?: string,
+    ): Promise<{ mission: Mission }> {
+        return this.json<{ mission: Mission }>(`/missions/${encodeTrackerId(id)}/close`, {
             method: "POST",
             body,
             ...idempotencyHeader(idemKey),
