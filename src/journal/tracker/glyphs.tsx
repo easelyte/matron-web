@@ -9,7 +9,7 @@ Please see LICENSE files in the repository root for full details.
  * Single source-of-truth glyph map for the tracker. Every tracker surface (rows, cards, detail
  * headers) draws its kind glyph from here so the visual vocabulary is defined once. Colour is
  * carried by a class, not a fill — the semantic tokens (orange "needs you", teal accent, purple
- * decision, secondary) live in journal.pcss so both themes stay in lock-step.
+ * decision, secondary) live in tracker.pcss so both themes stay in lock-step.
  *
  * Orange is the ONE urgent colour and appears ONLY where it means "needs you": the question glyph,
  * the user_input milestone glyph, and the NeedsYou badge.
