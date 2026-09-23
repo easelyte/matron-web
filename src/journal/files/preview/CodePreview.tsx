@@ -36,7 +36,7 @@ export function CodePreview({ api, path, filename, meta }: RendererProps): React
                 {text.error}
             </PreviewStatus>
         );
-    if (tooLarge) return <TooLargePreview api={api} path={path} filename={filename} />;
+    if (tooLarge) return <TooLargePreview />;
 
     async function handleCopy(): Promise<void> {
         const ok = await copyText(source);

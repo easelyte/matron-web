@@ -19,8 +19,7 @@ export function ImagePreview({ api, path, filename, meta }: RendererProps): Reac
         `img:${path}:${meta.mtime}`,
     );
     if (src.status === "loading") return <PreviewStatus variant="loading">Loading image…</PreviewStatus>;
-    if (src.status === "error")
-        return <MediaError api={api} path={path} filename={filename} error={src.error} onRetry={src.reload} />;
+    if (src.status === "error") return <MediaError error={src.error} onRetry={src.reload} />;
     return (
         <div className="mj_FilesImage">
             <img src={src.data} alt={filename} />

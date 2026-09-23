@@ -49,25 +49,13 @@ export function metaLine(meta: FileMeta): string {
     return parts.join(" · ");
 }
 
-// Error state for media renderers (image/pdf/media): the uniform message + a download fallback
-// (a 413 too-large media 413s inline → download works) + Retry.
-export function MediaError({
-    api,
-    path,
-    filename,
-    error,
-    onRetry,
-}: {
-    api: FilesApiLike | undefined;
-    path: string;
-    filename: string;
-    error: React.ReactNode;
-    onRetry: () => void;
-}): React.ReactElement {
+// Error state for media renderers (image/pdf/media): the uniform message + Retry. The download
+// fallback (a 413 too-large media 413s inline → download still works) is the single DownloadControl
+// FilePreview renders above every renderer, so it is not repeated here.
+export function MediaError({ error, onRetry }: { error: React.ReactNode; onRetry: () => void }): React.ReactElement {
     return (
         <div className="mj_FilesGeneric" role="alert">
             <p className="mj_FilesGeneric_note">{error}</p>
-            <DownloadControl api={api} path={path} filename={filename} />
             <button className="mj_FilesRetry" type="button" onClick={onRetry}>
                 Retry
             </button>

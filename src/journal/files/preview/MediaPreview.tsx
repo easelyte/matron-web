@@ -22,8 +22,7 @@ export function MediaPreview({ api, path, filename, meta }: RendererProps): Reac
         `media:${path}:${meta.mtime}`,
     );
     if (src.status === "loading") return <PreviewStatus variant="loading">Loading…</PreviewStatus>;
-    if (src.status === "error")
-        return <MediaError api={api} path={path} filename={filename} error={src.error} onRetry={src.reload} />;
+    if (src.status === "error") return <MediaError error={src.error} onRetry={src.reload} />;
     return (
         <div className="mj_FilesMedia">
             {kind === "audio" ? (

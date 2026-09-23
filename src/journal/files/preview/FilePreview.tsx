@@ -15,7 +15,7 @@ import { ImagePreview } from "./ImagePreview";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { MediaPreview } from "./MediaPreview";
 import { PdfPreview } from "./PdfPreview";
-import { PreviewStatus } from "./PreviewChrome";
+import { DownloadControl, PreviewStatus } from "./PreviewChrome";
 import type { RendererProps } from "./types";
 import { useAsyncResource } from "./useAsyncResource";
 
@@ -43,19 +43,38 @@ export function FilePreview({
     const resolved = meta.data!;
     const props: RendererProps = { api, path, filename, meta: resolved };
     const kind = pickPreviewKind({ mime: resolved.mime, isText: resolved.isText, filename });
-    switch (kind) {
-        case "markdown":
-            return <MarkdownPreview {...props} />;
-        case "code":
-            return <CodePreview {...props} />;
-        case "image":
-            return <ImagePreview {...props} />;
-        case "pdf":
-            return <PdfPreview {...props} />;
-        case "audio":
-        case "video":
-            return <MediaPreview {...props} />;
-        default:
-            return <GenericPreview {...props} />;
-    }
+    const renderer = ((): React.ReactElement => {
+        switch (kind) {
+            case "markdown":
+                return <MarkdownPreview {...props} />;
+            case "code":
+                return <CodePreview {...props} />;
+            case "image":
+                return <ImagePreview {...props} />;
+            case "pdf":
+                return <PdfPreview {...props} />;
+            case "audio":
+            case "video":
+                return <MediaPreview {...props} />;
+            default:
+                return <GenericPreview {...props} />;
+        }
+    })();
+
+    // ONE download affordance for EVERY resolved file, rendered here at the single dispatch point
+    // rather than per-renderer. Download is a READ capability, so it is offered for any file type
+    // (text, image, pdf, media, and unpreviewable) and is NOT gated on `writable`. It reuses the
+    // canonical DownloadControl → useDownload primitive (visible uniform errors, in-flight disable),
+    // so there is exactly one request-owning control per file — no duplicate button, no competing
+    // busy state. The previously per-renderer controls (GenericPreview / TooLargePreview /
+    // MediaError) are gone; their download fallback is this single control, which sits above every
+    // renderer INCLUDING the too-large and load-error sub-states.
+    return (
+        <>
+            <div className="mj_FilesPreview_downloadRow">
+                <DownloadControl api={api} path={path} filename={filename} />
+            </div>
+            {renderer}
+        </>
+    );
 }
