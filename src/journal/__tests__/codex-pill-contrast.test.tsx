@@ -143,7 +143,7 @@ describe("Codex and Claude pill non-text contrast", () => {
     beforeAll(() => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
         style = document.createElement("style");
-        style.textContent = ["shell.pcss", "journal.pcss"]
+        style.textContent = ["shell.pcss", "journal.pcss", "tracker.pcss"]
             .map((file) => readFileSync(resolve(__dirname, "..", file), "utf8"))
             .join("\n");
         document.head.append(style);
