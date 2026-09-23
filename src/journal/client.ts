@@ -2295,13 +2295,30 @@ export class MatronJournalClient {
         this.emit();
         if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
 
+        // #779: bind every callback to the generation that created this connection. A stopped
+        // connection keeps draining its processing queue, so a frame (or snapshot_required) queued
+        // before logout can run after the NEXT session started — and every handler below reads the
+        // client's CURRENT database/api, so an unbound callback would act on the new session (a
+        // stale resync would replace the new journal; a stale revoke would log the new account out).
+        const connectionGen = this.sessionGen;
+        const current = (): boolean => this.sessionGen === connectionGen;
         this.connection = new JournalConnection(session.serverUrl, session.token, {
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
-            onFrame: async (frame) => this.handleFrame(frame),
-            onReady: async () => this.handleReady(),
-            onSnapshotRequired: async () => this.replaceSnapshot(),
-            onRevoked: () => void this.logout("This device was revoked. Sign in again to continue."),
-            onState: (connection, error) => this.patch({ connection, connectionError: error }),
+            onFrame: async (frame) => {
+                if (current()) await this.handleFrame(frame);
+            },
+            onReady: async () => {
+                if (current()) await this.handleReady();
+            },
+            onSnapshotRequired: async () => {
+                if (current()) await this.replaceSnapshot();
+            },
+            onRevoked: () => {
+                if (current()) void this.logout("This device was revoked. Sign in again to continue.");
+            },
+            onState: (connection, error) => {
+                if (current()) this.patch({ connection, connectionError: error });
+            },
         });
         this.connection.start();
     }
@@ -2444,7 +2461,15 @@ export class MatronJournalClient {
     }
 
     private async replaceSnapshot(): Promise<void> {
-        if (!this.api || !this.database) return;
+        // #779: capture the session this replace belongs to and use ONLY the captured refs. A
+        // logout + login (another account, or the same one in a new generation) can land during
+        // any await below; without the guard the old snapshot would be written into the NEW
+        // session's database and published into its state. Mirrors handleReady's ownsReplay.
+        const gen = this.sessionGen;
+        const db = this.database;
+        const api = this.api;
+        if (!api || !db) return;
+        const owns = (): boolean => this.sessionGen === gen && this.database === db;
         const previousSelection = this.state.selectedConversationId;
         this.resetTransientSyncState();
         this.patch({
@@ -2462,10 +2487,18 @@ export class MatronJournalClient {
             textStreams: {},
             toolStreams: {},
         });
-        const snapshot = await this.api.snapshot();
-        await this.database.replaceWithSnapshot(snapshot);
-        await this.reconcilePersistedOwnMessages(this.database);
-        const conversations = await this.database.conversations();
+        const snapshot = await api.snapshot();
+        if (!owns()) return;
+        await db.replaceWithSnapshot(snapshot);
+        if (!owns()) return;
+        const removed = await db.reconcilePersistedOwnMessages();
+        if (!owns()) return;
+        for (const localId of removed) {
+            this.pendingFiles.delete(localId);
+            this.transientAttachmentErrors.delete(localId);
+        }
+        const conversations = await db.conversations();
+        if (!owns()) return;
         let { archivedIds, pinnedIds, favoriteIds, unreadOverrideIds } = this.state;
         const session = this.state.session;
         if (session) {
