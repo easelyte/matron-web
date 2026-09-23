@@ -2295,13 +2295,30 @@ export class MatronJournalClient {
         this.emit();
         if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
 
+        // #779: bind every callback to the generation that created this connection. A stopped
+        // connection keeps draining its processing queue, so a frame (or snapshot_required) queued
+        // before logout can run after the NEXT session started — and every handler below reads the
+        // client's CURRENT database/api, so an unbound callback would act on the new session (a
+        // stale resync would replace the new journal; a stale revoke would log the new account out).
+        const connectionGen = this.sessionGen;
+        const current = (): boolean => this.sessionGen === connectionGen;
         this.connection = new JournalConnection(session.serverUrl, session.token, {
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
-            onFrame: async (frame) => this.handleFrame(frame),
-            onReady: async () => this.handleReady(),
-            onSnapshotRequired: async () => this.replaceSnapshot(),
-            onRevoked: () => void this.logout("This device was revoked. Sign in again to continue."),
-            onState: (connection, error) => this.patch({ connection, connectionError: error }),
+            onFrame: async (frame) => {
+                if (current()) await this.handleFrame(frame);
+            },
+            onReady: async () => {
+                if (current()) await this.handleReady();
+            },
+            onSnapshotRequired: async () => {
+                if (current()) await this.replaceSnapshot();
+            },
+            onRevoked: () => {
+                if (current()) void this.logout("This device was revoked. Sign in again to continue.");
+            },
+            onState: (connection, error) => {
+                if (current()) this.patch({ connection, connectionError: error });
+            },
         });
         this.connection.start();
     }

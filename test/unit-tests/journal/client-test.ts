@@ -1372,6 +1372,49 @@ describe("MatronJournalClient state handling", () => {
             expect(client.getSnapshot().conversations).toEqual([]);
         });
 
+        it("ignores callbacks a stopped connection delivers after the next session started", async () => {
+            // A stopped connection keeps draining its queue: a snapshot_required, journal frame or
+            // revoke queued on A must not act on B through the client's current database/api.
+            const client = new MatronJournalClient();
+            const state = internals(client);
+            const databaseA = fakeDatabase();
+            const databaseB = fakeDatabase();
+            jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+            jest.spyOn(JournalDatabase, "open")
+                .mockResolvedValueOnce(databaseA as unknown as JournalDatabase)
+                .mockResolvedValueOnce(databaseB as unknown as JournalDatabase);
+            await state.startSession(SESSION);
+            const oldCallbacks = (
+                state.connection as unknown as { callbacks: Record<string, (...a: unknown[]) => unknown> }
+            ).callbacks;
+            await state.startSession({ ...SESSION, token: "token-b", userId: 3, username: "pat" });
+            const snapshot = jest.spyOn(JournalApi.prototype, "snapshot");
+            (databaseB.replaceWithSnapshot as jest.Mock).mockClear();
+            (databaseB.applyJournal as jest.Mock).mockClear();
+            const stateBefore = client.getSnapshot();
+
+            await oldCallbacks.onSnapshotRequired();
+            await oldCallbacks.onFrame({
+                kind: "journal",
+                seq: 99,
+                convo_id: "c1",
+                ts: 1,
+                sender: "user:dan",
+                type: "text",
+                payload: { body: "stale" },
+            });
+            oldCallbacks.onState("offline", "stale error");
+            oldCallbacks.onRevoked();
+            await Promise.resolve();
+
+            expect(snapshot).not.toHaveBeenCalled();
+            expect(databaseB.replaceWithSnapshot).not.toHaveBeenCalled();
+            expect(databaseB.applyJournal).not.toHaveBeenCalled();
+            expect(client.getSnapshot().session).toMatchObject({ username: "pat" });
+            expect(client.getSnapshot().connection).toBe(stateBefore.connection);
+            expect(client.getSnapshot().connectionError).toBe(stateBefore.connectionError);
+        });
+
         it("stops after the database write when the session changes mid-replace (same account)", async () => {
             const client = new MatronJournalClient();
             const state = internals(client);
