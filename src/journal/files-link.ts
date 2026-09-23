@@ -62,5 +62,8 @@ function isPlainPrimaryClick(event: ReactMouseEvent): boolean {
 export function handleFilesLinkClick(event: ReactMouseEvent<HTMLAnchorElement>, hash: string): void {
     if (!isPlainPrimaryClick(event)) return;
     event.preventDefault();
+    // The link may sit inside a clickable surface (a tracker card is a <button> that opens the
+    // item, which would close the Files pane again) — the click is fully handled here.
+    event.stopPropagation();
     openFilesDeepLink(hash);
 }

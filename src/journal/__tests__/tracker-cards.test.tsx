@@ -290,3 +290,52 @@ describe("MissionNotice", () => {
         expect(container.querySelector(".mj_TrackerMissionNotice")?.textContent).toContain("Mission #5 closed");
     });
 });
+
+describe("Files deep links inside clickable tracker cards", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    const FILE_HASH = `#files=${encodeURIComponent("/root/a/plan.md")}`;
+    const body = `see [plan](${window.location.origin}/${FILE_HASH})`;
+
+    it.each([
+        [
+            "closed ItemCard",
+            (client: FakeClient) => (
+                <ItemCard
+                    client={client as unknown as MatronJournalClient}
+                    event={event("item", { num: 4, kind: "task", title: "t", action: "closed", comment: { body } })}
+                />
+            ),
+        ],
+        [
+            "commented ItemInlineNote",
+            (client: FakeClient) => (
+                <ItemInlineNote
+                    client={client as unknown as MatronJournalClient}
+                    event={event("item", { num: 4, kind: "task", title: "t", action: "commented", comment: { body } })}
+                />
+            ),
+        ],
+    ])("a plain click in a %s opens Files and does not also open the item", async (_label, render) => {
+        const client = fakeClient();
+        const { container, root } = await mount(render(client));
+        const hashes: string[] = [];
+        const onHashChange = (): void => void hashes.push(window.location.hash);
+        window.addEventListener("hashchange", onHashChange);
+
+        await act(async () => {
+            container
+                .querySelector("a")!
+                .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+        });
+        window.removeEventListener("hashchange", onHashChange);
+        window.history.replaceState(null, "", "/");
+        await act(async () => root.unmount());
+        container.remove();
+
+        expect(hashes).toEqual([FILE_HASH]);
+        expect(client.openTrackerItem).not.toHaveBeenCalled();
+    });
+});
