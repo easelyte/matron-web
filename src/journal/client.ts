@@ -2106,6 +2106,13 @@ export class MatronJournalClient {
 
     private async startSession(session: Session): Promise<void> {
         this.sessionGen += 1;
+        // #766: a genuinely new session (initialise / login) establishes a fresh cursor and
+        // connection, so this is the ONLY place the malformed-seq reconnect-loop budget and halt
+        // are cleared. They deliberately survive resyncs (replaceSnapshot / resetTransientSyncState)
+        // — clearing them there would wipe the budget on every resnapshot, so a server emitting one
+        // malformed frame per reconnect would never reach the halt threshold (unbounded loop).
+        this.malformedSeqResyncs = [];
+        this.journalHalted = false;
         this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
         const writeProbeKey = `${archiveStore.storageKey(session)}:__wprobe__`;
         let storeWritable = false;
@@ -3053,10 +3060,10 @@ export class MatronJournalClient {
         this.readHighWater.clear();
         this.ackTimer = undefined;
         this.pendingAck = 0;
-        // #766: a new session / snapshot transition re-establishes a clean cursor, so clear the
-        // malformed-seq reconnect-loop guard and lift the halt.
-        this.malformedSeqResyncs = [];
-        this.journalHalted = false;
+        // #766: deliberately do NOT clear malformedSeqResyncs / journalHalted here. This runs on
+        // every resync (replaceSnapshot), and the reconnect-loop budget must survive resyncs (it is
+        // reset only by startSession, on a genuinely new session). The sliding window expires stale
+        // budget entries on its own.
         this.historyError = undefined;
         this.history.clear();
         this.activities.clear();

@@ -208,22 +208,55 @@ describe("#766 malformed-seq resync", () => {
         expect(conn.forceResync).toHaveBeenCalledTimes(3);
     });
 
-    it("lifts the halt on a fresh session (resetTransientSyncState) so processing can resume", async () => {
-        const { client, internal, database, conn } = await makeClient(5);
+    it("preserves the budget across a REAL resync so the guard still trips (F1 composition)", async () => {
+        // The crux of terminal-round F1: forceResync -> onSnapshotRequired -> replaceSnapshot ->
+        // resetTransientSyncState. If the budget were cleared there, a server emitting one malformed
+        // frame per reconnect would reset the budget on every resync and NEVER halt (unbounded
+        // loop). Here forceResync runs the REAL client resync callback, so resetTransientSyncState
+        // actually executes between malformed frames; the guard must still trip.
+        let snapSeq = 5;
+        const api = {
+            snapshot: jest.fn(async () => ({ seq: ++snapSeq, conversations: [] })),
+        };
+        const { client, internal, conn } = await makeClient(5);
+        (client as unknown as { api: typeof api }).api = api;
+        const resyncs: Promise<void>[] = [];
+        conn.forceResync.mockImplementation(async () => {
+            const resync = (client as unknown as { replaceSnapshot(): Promise<void> }).replaceSnapshot();
+            resyncs.push(resync);
+            await resync;
+        });
+
+        // Four malformed frames, each triggering a real resync that runs resetTransientSyncState.
+        // Let the async resync fully complete between frames to maximally exercise the reset race.
+        for (let i = 0; i < 4; i++) {
+            await internal.handleJournal(journalEvent(Number.NaN));
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        // Drain any in-flight resync so it cannot log after the test completes.
+        await Promise.allSettled(resyncs);
+
+        // Budget survived the resyncs, so the guard tripped and halted.
+        expect(api.snapshot).toHaveBeenCalledTimes(3);
+        expect(conn.stop).toHaveBeenCalledTimes(1);
+        expect(internal.state.connectionError).toBe(MALFORMED_SEQ_HALTED_ERROR);
+    });
+
+    it("does NOT reset the budget or lift the halt on a resync (resetTransientSyncState)", async () => {
+        const { client, internal } = await makeClient(5);
 
         for (let i = 0; i < 4; i++) await internal.handleJournal(journalEvent(Number.NaN));
         expect((internal as unknown as { journalHalted: boolean }).journalHalted).toBe(true);
+        expect((internal as unknown as { malformedSeqResyncs: number[] }).malformedSeqResyncs.length).toBeGreaterThan(
+            0,
+        );
 
-        // A new session / snapshot transition re-establishes a clean cursor and lifts the halt.
+        // A resync's resetTransientSyncState must NOT clear the reconnect-loop guard — only a genuine
+        // new session (startSession) does. The halt survives.
         (client as unknown as { resetTransientSyncState(): void }).resetTransientSyncState();
-        expect((internal as unknown as { journalHalted: boolean }).journalHalted).toBe(false);
-
-        // Processing resumes: a well-formed frame applies and advances the cursor again.
-        await internal.handleJournal(journalEvent(6));
-        expect(await database.cursor()).toBe(6);
-
-        // And the malformed-seq budget is restored — a malformed frame resyncs once more.
-        await internal.handleJournal(journalEvent(Number.NaN));
-        expect(conn.forceResync).toHaveBeenCalledTimes(4);
+        expect((internal as unknown as { journalHalted: boolean }).journalHalted).toBe(true);
+        expect((internal as unknown as { malformedSeqResyncs: number[] }).malformedSeqResyncs.length).toBeGreaterThan(
+            0,
+        );
     });
 });
