@@ -2444,7 +2444,15 @@ export class MatronJournalClient {
     }
 
     private async replaceSnapshot(): Promise<void> {
-        if (!this.api || !this.database) return;
+        // #779: capture the session this replace belongs to and use ONLY the captured refs. A
+        // logout + login (another account, or the same one in a new generation) can land during
+        // any await below; without the guard the old snapshot would be written into the NEW
+        // session's database and published into its state. Mirrors handleReady's ownsReplay.
+        const gen = this.sessionGen;
+        const db = this.database;
+        const api = this.api;
+        if (!api || !db) return;
+        const owns = (): boolean => this.sessionGen === gen && this.database === db;
         const previousSelection = this.state.selectedConversationId;
         this.resetTransientSyncState();
         this.patch({
@@ -2462,10 +2470,18 @@ export class MatronJournalClient {
             textStreams: {},
             toolStreams: {},
         });
-        const snapshot = await this.api.snapshot();
-        await this.database.replaceWithSnapshot(snapshot);
-        await this.reconcilePersistedOwnMessages(this.database);
-        const conversations = await this.database.conversations();
+        const snapshot = await api.snapshot();
+        if (!owns()) return;
+        await db.replaceWithSnapshot(snapshot);
+        if (!owns()) return;
+        const removed = await db.reconcilePersistedOwnMessages();
+        if (!owns()) return;
+        for (const localId of removed) {
+            this.pendingFiles.delete(localId);
+            this.transientAttachmentErrors.delete(localId);
+        }
+        const conversations = await db.conversations();
+        if (!owns()) return;
         let { archivedIds, pinnedIds, favoriteIds, unreadOverrideIds } = this.state;
         const session = this.state.session;
         if (session) {
