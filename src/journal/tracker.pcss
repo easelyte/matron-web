@@ -1,0 +1,1077 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+/* Tracker pane styles, split out of journal.pcss so the tracker surface owns its own stylesheet.
+   Imported immediately after journal.pcss (src/journal/index.tsx, fixtures/index.tsx), so the
+   cascade order is exactly what it was when this block sat at the end of journal.pcss. */
+
+/* ===== Tracker (missions + item inbox) ===== */
+/* A main-region pane in the established visual language (mirrors the Files pane). Composes the
+   --cpd tokens; adds ONE urgent semantic — orange "needs you" — and a purple decision accent, both
+   authored in both themes as scoped --mj-* tokens. Orange appears ONLY where it means "needs you". */
+:root {
+    --mj-needsyou: #d97706;
+    --mj-needsyou-bg: rgb(217 119 6 / 0.14);
+    --mj-decision: #8b5cf6;
+}
+
+[data-theme="dark"] {
+    --mj-needsyou: #f59e0b;
+    --mj-needsyou-bg: rgb(245 158 11 / 0.18);
+    --mj-decision: #a78bfa;
+}
+
+/* — Glyph colours (single source of truth) — */
+.mj_TrackerGlyph {
+    flex: none;
+}
+.mj_TrackerGlyph_question {
+    color: var(--mj-needsyou);
+}
+.mj_TrackerGlyph_task {
+    color: var(--cpd-color-text-action-accent);
+}
+.mj_TrackerGlyph_decision {
+    color: var(--mj-decision);
+}
+.mj_TrackerGlyph_mission_open {
+    color: var(--cpd-color-text-action-accent);
+}
+.mj_TrackerGlyph_mission_closed {
+    color: var(--cpd-color-text-secondary);
+}
+.mj_TrackerGlyph_milestone_user_input {
+    color: var(--mj-needsyou);
+}
+.mj_TrackerGlyph_milestone_progress {
+    color: var(--cpd-color-text-secondary);
+}
+.mj_TrackerGlyph_bubble,
+.mj_TrackerGlyph_jump,
+.mj_TrackerGlyph_photo {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_TrackerNeedsYouBadge {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    flex: none;
+    height: 20px;
+    padding: 0 var(--cpd-space-2x);
+    border-radius: var(--cpd-radius-pill);
+    background: var(--mj-needsyou);
+    color: #fff;
+    font: var(--cpd-font-body-xs-semibold, 600 12px/16px Inter, sans-serif);
+    font-variant-numeric: tabular-nums;
+}
+.mj_TrackerNeedsYouBadge_count {
+    line-height: 1;
+}
+
+/* — Pane shell — */
+.mj_TrackerPane {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    width: 100%;
+    background: var(--cpd-color-bg-room-canvas, var(--cpd-color-bg-canvas-default));
+}
+
+.mj_TrackerPane_top {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    box-sizing: border-box;
+    height: 56px;
+    padding: 0 var(--cpd-space-4x);
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+}
+
+.mj_TrackerPane_title {
+    margin: 0;
+    font: var(--cpd-font-body-lg-semibold, 600 16px/22px Inter, sans-serif);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_TrackerViewSwitch {
+    display: inline-flex;
+    margin-left: auto;
+    padding: 2px;
+    gap: 2px;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-primary);
+}
+
+.mj_TrackerViewSwitch_tab {
+    border: 0;
+    background: transparent;
+    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+    border-radius: var(--cpd-radius-pill);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+    cursor: pointer;
+}
+.mj_TrackerViewSwitch_tab_active {
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+    box-shadow: var(--cpd-shadow-sm);
+}
+.mj_TrackerViewSwitch_tab:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 1px;
+}
+
+.mj_TrackerPane_spinner {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--cpd-color-border-interactive-secondary);
+    border-top-color: var(--cpd-color-text-action-accent);
+    animation: mj_TrackerSpin 0.7s linear infinite;
+}
+
+@keyframes mj_TrackerSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.mj_TrackerErrorBanner {
+    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-critical-primary);
+    font: var(--cpd-font-body-sm-regular);
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+}
+
+.mj_TrackerPane_body {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-color: var(--mj-scrollbar) transparent;
+}
+
+/* — Lists + sections — */
+.mj_TrackerList {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: var(--cpd-space-2x) 0 var(--cpd-space-8x);
+}
+
+.mj_TrackerSection {
+    display: flex;
+    flex-direction: column;
+    padding: var(--cpd-space-2x) 0;
+}
+
+.mj_TrackerSection_header {
+    margin: 0;
+    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+    font: var(--cpd-font-body-xs-semibold, 600 12px/16px Inter, sans-serif);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_TrackerSection_headRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--cpd-space-2x);
+    padding-right: var(--cpd-space-4x);
+}
+
+.mj_TrackerSection_toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    border: 0;
+    background: transparent;
+    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+    color: var(--cpd-color-text-tertiary);
+    font: var(--cpd-font-body-xs-semibold, 600 12px/16px Inter, sans-serif);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+}
+
+.mj_TrackerSection_chevron {
+    display: inline-block;
+    transition: transform var(--cpd-dur-fast) var(--cpd-ease);
+}
+.mj_TrackerSection_chevron_open {
+    transform: rotate(90deg);
+}
+
+.mj_TrackerToggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+.mj_TrackerToggle input {
+    accent-color: var(--cpd-color-bg-accent);
+}
+
+/* — Item row (inbox idiom) — */
+.mj_TrackerItemRow,
+.mj_TrackerMissionRow {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--cpd-space-3x);
+    width: 100%;
+    box-sizing: border-box;
+    text-align: left;
+    border: 0;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    background: transparent;
+    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    cursor: pointer;
+    color: var(--cpd-color-text-primary);
+}
+.mj_TrackerItemRow:hover,
+.mj_TrackerMissionRow:hover {
+    background: var(--cpd-state-hover);
+}
+.mj_TrackerItemRow:focus-visible,
+.mj_TrackerMissionRow:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: -2px;
+}
+.mj_TrackerItemRow_needsyou {
+    box-shadow: inset 3px 0 0 var(--mj-needsyou);
+}
+
+.mj_TrackerItemRow_glyph,
+.mj_TrackerMissionRow_glyph {
+    flex: none;
+    font-size: 18px;
+    margin-top: 1px;
+}
+
+.mj_TrackerItemRow_main,
+.mj_TrackerMissionRow_main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.mj_TrackerItemRow_title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font: var(--cpd-font-body-strong);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_TrackerItemRow_num,
+.mj_TrackerMissionRow_num,
+.mj_TrackerMiniItem_num,
+.mj_TrackerMilestoneRow_num {
+    color: var(--cpd-color-text-secondary);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+    margin-right: var(--cpd-space-1x);
+}
+
+.mj_TrackerItemRow_body {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_TrackerItemRow_meta,
+.mj_TrackerMissionRow_meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--cpd-space-1x) var(--cpd-space-2x);
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_TrackerItemRow_origin {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_TrackerItemRow_missionChip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 12px;
+    color: var(--cpd-color-text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_TrackerItemRow_status {
+    font: var(--cpd-font-meta);
+}
+.mj_TrackerItemRow_status_needsyou {
+    color: var(--mj-needsyou);
+    font-weight: 600;
+}
+.mj_TrackerItemRow_status_muted {
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_TrackerItemRow_comments {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_TrackerItemRow_thumb {
+    flex: none;
+    font-size: 22px;
+    color: var(--cpd-color-text-tertiary);
+    align-self: center;
+}
+
+/* — Mission row — */
+.mj_TrackerMissionRow_title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font: var(--cpd-font-body-strong);
+}
+.mj_TrackerMissionRow_meta {
+    align-items: center;
+}
+.mj_TrackerMissionRow_meta svg {
+    font-size: 15px;
+}
+.mj_TrackerMissionRow_sep {
+    color: var(--cpd-color-text-tertiary);
+}
+.mj_TrackerMissionRow_milestone {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    max-width: 24ch;
+    color: var(--cpd-color-text-secondary);
+}
+.mj_TrackerMissionRow_age {
+    color: var(--cpd-color-text-tertiary);
+}
+.mj_TrackerMissionRow_summary {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+}
+
+/* — Empty states — */
+.mj_TrackerEmpty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    padding: var(--cpd-space-12x) var(--cpd-space-6x);
+    text-align: center;
+}
+.mj_TrackerEmpty_title {
+    margin: 0;
+    font: var(--cpd-font-title);
+    color: var(--cpd-color-text-primary);
+}
+.mj_TrackerEmpty_hint {
+    margin: 0;
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+    max-width: 40ch;
+}
+
+/* — Inbox filter toggle — */
+.mj_TrackerInboxToggle {
+    display: inline-flex;
+    align-self: center;
+    margin: var(--cpd-space-2x) 0;
+    padding: 2px;
+    gap: 2px;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-primary);
+}
+.mj_TrackerToggleTab {
+    border: 0;
+    background: transparent;
+    padding: var(--cpd-space-1x) var(--cpd-space-4x);
+    border-radius: var(--cpd-radius-pill);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+    cursor: pointer;
+}
+.mj_TrackerToggleTab_active {
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+    box-shadow: var(--cpd-shadow-sm);
+}
+
+/* — Detail shell — */
+.mj_TrackerDetail {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+}
+.mj_TrackerDetail_head {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    box-sizing: border-box;
+    min-height: 48px;
+    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+}
+.mj_TrackerDetail_scroll {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: var(--cpd-space-4x) var(--cpd-space-4x) var(--cpd-space-10x);
+    scrollbar-color: var(--mj-scrollbar) transparent;
+}
+
+.mj_TrackerBack {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    background: transparent;
+    padding: var(--cpd-space-1x);
+    border-radius: var(--cpd-radius-sm);
+    color: var(--cpd-color-text-secondary);
+    cursor: pointer;
+    font-size: 20px;
+}
+.mj_TrackerBack:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_TrackerTextButton {
+    border: 0;
+    background: transparent;
+    padding: var(--cpd-space-1x) var(--cpd-space-2x);
+    color: var(--cpd-color-text-action-accent);
+    font: var(--cpd-font-body-sm-regular);
+    cursor: pointer;
+}
+
+.mj_TrackerButton {
+    align-self: flex-start;
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+    font: var(--cpd-font-body-sm-regular);
+    font-weight: 600;
+    cursor: pointer;
+}
+.mj_TrackerButton:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+.mj_TrackerButton_danger {
+    background: var(--cpd-color-text-critical-primary);
+    color: #fff;
+}
+
+/* — Mission head — */
+.mj_TrackerMissionHead {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-3x);
+    margin-bottom: var(--cpd-space-4x);
+}
+.mj_TrackerMissionHead_title {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--cpd-space-2x);
+}
+.mj_TrackerMissionHead_num,
+.mj_TrackerItemHead_kind {
+    font-variant-numeric: tabular-nums;
+    color: var(--cpd-color-text-secondary);
+}
+.mj_TrackerMissionHead_name {
+    margin: 0;
+    font: var(--cpd-font-heading);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_TrackerStateLabel {
+    padding: 2px var(--cpd-space-2x);
+    border-radius: var(--cpd-radius-pill);
+    font: var(--cpd-font-meta);
+    font-weight: 600;
+}
+.mj_TrackerStateLabel_open {
+    color: var(--cpd-color-text-action-accent);
+    background: var(--cpd-state-selected);
+}
+.mj_TrackerStateLabel_closed {
+    color: var(--cpd-color-text-secondary);
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_TrackerProse {
+    font: var(--cpd-font-body);
+    color: var(--cpd-color-text-primary);
+    overflow-wrap: anywhere;
+}
+.mj_TrackerCloseSummary {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-2x);
+}
+.mj_TrackerDivider {
+    width: 100%;
+    height: 0;
+    border: 0;
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    margin: var(--cpd-space-2x) 0 0;
+}
+.mj_TrackerCaption {
+    margin: 0;
+    font: var(--cpd-font-body-xs-semibold, 600 12px/16px Inter, sans-serif);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--cpd-color-text-tertiary);
+}
+.mj_TrackerClosedOver {
+    margin: 0;
+    font: var(--cpd-font-body-sm-regular);
+    font-weight: 600;
+    color: var(--mj-needsyou);
+}
+
+/* — Milestone row — */
+.mj_TrackerMilestoneRow {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--cpd-space-3x);
+    width: 100%;
+    box-sizing: border-box;
+    text-align: left;
+    border: 0;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    background: transparent;
+    padding: var(--cpd-space-3x) 0;
+    cursor: pointer;
+    color: var(--cpd-color-text-primary);
+}
+.mj_TrackerMilestoneRow:hover {
+    background: var(--cpd-state-hover);
+}
+.mj_TrackerMilestoneRow_glyph {
+    flex: none;
+    font-size: 18px;
+    margin-top: 1px;
+}
+.mj_TrackerMilestoneRow_main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+.mj_TrackerMilestoneRow_title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font: var(--cpd-font-body-strong);
+}
+.mj_TrackerMilestoneRow_body {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+}
+.mj_TrackerMilestoneRow_meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--cpd-space-1x) var(--cpd-space-2x);
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-tertiary);
+}
+.mj_TrackerMilestoneRow_hint {
+    color: var(--cpd-color-text-secondary);
+}
+.mj_TrackerMilestoneRow_jump {
+    flex: none;
+    align-self: center;
+    font-size: 16px;
+    color: var(--cpd-color-text-tertiary);
+}
+
+/* — Mini item row (mission open-items) — */
+.mj_TrackerMiniItem {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    width: 100%;
+    box-sizing: border-box;
+    text-align: left;
+    border: 0;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    background: transparent;
+    padding: var(--cpd-space-2x) 0;
+    cursor: pointer;
+    color: var(--cpd-color-text-primary);
+}
+.mj_TrackerMiniItem:hover {
+    background: var(--cpd-state-hover);
+}
+.mj_TrackerMiniItem_needsyou {
+    box-shadow: inset 3px 0 0 var(--mj-needsyou);
+}
+.mj_TrackerMiniItem_glyph {
+    flex: none;
+    font-size: 16px;
+}
+.mj_TrackerMiniItem_title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font: var(--cpd-font-body-sm-regular);
+}
+.mj_TrackerMiniItem_needsyouTag {
+    flex: none;
+    color: var(--mj-needsyou);
+    font: var(--cpd-font-meta);
+    font-weight: 600;
+}
+
+/* — Conversation row — */
+.mj_TrackerConvoRow {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    padding: var(--cpd-space-2x) 0;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    font: var(--cpd-font-body-sm-regular);
+}
+.mj_TrackerConvoRow_box {
+    flex: none;
+    padding: 1px var(--cpd-space-2x);
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-meta);
+}
+.mj_TrackerConvoRow_title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--cpd-color-text-primary);
+}
+.mj_TrackerConvoRow_state {
+    flex: none;
+    color: var(--cpd-color-text-tertiary);
+    font: var(--cpd-font-meta);
+}
+
+/* — Close-mission — */
+.mj_TrackerCloseMission {
+    gap: var(--cpd-space-2x);
+    padding-left: var(--cpd-space-4x);
+    padding-right: var(--cpd-space-4x);
+}
+.mj_TrackerTextarea,
+.mj_TrackerComposer_input {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 72px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    font: var(--cpd-font-body);
+}
+.mj_TrackerTextarea:focus-visible,
+.mj_TrackerComposer_input:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 0;
+}
+.mj_TrackerConfirm {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-2x);
+    padding: var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-subtle-primary);
+}
+.mj_TrackerConfirm_title {
+    margin: 0;
+    font: var(--cpd-font-body-strong);
+    color: var(--cpd-color-text-primary);
+}
+.mj_TrackerConfirm_actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--cpd-space-2x);
+}
+
+/* — Item detail head — */
+.mj_TrackerItemHead_kind {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    font: var(--cpd-font-body-strong);
+    color: var(--cpd-color-text-secondary);
+}
+.mj_TrackerItemHead_glyph {
+    font-size: 18px;
+}
+
+.mj_TrackerStatusPill {
+    padding: 2px var(--cpd-space-2x);
+    border-radius: var(--cpd-radius-pill);
+    font: var(--cpd-font-meta);
+    font-weight: 600;
+    white-space: nowrap;
+}
+.mj_TrackerStatusPill_needsyou {
+    color: var(--mj-needsyou);
+    background: var(--mj-needsyou-bg);
+}
+.mj_TrackerStatusPill_muted {
+    color: var(--cpd-color-text-secondary);
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_TrackerMenu {
+    position: relative;
+    margin-left: auto;
+}
+.mj_TrackerMenu_list {
+    position: absolute;
+    right: 0;
+    top: calc(100% + var(--cpd-space-1x));
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    min-width: 160px;
+    padding: var(--cpd-space-1x);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-raised);
+    box-shadow: var(--cpd-shadow-md);
+}
+.mj_TrackerMenu_item {
+    text-align: left;
+    border: 0;
+    background: transparent;
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    border-radius: var(--cpd-radius-sm);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+    cursor: pointer;
+}
+.mj_TrackerMenu_item:hover {
+    background: var(--cpd-state-hover);
+}
+.mj_TrackerMenu_item_danger {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_TrackerItemTitle {
+    margin: 0 0 var(--cpd-space-3x);
+    font: var(--cpd-font-heading);
+    color: var(--cpd-color-text-primary);
+    user-select: text;
+}
+
+.mj_TrackerOrigin {
+    display: inline-block;
+    margin-bottom: var(--cpd-space-3x);
+    border: 0;
+    background: transparent;
+    padding: 0;
+    color: var(--cpd-color-text-action-accent);
+    font: var(--cpd-font-body-sm-regular);
+    cursor: pointer;
+}
+
+.mj_TrackerLabels,
+.mj_TrackerLinks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--cpd-space-1x);
+    margin-bottom: var(--cpd-space-3x);
+}
+.mj_TrackerLabel {
+    padding: 1px var(--cpd-space-2x);
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-meta);
+}
+.mj_TrackerLinkChip {
+    padding: 1px var(--cpd-space-2x);
+    border-radius: var(--cpd-radius-pill);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    color: var(--cpd-color-text-action-accent);
+    font: var(--cpd-font-meta);
+    text-decoration: none;
+    max-width: 32ch;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.mj_TrackerItemBody {
+    margin-bottom: var(--cpd-space-4x);
+}
+
+/* — Comment thread — */
+.mj_TrackerThread {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-3x);
+    padding-top: var(--cpd-space-2x);
+    border-top: 1px solid var(--cpd-color-border-subtle);
+}
+.mj_TrackerComment {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-1x);
+}
+.mj_TrackerComment_head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--cpd-space-2x);
+}
+.mj_TrackerComment_author {
+    font: var(--cpd-font-label);
+    color: var(--cpd-color-text-primary);
+}
+.mj_TrackerComment_time {
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-tertiary);
+}
+.mj_TrackerComment_user {
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-self-bubble);
+}
+.mj_TrackerStatusRow {
+    text-align: center;
+    padding: var(--cpd-space-1x) 0;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-tertiary);
+}
+.mj_TrackerStatusRow_body {
+    font-style: italic;
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_TrackerAttachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--cpd-space-1x);
+}
+.mj_TrackerAttachmentChip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    padding: 1px var(--cpd-space-2x);
+    border-radius: var(--cpd-radius-sm);
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-meta);
+}
+.mj_TrackerAttachmentChip_size {
+    color: var(--cpd-color-text-tertiary);
+}
+
+/* — Composer — */
+.mj_TrackerComposer {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--cpd-space-2x);
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    box-sizing: border-box;
+    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-default);
+}
+.mj_TrackerComposer_input {
+    min-height: 40px;
+    flex: 1 1 auto;
+}
+.mj_TrackerComposer_send {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+    cursor: pointer;
+    font-size: 18px;
+}
+.mj_TrackerComposer_send:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* — Timeline cards (join the mj_PromptCard family) — */
+.mj_TrackerCard {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-2x);
+    width: 100%;
+    box-sizing: border-box;
+    text-align: left;
+    cursor: pointer;
+}
+.mj_TrackerCard_needsyou {
+    box-shadow: inset 3px 0 0 var(--mj-needsyou);
+}
+.mj_TrackerCard_row {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+}
+.mj_TrackerCard_glyph {
+    flex: none;
+    font-size: 18px;
+}
+.mj_TrackerCard_num {
+    color: var(--cpd-color-text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+.mj_TrackerCard_title {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font: var(--cpd-font-body-strong);
+    color: var(--cpd-color-text-primary);
+}
+.mj_TrackerCard_chevron {
+    flex: none;
+    font-size: 18px;
+    color: var(--cpd-color-text-tertiary);
+}
+.mj_TrackerCard_comment {
+    padding-left: calc(18px + var(--cpd-space-2x));
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    padding-top: var(--cpd-space-2x);
+}
+.mj_TrackerCard_attachment {
+    margin: var(--cpd-space-1x) 0 0;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-secondary);
+}
+.mj_TrackerCard_milestoneBody {
+    margin: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+}
+.mj_TrackerCard_subtitle {
+    margin: 0;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_TrackerInlineNote {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-1x);
+    width: 100%;
+    box-sizing: border-box;
+    text-align: left;
+    border: 0;
+    background: transparent;
+    padding: var(--cpd-space-1x) 0;
+    cursor: pointer;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+.mj_TrackerInlineNote_line {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+}
+.mj_TrackerInlineNote_glyph {
+    font-size: 15px;
+}
+.mj_TrackerInlineNote_body {
+    padding-left: calc(15px + var(--cpd-space-1x));
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_TrackerMissionNotice {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    border: 0;
+    background: transparent;
+    padding: var(--cpd-space-1x) 0;
+    cursor: pointer;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+}
+.mj_TrackerMissionNotice_flag {
+    font-size: 14px;
+}
+
+/* Mobile: keep detail scroll + composer comfortable on a narrow viewport. */
+@media (max-width: 760px) {
+    .mj_TrackerViewSwitch {
+        margin-left: auto;
+    }
+    .mj_TrackerList,
+    .mj_TrackerDetail_scroll,
+    .mj_TrackerComposer {
+        max-width: 100%;
+    }
+}

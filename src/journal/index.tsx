@@ -15,6 +15,7 @@ import { MatronJournalClient } from "./client";
 import { MatronApp } from "./components";
 import "./shell.pcss";
 import "./journal.pcss";
+import "./tracker.pcss";
 
 const container = document.getElementById("matron");
 if (!container) throw new Error("Matron application container is missing");

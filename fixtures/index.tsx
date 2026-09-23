@@ -27,6 +27,7 @@ import { MatronApp } from "../src/journal/components";
 import type { ClientState, Conversation, JournalEvent, Session } from "../src/journal/types";
 import "../src/journal/shell.pcss";
 import "../src/journal/journal.pcss";
+import "../src/journal/tracker.pcss";
 
 const SESSION: Session = {
     serverUrl: "https://journal.example",
