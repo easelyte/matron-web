@@ -505,7 +505,7 @@ describe("Composer voice recording", () => {
         expect(voiceError(container)).toBe("Recording stopped unexpectedly.");
     });
 
-    it("drops a mic acquisition that resolves after the client session changed (#511 edge 1)", async () => {
+    it("drops a mic acquisition that resolves after the client session changed and returns to idle", async () => {
         const request = deferred<MediaStream>();
         const staleStream = harness.stream() as unknown as MockStream;
         harness.getUserMedia.mockReturnValueOnce(request.promise);
@@ -521,9 +521,11 @@ describe("Composer voice recording", () => {
         // so the note cannot send under the wrong session generation.
         expect(staleStream.track.stop).toHaveBeenCalledTimes(1);
         expect(harness.instances).toHaveLength(0);
+        // The bail-out is a cancelled request, not a hung one: the mic button is usable again.
+        expect(button(container, "Record voice message").disabled).toBe(false);
     });
 
-    it("ignores a late recorder error after the watchdog already sent the note (#511 edge 2)", async () => {
+    it("ignores a late recorder error after the watchdog already sent the note", async () => {
         harness.queue({ autoStopEvents: false, finalChunk: "UNUSED" });
         const client = makeClient();
         const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");

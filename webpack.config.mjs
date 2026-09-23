@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import CopyWebpackPlugin from "copy-webpack-plugin";
 import HtmlWebpackPlugin from "html-webpack-plugin";
 import MiniCssExtractPlugin from "mini-css-extract-plugin";
+import MinimizerPlugin from "minimizer-webpack-plugin";
 import postcssPresetEnv from "postcss-preset-env";
 import webpack from "webpack";
 import "webpack-dev-server";
@@ -58,6 +59,17 @@ export default (_environment, arguments_) => {
         resolve: {
             extensions: [".js", ".json", ".ts", ".tsx"],
         },
+        optimization: {
+            // pdf.js ships pdf.worker.min.mjs already minified; re-running Terser over it breaks
+            // its private fields ("Private field '#T' must be declared in an enclosing class"),
+            // so exclude it. Same plugin + options as webpack's default minimizer.
+            minimizer: [
+                new MinimizerPlugin({
+                    exclude: /pdf\.worker\.min\..*\.mjs$/,
+                    terserOptions: { compress: { passes: 2 } },
+                }),
+            ],
+        },
         module: {
             rules: [
                 {
@@ -100,16 +112,6 @@ export default (_environment, arguments_) => {
                     { from: "res/icons", to: "icons", noErrorOnMissing: true },
                     { from: "res/opengraph.png", noErrorOnMissing: true },
                     { from: "config.json", noErrorOnMissing: true },
-                    // pdf.js worker, copied VERBATIM. `minimized: true` tells Terser to leave
-                    // it alone — re-minifying pdfjs-dist's already-minified worker produces a
-                    // build that throws "Private field '#T' must be declared in an enclosing
-                    // class" in pdf.js's fake-worker eval (see src/journal/pdf-render.ts).
-                    // NOT noErrorOnMissing: fail the build loudly if the vendor path moves.
-                    {
-                        from: "node_modules/pdfjs-dist/build/pdf.worker.min.mjs",
-                        to: "assets/pdf.worker.min.mjs",
-                        info: { minimized: true },
-                    },
                 ],
             }),
             new webpack.DefinePlugin({ "process.env.VERSION": JSON.stringify(version) }),

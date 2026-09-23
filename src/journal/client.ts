@@ -2836,31 +2836,28 @@ export class MatronJournalClient {
     private async refreshConversations(): Promise<void> {
         if (!this.database) return;
         const conversations = await this.database.conversations();
-        // Reconcile the fire-and-forget ephemerals against the durable run-state. Neither turn-end
-        // frame is ever replayed — the tool_stream 'end' (applyToolStream, #698) nor the activity
-        // 'idle' (bridge lib/journal-publisher.js publishActivity) — so a dropped one strands a
-        // dangling 'running' tool card in this.toolStreams or a stale "Thinking" in this.activities
-        // until the next turn. session_state is the persisted, replayed signal: a conversation no
-        // longer running has neither a live tool stream nor a live activity.
+        // Reconcile dangling tool-call cards against the durable run-state. The tool_stream 'end'
+        // frame (applyToolStream, #698) is never replayed, so a dropped one strands a 'running'
+        // tool card in this.toolStreams until the next turn; session_state is the persisted,
+        // replayed signal. The activity indicator is deliberately NOT pruned here (upstream
+        // db04c8c): the bridge sends activity 'thinking' immediately at turn start but queues the
+        // durable 'running' row behind journalPublish, so a prune in that window deleted the live
+        // indicator and nothing re-sent it. The Timeline's sessionRunning view gate hides a stale
+        // activity instead.
         for (const conversation of conversations) {
-            if (conversation.session_state !== "running") {
-                this.toolStreams.delete(conversation.id);
-                this.activities.delete(conversation.id);
-            }
+            if (conversation.session_state !== "running") this.toolStreams.delete(conversation.id);
         }
         this.patch({ conversations });
-        // Keep the published snapshot in lockstep with the private maps (P2). Deleting the private
-        // entries above does NOT touch ClientState.toolStreams / ClientState.activity, so a pruned
-        // card or activity would otherwise still sit in the snapshot and re-render on the
-        // conversation's next running turn (before any fresh ephemeral frame republishes it).
-        // Republish the selected conversation's ephemeral state whenever either signal was just
-        // pruned out from under the snapshot — and only then, so a routine refresh cannot clobber
-        // live streams.
+        // Keep the published snapshot in lockstep with the private map (P2): deleting the private
+        // entry above does NOT touch ClientState.toolStreams, so a pruned card would otherwise
+        // still sit in the snapshot and re-render on the conversation's next running turn.
+        // Republish only when a card was just pruned out from under the snapshot, so a routine
+        // refresh cannot clobber live streams.
         const selectedId = this.state.selectedConversationId;
         if (
             selectedId !== undefined &&
-            ((!this.toolStreams.has(selectedId) && Object.keys(this.state.toolStreams).length > 0) ||
-                (!this.activities.has(selectedId) && this.state.activity !== undefined))
+            !this.toolStreams.has(selectedId) &&
+            Object.keys(this.state.toolStreams).length > 0
         ) {
             this.refreshEphemeralState(selectedId);
         }

@@ -4227,66 +4227,31 @@ describe("session creation orchestration", () => {
         expect(client.getSnapshot().toolStreams).toEqual({});
     });
 
-    it("prunes a stale activity when the conversation is no longer running", async () => {
-        // The activity indicator rides a fire-and-forget ephemeral whose turn-end 'idle' frame is
-        // never replayed (bridge lib/journal-publisher.js publishActivity), so a dropped one would
-        // strand a stale "Thinking" in this.activities. session_state is the durable, replayed
-        // signal, so a conversation that is no longer running must have its activity reconciled off.
-        const client = new MatronJournalClient();
-        const state = internals(client);
-        const database = fakeDatabase({
-            conversations: jest.fn().mockResolvedValue([
-                { ...CONVERSATIONS[0], session_state: "done" }, // c1 finished
-                { ...CONVERSATIONS[1], session_state: "running" }, // c2 still running
-            ]),
-        });
-        state.database = database;
-        // Both stuck on 'thinking' because their turn-end 'idle' frames were dropped.
-        state.activities.set("c1", { state: "thinking" });
-        state.activities.set("c2", { state: "thinking" });
-        // c1 is the selected conversation and its stale activity is already published.
-        state.state = { ...signedInState(client), activity: { state: "thinking" } };
-
-        await state.handleJournal({
-            kind: "journal",
-            seq: 30,
-            convo_id: "c1",
-            ts: Date.now(),
-            sender: "system",
-            type: "session_status",
-            payload: { state: "done" },
-        });
-
-        expect(state.activities.has("c1")).toBe(false); // finished → private map pruned
-        expect(state.activities.get("c2")).toEqual({ state: "thinking" }); // still running → kept
-        // Published snapshot for the selected conversation must be republished without the stale
-        // activity, or ClientState.activity keeps rendering "Thinking" after the private prune.
-        expect(client.getSnapshot().activity).toBeUndefined();
-    });
-
-    it("republishes the snapshot when only the activity was pruned (no tool streams involved)", async () => {
-        // Lockstep guard: the republish condition must fire on a pruned activity on its own, not
-        // only when a pruned tool-stream entry (#698) happens to trigger it.
+    it("keeps a live 'thinking' activity that lands before the durable 'running' row (upstream db04c8c)", async () => {
+        // The bridge sends activity 'thinking' immediately at turn start but queues the durable
+        // session_state 'running' behind journalPublish, so 'thinking' routinely arrives while the
+        // row still says 'waiting'. A refresh in that window must not delete the live activity:
+        // the bridge dedups activity transitions, so nothing would re-send it.
         const client = new MatronJournalClient();
         const state = internals(client);
         state.database = fakeDatabase({
-            conversations: jest.fn().mockResolvedValue([{ ...CONVERSATIONS[0], session_state: "done" }]),
+            conversations: jest.fn().mockResolvedValue([{ ...CONVERSATIONS[0], session_state: "waiting" }]),
         });
-        state.activities.set("c1", { state: "tool", detail: "Bash" });
-        state.state = { ...signedInState(client), activity: { state: "tool", detail: "Bash" }, toolStreams: {} };
+        state.activities.set("c1", { state: "thinking" });
+        state.state = { ...signedInState(client), activity: { state: "thinking" }, toolStreams: {} };
 
         await state.handleJournal({
             kind: "journal",
             seq: 31,
-            convo_id: "c1",
+            convo_id: "c2",
             ts: Date.now(),
             sender: "system",
             type: "session_status",
             payload: { state: "done" },
         });
 
-        expect(state.activities.has("c1")).toBe(false);
-        expect(client.getSnapshot().activity).toBeUndefined();
+        expect(state.activities.get("c1")).toEqual({ state: "thinking" });
+        expect(client.getSnapshot().activity).toEqual({ state: "thinking" });
     });
 
     it("does not republish ephemeral state when nothing was pruned", async () => {
@@ -4358,19 +4323,21 @@ describe("session creation orchestration", () => {
         });
     });
 
-    it("reconciles a stale activity from a duplicate frame a peer tab already applied", async () => {
+    it("reconciles a stale tool card from a duplicate frame a peer tab already applied", async () => {
         // Tabs sharing a server/user share one IndexedDB, so a terminal session_status applied by
         // the peer tab advances the shared cursor and comes back applied=false here. The durable
         // store is still authoritative (P48): reconcile against it instead of returning, or the
-        // tab that dropped the ephemeral 'idle' keeps rendering "Thinking" until the next turn.
+        // tab that dropped the ephemeral tool_stream 'end' keeps a dangling tool card. (Activity
+        // is not pruned here — the Timeline's sessionRunning gate hides it; upstream db04c8c.)
         const client = new MatronJournalClient();
         const state = internals(client);
         state.database = fakeDatabase({
             applyJournal: jest.fn().mockResolvedValue(false), // peer tab won the cursor race
             conversations: jest.fn().mockResolvedValue([{ ...CONVERSATIONS[0], session_state: "done" }]),
         });
-        state.activities.set("c1", { state: "thinking" });
-        state.state = { ...signedInState(client), activity: { state: "thinking" } };
+        const card = { messageRef: "toolref", content: "ls", offset: 2, headTruncated: false };
+        state.toolStreams.set("c1", { toolref: { ...card } });
+        state.state = { ...signedInState(client), toolStreams: { toolref: { ...card } } };
 
         await state.handleJournal({
             kind: "journal",
@@ -4382,8 +4349,8 @@ describe("session creation orchestration", () => {
             payload: { state: "done" },
         });
 
-        expect(state.activities.has("c1")).toBe(false);
-        expect(client.getSnapshot().activity).toBeUndefined();
+        expect(state.toolStreams.has("c1")).toBe(false);
+        expect(client.getSnapshot().toolStreams).toEqual({});
     });
 });
 
