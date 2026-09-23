@@ -102,6 +102,18 @@ export function MarkAllReadIcon(props: IconProps): React.ReactElement {
     );
 }
 
+export function ChecklistIcon(props: IconProps): React.ReactElement {
+    // Tracker entry point — a checklist glyph (two checked rows) distinct from the flag/cards.
+    return (
+        <Icon {...props}>
+            <path d="m3 6 1.5 1.5L7 5" />
+            <path d="m3 13 1.5 1.5L7 12" />
+            <path d="M11 6h10M11 13h10M11 20h10" />
+            <path d="m3 20 1.5 1.5L7 19" />
+        </Icon>
+    );
+}
+
 export function MarkReadIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>

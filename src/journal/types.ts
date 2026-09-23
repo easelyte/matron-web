@@ -14,6 +14,8 @@ export const MESSAGE_EVENT_TYPES = new Set([
     "file",
     "image",
     "spawn_outcome",
+    // v1: tracker markers are not unread messages — `item`/`milestone`/`mission` are
+    // deliberately OUT of this set to avoid unread-badge churn (revisit in a later pass).
 ]);
 
 export interface MatronConfig {
@@ -298,6 +300,98 @@ export interface ClientState {
     dragActive: boolean;
     stagedUploads?: StagedUploads;
     sendTick: number;
+    // Tracker pane (Decisions / Items inbox). `trackerView` is the main-region discriminant
+    // (checked ahead of selectedConversationId — one surface at a time). The rest are
+    // store-resident so sidebar badges stay live off WS invalidation:
+    //   inboxItems  = the inbox list view;
+    //   trackerItem = the open item detail (item + its comment thread), null = none.
+    // Undefined = never loaded this session.
+    trackerView?: TrackerViewState;
+    inboxItems?: TrackerItem[];
+    trackerItem?: { item: TrackerItem; comments: TrackerComment[] } | null;
+    /** True while ANY tracker fetch is in flight (v1: one detail/list open at a time). */
+    trackerLoading?: boolean;
+    /** Last tracker fetch/mutation error; cleared on the next successful load. */
+    trackerError?: string;
+}
+
+// ── Tracker (Decisions / Items inbox) ──────────────────────────────────────────
+// Wire shapes bind EXACTLY to the journal items API (src/items.js @dd9c04a):
+// `id`/`mission_id`/`supersedes`/`origin_convo_id` are opaque TEXT ids
+// (strings); `num` is the human #number (integer); every timestamp is epoch-ms INTEGER
+// (number). Titles can be absent across a privacy boundary — bind defensively at render.
+
+/** Which tracker surface the pane shows; `selectedItemId` is a #num value (integer). */
+export interface TrackerViewState {
+    open: boolean;
+    view?: "inbox";
+    selectedItemId?: number;
+}
+
+export type TrackerItemKind = "task" | "question" | "decision";
+export type TrackerItemState = "open" | "closed";
+export type TrackerResolution = "done" | "answered" | "decided" | "reversed" | "cancelled";
+export type TrackerAwaiting = "user" | "agent";
+export type TrackerActor = "user" | "agent";
+export type TrackerCommentKind = "comment" | "status";
+
+export interface TrackerLink {
+    url: string;
+    title?: string;
+}
+
+export interface TrackerAttachment {
+    blob_ref: string;
+    mime: string;
+    name: string;
+    size: number;
+    transcript?: string;
+}
+
+/** A resolution/state/awaiting triple; a status comment's text derives from `meta.to`. */
+export interface StatusSnapshot {
+    state: TrackerItemState;
+    resolution: TrackerResolution | null;
+    awaiting: TrackerAwaiting | null;
+}
+
+export interface TrackerItem {
+    id: string;
+    num: number;
+    kind: TrackerItemKind;
+    state: TrackerItemState;
+    resolution: TrackerResolution | null;
+    awaiting: TrackerAwaiting | null;
+    rank: number;
+    title: string;
+    body: string;
+    labels: string[];
+    links: TrackerLink[];
+    supersedes: string | null;
+    origin_convo_id: string;
+    origin_device_id?: number;
+    created_by: TrackerActor;
+    created_at: number;
+    updated_at: number;
+    closed_at: number | null;
+    mission_id: string | null;
+    mission_num: number | null;
+    comment_count: number;
+    last_comment_at: number | null;
+    attachments: TrackerAttachment[];
+    has_image: boolean;
+}
+
+export interface TrackerComment {
+    id: string;
+    item_id: string;
+    author: TrackerActor;
+    device_id: number;
+    kind: TrackerCommentKind;
+    body: string;
+    attachments: TrackerAttachment[];
+    meta?: { from?: StatusSnapshot; to?: StatusSnapshot } | null;
+    created_at: number;
 }
 
 export function coerceParentId(x: unknown): string | null {
@@ -622,6 +716,18 @@ export function eventSnippet(type: string, payload: EventPayload): string {
             default:
                 return "[spawn_outcome]";
         }
+    }
+    if (type === "item") {
+        // Tracker item marker (payload: {num,kind,title,action,awaiting?,...}). Titles can be
+        // absent across a privacy boundary — fall back to `#num`. `📌` mirrors the server's own
+        // minted marker text so the sidebar preview reads consistently with the timeline card.
+        const num = asNumber(payload.num);
+        const kind = asString(payload.kind, "item");
+        const title = asString(payload.title).trim();
+        const needsUser = asString(payload.awaiting) === "user";
+        const head = num ? `${kind} #${num}` : kind;
+        const label = needsUser ? `📌 Needs you — ${head}` : `📌 ${head}`;
+        return (title ? `${label}: ${title}` : label).slice(0, 120);
     }
     if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);
     if (type === "tool_output" && typeof payload.command === "string") return `$ ${payload.command}`.slice(0, 120);

@@ -11,6 +11,7 @@ import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation
 import { JournalDatabase } from "./database";
 import { mergeSessionStatus } from "./status";
 import {
+    asNumber,
     buildSidebarIndex,
     childSidebarPlacement,
     type ClientState,
@@ -28,6 +29,9 @@ import {
     type ServerFrame,
     type Session,
     type SnapshotResponse,
+    type TrackerItem,
+    type TrackerResolution,
+    type TrackerViewState,
     trimUtf8Prefix,
     type ToolStreamState,
     utf8Length,
@@ -250,6 +254,12 @@ export class MatronJournalClient {
     private readonly uploadConvos = new Map<string, string>();
     private readonly issuedRefreshEpochs = new Map<string, number>();
     private readonly appliedRefreshEpochs = new Map<string, number>();
+    // Monotonic guards so only the latest tracker request writes its result — an earlier slow
+    // response (out-of-order load, or a superseded selection) can never clobber a newer one.
+    // Bumped on every loadItem/loadInbox call; the resolved response checks it before patching
+    // (F1 stale-response guard).
+    private trackerItemGen = 0;
+    private trackerInboxGen = 0;
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
@@ -482,6 +492,9 @@ export class MatronJournalClient {
         storeSelectedConversation(this.state.session, conversationId);
         this.patch({
             selectedConversationId: conversationId,
+            // Selecting a conversation closes the Tracker pane so the chosen room becomes visible
+            // (trackerView is a main-region discriminant checked ahead of selectedConversationId).
+            trackerView: undefined,
             events: [],
             pendingMessages: [],
             loadingHistory: false,
@@ -1229,6 +1242,205 @@ export class MatronJournalClient {
         return this.state.conversations.find((conversation) => conversation.id === this.state.selectedConversationId);
     }
 
+    // ── Tracker pane (Decisions / Items inbox) ──────────────────────────────────────
+    // The tracker shares the main region with the conversation view — one surface at a
+    // time. `trackerView` is the discriminant; the inbox/detail data is store-resident
+    // (loaded lazily by the load* helpers below, invalidated over WS).
+
+    // `itemId`: a number selects that row; `null` explicitly CLEARS the selection;
+    // `undefined` preserves the prev selection. `null ?? prev` would resolve to prev, so the
+    // clear needs the explicit === null arm.
+    public openTrackerView(opts: { view?: "inbox"; itemId?: number | null } = {}): void {
+        const prev = this.state.trackerView;
+        const next: TrackerViewState = {
+            open: true,
+            view: opts.view ?? prev?.view ?? "inbox",
+            selectedItemId: opts.itemId === null ? undefined : (opts.itemId ?? prev?.selectedItemId),
+        };
+        this.patch({ trackerView: next });
+    }
+
+    public closeTrackerView(): void {
+        if (!this.state.trackerView) return;
+        this.patch({ trackerView: undefined });
+    }
+
+    // Deep-link / row-tap entry point: select the row (last-tap-wins) and open its inbox detail.
+    // The pane's own effect issues the matching loadItem call when the selection changes.
+    // Selecting a DIFFERENT row invalidates the cached detail up front (→ null) so the previously
+    // loaded record can never be rendered — nor have its action handlers (reply/close/reopen) fire —
+    // against the new selection before the loader replaces it (F1). Re-selecting the same row keeps
+    // the cache so it doesn't flash.
+    public openTrackerItem(num: number): void {
+        if (this.state.trackerItem && this.state.trackerItem.item.num !== num) {
+            this.patch({ trackerItem: null });
+        }
+        this.openTrackerView({ view: "inbox", itemId: num });
+    }
+
+    // One in-app handler for `matron://item/<N>` markdown deep links, shared by the timeline and
+    // every tracker Markdown call site so a valid item link is always activatable (F6) — never
+    // rendered inert or stripped.
+    public openTrackerLink(kind: "item", num: number): void {
+        if (kind === "item") this.openTrackerItem(num);
+    }
+
+    // ── Tracker data loaders (fetch → patch, sharing the trackerLoading/trackerError pair). Each
+    // guards on the api instance so a response that races a logout / re-login can never write into a
+    // newer session's store. ──────────────────────
+
+    public async loadInbox(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        // Request-generation guard: like loadItem, a slower earlier load must never overwrite a
+        // newer one's result. A marker (WS) can restart loadInbox while an in-flight multi-page walk
+        // is mid-pagination; without this the older walk could finish last and restore rows the newer
+        // load already dropped (e.g. items closed meanwhile) (F2).
+        const gen = ++this.trackerInboxGen;
+        this.patch({ trackerLoading: true, trackerError: undefined });
+        try {
+            // App-wide open items; the inbox sorts "needs you" (open && awaiting==user) first
+            // client-side, so a single open-state fetch feeds every section. The list is
+            // cursor-paginated (server clamps limit ≤500), so follow next_cursor to exhaustion —
+            // the inbox and its "Needs you" section reason over ALL open items, and a partial first
+            // page reads as a false "nothing needs you" / drops user-blocking rows (F3). Bounded to
+            // MAX_PAGES / MAX_ITEMS as a runaway guard; deduped by item id across pages.
+            const MAX_PAGES = 20;
+            const MAX_ITEMS = 10_000;
+            const accumulated: TrackerItem[] = [];
+            const seen = new Set<string>();
+            let cursor: string | undefined;
+            let truncated = false;
+            for (let page = 0; ; page += 1) {
+                const { items, next_cursor } = await api.items({ state: "open", ...(cursor ? { cursor } : {}) });
+                if (this.api !== api || this.trackerInboxGen !== gen) return;
+                for (const item of items) {
+                    if (seen.has(item.id)) continue;
+                    seen.add(item.id);
+                    accumulated.push(item);
+                }
+                if (!next_cursor) break;
+                // Hit the runaway guard while the server still has more pages: publish what we have
+                // but surface the truncation loudly rather than presenting a partial list as the
+                // authoritative "all open items" (a silent cap re-creates the false-empty bug) (F2).
+                if (page + 1 >= MAX_PAGES || accumulated.length >= MAX_ITEMS) {
+                    truncated = true;
+                    break;
+                }
+                cursor = next_cursor;
+            }
+            this.patch({
+                inboxItems: accumulated,
+                trackerLoading: false,
+                trackerError: truncated
+                    ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
+                    : undefined,
+            });
+        } catch (error) {
+            if (this.api !== api || this.trackerInboxGen !== gen) return;
+            this.patch({ trackerError: errorMessage(error), trackerLoading: false });
+        }
+    }
+
+    public async loadItem(id: number | string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.trackerItemGen;
+        this.patch({ trackerLoading: true, trackerError: undefined });
+        try {
+            const detail = await api.item(id);
+            // Guard both API identity (logout/re-login) AND request identity: a superseded/out-of-
+            // order response must never patch a newer selection's detail (F1).
+            if (this.api !== api || this.trackerItemGen !== gen) return;
+            this.patch({ trackerItem: detail, trackerLoading: false });
+        } catch (error) {
+            if (this.api !== api || this.trackerItemGen !== gen) return;
+            this.patch({ trackerError: errorMessage(error), trackerLoading: false });
+        }
+    }
+
+    // ── Tracker mutations (fresh Idempotency-Key per call → refetch the affected row + patch).
+    // On failure they surface trackerError but leave the loaded data intact (await-refetch, no
+    // optimistic outbox in v1). The inbox is refetched only when already loaded, so a mutation from
+    // a detail view keeps its badges live without forcing a cold load.
+    // Each resolves `true` only on a CONFIRMED successful write and `false` on any handled failure
+    // (offline/auth-expiry/timeout/5xx, or signed-out) — callers gate destructive UI resets (e.g.
+    // clearing a reply draft) on that flag so a failed mutation never silently drops user input (F2).
+    // A write that lands but races a logout still resolves true (the write happened). ──
+
+    // `idempotencyKey`: callers that can RETRY the same write after an AMBIGUOUS delivery (a comment
+    // POST that may have committed before the response was lost) must pass a STABLE key so the retry
+    // reuses it and the server dedupes the replay instead of minting a duplicate comment (F1). Omit
+    // it for one-shot callers to get a fresh key per call. NOTE: end-to-end dedup also needs the
+    // deployed transport to FORWARD the Idempotency-Key header — the web fetch path does; the desktop
+    // Electron preload currently discards it (see api.ts), tracked as the desktop-PATCH residual.
+    public async commentItem(
+        id: number | string,
+        body: { body?: string; attachments?: TrackerItem["attachments"] },
+        idempotencyKey?: string,
+    ): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.postItemComment(id, body, idempotencyKey ?? crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        await this.loadItem(id);
+        if (this.state.inboxItems) await this.loadInbox();
+        return true;
+    }
+
+    public async closeTrackerItem(
+        id: number | string,
+        resolution: TrackerResolution,
+        comment?: string,
+    ): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.closeItem(id, { resolution, comment }, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        await this.loadItem(id);
+        if (this.state.inboxItems) await this.loadInbox();
+        return true;
+    }
+
+    public async reopenTrackerItem(id: number | string, comment?: string): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.reopenItem(id, { comment }, crypto.randomUUID());
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        await this.loadItem(id);
+        if (this.state.inboxItems) await this.loadInbox();
+        return true;
+    }
+
+    // WS invalidation for tracker item markers (`item` journal frames). A marker is a change
+    // connected clients must reflect without re-polling; we refetch ONLY the tracker data currently
+    // loaded/open (a closed pane, or an unloaded inbox, fetches nothing) so badges stay live cheaply.
+    // Item numbers on the wire are the human #num.
+    private handleTrackerMarker(event: JournalEvent): void {
+        if (event.type === "item") {
+            const num = asNumber(event.payload.num, 0);
+            if (num && this.state.trackerItem && this.state.trackerItem.item.num === num) {
+                void this.loadItem(num);
+            }
+            if (this.state.inboxItems) void this.loadInbox();
+        }
+    }
+
     private async startSession(session: Session): Promise<void> {
         this.sessionGen += 1;
         this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
@@ -1731,6 +1943,10 @@ export class MatronJournalClient {
 
     private async handleJournal(event: JournalEvent): Promise<void> {
         if (!this.database) return;
+        // Tracker markers (item/mission/milestone) drive a live refetch of any loaded tracker
+        // data regardless of whether this event is newly applied below — fire-and-forget so it
+        // never blocks (or is blocked by) timeline application. Non-tracker types return at once.
+        this.handleTrackerMarker(event);
         const applied = await this.database.applyJournal(event);
         this.clearRpcCreateWatchdog(event.convo_id);
         const removed = await this.database.reconcileOwnMessage(event);

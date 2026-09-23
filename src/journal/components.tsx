@@ -37,6 +37,7 @@ import {
     AnthropicMark,
     ArchiveIcon,
     AttachmentIcon,
+    ChecklistIcon,
     CheckIcon,
     ChevronDownIcon,
     ChevronLeftIcon,
@@ -79,6 +80,8 @@ import {
 } from "./icons";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
+import { isRenderableItemMarker, renderItemMarker } from "./tracker/cards";
+import { TrackerPane } from "./tracker/TrackerPane";
 import {
     buildMediaCorpus,
     isRenderableInViewer,
@@ -1266,6 +1269,20 @@ function ConversationList({
                                                 <MarkAllReadIcon />
                                             </button>
                                         )}
+                                        <button
+                                            className="mj_IconButton"
+                                            type="button"
+                                            aria-label="Tracker"
+                                            aria-pressed={state.trackerView?.open ?? false}
+                                            title="Tracker"
+                                            onClick={() =>
+                                                state.trackerView?.open
+                                                    ? client.closeTrackerView()
+                                                    : client.openTrackerView()
+                                            }
+                                        >
+                                            <ChecklistIcon />
+                                        </button>
                                         <button
                                             className="mj_IconButton"
                                             type="button"
@@ -3505,6 +3522,21 @@ export function isQueuedReleaseReply(
     return legacyQueuePromptSeqs.has(targetSeq) && (choice === "interrupt" || /^cancel:\d+$/.test(choice));
 }
 
+/**
+ * Tracker events that EventContent renders as null and so must not occupy a timeline row at all —
+ * otherwise EventRow still wraps the null content in an avatar + sender bubble (a ghost message).
+ * Two families: the plain-text `fallback_for` mirror the bridge emits for old clients (this client
+ * renders the real `item` marker instead), and every `item` marker that renders no card — the quiet
+ * invalidation-only reordered/updated AND any unknown action under version skew. The item test
+ * delegates to the SAME classifier renderItemMarker uses (isRenderableItemMarker), so rendering and
+ * suppression can never diverge and an unsupported action can never leave a ghost row (F5).
+ */
+function isSuppressedTrackerEvent(event: JournalEvent): boolean {
+    if (event.type === "text") return asString(event.payload.fallback_for).length > 0;
+    if (event.type === "item") return !isRenderableItemMarker(event);
+    return false;
+}
+
 const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
 
 export function EventContent({
@@ -3521,15 +3553,26 @@ export function EventContent({
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
     isReadOnly?: boolean;
     resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
-}): React.ReactElement {
+}): React.ReactElement | null {
     const answer = answeredPromptReplies.get(`${event.convo_id}:${event.seq}`);
     switch (event.type) {
         case "text":
+            // A tracker fallback text (payload.fallback_for set) is the plain-text mirror the
+            // bridge emits for old clients that can't render the real `item` marker. This client
+            // renders that marker, so suppress the duplicate fallback text.
+            if (asString(event.payload.fallback_for)) return null;
             return (
                 <div className="mj_Markdown">
-                    <MarkdownBody text={asString(event.payload.body)} label={String(event.seq)} />
+                    <MarkdownBody
+                        text={asString(event.payload.body)}
+                        label={String(event.seq)}
+                        onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                    />
                 </div>
             );
+        case "item":
+            // Quiet invalidation-only markers (reordered/updated) and unknown actions render null.
+            return renderItemMarker(event, client);
         case "prompt":
             if (asString(event.payload.kind) === "queued_release") {
                 return (
@@ -3928,7 +3971,8 @@ function Timeline({
             state.events.filter(
                 (event) =>
                     !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
-                    !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs),
+                    !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs) &&
+                    !isSuppressedTrackerEvent(event),
             ),
         [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs],
     );
@@ -5674,8 +5718,12 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                 >
                     <div />
                 </div>
-                <div className={`mx_RoomView_wrapper ${state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}>
-                    {state.selectedConversationId ? (
+                <div
+                    className={`mx_RoomView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
+                >
+                    {state.trackerView?.open ? (
+                        <TrackerPane client={client} state={state} />
+                    ) : state.selectedConversationId ? (
                         <div
                             className={`mx_RoomView${dragActive ? " mj_RoomView_dragActive" : ""}`}
                             onDragOver={(event) => {

@@ -28,7 +28,7 @@ import React, {
     type ComponentPropsWithoutRef,
     type ReactNode,
 } from "react";
-import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -221,6 +221,36 @@ interface MarkdownBodyProps {
     text: string;
     streaming?: boolean;
     label: string;
+    // Optional in-app handler for `matron://item/<N>` deep links. Wired only at the timeline/tracker
+    // call sites; where it is absent such a link renders inert (the custom scheme is never handed to
+    // the browser).
+    onTrackerLink?: (kind: "item", num: number) => void;
+}
+
+/**
+ * Strictly parse an in-app tracker deep link: `matron://item/<N>`, where N is a positive
+ * ASCII-decimal integer and there is NOTHING else — no query, fragment, port, or extra path
+ * segment. Anything non-conforming returns null and is treated as an ordinary link.
+ */
+function parseTrackerHref(href: string): { kind: "item"; num: number } | null {
+    const match = /^matron:\/\/(item)\/([0-9]+)$/.exec(href);
+    if (!match) return null;
+    const num = Number(match[2]);
+    if (!Number.isSafeInteger(num) || num <= 0) return null;
+    return { kind: match[1] as "item", num };
+}
+
+/**
+ * react-markdown's default URL sanitizer strips any non-safelisted scheme to "" — including our
+ * `matron://` in-app deep links, which would arrive at the `a()` renderer as an empty href and
+ * render inert BEFORE onTrackerLink could ever fire (F6). Preserve a tracker link ONLY when it
+ * passes the SAME parser the `a()` renderer uses (parseTrackerHref) — a looser regex here would
+ * preserve links the renderer then rejects (e.g. matron://item/0 or an out-of-range int), which
+ * would fall through to an ordinary anchor and leak a live custom-scheme href to the browser.
+ * Delegate everything else so javascript:, data:, etc. stay stripped.
+ */
+function trackerUrlTransform(url: string): string {
+    return parseTrackerHref(url) ? url : defaultUrlTransform(url);
 }
 
 interface CodeBlockProps extends ComponentPropsWithoutRef<"pre">, ExtraProps {
@@ -303,7 +333,7 @@ function CodeBlock({ node, source, children, ...props }: CodeBlockProps): React.
     );
 }
 
-function componentsFor(source: string): Components {
+function componentsFor(source: string, onTrackerLink?: (kind: "item", num: number) => void): Components {
     return {
         pre(props) {
             return <CodeBlock {...props} source={source} />;
@@ -317,6 +347,26 @@ function componentsFor(source: string): Components {
             );
         },
         a({ node: _node, href, children, ...props }) {
+            const tracker = href !== undefined ? parseTrackerHref(href) : null;
+            if (tracker) {
+                // With a handler, a matron:// link becomes a real in-app link (tap opens the
+                // tracker surface). Without one it renders inert — never navigate the browser to
+                // the custom scheme.
+                if (!onTrackerLink) return <a {...props}>{children}</a>;
+                return (
+                    <a
+                        {...props}
+                        href={href}
+                        className="mj_TrackerLink"
+                        onClick={(clickEvent) => {
+                            clickEvent.preventDefault();
+                            onTrackerLink(tracker.kind, tracker.num);
+                        }}
+                    >
+                        {children}
+                    </a>
+                );
+            }
             const external = href !== undefined && /^(?:https?:|mailto:|\/\/)/i.test(href);
             return (
                 <a
@@ -375,7 +425,12 @@ class MarkdownErrorBoundary extends Component<MarkdownErrorBoundaryProps, Markdo
     }
 }
 
-function MarkdownBodyComponent({ text, streaming = false, label }: MarkdownBodyProps): React.ReactElement {
+function MarkdownBodyComponent({
+    text,
+    streaming = false,
+    label,
+    onTrackerLink,
+}: MarkdownBodyProps): React.ReactElement {
     if (exceedsMarkdownRenderLimit(text)) {
         return <div className="mj_MessageText mj_MarkdownRaw">{text}</div>;
     }
@@ -385,7 +440,8 @@ function MarkdownBodyComponent({ text, streaming = false, label }: MarkdownBodyP
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={streaming ? [] : [capCodeBlockHighlighting, [rehypeHighlight, HIGHLIGHT_OPTIONS]]}
-                components={componentsFor(text)}
+                urlTransform={onTrackerLink ? trackerUrlTransform : defaultUrlTransform}
+                components={componentsFor(text, onTrackerLink)}
             >
                 {text}
             </ReactMarkdown>
