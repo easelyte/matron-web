@@ -89,6 +89,14 @@ function sanitizeSearchHits(response: { hits?: unknown } | null | undefined): Se
     return hits;
 }
 const RPC_CREATE_WATCHDOG_MS = 10_000;
+// #766 reconnect-loop guard. A malformed-seq LIVE frame triggers a full resync; a single one
+// recovers cleanly (a fresh snapshot never contains it), so the healthy case never approaches
+// this bound. But a server that repeatedly pushes malformed frames would re-poison each clean
+// cursor immediately, so more than LIMIT resyncs inside WINDOW halts auto-resync and surfaces an
+// error instead of looping. The counter resets on the next well-formed frame (server recovered).
+const MALFORMED_SEQ_RESYNC_LIMIT = 3;
+const MALFORMED_SEQ_RESYNC_WINDOW_MS = 30_000;
+export const MALFORMED_SEQ_HALTED_ERROR = "Sync paused — the server is sending malformed updates. Reload to try again.";
 const BACKFILL_SNAPSHOT_TIMEOUT_MS = 10_000;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 const MARK_ALL_READ_ERROR = "Some conversations couldn't be updated — device storage is full or unavailable.";
@@ -339,6 +347,10 @@ export class MatronJournalClient {
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
+    // #766: timestamps (ms) of recent malformed-seq-triggered resyncs, for the reconnect-loop
+    // guard in handleMalformedJournalFrame. Pruned to MALFORMED_SEQ_RESYNC_WINDOW_MS on each hit
+    // and reset to empty on the next well-formed frame.
+    private malformedSeqResyncs: number[] = [];
     private historyError?: string;
     private startSessionRequest?: Promise<StartOutcome>;
     private rpcCreateWatchdog?: number;
@@ -2563,6 +2575,33 @@ export class MatronJournalClient {
 
     private async handleJournal(event: JournalEvent): Promise<void> {
         if (!this.database) return;
+        // #766: frame-decode passes journal (sequenced) frames through UNVALIDATED by design — a
+        // boundary drop would advance the cursor past the dropped seq and lose the row silently
+        // (applyJournal has no gap detection). But a frame whose `seq` is not a usable cursor value
+        // is a cursor-POISON hazard, not just a bad payload: applyJournal's dedup guard
+        // `event.seq <= currentCursor` is FALSE when seq is NaN/non-numeric (NaN comparisons are
+        // always false), so the poison frame is applied, `Math.max(last_seq, seq)` becomes NaN, and
+        // `meta.put(seq, CURSOR_KEY)` writes the poison as the durable cursor — which is then acked
+        // to the server and returned by db.cursor() on every reconnect. So a malformed seq must be
+        // neither applied NOR acked NOR allowed to advance the cursor; instead halt and re-snapshot
+        // (the #753 follow-up scoped in frame-decode.decodeJournalEvent). convo_id is validated too
+        // because applyJournal and handleTrackerMarker read it unguarded as an IndexedDB key.
+        if (
+            !Number.isSafeInteger(event.seq) ||
+            event.seq < 0 ||
+            typeof event.convo_id !== "string" ||
+            !event.convo_id
+        ) {
+            this.handleMalformedJournalFrame(event);
+            return;
+        }
+        // A well-formed frame proves the server recovered: clear the reconnect-loop guard so a
+        // later transient blip gets its full resync budget again, and drop the halt banner if it is
+        // still showing.
+        if (this.malformedSeqResyncs.length > 0) {
+            this.malformedSeqResyncs = [];
+            if (this.state.connectionError === MALFORMED_SEQ_HALTED_ERROR) this.patch({ connectionError: undefined });
+        }
         // Tracker markers (item/mission/milestone) drive a live refetch of any loaded tracker
         // data regardless of whether this event is newly applied below — fire-and-forget so it
         // never blocks (or is blocked by) timeline application. Non-tracker types return at once.
@@ -2637,6 +2676,47 @@ export class MatronJournalClient {
             if (!viewingHistoryWindow && MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
                 this.scheduleRead(event.convo_id, event.seq);
             }
+        }
+    }
+
+    /**
+     * #766: a live journal frame arrived with a `seq` that cannot serve as a cursor (NaN /
+     * non-integer / negative) or a missing convo_id. It has already been kept out of the durable
+     * store (handleJournal returns before applyJournal/scheduleAck), so the cursor is still clean.
+     * Recover by re-snapshotting through the connection's resync flow (drop socket → replaceSnapshot
+     * → reconnect), which is what actually resets the socket so the post-reconnect hello/ack carry
+     * the clean cursor — calling replaceSnapshot() in isolation would leave the old socket resuming
+     * from the poison ack cursor. Guarded by a reconnect-loop counter so a pathological server
+     * cannot drive an unbounded resync loop.
+     */
+    private handleMalformedJournalFrame(event: JournalEvent): void {
+        console.warn("matron:journal", {
+            event: "malformed_seq",
+            convo_id: typeof event.convo_id === "string" ? event.convo_id : undefined,
+            seq: event.seq,
+        });
+        const now = Date.now();
+        this.malformedSeqResyncs = this.malformedSeqResyncs.filter((ts) => now - ts < MALFORMED_SEQ_RESYNC_WINDOW_MS);
+        this.malformedSeqResyncs.push(now);
+        if (this.malformedSeqResyncs.length > MALFORMED_SEQ_RESYNC_LIMIT) {
+            // Loop guard tripped: stop auto-resyncing and surface the halt instead of looping. The
+            // socket is left as-is (a subsequent well-formed frame clears the guard and banner).
+            console.warn("matron:journal", { event: "malformed_seq_resync_halted" });
+            this.patch({ connectionError: MALFORMED_SEQ_HALTED_ERROR });
+            return;
+        }
+        void this.triggerMalformedSeqResync();
+    }
+
+    private async triggerMalformedSeqResync(): Promise<void> {
+        const connection = this.connection;
+        if (!connection) return;
+        try {
+            await connection.forceResync();
+        } catch (error) {
+            this.patch({
+                connectionError: error instanceof Error ? error.message : "Could not resync after a malformed update.",
+            });
         }
     }
 

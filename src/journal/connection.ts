@@ -84,6 +84,41 @@ export class JournalConnection {
         }
     }
 
+    /**
+     * Client-triggered full resync (#766). Mirrors the server's `snapshot_required` control-frame
+     * handler (see handleFrame): drop the socket, re-snapshot via onSnapshotRequired (which resets
+     * the durable cursor to the snapshot's clean seq), then reconnect at delay 0. Used when the
+     * client detects an unrecoverable local hazard in a LIVE journal frame — a `seq` that is not a
+     * usable cursor value (NaN / non-integer / negative). Applying such a frame would poison the
+     * durable cursor AND the ack sent to the server, so the client halts and re-snapshots instead
+     * of a boundary drop (a drop would silently advance the cursor past the row — applyJournal has
+     * no gap detection). On reconnect the client acks the CLEAN snapshot cursor, and because the
+     * malformed frame was a live push (not part of the snapshot) a fresh snapshot does not
+     * redeliver it: one malformed frame => one resync => recovered.
+     *
+     * Idempotent: a resync already in flight (replacingSnapshot), or a stopped connection, is a
+     * no-op — so several malformed frames arriving back-to-back on one socket collapse into a
+     * single re-snapshot rather than stacking sockets.
+     */
+    public async forceResync(): Promise<void> {
+        if (this.stopped || this.replacingSnapshot) return;
+        this.replacingSnapshot = true;
+        // Drop the socket, then clear our reference deterministically. onclose also clears it (and,
+        // because replacingSnapshot is set, suppresses its own reconnect — this method owns the
+        // reconnect below), but clearing here removes the dependency on the async close event firing
+        // before scheduleReconnect's open() runs; open() early-returns while this.socket is set. The
+        // onclose `this.socket === socket` guard makes the later event a no-op. Await the re-snapshot
+        // before reconnecting so hello carries the clean cursor, exactly as snapshot_required does.
+        this.socket?.close(1000, "client resync");
+        this.socket = undefined;
+        try {
+            await this.callbacks.onSnapshotRequired();
+        } finally {
+            this.replacingSnapshot = false;
+        }
+        this.scheduleReconnect(0);
+    }
+
     public async agentRequest(
         agentDeviceId: number,
         method: string,

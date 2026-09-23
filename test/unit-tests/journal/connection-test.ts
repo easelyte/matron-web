@@ -395,3 +395,82 @@ describe("JournalConnection RPC transport", () => {
         });
     });
 });
+
+describe("JournalConnection.forceResync (#766)", () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+        jest.useRealTimers();
+    });
+
+    it("drops the socket, re-snapshots, then reconnects — mirroring snapshot_required", async () => {
+        const connectionCallbacks = callbacks();
+        const oldSocket = { close: jest.fn() } as unknown as WebSocket;
+        const newSocket = { close: jest.fn() } as unknown as WebSocket;
+        const websocket = jest.spyOn(globalThis, "WebSocket").mockImplementation(() => newSocket);
+        const connection = new JournalConnection("https://journal.example", "token", connectionCallbacks, () => "id-1");
+        const internal = connection as unknown as ConnectionInternals & {
+            stopped: boolean;
+            replacingSnapshot: boolean;
+        };
+        // Simulate a live, welcomed connection with an open socket.
+        internal.stopped = false;
+        internal.socket = oldSocket;
+
+        await connection.forceResync();
+
+        // The current socket is dropped and a fresh snapshot is fetched (the cursor reset lives in
+        // the client's onSnapshotRequired callback).
+        expect(oldSocket.close).toHaveBeenCalledWith(1000, "client resync");
+        expect(connectionCallbacks.onSnapshotRequired).toHaveBeenCalledTimes(1);
+        // The resync flag is cleared once the re-snapshot resolves.
+        expect(internal.replacingSnapshot).toBe(false);
+
+        // scheduleReconnect(0) then reopens the socket.
+        jest.advanceTimersByTime(0);
+        expect(websocket).toHaveBeenCalledTimes(1);
+
+        connection.stop();
+        websocket.mockRestore();
+    });
+
+    it("is a no-op on a stopped connection", async () => {
+        const connectionCallbacks = callbacks();
+        const connection = new JournalConnection("https://journal.example", "token", connectionCallbacks, () => "id-1");
+        // Default state is stopped=true until start().
+        await connection.forceResync();
+        expect(connectionCallbacks.onSnapshotRequired).not.toHaveBeenCalled();
+    });
+
+    it("collapses a concurrent resync while one is already in flight", async () => {
+        const connectionCallbacks = callbacks();
+        let releaseSnapshot!: () => void;
+        connectionCallbacks.onSnapshotRequired.mockReturnValue(
+            new Promise<void>((resolve) => {
+                releaseSnapshot = resolve;
+            }),
+        );
+        const websocket = jest
+            .spyOn(globalThis, "WebSocket")
+            .mockImplementation(() => ({ close: jest.fn() }) as unknown as WebSocket);
+        const connection = new JournalConnection("https://journal.example", "token", connectionCallbacks, () => "id-1");
+        const internal = connection as unknown as ConnectionInternals & { stopped: boolean };
+        internal.stopped = false;
+        internal.socket = { close: jest.fn() } as unknown as WebSocket;
+
+        const first = connection.forceResync();
+        // A second call while the first is mid-flight (replacingSnapshot set) must not re-enter.
+        await connection.forceResync();
+        expect(connectionCallbacks.onSnapshotRequired).toHaveBeenCalledTimes(1);
+
+        releaseSnapshot();
+        await first;
+        jest.advanceTimersByTime(0);
+
+        connection.stop();
+        websocket.mockRestore();
+    });
+});
