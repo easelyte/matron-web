@@ -683,3 +683,43 @@ describe("MatronJournalClient tracker needs-you badge", () => {
         expect(client.getSnapshot().trackerNeedsYou).toBe(0);
     });
 });
+
+describe("MatronJournalClient tracker needs-you badge (review round 1)", () => {
+    it("an item marker mid-prime supersedes the in-flight prime (stale response dropped)", async () => {
+        const { client, state } = makeClient();
+        let resolvePrime!: (value: { items: TrackerItem[]; next_cursor: null }) => void;
+        state.api = {
+            items: jest
+                .fn()
+                .mockReturnValueOnce(new Promise((resolve) => (resolvePrime = resolve)))
+                .mockResolvedValueOnce({ items: [item({ id: "it_1" }), item({ id: "it_2" })], next_cursor: null }),
+        };
+
+        const prime = client.refreshTrackerBadge(); // connection ready → prime in flight
+        state.handleTrackerMarker(marker("item", { num: 2, action: "created" }));
+        await flush();
+        await flush();
+        resolvePrime({ items: [], next_cursor: null }); // older state lands last
+        await prime;
+
+        expect(state.api.items).toHaveBeenCalledTimes(2);
+        expect(client.getSnapshot().trackerNeedsYou).toBe(2);
+    });
+
+    it("marks the count partial when the page guard is hit with pages remaining", async () => {
+        const { client, state } = makeClient();
+        let n = 0;
+        state.api = {
+            items: jest.fn(() => {
+                n += 1;
+                return Promise.resolve({ items: [item({ id: `it_${n}`, num: n })], next_cursor: "more" });
+            }),
+        };
+
+        await client.refreshTrackerBadge();
+
+        expect(state.api.items).toHaveBeenCalledTimes(20);
+        expect(client.getSnapshot().trackerNeedsYou).toBe(20);
+        expect(client.getSnapshot().trackerNeedsYouPartial).toBe(true);
+    });
+});

@@ -18,6 +18,9 @@ interface JournalConnectionCallbacks {
 }
 
 const RETRY_DELAYS_MS = [0, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
+// A socket that upgrades but never receives hello_ok would otherwise sit in "connecting" forever
+// (no close → no retry). Past this deadline it is closed, and the normal onclose retry takes over.
+export const WELCOME_TIMEOUT_MS = 20_000;
 
 export class JournalConnection {
     private socket?: WebSocket;
@@ -25,6 +28,7 @@ export class JournalConnection {
     private retryAttempt = 0;
     private stopped = true;
     private welcomed = false;
+    private welcomeTimer?: number;
     private replacingSnapshot = false;
     private processing = Promise.resolve();
     private pendingRpc = new Map<
@@ -58,6 +62,7 @@ export class JournalConnection {
     public stop(): void {
         this.stopped = true;
         this.welcomed = false;
+        this.clearWelcomeTimer();
         this.replacingSnapshot = false;
         if (this.retryTimer !== undefined) window.clearTimeout(this.retryTimer);
         this.retryTimer = undefined;
@@ -129,11 +134,22 @@ export class JournalConnection {
     /**
      * Operator-triggered reconnect (Settings / connection banner). Skips any pending backoff and
      * opens a socket now, resetting the backoff ladder so a later drop starts short again. A no-op
-     * on a stopped connection, or while a socket already exists (open, or mid-connect: open()
-     * itself would early-return, and a second parallel socket must never be opened).
+     * on a stopped connection, during a snapshot resync (which owns its own reconnect), or while a
+     * welcomed socket is live. A socket that has not been welcomed yet is replaced.
      */
     public reconnectNow(): void {
-        if (this.stopped || this.socket) return;
+        if (this.stopped || this.replacingSnapshot) return;
+        if (this.socket) {
+            // A welcomed socket is healthy: nothing to do.
+            if (this.welcomed) return;
+            // A socket still waiting for hello_ok may be stalled: detach and close it, then open a
+            // fresh one. Its late close event is dropped by onclose's socket-identity guard, so
+            // this never leaves two live sockets or a double-scheduled retry.
+            const stale = this.socket;
+            this.socket = undefined;
+            this.clearWelcomeTimer();
+            stale.close(1000, "manual reconnect");
+        }
         if (this.retryTimer !== undefined) window.clearTimeout(this.retryTimer);
         this.retryTimer = undefined;
         this.retryAttempt = 0;
@@ -193,6 +209,11 @@ export class JournalConnection {
         const socket = new WebSocket(websocketUrl(this.serverUrl));
         this.socket = socket;
         this.welcomed = false;
+        this.clearWelcomeTimer();
+        this.welcomeTimer = window.setTimeout(() => {
+            this.welcomeTimer = undefined;
+            if (this.socket === socket && !this.welcomed) socket.close(4000, "welcome timeout");
+        }, WELCOME_TIMEOUT_MS);
 
         socket.onopen = () => {
             void this.callbacks
@@ -229,6 +250,7 @@ export class JournalConnection {
             if (this.socket !== socket) return;
             this.socket = undefined;
             this.welcomed = false;
+            this.clearWelcomeTimer();
             if (this.stopped || this.replacingSnapshot) return;
             const reason = event.code === 1000 ? undefined : event.reason || "Connection interrupted";
             this.callbacks.onState(navigator.onLine ? "connecting" : "offline", reason);
@@ -333,6 +355,7 @@ export class JournalConnection {
         if (frame.kind === "control") {
             if (frame.op === "hello_ok") {
                 this.welcomed = true;
+                this.clearWelcomeTimer();
                 this.retryAttempt = 0;
                 this.callbacks.onState("online");
                 await this.callbacks.onReady();
@@ -425,6 +448,11 @@ export class JournalConnection {
 
     private logRpcDiag(event: string, requestId?: string): void {
         console.warn("matron:rpc", { event, request_id: requestId });
+    }
+
+    private clearWelcomeTimer(): void {
+        if (this.welcomeTimer !== undefined) window.clearTimeout(this.welcomeTimer);
+        this.welcomeTimer = undefined;
     }
 
     private scheduleReconnect(delayOverride?: number): void {

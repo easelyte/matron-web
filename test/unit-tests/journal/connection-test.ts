@@ -601,16 +601,33 @@ describe("JournalConnection.reconnectNow (manual reconnect from Settings)", () =
         expect(open).toHaveBeenCalledTimes(1); // the cancelled backoff never fires a second open
     });
 
-    it("is a no-op while a socket is already open or connecting", () => {
+    it("is a no-op while a welcomed socket is live", () => {
         const { connection, socket } = harness();
-        const internal = connection as unknown as ReconnectInternals;
+        const internal = connection as unknown as ReconnectInternals & { welcomed: boolean };
         const open = jest.spyOn(internal, "open").mockImplementation(() => undefined);
         internal.stopped = false;
         internal.socket = socket;
+        internal.welcomed = true;
 
         connection.reconnectNow();
 
         expect(open).not.toHaveBeenCalled();
+        expect(socket.close).not.toHaveBeenCalled();
+    });
+
+    it("replaces a socket that was never welcomed (stalled before hello_ok)", () => {
+        const { connection, socket } = harness();
+        const internal = connection as unknown as ReconnectInternals & { welcomed: boolean };
+        const open = jest.spyOn(internal, "open").mockImplementation(() => undefined);
+        internal.stopped = false;
+        internal.socket = socket;
+        internal.welcomed = false;
+
+        connection.reconnectNow();
+
+        expect(socket.close).toHaveBeenCalledTimes(1);
+        expect(internal.socket).toBeUndefined();
+        expect(open).toHaveBeenCalledTimes(1);
     });
 
     it("is a no-op on a stopped connection", () => {
@@ -621,5 +638,61 @@ describe("JournalConnection.reconnectNow (manual reconnect from Settings)", () =
         connection.reconnectNow();
 
         expect(open).not.toHaveBeenCalled();
+    });
+});
+
+describe("JournalConnection welcome timeout", () => {
+    class FakeSocket {
+        public static instances: FakeSocket[] = [];
+        public readyState = 0;
+        public onopen: (() => void) | null = null;
+        public onclose: ((event: { code: number; reason: string }) => void) | null = null;
+        public onmessage: unknown = null;
+        public onerror: unknown = null;
+        public close = jest.fn((code = 1000, reason = "") => {
+            this.onclose?.({ code, reason });
+        });
+        public constructor() {
+            FakeSocket.instances.push(this);
+        }
+    }
+    const realWebSocket = globalThis.WebSocket;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        FakeSocket.instances = [];
+        (globalThis as { WebSocket: unknown }).WebSocket = FakeSocket;
+    });
+    afterEach(() => {
+        (globalThis as { WebSocket: unknown }).WebSocket = realWebSocket;
+        jest.useRealTimers();
+    });
+
+    it("closes a socket that never receives hello_ok and retries", () => {
+        const { connection } = harness();
+        connection.start();
+        expect(FakeSocket.instances).toHaveLength(1);
+
+        jest.advanceTimersByTime(20_000);
+
+        expect(FakeSocket.instances[0].close).toHaveBeenCalledWith(4000, "welcome timeout");
+        jest.advanceTimersByTime(60_000);
+        expect(FakeSocket.instances.length).toBeGreaterThan(1);
+        connection.stop();
+    });
+
+    it("does not close a welcomed socket", async () => {
+        const { connection } = harness();
+        connection.start();
+        const socket = FakeSocket.instances[0] as unknown as WebSocket;
+        await (connection as unknown as ConnectionInternals).handleFrame(
+            { kind: "control", op: "hello_ok" } as unknown as ServerFrame,
+            socket,
+        );
+
+        jest.advanceTimersByTime(20_000);
+
+        expect(FakeSocket.instances[0].close).not.toHaveBeenCalled();
+        connection.stop();
     });
 });

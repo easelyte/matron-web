@@ -1924,6 +1924,7 @@ export class MatronJournalClient {
             this.patch({
                 inboxItems: accumulated,
                 trackerNeedsYou: accumulated.filter(needsUser).length,
+                trackerNeedsYouPartial: truncated,
                 trackerLoading: false,
                 trackerError: truncated
                     ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
@@ -1945,12 +1946,15 @@ export class MatronJournalClient {
         const api = this.api;
         if (!api) return;
         const gen = ++this.trackerBadgeGen;
-        const MAX_PAGES = 5;
+        // Same runaway guard as loadInbox. Hitting it with pages remaining publishes the count as a
+        // LOWER BOUND (trackerNeedsYouPartial → the badge renders "N+"), never as an exact total.
+        const MAX_PAGES = 20;
         const seen = new Set<string>();
         let count = 0;
+        let partial = false;
         let cursor: string | undefined;
         try {
-            for (let page = 0; page < MAX_PAGES; page += 1) {
+            for (let page = 0; ; page += 1) {
                 const { items, next_cursor } = await api.items({
                     state: "open",
                     awaiting: "user",
@@ -1963,19 +1967,28 @@ export class MatronJournalClient {
                     if (needsUser(item)) count += 1;
                 }
                 if (!next_cursor) break;
+                if (page + 1 >= MAX_PAGES) {
+                    partial = true;
+                    break;
+                }
                 cursor = next_cursor;
             }
         } catch {
             return;
         }
-        this.patch({ trackerNeedsYou: count });
+        this.patch({ trackerNeedsYou: count, trackerNeedsYouPartial: partial });
     }
 
     // After a tracker mutation or an item marker: the loaded inbox is refetched (and derives the
-    // badge); otherwise a primed badge is refreshed on its own. Nothing loaded, nothing fetched.
+    // badge); otherwise the badge is refreshed on its own once priming has STARTED (gen > 0), not
+    // only once it has landed — a marker arriving mid-prime must supersede the in-flight request
+    // (the generation guard drops the older response), or its change would be lost. Before any
+    // prime (no connection ready yet), nothing is fetched.
     private async refreshInboxOrBadge(): Promise<void> {
         if (this.state.inboxItems) await this.loadInbox();
-        else if (this.state.trackerNeedsYou !== undefined) await this.refreshTrackerBadge();
+        else if (this.trackerBadgeGen > 0 || this.state.trackerNeedsYou !== undefined) {
+            await this.refreshTrackerBadge();
+        }
     }
 
     /** Operator-triggered reconnect (Settings menu / connection banner). */

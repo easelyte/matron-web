@@ -1938,9 +1938,12 @@ function ConversationList({
                                         <button
                                             className="mj_IconButton mj_HeaderNavButton mj_IconButton_badged"
                                             type="button"
-                                            aria-label={trackerLabel(state.trackerNeedsYou)}
+                                            aria-label={trackerLabel(
+                                                state.trackerNeedsYou,
+                                                state.trackerNeedsYouPartial,
+                                            )}
                                             aria-pressed={state.trackerView?.open ?? false}
-                                            title={trackerLabel(state.trackerNeedsYou)}
+                                            title={trackerLabel(state.trackerNeedsYou, state.trackerNeedsYouPartial)}
                                             onClick={() =>
                                                 state.trackerView?.open
                                                     ? client.closeTrackerView()
@@ -1948,7 +1951,10 @@ function ConversationList({
                                             }
                                         >
                                             <ChecklistIcon />
-                                            <NavBadge count={state.trackerNeedsYou} />
+                                            <NavBadge
+                                                count={state.trackerNeedsYou}
+                                                partial={state.trackerNeedsYouPartial}
+                                            />
                                         </button>
                                         <button
                                             className="mj_IconButton"

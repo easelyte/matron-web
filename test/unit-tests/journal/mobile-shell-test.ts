@@ -195,6 +195,14 @@ describe("mobile bottom nav", () => {
         expect(tab.getAttribute("aria-label")).toBe("Tracker");
     });
 
+    it("renders a lower-bound count as N+ when the badge is partial", async () => {
+        const container = await render(signedInClient({ trackerNeedsYou: 7, trackerNeedsYouPartial: true }));
+
+        const tab = mobileNav(container)!.querySelector('button[data-nav="tracker"]')!;
+        expect(tab.querySelector(".mj_NavBadge")?.textContent).toBe("7+");
+        expect(tab.getAttribute("aria-label")).toBe("Tracker, 7+ need you");
+    });
+
     it("is not rendered inside an open conversation (the composer owns the bottom edge)", async () => {
         const client = signedInClient({ selectedConversationId: "c1" });
         const container = await render(client);

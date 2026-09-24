@@ -33,18 +33,33 @@ export function mainSurfaceOpen(state: ClientState, filesAvailable: boolean): bo
     );
 }
 
-export function NavBadge({ count }: { count: number | undefined }): React.ReactElement | null {
+/** Badge text: exact up to 99; "N+" when the count is only a lower bound (or past 99). */
+export function badgeText(count: number | undefined, partial = false): string | null {
     if (!count || count <= 0) return null;
+    if (count > 99) return "99+";
+    return partial ? `${count}+` : String(count);
+}
+
+export function NavBadge({
+    count,
+    partial,
+}: {
+    count: number | undefined;
+    partial?: boolean;
+}): React.ReactElement | null {
+    const text = badgeText(count, partial);
+    if (text === null) return null;
     return (
         <span className="mj_NavBadge" aria-hidden="true">
-            {count > 99 ? "99+" : count}
+            {text}
         </span>
     );
 }
 
 /** Accessible name for a tracker entry point: the count rides in the name, not a hidden span. */
-export function trackerLabel(count: number | undefined): string {
-    return count && count > 0 ? `Tracker, ${count} need you` : "Tracker";
+export function trackerLabel(count: number | undefined, partial = false): string {
+    const text = badgeText(count, partial);
+    return text === null ? "Tracker" : `Tracker, ${text} need you`;
 }
 
 type NavKey = "chats" | "tracker" | "files";
@@ -74,6 +89,7 @@ export function MobileNav({
             client.openFilesView();
         }
     };
+    const partial = state.trackerNeedsYouPartial ?? false;
     const tab = (key: NavKey, label: string, icon: React.ReactElement, badge?: number): React.ReactElement => (
         <button
             key={key}
@@ -81,12 +97,12 @@ export function MobileNav({
             data-nav={key}
             className={`mj_MobileNav_tab${current === key ? " mj_MobileNav_tab_active" : ""}`}
             aria-current={current === key ? "page" : undefined}
-            aria-label={key === "tracker" ? trackerLabel(badge) : label}
+            aria-label={key === "tracker" ? trackerLabel(badge, partial) : label}
             onClick={() => go(key)}
         >
             <span className="mj_MobileNav_icon">
                 {icon}
-                <NavBadge count={badge} />
+                <NavBadge count={badge} partial={partial} />
             </span>
             <span className="mj_MobileNav_label">{label}</span>
         </button>

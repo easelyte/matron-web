@@ -228,3 +228,12 @@ Please see LICENSE files in the repository root for full details.
         padding: 0 var(--cpd-space-2x);
     }
 }
+
+/* The full-screen media viewer is a fixed overlay outside the padded app frame, so under
+   viewport-fit=cover it must keep its own controls out of the notch / home-indicator areas. */
+@media (max-width: 700px) {
+    .mj_MediaViewer {
+        padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0)
+            env(safe-area-inset-left, 0);
+    }
+}
