@@ -556,6 +556,9 @@ Please see LICENSE files in the repository root for full details.
     flex: 1 1 0;
     min-height: 0;
     overflow-y: auto;
+    /* border-box: width 100% + the horizontal padding otherwise overflows the pane by 32px, which
+       clipped titles, comment bubbles and the close-mission field on a phone. */
+    box-sizing: border-box;
     width: 100%;
     max-width: 720px;
     margin: 0 auto;

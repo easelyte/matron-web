@@ -363,70 +363,10 @@ textarea {
     color: var(--cpd-color-text-action-accent);
 }
 
-/* Persistent sidebar connection footer: avatar · operator id · connection status.
-   v3 mock bottom-left of the sidebar (#519). */
+/* The sidebar column (the old persistent connection footer was removed; connection status now
+   lives in the Settings menu + a disconnected-only banner, see mobile-shell.tsx). */
 .mx_LeftPanel_wrapper--user {
     flex-direction: column;
-}
-
-.mj_SidebarFooter {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: var(--cpd-space-2x);
-    padding: var(--cpd-space-2x) var(--cpd-space-3x);
-    border-top: 1px solid var(--cpd-color-border-subtle);
-    background: var(--cpd-color-bg-canvas-default);
-}
-
-.mj_SidebarFooterAvatar {
-    display: inline-flex;
-    flex: none;
-    width: 24px;
-    height: 24px;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-subtle-secondary);
-    color: var(--cpd-color-text-secondary);
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 1;
-    text-transform: uppercase;
-}
-
-.mj_SidebarFooterId {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    color: var(--cpd-color-text-secondary);
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.mj_SidebarFooterStatus {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    gap: var(--cpd-space-1x);
-    color: var(--cpd-color-text-tertiary);
-    font-size: 11px;
-    font-weight: 400;
-    line-height: 14px;
-}
-
-.mj_SidebarFooterDot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--cpd-color-text-tertiary);
-}
-
-.mj_SidebarFooterStatus_online .mj_SidebarFooterDot {
-    background: var(--cpd-color-text-action-accent);
 }
 
 .mj_SubChatState {

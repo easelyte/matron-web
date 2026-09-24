@@ -126,6 +126,20 @@ export class JournalConnection {
         if (!this.stopped) this.scheduleReconnect(0);
     }
 
+    /**
+     * Operator-triggered reconnect (Settings / connection banner). Skips any pending backoff and
+     * opens a socket now, resetting the backoff ladder so a later drop starts short again. A no-op
+     * on a stopped connection, or while a socket already exists (open, or mid-connect: open()
+     * itself would early-return, and a second parallel socket must never be opened).
+     */
+    public reconnectNow(): void {
+        if (this.stopped || this.socket) return;
+        if (this.retryTimer !== undefined) window.clearTimeout(this.retryTimer);
+        this.retryTimer = undefined;
+        this.retryAttempt = 0;
+        this.open();
+    }
+
     public async agentRequest(
         agentDeviceId: number,
         method: string,

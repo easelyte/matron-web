@@ -568,3 +568,58 @@ describe("JournalConnection.forceResync (#766)", () => {
         websocket.mockRestore();
     });
 });
+
+describe("JournalConnection.reconnectNow (manual reconnect from Settings)", () => {
+    interface ReconnectInternals {
+        stopped: boolean;
+        socket?: WebSocket;
+        retryTimer?: number;
+        retryAttempt: number;
+        open(): void;
+    }
+
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => {
+        jest.restoreAllMocks();
+        jest.useRealTimers();
+    });
+
+    it("skips the pending backoff and opens a socket immediately", () => {
+        const { connection } = harness();
+        const internal = connection as unknown as ReconnectInternals;
+        const open = jest.spyOn(internal, "open").mockImplementation(() => undefined);
+        internal.stopped = false;
+        internal.retryAttempt = 5;
+        internal.retryTimer = window.setTimeout(() => internal.open(), 60_000);
+
+        connection.reconnectNow();
+
+        expect(open).toHaveBeenCalledTimes(1);
+        expect(internal.retryTimer).toBeUndefined();
+        expect(internal.retryAttempt).toBe(0);
+        jest.advanceTimersByTime(60_000);
+        expect(open).toHaveBeenCalledTimes(1); // the cancelled backoff never fires a second open
+    });
+
+    it("is a no-op while a socket is already open or connecting", () => {
+        const { connection, socket } = harness();
+        const internal = connection as unknown as ReconnectInternals;
+        const open = jest.spyOn(internal, "open").mockImplementation(() => undefined);
+        internal.stopped = false;
+        internal.socket = socket;
+
+        connection.reconnectNow();
+
+        expect(open).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op on a stopped connection", () => {
+        const { connection } = harness();
+        const internal = connection as unknown as ReconnectInternals;
+        const open = jest.spyOn(internal, "open").mockImplementation(() => undefined);
+
+        connection.reconnectNow();
+
+        expect(open).not.toHaveBeenCalled();
+    });
+});

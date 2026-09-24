@@ -179,6 +179,11 @@ function deviceName(): string {
     return `Matron Web (${navigator.platform || "browser"})`;
 }
 
+// An item counts toward the "needs you" badge when it is open and awaiting the user.
+function needsUser(item: TrackerItem): boolean {
+    return item.state === "open" && item.awaiting === "user";
+}
+
 function blankState(): ClientState {
     return {
         phase: "loading",
@@ -343,6 +348,9 @@ export class MatronJournalClient {
     private trackerItemGen = 0;
     private trackerMissionGen = 0;
     private trackerInboxGen = 0;
+    // Generation guard for the needs-you badge fetch; loadInbox bumps it too, so a full inbox load
+    // (the authoritative count) supersedes a slower in-flight badge-only fetch.
+    private trackerBadgeGen = 0;
     private trackerMissionsGen = 0;
     private sessionGen = 0;
     private ackTimer?: number;
@@ -1912,8 +1920,10 @@ export class MatronJournalClient {
                 }
                 cursor = next_cursor;
             }
+            this.trackerBadgeGen += 1;
             this.patch({
                 inboxItems: accumulated,
+                trackerNeedsYou: accumulated.filter(needsUser).length,
                 trackerLoading: false,
                 trackerError: truncated
                     ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
@@ -1923,6 +1933,54 @@ export class MatronJournalClient {
             if (this.api !== api || this.trackerInboxGen !== gen) return;
             this.patch({ trackerError: errorMessage(error), trackerLoading: false });
         }
+    }
+
+    /**
+     * The "needs you" count behind the mobile nav + header tracker badges: open items awaiting the
+     * user, app-wide. Fetches only that filtered slice (not the whole inbox), follows the cursor so
+     * a first page never under-counts, and is best-effort: a failure keeps the last known count and
+     * never raises the tracker error banner (the badge is a hint, the inbox is the record).
+     */
+    public async refreshTrackerBadge(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.trackerBadgeGen;
+        const MAX_PAGES = 5;
+        const seen = new Set<string>();
+        let count = 0;
+        let cursor: string | undefined;
+        try {
+            for (let page = 0; page < MAX_PAGES; page += 1) {
+                const { items, next_cursor } = await api.items({
+                    state: "open",
+                    awaiting: "user",
+                    ...(cursor ? { cursor } : {}),
+                });
+                if (this.api !== api || this.trackerBadgeGen !== gen) return;
+                for (const item of items) {
+                    if (seen.has(item.id)) continue;
+                    seen.add(item.id);
+                    if (needsUser(item)) count += 1;
+                }
+                if (!next_cursor) break;
+                cursor = next_cursor;
+            }
+        } catch {
+            return;
+        }
+        this.patch({ trackerNeedsYou: count });
+    }
+
+    // After a tracker mutation or an item marker: the loaded inbox is refetched (and derives the
+    // badge); otherwise a primed badge is refreshed on its own. Nothing loaded, nothing fetched.
+    private async refreshInboxOrBadge(): Promise<void> {
+        if (this.state.inboxItems) await this.loadInbox();
+        else if (this.state.trackerNeedsYou !== undefined) await this.refreshTrackerBadge();
+    }
+
+    /** Operator-triggered reconnect (Settings menu / connection banner). */
+    public reconnect(): void {
+        this.connection?.reconnectNow();
     }
 
     public async loadItem(id: number | string): Promise<void> {
@@ -1987,7 +2045,7 @@ export class MatronJournalClient {
         }
         if (this.api !== api) return true;
         await this.loadItem(id);
-        if (this.state.inboxItems) await this.loadInbox();
+        await this.refreshInboxOrBadge();
         return true;
     }
 
@@ -2006,7 +2064,7 @@ export class MatronJournalClient {
         }
         if (this.api !== api) return true;
         await this.loadItem(id);
-        if (this.state.inboxItems) await this.loadInbox();
+        await this.refreshInboxOrBadge();
         return true;
     }
 
@@ -2021,7 +2079,7 @@ export class MatronJournalClient {
         }
         if (this.api !== api) return true;
         await this.loadItem(id);
-        if (this.state.inboxItems) await this.loadInbox();
+        await this.refreshInboxOrBadge();
         return true;
     }
 
@@ -2039,7 +2097,7 @@ export class MatronJournalClient {
         }
         if (this.api !== api) return true;
         await this.loadItem(id);
-        if (this.state.inboxItems) await this.loadInbox();
+        await this.refreshInboxOrBadge();
         return true;
     }
 
@@ -2084,7 +2142,7 @@ export class MatronJournalClient {
             if (num && this.state.trackerItem && this.state.trackerItem.item.num === num) {
                 void this.loadItem(num);
             }
-            if (this.state.inboxItems) void this.loadInbox();
+            void this.refreshInboxOrBadge();
             return;
         }
         if (event.type === "mission") {
@@ -2558,6 +2616,10 @@ export class MatronJournalClient {
         if (!db || !connection) return;
         const ownsReplay = (): boolean =>
             this.sessionGen === gen && this.database === db && this.connection === connection;
+
+        // Prime (or, after a reconnect, heal) the tracker needs-you badge: markers missed while
+        // offline would otherwise leave it stale until the next item event. Fire-and-forget.
+        void this.refreshTrackerBadge();
 
         const outbox = await db.outbox();
         if (!ownsReplay()) return;
