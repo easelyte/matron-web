@@ -395,6 +395,11 @@ export interface ClientState {
     trackerView?: TrackerViewState;
     missions?: Mission[];
     inboxItems?: TrackerItem[];
+    /** Open items awaiting the user, app-wide — the mobile nav / header tracker badge. Primed on
+     *  every connection ready, kept live by item markers; undefined = not yet primed. */
+    trackerNeedsYou?: number;
+    /** True when trackerNeedsYou is a lower bound (pagination runaway guard hit) — badge shows "N+". */
+    trackerNeedsYouPartial?: boolean;
     trackerItem?: { item: TrackerItem; comments: TrackerComment[] } | null;
     trackerMission?: MissionDetail | null;
     /** True while ANY tracker fetch is in flight (v1: one detail/list open at a time). */

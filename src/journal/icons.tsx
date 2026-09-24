@@ -502,3 +502,12 @@ export function ResetIcon(props: IconProps): React.ReactElement {
         </Icon>
     );
 }
+
+export function ChatsIcon(props: IconProps): React.ReactElement {
+    // Mobile nav "Chats" tab — a speech bubble, the conversation list's home.
+    return (
+        <Icon {...props}>
+            <path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.1A8 8 0 1 1 20 12Z" />
+        </Icon>
+    );
+}

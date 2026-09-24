@@ -90,6 +90,7 @@ function isElectronRuntime(): boolean {
     return typeof window !== "undefined" && Boolean((window as Window & { electron?: unknown }).electron);
 }
 import { MarkdownBody, markdownToPlainText } from "./markdown";
+import { ConnectionBanner, ConnectionStatus, mainSurfaceOpen, MobileNav, NavBadge, trackerLabel } from "./mobile-shell";
 import { isRenderableItemMarker, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
 import { TrackerPane } from "./tracker/TrackerPane";
 import {
@@ -1877,7 +1878,7 @@ function ConversationList({
 
     return (
         <div
-            className={`mx_LeftPanel_outerWrapper ${state.selectedConversationId ? "mj_Sidebar_mobileHidden" : ""}`}
+            className={`mx_LeftPanel_outerWrapper ${mainSurfaceOpen(state, !isElectronRuntime()) ? "mj_Sidebar_mobileHidden" : ""}`}
             style={{ "--mj-left-panel-width": `${width}px` } as React.CSSProperties}
         >
             <div className="mx_LeftPanel_wrapper mx_LeftPanel_newRoomList">
@@ -1914,7 +1915,7 @@ function ConversationList({
                                             support needs binary bodies over journalRequest — follow-up. */}
                                         {!isElectronRuntime() && (
                                             <button
-                                                className="mj_IconButton"
+                                                className="mj_IconButton mj_HeaderNavButton"
                                                 type="button"
                                                 aria-label="Files"
                                                 aria-pressed={state.filesView?.open ? true : undefined}
@@ -1931,12 +1932,18 @@ function ConversationList({
                                         {/* Tracker is NOT Electron-gated: unlike Files (raw fetch),
                                             it uses JournalApi, which routes through the Electron
                                             bridge, so it works on desktop as well as web/iOS. */}
+                                        {/* Hidden at phone widths, where the bottom MobileNav carries
+                                            Tracker + Files (mj_HeaderNavButton). The needs-you badge
+                                            rides here on desktop and on the nav tab on mobile. */}
                                         <button
-                                            className="mj_IconButton"
+                                            className="mj_IconButton mj_HeaderNavButton mj_IconButton_badged"
                                             type="button"
-                                            aria-label="Tracker"
+                                            aria-label={trackerLabel(
+                                                state.trackerNeedsYou,
+                                                state.trackerNeedsYouPartial,
+                                            )}
                                             aria-pressed={state.trackerView?.open ?? false}
-                                            title="Tracker"
+                                            title={trackerLabel(state.trackerNeedsYou, state.trackerNeedsYouPartial)}
                                             onClick={() =>
                                                 state.trackerView?.open
                                                     ? client.closeTrackerView()
@@ -1944,6 +1951,10 @@ function ConversationList({
                                             }
                                         >
                                             <ChecklistIcon />
+                                            <NavBadge
+                                                count={state.trackerNeedsYou}
+                                                partial={state.trackerNeedsYouPartial}
+                                            />
                                         </button>
                                         <button
                                             className="mj_IconButton"
@@ -2109,27 +2120,12 @@ function ConversationList({
                             </nav>
                         </div>
                     </div>
-                    <div className="mj_SidebarFooter">
-                        <span className="mj_SidebarFooterAvatar" aria-hidden="true">
-                            {(state.session?.username ?? "?").slice(0, 1)}
-                        </span>
-                        <span className="mj_SidebarFooterId" title={state.session?.username}>
-                            {state.session?.username ?? "Signed out"}
-                        </span>
-                        <span className={`mj_SidebarFooterStatus mj_SidebarFooterStatus_${state.connection}`}>
-                            <span className="mj_SidebarFooterDot" aria-hidden="true" />
-                            {state.connection === "online"
-                                ? "connected"
-                                : state.connection === "connecting"
-                                  ? "connecting…"
-                                  : "offline"}
-                        </span>
-                    </div>
                 </div>
                 {accountOpen && (
                     <div className="mj_HeaderMenu mj_AccountMenu">
                         <strong>{state.session?.username}</strong>
                         <span>{state.session?.serverUrl}</span>
+                        <ConnectionStatus client={client} state={state} />
                         <button
                             onClick={() => {
                                 setAccountOpen(false);
@@ -6313,7 +6309,11 @@ function Composer({
                     </div>
                 )}
                 <div id="mj-composer-hint" className="mj_ComposerHint">
-                    <span className="mj_ComposerHint_keys">
+                    {/* The keyboard-shortcut hint is hidden at phone widths (no shift+enter on a
+                        touch keyboard); the "Jump to latest" notice always shows. */}
+                    <span
+                        className={`mj_ComposerHint_keys${state.viewingHistoryWindow ? "" : " mj_ComposerHint_shortcuts"}`}
+                    >
                         {state.viewingHistoryWindow ? "Jump to latest to send" : "/ commands · shift+enter for newline"}
                     </span>
                     {ctxHintPct !== null && (
@@ -6946,6 +6946,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
     return (
         <div className="mx_MatrixChat_wrapper">
+            <ConnectionBanner client={client} state={state} />
             <div ref={appContent} className="mx_MatrixChat" inert={state.stagedUploads ? true : undefined}>
                 <ConversationList client={client} state={state} width={leftPanel.width} />
                 <div
@@ -6956,7 +6957,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                     <div />
                 </div>
                 <div
-                    className={`mx_RoomView_wrapper ${state.trackerView?.open || state.filesView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
+                    className={`mx_RoomView_wrapper ${mainSurfaceOpen(state, !isElectronRuntime()) ? "" : "mj_Chat_mobileHidden"}`}
                 >
                     {state.trackerView?.open ? (
                         <TrackerPane client={client} state={state} />
@@ -7049,6 +7050,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                     )}
                 </div>
             </div>
+            <MobileNav client={client} state={state} filesAvailable={!isElectronRuntime()} />
             {state.stagedUploads && <UploadConfirmDialog client={client} staged={state.stagedUploads} />}
         </div>
     );

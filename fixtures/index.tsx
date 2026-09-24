@@ -39,6 +39,7 @@ import type {
 import "../src/journal/shell.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
+import "../src/journal/mobile.pcss";
 
 const SESSION: Session = {
     serverUrl: "https://journal.example",
@@ -340,6 +341,8 @@ const state: ClientState = {
     events,
     pendingMessages: [],
     connection: "online",
+    // Needs-you badge on the header tracker button (desktop) and the mobile nav Tracker tab.
+    trackerNeedsYou: 2,
     sessionStatus: {
         model: "claude-sonnet",
         context: { tokens: 144_000, window: 200_000, pct: 72 },
