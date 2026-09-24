@@ -681,6 +681,50 @@ describe("JournalConnection welcome timeout", () => {
         connection.stop();
     });
 
+    it("a hello_ok queued behind a slow onReady still counts as welcome receipt", async () => {
+        const cbs = callbacks();
+        let releaseReady!: () => void;
+        cbs.onReady.mockImplementationOnce(() => new Promise<void>((resolve) => (releaseReady = resolve)));
+        const connection = new JournalConnection("https://journal.example", "token", cbs, () => "r");
+        connection.start();
+        const first = FakeSocket.instances[0] as unknown as { onmessage: (e: MessageEvent) => void };
+        const hello = (): MessageEvent =>
+            new MessageEvent("message", { data: JSON.stringify({ kind: "control", op: "hello_ok" }) });
+        first.onmessage(hello()); // first welcome → onReady blocks the queue
+        await Promise.resolve();
+        await Promise.resolve();
+        // Server drops the first socket; the replacement's hello_ok queues behind the blocked onReady.
+        FakeSocket.instances[0].close(1006, "drop");
+        jest.advanceTimersByTime(0);
+        const second = FakeSocket.instances[1] as unknown as { onmessage: (e: MessageEvent) => void };
+        second.onmessage(hello());
+
+        jest.advanceTimersByTime(20_000);
+        expect(FakeSocket.instances[1].close).not.toHaveBeenCalled(); // receipt recorded, no timeout
+        connection.reconnectNow();
+        expect(FakeSocket.instances).toHaveLength(2); // not replaced
+        releaseReady();
+        connection.stop();
+    });
+
+    it("ignores a queued hello_ok for a socket that has since been replaced", async () => {
+        const cbs = callbacks();
+        const connection = new JournalConnection("https://journal.example", "token", cbs, () => "r");
+        connection.start();
+        const stale = FakeSocket.instances[0] as unknown as WebSocket;
+        connection.reconnectNow(); // unwelcomed → replaced
+        expect(FakeSocket.instances).toHaveLength(2);
+
+        await (connection as unknown as ConnectionInternals).handleFrame(
+            { kind: "control", op: "hello_ok" } as unknown as ServerFrame,
+            stale,
+        );
+
+        expect((connection as unknown as ConnectionInternals).welcomed).toBe(false);
+        expect(cbs.onState).not.toHaveBeenCalledWith("online");
+        connection.stop();
+    });
+
     it("does not close a welcomed socket", async () => {
         const { connection } = harness();
         connection.start();

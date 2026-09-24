@@ -29,6 +29,10 @@ export class JournalConnection {
     private stopped = true;
     private welcomed = false;
     private welcomeTimer?: number;
+    // The socket whose hello_ok has ARRIVED (recorded on receipt, before the processing queue):
+    // a welcome stuck behind earlier queued work (e.g. a slow onReady) must neither trip the
+    // welcome timeout nor make a manual reconnect replace an in-fact-welcomed socket.
+    private helloSocket?: WebSocket;
     private replacingSnapshot = false;
     private processing = Promise.resolve();
     private pendingRpc = new Map<
@@ -140,8 +144,8 @@ export class JournalConnection {
     public reconnectNow(): void {
         if (this.stopped || this.replacingSnapshot) return;
         if (this.socket) {
-            // A welcomed socket is healthy: nothing to do.
-            if (this.welcomed) return;
+            // A welcomed socket (or one whose hello_ok is queued for processing) is healthy.
+            if (this.welcomed || this.helloSocket === this.socket) return;
             // A socket still waiting for hello_ok may be stalled: detach and close it, then open a
             // fresh one. Its late close event is dropped by onclose's socket-identity guard, so
             // this never leaves two live sockets or a double-scheduled retry.
@@ -354,6 +358,9 @@ export class JournalConnection {
 
         if (frame.kind === "control") {
             if (frame.op === "hello_ok") {
+                // A welcome drained from the queue after its socket was replaced belongs to a dead
+                // socket: it must not mark the replacement online or clear its welcome deadline.
+                if (socket !== this.socket) return;
                 this.welcomed = true;
                 this.clearWelcomeTimer();
                 this.retryAttempt = 0;
@@ -431,6 +438,11 @@ export class JournalConnection {
         }
         if (decoded.narrowed) this.logFrameDiag(`narrowed:${decoded.narrowed.join(",")}`);
         const frame = decoded.frame;
+
+        if (frame.kind === "control" && frame.op === "hello_ok" && socket === this.socket) {
+            this.helloSocket = socket;
+            this.clearWelcomeTimer();
+        }
 
         if (this.isFastPathFrame(frame)) {
             void this.handleFrame(frame, socket).catch((error) => this.handleProcessingError(error, socket));
