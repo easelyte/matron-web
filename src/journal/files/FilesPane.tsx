@@ -458,24 +458,19 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
                 </div>
 
                 <div className="mj_FilesPane_preview">
-                    {canEditSelected && selected ? (
-                        <div className="mj_FilesPreview_bar">
-                            <button
-                                type="button"
-                                className="mj_FilesPreview_edit"
-                                onClick={() => writes.begin({ kind: "edit", path: selected.path, name: selected.name })}
-                            >
-                                <FileEditIcon />
-                                <span>Edit</span>
-                            </button>
-                        </div>
-                    ) : null}
                     {selected && api ? (
                         <FilePreview
                             key={`${selected.path}:${selected.at}`}
                             api={api}
                             path={selected.path}
                             filename={selected.name}
+                            // Edit lives in the preview header's action cluster, next to Copy and
+                            // Download. Offered only for editable text in a server-writable dir.
+                            onEdit={
+                                canEditSelected
+                                    ? () => writes.begin({ kind: "edit", path: selected.path, name: selected.name })
+                                    : undefined
+                            }
                         />
                     ) : (
                         <PreviewStatus variant="empty">Select a file to preview it.</PreviewStatus>

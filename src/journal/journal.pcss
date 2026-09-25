@@ -4804,26 +4804,6 @@ button.mj_File {
         monospace;
 }
 
-.mj_FilesCode_copy {
-    margin-left: auto;
-    border: 0;
-    background: transparent;
-    color: var(--cpd-color-text-secondary);
-    cursor: pointer;
-    font:
-        400 11px/14px Inter,
-        sans-serif;
-}
-
-.mj_FilesCode_copy:hover {
-    color: var(--cpd-color-text-action-accent);
-}
-
-.mj_FilesCode_copy:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 1px;
-}
-
 .mj_FilesCode_pre {
     margin: 0;
     overflow: auto;
@@ -4870,17 +4850,7 @@ button.mj_File {
     font: var(--cpd-font-body-sm-regular);
 }
 
-/* Single download affordance rendered by FilePreview above every renderer. Right-aligned so it
-   sits consistently regardless of the preview content below it, and stacks its button + error
-   vertically (DownloadControl renders both). */
-.mj_FilesPreview_downloadRow {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    margin-bottom: var(--cpd-space-2x);
-}
-
-.mj_FilesPreview_downloadRow .mj_FilesDownload {
+.mj_FilesDownload {
     margin-top: 0;
 }
 
@@ -5066,38 +5036,124 @@ button.mj_File {
     height: 14px;
 }
 
-/* Edit affordance above the preview, for a text file in a writable directory. */
-.mj_FilesPreview_bar {
+/* ─── Preview header: file name + meta, and ONE action cluster (Edit · Copy · Download) ─────────
+   Sticky to the top of the scrolling preview so Copy / Download stay reachable in a long file.
+   The negative margins cancel .mj_FilesPane_preview's padding so the bar spans edge to edge. */
+.mj_FilesPreview_header {
+    position: sticky;
+    top: calc(-1 * var(--cpd-space-4x));
+    z-index: 1;
     display: flex;
-    justify-content: flex-end;
-    margin-bottom: var(--cpd-space-2x);
+    align-items: center;
+    gap: var(--cpd-space-3x);
+    margin: calc(-1 * var(--cpd-space-4x)) calc(-1 * var(--cpd-space-4x)) var(--cpd-space-3x);
+    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-room-canvas, var(--cpd-color-bg-canvas-default));
 }
 
-.mj_FilesPreview_edit {
-    display: inline-flex;
+.mj_FilesPreview_heading {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.mj_FilesPreview_name {
+    overflow: hidden;
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-md-semibold, 600 14px/20px Inter, sans-serif);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_FilesPreview_meta {
+    overflow: hidden;
+    color: var(--cpd-color-text-tertiary);
+    font: var(--cpd-font-body-xs-regular);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_FilesPreview_actions {
+    display: flex;
+    flex: 0 0 auto;
     align-items: center;
     gap: var(--cpd-space-1x);
-    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+}
+
+/* Equal-size icon buttons. Secondary = quiet outline; primary (Download) = filled accent. */
+.mj_FilesAction {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
     border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: var(--cpd-radius-pill);
+    border-radius: var(--cpd-radius-md);
     background: transparent;
-    color: var(--cpd-color-text-action-accent);
+    color: var(--cpd-color-icon-secondary);
     cursor: pointer;
-    font: var(--cpd-font-body-sm-semibold, 600 14px/20px Inter, sans-serif);
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        color var(--cpd-dur-fast) var(--cpd-ease),
+        border-color var(--cpd-dur-fast) var(--cpd-ease);
 }
 
-.mj_FilesPreview_edit svg {
-    width: var(--cpd-icon-sm, 16px);
-    height: var(--cpd-icon-sm, 16px);
+.mj_FilesAction svg {
+    width: var(--cpd-icon-md, 16px);
+    height: var(--cpd-icon-md, 16px);
 }
 
-.mj_FilesPreview_edit:hover {
+.mj_FilesAction:hover:not(:disabled, [aria-disabled="true"]) {
     background: var(--cpd-state-hover);
+    color: var(--cpd-color-text-primary);
 }
 
-.mj_FilesPreview_edit:focus-visible {
+.mj_FilesAction:focus-visible {
     outline: 2px solid var(--cpd-color-icon-accent-primary);
     outline-offset: 1px;
+}
+
+.mj_FilesAction:disabled,
+.mj_FilesAction[aria-disabled="true"] {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.mj_FilesAction_done {
+    border-color: var(--cpd-color-text-action-accent);
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_FilesAction_primary {
+    border-color: var(--cpd-color-bg-accent);
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+}
+
+.mj_FilesAction_primary:hover:not(:disabled) {
+    border-color: var(--cpd-color-bg-accent-emphasis);
+    background: var(--cpd-color-bg-accent-emphasis);
+    color: var(--cpd-color-text-on-accent);
+}
+
+/* Screen-reader-only live region for the "Copied" announcement. */
+.mj_FilesPreview_live {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.mj_FilesPreview_actionError {
+    margin: 0 0 var(--cpd-space-3x);
+    color: var(--cpd-color-text-critical-primary);
+    font: var(--cpd-font-body-sm-regular);
+    text-align: right;
 }
 
 /* ─── Write confirm dialog ─────────────────────────────────────────────────────────────────────

@@ -101,24 +101,24 @@ describe("every previewable file type now offers download (loop #773)", () => {
             preview("/r/README.md", "README.md", mockApi(meta({ mime: "text/markdown", isText: true }))),
         );
         expect(c.querySelector(".mj_FilesMarkdown")).not.toBeNull();
-        expect(c.querySelector(".mj_FilesDownload")).not.toBeNull();
+        expect(c.querySelector(".mj_FilesAction_download")).not.toBeNull();
     });
 
     it("offers download for an image", async () => {
         const c = await mount(preview("/r/diagram.png", "diagram.png", mockApi(meta({ mime: "image/png" }))));
         expect(c.querySelector(".mj_FilesImage img")).not.toBeNull();
-        expect(c.querySelector(".mj_FilesDownload")).not.toBeNull();
+        expect(c.querySelector(".mj_FilesAction_download")).not.toBeNull();
     });
 
     it("offers download for a pdf", async () => {
         const c = await mount(preview("/r/report.pdf", "report.pdf", mockApi(meta({ mime: "application/pdf" }))));
-        expect(c.querySelector(".mj_FilesDownload")).not.toBeNull();
+        expect(c.querySelector(".mj_FilesAction_download")).not.toBeNull();
     });
 
     it("offers download for audio", async () => {
         const c = await mount(preview("/r/song.mp3", "song.mp3", mockApi(meta({ mime: "audio/mpeg" }))));
         expect(c.querySelector(".mj_FilesMedia audio")).not.toBeNull();
-        expect(c.querySelector(".mj_FilesDownload")).not.toBeNull();
+        expect(c.querySelector(".mj_FilesAction_download")).not.toBeNull();
     });
 });
 
@@ -126,7 +126,7 @@ describe("exactly one download control per file (no duplicate — Codex F1)", ()
     it("renders a SINGLE download control for a binary/unpreviewable file", async () => {
         const c = await mount(preview("/r/archive.zip", "archive.zip", mockApi(meta({ mime: "application/zip" }))));
         expect(c.querySelector(".mj_FilesGeneric")).not.toBeNull(); // the info card still renders
-        expect(c.querySelectorAll(".mj_FilesDownload")).toHaveLength(1); // ...with no second button
+        expect(c.querySelectorAll(".mj_FilesAction_download")).toHaveLength(1); // ...with no second button
     });
 });
 
@@ -134,7 +134,7 @@ describe("download goes through the existing attachment path", () => {
     it("calls api.download with the file's path and name", async () => {
         const api = mockApi(meta({ mime: "text/markdown", isText: true }));
         const c = await mount(preview("/r/README.md", "README.md", api));
-        await click(c.querySelector(".mj_FilesDownload"));
+        await click(c.querySelector(".mj_FilesAction_download"));
         expect(api.download).toHaveBeenCalledTimes(1);
         expect(api.download).toHaveBeenCalledWith("/r/README.md", "README.md");
     });
@@ -146,8 +146,8 @@ describe("a rejected download surfaces a uniform error without leaking the reaso
             download: jest.fn().mockRejectedValue(new JournalApiError("secret-path denied", 403, "forbidden")),
         });
         const c = await mount(preview("/r/README.md", "README.md", api));
-        await click(c.querySelector(".mj_FilesDownload"));
-        const error = c.querySelector(".mj_FilesDownload_error");
+        await click(c.querySelector(".mj_FilesAction_download"));
+        const error = c.querySelector(".mj_FilesPreview_downloadError");
         expect(error).not.toBeNull();
         // Uniform copy — the server's raw reason must not reach the operator.
         expect(error?.textContent).toBe("This file or folder can't be accessed.");
@@ -168,7 +168,7 @@ describe("a rejected download surfaces a uniform error without leaking the reaso
             download: download as unknown as FilesApiLike["download"],
         });
         const c = await mount(preview("/r/README.md", "README.md", api));
-        const button = c.querySelector<HTMLButtonElement>(".mj_FilesDownload");
+        const button = c.querySelector<HTMLButtonElement>(".mj_FilesAction_download");
         await click(button);
         expect(button?.disabled).toBe(true);
         await act(async () => {
