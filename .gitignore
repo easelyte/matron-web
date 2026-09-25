@@ -21,3 +21,8 @@ package-lock.json
 .codex-session-tmp/
 .fixtures-dist/
 memory/
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules

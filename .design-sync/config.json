@@ -1,0 +1,154 @@
+{
+  "projectId": "9c8de8df-b75b-4e3b-8540-68dce40b1d88",
+  "shape": "package",
+  "pkg": "matron-web",
+  "globalName": "MatronWeb",
+  "buildCmd": "node .design-sync/build-pkg.mjs",
+  "srcDir": "cards",
+  "cssEntry": "styles.css",
+  "extraFonts": [
+    "../../node_modules/@fontsource/inter/latin-400.css",
+    "../../node_modules/@fontsource/inter/latin-600.css",
+    "../../node_modules/@fontsource/fira-code/latin-400.css"
+  ],
+  "extraEntries": [
+    "./icons.mjs"
+  ],
+  "provider": {
+    "component": "MatronThemeProvider"
+  },
+  "componentSrcMap": {
+    "MatronApp": null,
+    "ConnectionBanner": null,
+    "MatronThemeProvider": null
+  },
+  "overrides": {
+    "DesignTokens": {
+      "cardMode": "column"
+    },
+    "DiffCard": {
+      "cardMode": "column"
+    },
+    "DownloadControl": {
+      "cardMode": "column"
+    },
+    "EditFileSheet": {
+      "cardMode": "single",
+      "viewport": "760x680"
+    },
+    "EventContent": {
+      "cardMode": "column"
+    },
+    "FileWriteDialog": {
+      "cardMode": "single",
+      "viewport": "760x620"
+    },
+    "FilesPane": {
+      "cardMode": "column",
+      "viewport": "1100x760"
+    },
+    "GenericPreview": {
+      "cardMode": "column"
+    },
+    "HeaderShell": {
+      "cardMode": "column"
+    },
+    "IconCatalog": {
+      "cardMode": "column"
+    },
+    "ImagePreview": {
+      "cardMode": "column"
+    },
+    "ItemCard": {
+      "cardMode": "column"
+    },
+    "ItemDetail": {
+      "cardMode": "column"
+    },
+    "ItemInlineNote": {
+      "cardMode": "column"
+    },
+    "ItemRow": {
+      "cardMode": "column"
+    },
+    "ItemsInbox": {
+      "cardMode": "column"
+    },
+    "MatronMobileScreen": {
+      "cardMode": "column",
+      "viewport": "438x892"
+    },
+    "MatronScreen": {
+      "cardMode": "column",
+      "viewport": "1280x820"
+    },
+    "MediaError": {
+      "cardMode": "column"
+    },
+    "MediaPreview": {
+      "cardMode": "column"
+    },
+    "MediaViewer": {
+      "cardMode": "single",
+      "viewport": "960x700"
+    },
+    "MessageSearchResults": {
+      "cardMode": "column"
+    },
+    "MilestoneCard": {
+      "cardMode": "column"
+    },
+    "MissionDetail": {
+      "cardMode": "column"
+    },
+    "MissionNotice": {
+      "cardMode": "column"
+    },
+    "MissionsList": {
+      "cardMode": "column"
+    },
+    "MobileNav": {
+      "cardMode": "column",
+      "viewport": "438x360"
+    },
+    "NavBadge": {
+      "cardMode": "column"
+    },
+    "NeedsYouBadge": {
+      "cardMode": "column"
+    },
+    "NewSessionSheet": {
+      "cardMode": "single",
+      "viewport": "760x680"
+    },
+    "PdfPreview": {
+      "cardMode": "column"
+    },
+    "PinnedSummary": {
+      "cardMode": "column"
+    },
+    "PreviewStatus": {
+      "cardMode": "column"
+    },
+    "QueuedReleaseCard": {
+      "cardMode": "column"
+    },
+    "SubagentStrip": {
+      "cardMode": "column"
+    },
+    "TooLargePreview": {
+      "cardMode": "column"
+    },
+    "TrackerGlyph": {
+      "cardMode": "column"
+    },
+    "TrackerPane": {
+      "cardMode": "column",
+      "viewport": "1100x760"
+    },
+    "WorkView": {
+      "cardMode": "column"
+    }
+  },
+  "readmeHeader": ".design-sync/conventions.md"
+}
