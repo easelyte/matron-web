@@ -5,12 +5,11 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 
-import { copyText } from "../../clipboard";
 import { highlightFile } from "../highlight";
 import { INLINE_TEXT_MAX } from "../limits";
-import { PreviewStatus } from "./PreviewChrome";
+import { TextResourceView } from "./PreviewChrome";
 import { TooLargePreview } from "./TooLargePreview";
 import type { RendererProps } from "./types";
 import { useAsyncResource } from "./useAsyncResource";
@@ -20,38 +19,29 @@ import { useAsyncResource } from "./useAsyncResource";
 // ``` fences renders faithfully. Shares the inline-render ceiling with markdown (F6).
 export function CodePreview({ api, path, filename, meta }: RendererProps): React.ReactElement {
     const text = useAsyncResource((signal) => api.textContent(path, signal), `code:${path}:${meta.mtime}`);
-    const [copyLabel, setCopyLabel] = useState("Copy");
+    return (
+        <TextResourceView text={text}>{(source) => <CodeView filename={filename} source={source} />}</TextResourceView>
+    );
+}
 
-    const source = text.data ?? "";
+/**
+ * Pure render of already-loaded source. FilePreview loads a text file ONCE and hands the same text
+ * to this view and to the header's Copy action, so what is copied is exactly what is shown.
+ */
+export function CodeView({ filename, source }: { filename: string; source: string }): React.ReactElement {
     const tooLarge = source.length > INLINE_TEXT_MAX;
     const highlighted = useMemo(
-        () => (text.status === "loaded" && !tooLarge ? highlightFile(filename, source) : undefined),
-        [text.status, tooLarge, filename, source],
+        () => (tooLarge ? undefined : highlightFile(filename, source)),
+        [tooLarge, filename, source],
     );
-
-    if (text.status === "loading") return <PreviewStatus variant="loading">Loading…</PreviewStatus>;
-    if (text.status === "error")
-        return (
-            <PreviewStatus variant="error" onRetry={text.reload}>
-                {text.error}
-            </PreviewStatus>
-        );
     if (tooLarge) return <TooLargePreview />;
-
-    async function handleCopy(): Promise<void> {
-        const ok = await copyText(source);
-        setCopyLabel(ok ? "Copied" : "Copy failed");
-        setTimeout(() => setCopyLabel("Copy"), 1500);
-    }
-
     return (
         <div className="mj_FilesCode">
-            <div className="mj_FilesCode_header">
-                {highlighted?.language ? <span className="mj_FilesCode_lang">{highlighted.language}</span> : null}
-                <button className="mj_FilesCode_copy" type="button" onClick={() => void handleCopy()}>
-                    {copyLabel}
-                </button>
-            </div>
+            {highlighted?.language ? (
+                <div className="mj_FilesCode_header">
+                    <span className="mj_FilesCode_lang">{highlighted.language}</span>
+                </div>
+            ) : null}
             <pre className="mj_FilesCode_pre">
                 <code className="hljs" dangerouslySetInnerHTML={{ __html: highlighted?.html ?? "" }} />
             </pre>

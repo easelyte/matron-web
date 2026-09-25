@@ -7,48 +7,66 @@ Please see LICENSE files in the repository root for full details.
 
 import React from "react";
 
-import type { FilesApiLike } from "../filesApi";
+import type { FileMeta, FilesApiLike } from "../filesApi";
 import { pickPreviewKind } from "../previewKind";
-import { CodePreview } from "./CodePreview";
+import { CodeView } from "./CodePreview";
 import { GenericPreview } from "./GenericPreview";
 import { ImagePreview } from "./ImagePreview";
-import { MarkdownPreview } from "./MarkdownPreview";
+import { MarkdownView } from "./MarkdownPreview";
 import { MediaPreview } from "./MediaPreview";
 import { PdfPreview } from "./PdfPreview";
-import { DownloadControl, PreviewStatus } from "./PreviewChrome";
+import { PreviewStatus, TextResourceView } from "./PreviewChrome";
+import { PreviewToolbar } from "./PreviewToolbar";
 import type { RendererProps } from "./types";
 import { useAsyncResource } from "./useAsyncResource";
+import { type DownloadState, useDownload } from "./useDownload";
 
 // Loads the file's metadata (cheap, no bytes), then dispatches to the matching renderer per
 // pickPreviewKind. Two-step (meta → content) matches the API design: `is_text` from meta drives the
 // text/binary split before any content fetch, and the meta `mtime` keys the content cache (F7).
+//
+// Every state — meta loading, meta error, and each resolved kind — renders the SAME header
+// (PreviewToolbar) above it: file name + meta on the left, one action cluster on the right. There
+// is exactly one download control per file (a READ capability, offered for every type and never
+// gated on `writable`); Edit appears only when the pane passes `onEdit` (server-writable, editable
+// text); Copy appears only for text kinds (markdown / code / plain text).
 export function FilePreview({
     api,
     path,
     filename,
+    onEdit,
 }: {
     api: FilesApiLike;
     path: string;
     filename: string;
+    onEdit?: () => void;
 }): React.ReactElement {
     const meta = useAsyncResource((signal) => api.fileMeta(path, signal), `meta:${path}`);
-    if (meta.status === "loading") return <PreviewStatus variant="loading">Loading…</PreviewStatus>;
-    if (meta.status === "error")
+    // ONE download controller for the whole preview lifetime (see PreviewToolbar's `download`).
+    const download = useDownload(api, path, filename);
+    if (meta.status !== "loaded") {
         return (
-            <PreviewStatus variant="error" onRetry={meta.reload}>
-                {meta.error}
-            </PreviewStatus>
+            <>
+                <PreviewToolbar api={api} download={download} filename={filename} onEdit={onEdit} />
+                {meta.status === "loading" ? (
+                    <PreviewStatus variant="loading">Loading…</PreviewStatus>
+                ) : (
+                    <PreviewStatus variant="error" onRetry={meta.reload}>
+                        {meta.error}
+                    </PreviewStatus>
+                )}
+            </>
         );
+    }
 
     const resolved = meta.data!;
     const props: RendererProps = { api, path, filename, meta: resolved };
     const kind = pickPreviewKind({ mime: resolved.mime, isText: resolved.isText, filename });
+    if (kind === "markdown" || kind === "code")
+        return <TextFilePreview {...props} download={download} markdown={kind === "markdown"} onEdit={onEdit} />;
+
     const renderer = ((): React.ReactElement => {
         switch (kind) {
-            case "markdown":
-                return <MarkdownPreview {...props} />;
-            case "code":
-                return <CodePreview {...props} />;
             case "image":
                 return <ImagePreview {...props} />;
             case "pdf":
@@ -60,21 +78,51 @@ export function FilePreview({
                 return <GenericPreview {...props} />;
         }
     })();
-
-    // ONE download affordance for EVERY resolved file, rendered here at the single dispatch point
-    // rather than per-renderer. Download is a READ capability, so it is offered for any file type
-    // (text, image, pdf, media, and unpreviewable) and is NOT gated on `writable`. It reuses the
-    // canonical DownloadControl → useDownload primitive (visible uniform errors, in-flight disable),
-    // so there is exactly one request-owning control per file — no duplicate button, no competing
-    // busy state. The previously per-renderer controls (GenericPreview / TooLargePreview /
-    // MediaError) are gone; their download fallback is this single control, which sits above every
-    // renderer INCLUDING the too-large and load-error sub-states.
     return (
         <>
-            <div className="mj_FilesPreview_downloadRow">
-                <DownloadControl api={api} path={path} filename={filename} />
-            </div>
+            <PreviewToolbar api={api} download={download} filename={filename} meta={resolved} onEdit={onEdit} />
             {renderer}
+        </>
+    );
+}
+
+// A text file is read ONCE, here, and the same string feeds both the rendered view and the header's
+// Copy action — so Copy always yields the full raw source (markdown source, not rendered HTML), even
+// when the file is past the inline-render ceiling and the view shows the too-large card instead.
+function TextFilePreview({
+    api,
+    path,
+    filename,
+    meta,
+    download,
+    markdown,
+    onEdit,
+}: RendererProps & {
+    meta: FileMeta;
+    download: DownloadState;
+    markdown: boolean;
+    onEdit?: () => void;
+}): React.ReactElement {
+    const text = useAsyncResource((signal) => api.textContent(path, signal), `text:${path}:${meta.mtime}`);
+    return (
+        <>
+            <PreviewToolbar
+                api={api}
+                download={download}
+                filename={filename}
+                meta={meta}
+                onEdit={onEdit}
+                copySource={{ status: text.status, text: text.data, errorStatus: text.errorStatus }}
+            />
+            <TextResourceView text={text}>
+                {(source) =>
+                    markdown ? (
+                        <MarkdownView filename={filename} source={source} />
+                    ) : (
+                        <CodeView filename={filename} source={source} />
+                    )
+                }
+            </TextResourceView>
         </>
     );
 }

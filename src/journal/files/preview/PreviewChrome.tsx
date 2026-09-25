@@ -14,6 +14,7 @@ import React from "react";
 import { DownloadIcon } from "../../icons";
 import type { FileMeta, FilesApiLike } from "../filesApi";
 import { humanizeMtime, humanizeSize } from "../format";
+import type { AsyncResource } from "./useAsyncResource";
 import { useDownload } from "./useDownload";
 
 export function PreviewStatus({
@@ -39,6 +40,28 @@ export function PreviewStatus({
             ) : null}
         </div>
     );
+}
+
+/**
+ * Shared loading / error-with-Retry handling for a text read, rendering `children(source)` once the
+ * text has loaded. Used by the standalone Code/Markdown previews and by FilePreview's single text
+ * read (which also feeds the header's Copy action).
+ */
+export function TextResourceView({
+    text,
+    children,
+}: {
+    text: AsyncResource<string>;
+    children: (source: string) => React.ReactElement;
+}): React.ReactElement {
+    if (text.status === "loading") return <PreviewStatus variant="loading">Loading…</PreviewStatus>;
+    if (text.status === "error")
+        return (
+            <PreviewStatus variant="error" onRetry={text.reload}>
+                {text.error}
+            </PreviewStatus>
+        );
+    return children(text.data ?? "");
 }
 
 export function metaLine(meta: FileMeta): string {

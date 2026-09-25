@@ -130,7 +130,7 @@ describe("FilePreview dispatch (DOM)", () => {
             />,
         );
         expect(container.querySelector(".mj_FilesGeneric")).not.toBeNull();
-        expect(container.querySelector(".mj_FilesDownload")).not.toBeNull();
+        expect(container.querySelector(".mj_FilesAction_download")).not.toBeNull();
     });
 });
 
@@ -143,14 +143,14 @@ describe("download error visibility", () => {
             download: jest.fn().mockRejectedValue(new JournalApiError("denied", 403, "forbidden")),
         });
         const { container } = await mount(<FilePreview api={api} path="/r/archive.zip" filename="archive.zip" />);
-        const button = container.querySelector<HTMLButtonElement>(".mj_FilesDownload");
+        const button = container.querySelector<HTMLButtonElement>(".mj_FilesAction_download");
         expect(button).not.toBeNull();
         await act(async () => {
             button!.click();
             await Promise.resolve();
             await Promise.resolve();
         });
-        const error = container.querySelector(".mj_FilesDownload_error");
+        const error = container.querySelector(".mj_FilesPreview_downloadError");
         expect(error?.textContent).toBe("This file or folder can't be accessed.");
     });
 });

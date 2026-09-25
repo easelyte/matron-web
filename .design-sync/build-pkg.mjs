@@ -72,8 +72,8 @@ const SURFACE = [
   ['ConnectionStatus', 'journal/mobile-shell.tsx', 'mobile', 'The connection row in the Settings menu: status dot + Connected / Reconnecting / Offline, with a Reconnect button whenever not online.'],
   // files
   ['FilesPane', 'journal/files/FilesPane.tsx', 'files', 'The file explorer main region: breadcrumb path, toolbar (upload, new folder, show hidden), directory listing with kind icons, size and mtime, and a preview panel for the selected file. Write affordances appear only on writable roots.'],
-  ['FilePreview', 'journal/files/preview/FilePreview.tsx', 'files', 'Preview dispatcher for one file: loads its metadata, then renders the matching previewer (markdown, code, image, PDF, audio/video, or generic) under a download control and a meta line.'],
-  ['CodePreview', 'journal/files/preview/CodePreview.tsx', 'files', 'Syntax-highlighted source preview with line numbers and a copy button.'],
+  ['FilePreview', 'journal/files/preview/FilePreview.tsx', 'files', 'Preview dispatcher for one file: loads its metadata, then renders the matching previewer (markdown, code, image, PDF, audio/video, or generic) under a sticky header: file name + meta line on the left, and one equal-size icon-button cluster on the right (Edit when writable, Copy for text files, Download as the filled primary).'],
+  ['CodePreview', 'journal/files/preview/CodePreview.tsx', 'files', 'Syntax-highlighted source preview with a language label. Copy lives in the FilePreview header, not here.'],
   ['MarkdownPreview', 'journal/files/preview/MarkdownPreview.tsx', 'files', 'Rendered markdown preview of a .md file, using the same MarkdownBody as messages.'],
   ['ImagePreview', 'journal/files/preview/ImagePreview.tsx', 'files', 'Image file preview, fit to the panel on a checkerboard-free canvas.'],
   ['PdfPreview', 'journal/files/preview/PdfPreview.tsx', 'files', 'PDF preview: pages painted to canvas (pdf.js in the app; a page-shaped stand-in in this bundle).'],
@@ -82,7 +82,7 @@ const SURFACE = [
   ['TooLargePreview', 'journal/files/preview/TooLargePreview.tsx', 'files', 'The "too large to preview inline" note (download stays available above it).'],
   ['PreviewStatus', 'journal/files/preview/PreviewChrome.tsx', 'files', 'Status block for a preview: loading (spinner), error (with Retry) or empty.'],
   ['MediaError', 'journal/files/preview/PreviewChrome.tsx', 'files', 'Error state for image / PDF / media previews: message + Retry.'],
-  ['DownloadControl', 'journal/files/preview/PreviewChrome.tsx', 'files', 'The Download button above every preview (busy label while downloading, inline error below it).'],
+  ['DownloadControl', 'journal/files/preview/PreviewChrome.tsx', 'files', 'Standalone pill Download button (busy label while downloading, inline error below it). The preview header uses its own icon-button Download instead.'],
   ['FileWriteDialog', 'journal/files/FileWriteDialog.tsx', 'files', 'The confirm dialog for Files-pane writes: upload (with overwrite warning), new folder, rename/move, inline edit, and delete (moved to trash), with busy and error states.'],
   // media
   ['MediaViewer', 'journal/media-viewer.tsx', 'media', 'Full-screen media viewer overlay for images, SVGs and PDFs from the timeline: scrim, filename + counter, zoom / fit / reset, prev-next through the conversation\'s media, download and close.'],
