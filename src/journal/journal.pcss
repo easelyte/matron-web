@@ -5038,9 +5038,14 @@ button.mj_File {
 
 /* ─── Preview header: file name + meta, and ONE action cluster (Edit · Copy · Download) ─────────
    Sticky to the top of the scrolling preview so Copy / Download stay reachable in a long file.
-   The negative margins cancel .mj_FilesPane_preview's padding so the bar spans edge to edge and
-   its natural position IS the scrollport's top edge — hence `top: 0`: a negative inset would
-   slide the stuck bar (and the top of its tap targets) out of the clipped scrollport. */
+   The preview drops its top padding while a header is present, so the header's natural position
+   IS the scrollport's top edge and `top: 0` holds in every engine (whether or not it deflates the
+   sticky rectangle by the scroll container's padding). The side margins cancel the preview's
+   horizontal padding so the bar spans edge to edge. */
+.mj_FilesPane_preview:has(> .mj_FilesPreview_header) {
+    padding-top: 0;
+}
+
 .mj_FilesPreview_header {
     position: sticky;
     top: 0;
@@ -5048,7 +5053,7 @@ button.mj_File {
     display: flex;
     align-items: center;
     gap: var(--cpd-space-3x);
-    margin: calc(-1 * var(--cpd-space-4x)) calc(-1 * var(--cpd-space-4x)) var(--cpd-space-3x);
+    margin: 0 calc(-1 * var(--cpd-space-4x)) var(--cpd-space-3x);
     padding: var(--cpd-space-2x) var(--cpd-space-4x);
     border-bottom: 1px solid var(--cpd-color-border-subtle);
     background: var(--cpd-color-bg-room-canvas, var(--cpd-color-bg-canvas-default));
