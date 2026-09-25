@@ -17,7 +17,7 @@ import { copyText } from "../../clipboard";
 import { CheckIcon, ClipboardIcon, DownloadIcon, FileEditIcon } from "../../icons";
 import type { FileMeta, FilesApiLike } from "../filesApi";
 import { metaLine } from "./PreviewChrome";
-import { useDownload } from "./useDownload";
+import type { DownloadState } from "./useDownload";
 
 /** How long the Copy button shows its "copied" check before reverting. */
 export const COPIED_FEEDBACK_MS = 1500;
@@ -90,14 +90,19 @@ function useCopy(text: string | undefined): {
 
 export function PreviewToolbar({
     api,
-    path,
+    download,
     filename,
     meta,
     copySource,
     onEdit,
 }: {
     api: FilesApiLike | undefined;
-    path: string;
+    /**
+     * The download controller, owned by FilePreview ABOVE every state branch. The header is
+     * re-rendered as metadata and text resolve; owning the request here would drop an in-flight
+     * download's busy state and error on that transition and re-enable the button mid-request.
+     */
+    download: DownloadState;
     filename: string;
     /** Resolved metadata, when it has loaded (the header renders before it does). */
     meta?: FileMeta;
@@ -105,7 +110,6 @@ export function PreviewToolbar({
     /** Present only when the server said the file's directory is writable and it is editable text. */
     onEdit?: () => void;
 }): React.ReactElement {
-    const download = useDownload(api, path, filename);
     const copyReady = copySource?.status === "loaded" ? (copySource.text ?? "") : undefined;
     const copy = useCopy(copyReady);
     const copyBlocked = copySource ? copyUnavailableReason(copySource) : undefined;

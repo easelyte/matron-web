@@ -178,3 +178,46 @@ describe("a rejected download surfaces a uniform error without leaking the reaso
         expect(button?.disabled).toBe(false);
     });
 });
+
+describe("a download started before metadata resolves keeps its state across the header re-render", () => {
+    it("stays busy (no duplicate request) and still surfaces a later failure", async () => {
+        let resolveMeta!: (value: FileMeta) => void;
+        let rejectDownload!: (error: unknown) => void;
+        const api = mockApi(meta({ mime: "text/markdown", isText: true }), {
+            fileMeta: jest.fn(
+                () =>
+                    new Promise<FileMeta>((resolve) => {
+                        resolveMeta = resolve;
+                    }),
+            ) as unknown as FilesApiLike["fileMeta"],
+            download: jest.fn(
+                () =>
+                    new Promise<void>((_resolve, reject) => {
+                        rejectDownload = reject;
+                    }),
+            ) as unknown as FilesApiLike["download"],
+        });
+        const c = await mount(preview("/r/README.md", "README.md", api));
+        await click(c.querySelector(".mj_FilesAction_download"));
+        expect(api.download).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            resolveMeta(meta({ mime: "text/markdown", isText: true }));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(c.querySelector(".mj_FilesMarkdown")).not.toBeNull();
+        const button = c.querySelector<HTMLButtonElement>(".mj_FilesAction_download");
+        expect(button?.disabled).toBe(true); // still the same in-flight request
+
+        await act(async () => {
+            rejectDownload(new JournalApiError("denied", 403, "forbidden"));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(c.querySelector(".mj_FilesPreview_downloadError")?.textContent).toBe(
+            "This file or folder can't be accessed.",
+        );
+        expect(api.download).toHaveBeenCalledTimes(1);
+    });
+});

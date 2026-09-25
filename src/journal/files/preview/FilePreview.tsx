@@ -19,6 +19,7 @@ import { PreviewStatus, TextResourceView } from "./PreviewChrome";
 import { PreviewToolbar } from "./PreviewToolbar";
 import type { RendererProps } from "./types";
 import { useAsyncResource } from "./useAsyncResource";
+import { type DownloadState, useDownload } from "./useDownload";
 
 // Loads the file's metadata (cheap, no bytes), then dispatches to the matching renderer per
 // pickPreviewKind. Two-step (meta → content) matches the API design: `is_text` from meta drives the
@@ -41,10 +42,12 @@ export function FilePreview({
     onEdit?: () => void;
 }): React.ReactElement {
     const meta = useAsyncResource((signal) => api.fileMeta(path, signal), `meta:${path}`);
+    // ONE download controller for the whole preview lifetime (see PreviewToolbar's `download`).
+    const download = useDownload(api, path, filename);
     if (meta.status !== "loaded") {
         return (
             <>
-                <PreviewToolbar api={api} path={path} filename={filename} onEdit={onEdit} />
+                <PreviewToolbar api={api} download={download} filename={filename} onEdit={onEdit} />
                 {meta.status === "loading" ? (
                     <PreviewStatus variant="loading">Loading…</PreviewStatus>
                 ) : (
@@ -60,7 +63,7 @@ export function FilePreview({
     const props: RendererProps = { api, path, filename, meta: resolved };
     const kind = pickPreviewKind({ mime: resolved.mime, isText: resolved.isText, filename });
     if (kind === "markdown" || kind === "code")
-        return <TextFilePreview {...props} markdown={kind === "markdown"} onEdit={onEdit} />;
+        return <TextFilePreview {...props} download={download} markdown={kind === "markdown"} onEdit={onEdit} />;
 
     const renderer = ((): React.ReactElement => {
         switch (kind) {
@@ -77,7 +80,7 @@ export function FilePreview({
     })();
     return (
         <>
-            <PreviewToolbar api={api} path={path} filename={filename} meta={resolved} onEdit={onEdit} />
+            <PreviewToolbar api={api} download={download} filename={filename} meta={resolved} onEdit={onEdit} />
             {renderer}
         </>
     );
@@ -91,15 +94,21 @@ function TextFilePreview({
     path,
     filename,
     meta,
+    download,
     markdown,
     onEdit,
-}: RendererProps & { meta: FileMeta; markdown: boolean; onEdit?: () => void }): React.ReactElement {
+}: RendererProps & {
+    meta: FileMeta;
+    download: DownloadState;
+    markdown: boolean;
+    onEdit?: () => void;
+}): React.ReactElement {
     const text = useAsyncResource((signal) => api.textContent(path, signal), `text:${path}:${meta.mtime}`);
     return (
         <>
             <PreviewToolbar
                 api={api}
-                path={path}
+                download={download}
                 filename={filename}
                 meta={meta}
                 onEdit={onEdit}
