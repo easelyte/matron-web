@@ -275,3 +275,79 @@ Please see LICENSE files in the repository root for full details.
     height: 13px;
     flex-basis: 13px;
 }
+
+/* ---- helper thread: headlines (2026-09-26) ---- */
+
+/* Inside a helper's own thread (Developer view off) its steps read as a list of plain-English
+   headlines on the turn card's surface. Rows reuse the turn card's group row, step rows and deep
+   detail; only the list frame, the notes and the elapsed counter are new. */
+.mj_Headlines {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    padding: 4px;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-raised);
+}
+
+.mj_Headlines_list,
+.markdown-body .mj_Headlines_list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.mj_Headlines_list > li {
+    margin: 0;
+}
+
+.mj_Headlines_more {
+    margin: 0 0 2px 26px;
+}
+
+/* The agent's narration between headlines: plain text at body-small size, three lines at most.
+   Never markdown, so a heading or a code fence in it cannot change the type size. */
+.mj_Headlines_note {
+    display: -webkit-box;
+    overflow: hidden;
+    padding: 6px 6px 4px 30px;
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+}
+
+.mj_Headline_elapsed {
+    color: var(--cpd-color-text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_Headline_row:disabled {
+    cursor: default;
+}
+
+.mj_Headline_row:disabled:hover {
+    background: transparent;
+}
+
+.mj_Headline > .mj_Headline_deep {
+    margin: 2px 0 6px 24px;
+}
+
+/* ---- plain-view typography ---- */
+
+/* Narration inside a turn card and a helper thread's prose never step up to heading sizes: an
+   agent's "## Verdict" reads as a bold line at the body size. */
+.mj_TurnCard_narration :is(h1, h2, h3, h4, h5, h6),
+.mj_AgentTurn_helper .mj_AgentTurn_blocks :is(h1, h2, h3, h4, h5, h6) {
+    margin: 8px 0 2px;
+    padding: 0;
+    border: 0;
+    font: var(--cpd-font-body-strong);
+    color: inherit;
+}

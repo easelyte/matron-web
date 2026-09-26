@@ -14,3 +14,6 @@
 /src/journal/__tests__/fixtures/work-view-ok-detail.json
 /src/journal/__tests__/fixtures/work-view-empty.json
 /src/journal/__tests__/fixtures/work-view-error.json
+
+# Scrubbed corpus sample (generated, one line): regression fixture for helper headlines.
+src/journal/__tests__/fixtures/helper-corpus.json

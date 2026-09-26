@@ -16,12 +16,14 @@ Please see LICENSE files in the repository root for full details.
  * description? }); when present it wins, the text form is the fallback for older bridges and for
  * the server's snippet (which only ever carries the body).
  *
- * Everything here turns those into a turn-grouping Step, so the sentences come from the same
- * templates as the turn card (turn-grouping.ts): "Reading paths.py…", "Ran the tests".
+ * Everything here turns those into a turn-grouping Step; the sentences come from the shared
+ * step categoriser (step-phrases.ts), the same one the helper thread's headlines use:
+ * "Reading paths.py…", "Queried a database".
  */
 
 import { snippetText } from "./plain-text";
-import { liveLine, type Step, stepSentence } from "./turn-grouping";
+import { looksRaw, stepHeadline, stepLiveHeadline } from "./step-phrases";
+import { type Step } from "./turn-grouping";
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
 
@@ -42,26 +44,50 @@ const PATTERN = (value: string): boolean => !/\s/.test(value) || /\\|\||\.\*|\[[
  * Deliberately strict, because the text form is only the fallback for a bridge that does not
  * attach `payload.step`: the whole body must be one indicator line whose argument has the shape
  * the bridge prints (a backticked command, a bare tool name, an absolute path, a pattern, a URL,
- * `Subtask:`). Agent prose that happens to open with the same emoji ("🔍 Found the root cause")
- * stays prose. The to-do list and a web search's free-text query are left as prose too: neither
- * can be told apart from a sentence. `partial` accepts a line the server cut at 120 characters (a
- * snippet can lose the closing backtick of a long command).
+ * `Subtask:`, the `📋 Todos:` list, a one-line web query). Agent prose that happens to open with
+ * the same emoji ("🔍 Found the root cause.") stays prose. A backticked command may span lines (a
+ * heredoc script): the audit of real transcripts (2026-09-26) found those were the one tool call
+ * that still printed raw. `partial` accepts a line the server cut at 120 characters (a snippet
+ * can lose the closing backtick of a long command).
  */
 export function indicatorStep(body: string, id = "indicator", partial = false): Step | null {
     const text = body.trim();
-    if (!text || text.includes("\n")) return null;
+    if (!text) return null;
     const make = (tool: string, input: Step["input"]): Step => ({ kind: "step", id, tool, input, status: "ok" });
     let match: RegExpExecArray | null;
-    if ((match = /^🔧 `([^`]+)`$/u.exec(text))) return make("Bash", { command: match[1] });
-    if (partial && (match = /^🔧 `([^`]+)$/u.exec(text))) return make("Bash", { command: match[1] });
+    // A command may span lines (a heredoc, a multi-line script) and may itself contain backticks:
+    // the bridge wraps the whole command in one pair, so the body opens with "🔧 `" and closes
+    // with "`" (a server snippet may lose the closing one to its 120-character cut).
+    if ((match = /^🔧 `([\s\S]+)`$/u.exec(text)) && COMMAND_BODY(match[1])) return make("Bash", { command: match[1] });
+    if (partial && (match = /^🔧 `([\s\S]+)$/u.exec(text)) && COMMAND_BODY(match[1]))
+        return make("Bash", { command: match[1] });
+    // The to-do list: "📋 Todos:" then one line per item.
+    if (/^📋 Todos:(\n|$)/u.test(text)) return make("TodoWrite", {});
+    if (text.includes("\n")) return null;
     if ((match = /^🔧 (\S+)$/u.exec(text)) && TOOL_NAME.test(match[1])) return make(match[1], {});
     if ((match = /^📖 (\S.*)$/u.exec(text)) && PATH.test(match[1])) return make("Read", { path: match[1] });
     if ((match = /^🔍 (\S.*)$/u.exec(text)) && PATTERN(match[1])) return make("Grep", { pattern: match[1] });
     if ((match = /^🌐 (https?:\/\/\S+)$/u.exec(text))) return make("WebFetch", { url: match[1] });
+    // A web search's free-text query: one line that does not read as a sentence (no closing
+    // punctuation, no first-person narration). A newer bridge sends payload.step instead.
+    if ((match = /^🌐 (\S.{2,299})$/u.exec(text)) && WEB_QUERY(match[1]))
+        return make("WebSearch", { pattern: match[1] });
     if ((match = /^🔀 (?:Nested s|S)ubtask: (\S.*)$/u.exec(text)))
         return make("Task", { description: match[1].replace(/…$/u, "") });
     return null;
 }
+
+/**
+ * The command inside "🔧 `…`": a backtick inside it is only accepted when the command spans lines,
+ * was cut ("…") or reads as shell (a pipe, `;`, `&`, `$`, a flag), so prose such as
+ * "🔧 `x` is broken, fixing `y`" stays prose.
+ */
+const COMMAND_BODY = (value: string): boolean =>
+    !value.includes("`") || value.includes("\n") || /…$/u.test(value) || /[|;&$]|^\S+\s+-/.test(value);
+
+/** A web-search query as the bridge prints it: not a sentence. */
+const WEB_QUERY = (value: string): boolean =>
+    !/[.!:…]$/u.test(value.trim()) && !/^(I|I'm|I've|We|Let me|Now|Checking|Looking|Searching|Found)\b/.test(value);
 
 /** The structured `payload.step` a newer bridge attaches to an indicator line, as a Step. */
 export function payloadStep(value: unknown, id = "indicator"): Step | null {
@@ -125,7 +151,7 @@ export function looksLikeOutput(snippet: string, codex = false): boolean {
 
 /** Present-progressive while running ("Reading paths.py…"), past tense once done ("Read paths.py"). */
 export function activitySentence(step: Step, running: boolean): string {
-    return running ? liveLine(step) : stepSentence(step);
+    return running ? stepLiveHeadline(step) : stepHeadline(step);
 }
 
 export interface PreviewSource {
@@ -162,5 +188,9 @@ export function previewLine(conversation: PreviewSource): string {
     // from a running Codex session is described instead of printed.
     if (looksLikeOutput(snippet, conversation.worker === "codex")) return running ? "Working…" : "Ran a command";
     if (running && conversation.worker === "codex") return "Working…";
-    return snippetText(snippet);
+    const text = snippetText(snippet);
+    // Last guard: a line that still reads as machine text (a heredoc, a shell line, code, a run
+    // of paths) is described, never printed.
+    if (looksRaw(snippet) || looksRaw(text)) return running ? "Working…" : "Worked on a step";
+    return text;
 }

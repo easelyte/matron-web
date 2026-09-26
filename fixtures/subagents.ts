@@ -21,9 +21,62 @@ Please see LICENSE files in the repository root for full details.
  * `codex` (the finished Codex child selected).
  */
 
-import type { Conversation, JournalEvent } from "../src/journal/types";
+import corpus from "../src/journal/__tests__/fixtures/helper-corpus.json";
+import type { Conversation, JournalEvent, SessionStatus } from "../src/journal/types";
 
-export type SubagentScenario = "thread" | "child" | "codex";
+/*
+ * `real-claude` / `real-tests` / `real-codex`: a helper's own thread replayed from the scrubbed
+ * sample of real traffic (src/journal/__tests__/fixtures/helper-corpus.json): the python3-heredoc
+ * subagent from the operator's 2026-09-26 report, a Claude subagent that edits and runs tests,
+ * and a Codex review run.
+ */
+export type SubagentScenario = "thread" | "child" | "codex" | "real-claude" | "real-tests" | "real-codex";
+
+const REAL: Record<string, { id: string; thread: string; title: string; kind: "claude" | "codex"; state: string }> = {
+    "real-claude": {
+        id: "p1:sub:heredoc",
+        thread: "claude-heredoc",
+        title: "Helper headlines: audit the corpus",
+        kind: "claude",
+        state: "running",
+    },
+    "real-tests": {
+        id: "p1:sub:tests",
+        thread: "claude-tests",
+        title: "Q-wave: bundle budget and auth fixes",
+        kind: "claude",
+        state: "done",
+    },
+    "real-codex": {
+        id: "p1:codex:real",
+        thread: "codex-review",
+        title: "codex · review the files upload",
+        kind: "codex",
+        state: "done",
+    },
+};
+
+/** The corpus thread, re-timed onto this fixture's clock (one event every 4 seconds). */
+function realEvents(key: string): JournalEvent[] {
+    const spec = REAL[key];
+    const events = (corpus as unknown as { threads: Record<string, JournalEvent[]> }).threads[spec.thread];
+    return events.map((event, index) => ({
+        ...event,
+        seq: 9000 + index,
+        convo_id: spec.id,
+        ts: BASE + 1100_000 + index * 4000,
+        sender: spec.kind === "codex" ? "agent:codex" : "agent:claude",
+    }));
+}
+
+/**
+ * Header status for a real helper: a subagent past 200k tokens that a bridge before #81 sized
+ * against 200k (the red 100% bar), under a parent on opus[1m].
+ */
+export const REAL_STATUS: { parent: SessionStatus; child: SessionStatus } = {
+    parent: { model: "claude-opus-5-5[1m]", context: { tokens: 412_000, window: 1_000_000, pct: 41 } },
+    child: { model: "claude-opus-5-5", context: { tokens: 236_000, window: 200_000, pct: 100 } },
+};
 
 const BASE = Date.UTC(2026, 8, 26, 14, 0, 0);
 let seq = 5000;
@@ -290,6 +343,34 @@ export function subagentFixture(scenario: SubagentScenario): SubagentFixture {
             agent_kind: "claude",
         },
     ];
+    for (const [key, spec] of Object.entries(REAL)) {
+        const events = realEvents(key);
+        childEvents[spec.id] = events;
+        const last = events.at(-1)!;
+        const body = typeof last.payload.body === "string" ? last.payload.body : "";
+        conversations.push({
+            id: spec.id,
+            title: spec.title,
+            session_state: spec.state,
+            session_outcome: spec.state === "done" ? "completed" : null,
+            last_seq: last.seq,
+            unread_count: 0,
+            // The server's snippet: the first 120 characters of the last message.
+            snippet:
+                last.type === "tool_output"
+                    ? `$ ${String(last.payload.command ?? "")}`.slice(0, 120)
+                    : body.slice(0, 120),
+            created_at: events[0].ts,
+            last_ts: last.ts,
+            parent_convo_id: PARENT,
+            read_up_to_seq: last.seq,
+            agent_kind: spec.kind,
+        });
+    }
+    if (scenario in REAL) {
+        const spec = REAL[scenario];
+        return { conversations, selected: spec.id, events: childEvents[spec.id], childEvents };
+    }
     if (scenario === "child") {
         return {
             conversations,

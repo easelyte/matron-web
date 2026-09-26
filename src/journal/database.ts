@@ -360,11 +360,19 @@ export class JournalDatabase {
         validateSnapshotRows(snapshot);
         const transaction = this.database.transaction(["meta", "conversations", "events", "outbox"], "readwrite");
         const conversations = transaction.objectStore("conversations");
+        const existingRows = (await requestResult(conversations.getAll())) as Conversation[];
         const existingParents = new Map(
-            ((await requestResult(conversations.getAll())) as Conversation[]).map((conversation) => {
+            existingRows.map((conversation) => {
                 const parentId = coerceParentId(conversation.parent_convo_id);
                 return [conversation.id, parentId === conversation.id ? null : parentId] as const;
             }),
+        );
+        // The recorded last step survives a snapshot that still ends on the same message (same
+        // snippet and last_seq): the sidebar keeps phrasing it instead of reading the snippet.
+        const existingSteps = new Map(
+            existingRows
+                .filter((conversation) => conversation.last_step)
+                .map((conversation) => [conversation.id, conversation] as const),
         );
         conversations.clear();
         transaction.objectStore("events").clear();
@@ -379,8 +387,12 @@ export class JournalDatabase {
         for (const row of snapshot.conversations) {
             let incomingParent = coerceParentId(row.parent_convo_id);
             if (incomingParent === row.id) incomingParent = null;
+            const previous = existingSteps.get(row.id);
+            const keepStep =
+                previous && previous.snippet === row.snippet && previous.last_ts === (row.last_ts ?? row.created_at);
             conversations.put({
                 ...row,
+                ...(keepStep ? { last_step: previous.last_step } : {}),
                 parent_convo_id: existingParents.get(row.id) ?? incomingParent ?? null,
                 last_ts: row.last_ts ?? row.created_at,
                 read_up_to_seq: row.read_up_to_seq ?? (row.unread_count === 0 ? row.last_seq : 0),

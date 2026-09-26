@@ -13,7 +13,7 @@ import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation
 import { JournalDatabase } from "./database";
 import { buildEditFileParams, classifyEditFileReply, type EditFileInput, type EditFileOutcome } from "./edit-file";
 import { buildReadFileParams, classifyReadFileReply, type ReadFileInput, type ReadFileOutcome } from "./read-file";
-import { mergeSessionStatus } from "./status";
+import { helperContextStatus, mergeSessionStatus } from "./status";
 import { sectionStateFromReply, type JournalMetrics, type OpsSection, type OpsSectionState } from "./ops/model";
 import {
     asNumber,
@@ -34,6 +34,7 @@ import {
     type SearchHit,
     type ServerFrame,
     type Session,
+    type SessionStatus,
     type SnapshotResponse,
     type TrackerItem,
     type TrackerResolution,
@@ -919,7 +920,7 @@ export class MatronJournalClient {
             pendingScrollSeq: undefined,
             viewingHistoryWindow,
             activity: viewingHistoryWindow ? undefined : this.activities.get(conversationId),
-            sessionStatus: this.statuses.get(conversationId),
+            sessionStatus: this.statusFor(conversationId),
             textStreams: viewingHistoryWindow ? {} : { ...(this.textStreams.get(conversationId) ?? {}) },
             toolStreams: viewingHistoryWindow ? {} : { ...(this.toolStreams.get(conversationId) ?? {}) },
         });
@@ -955,7 +956,7 @@ export class MatronJournalClient {
         this.clearUnreadOverride(conversationId);
         this.patch({
             activity: this.activities.get(conversationId),
-            sessionStatus: this.statuses.get(conversationId),
+            sessionStatus: this.statusFor(conversationId),
             textStreams: { ...(this.textStreams.get(conversationId) ?? {}) },
             toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
         });
@@ -3211,6 +3212,9 @@ export class MatronJournalClient {
             }
         }
         if (convoId === this.state.selectedConversationId) this.refreshEphemeralState(convoId);
+        // A helper's gauge borrows its parent's window (statusFor): repaint it when that changes.
+        else if (frame.status && this.selectedConversation()?.parent_convo_id === convoId)
+            this.refreshEphemeralState(this.state.selectedConversationId!);
     }
 
     private applyToolStream(frame: JournalEphemeralFrame, convoId: string): void {
@@ -3251,11 +3255,24 @@ export class MatronJournalClient {
         this.toolStreams.set(convoId, streams);
     }
 
+    /**
+     * A conversation's header status. A helper's own conversation (a Claude subagent) has its
+     * context gauge sized against the parent's window where the bridge under-reported it.
+     */
+    private statusFor(conversationId: string): SessionStatus | undefined {
+        const status = this.statuses.get(conversationId);
+        if (!status?.context) return status;
+        const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
+        const parentId = conversation?.parent_convo_id;
+        if (parentId == null || parentId === conversationId) return status;
+        return helperContextStatus(status, this.statuses.get(parentId));
+    }
+
     private refreshEphemeralState(conversationId: string): void {
         const viewingHistoricalWindow = this.isViewingHistoricalWindow(conversationId);
         this.patch({
             activity: viewingHistoricalWindow ? undefined : this.activities.get(conversationId),
-            sessionStatus: this.statuses.get(conversationId),
+            sessionStatus: this.statusFor(conversationId),
             textStreams: viewingHistoricalWindow ? {} : { ...(this.textStreams.get(conversationId) ?? {}) },
             toolStreams: viewingHistoricalWindow ? {} : { ...(this.toolStreams.get(conversationId) ?? {}) },
         });

@@ -261,3 +261,42 @@ export function mergeSessionStatus(current: SessionStatus | undefined, update: S
         email: update.email ?? current?.email,
     };
 }
+
+const ONE_MILLION = 1_000_000;
+
+/** The model family a model id or alias names ("opus", "sonnet"…), or the bare id. */
+function modelFamily(model: string | undefined): string {
+    const id = (model ?? "")
+        .toLowerCase()
+        .replace(/\[1m\]/g, "")
+        .replace(/-\d{8}$/, "");
+    return /\b(opus|sonnet|haiku|fable|mythos)\b/.exec(id.replace(/[-_]/g, " "))?.[1] ?? id;
+}
+
+/**
+ * A helper's own context gauge (a Claude subagent's child conversation). Bridges up to #80
+ * size a subagent's window from the bare API model id its transcript carries
+ * (`claude-opus-5-5`), which never has the `[1m]` marker, so a subagent running in its
+ * parent's 1M window read 200k and pinned the bar at 100% in red. Corrected here, from data
+ * the frame already carries:
+ *   - more tokens than the reported window proves the window is the larger one (1M);
+ *   - a subagent on the parent's model family inherits the parent's (larger) window.
+ * A different-family subagent (haiku under an opus[1m] parent) keeps its own window.
+ */
+export function helperContextStatus(
+    child: SessionStatus | undefined,
+    parent: SessionStatus | undefined,
+): SessionStatus | undefined {
+    const context = child?.context;
+    if (!child || !context || !(context.tokens > 0)) return child;
+    let window = context.window > 0 ? context.window : ONE_MILLION;
+    if (context.tokens > window) window = ONE_MILLION;
+    const parentWindow = parent?.context?.window ?? 0;
+    if (parentWindow > window && (!child.model || modelFamily(child.model) === modelFamily(parent?.model)))
+        window = parentWindow;
+    if (window === context.window) return child;
+    return {
+        ...child,
+        context: { tokens: context.tokens, window, pct: Math.min(100, Math.round((context.tokens / window) * 100)) },
+    };
+}
