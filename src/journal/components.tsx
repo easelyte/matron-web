@@ -151,6 +151,7 @@ import {
     asString,
     buildSidebarIndex,
     childrenOf,
+    groupChildrenByParent,
     childSidebarPlacement,
     type ClientState,
     type MessageSearchState,
@@ -385,26 +386,49 @@ function formatTime(timestamp: number): string {
     return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
 }
 
+/**
+ * A formatRelativeDay that builds each Intl.DateTimeFormat at most once. Constructing a formatter
+ * is by far the costliest part of the label, and the sidebar formats one per row on every render
+ * (thousands on an account with a long history), so ConversationList makes one of these per
+ * render and shares it across rows. Per render, not module-level: the formatters capture the
+ * time zone and locale at construction, so a long-lived cache would keep stale ones.
+ */
+export function makeRelativeDayFormatter(): (timestamp: number, now: number) => string {
+    let clock: Intl.DateTimeFormat | undefined;
+    let weekday: Intl.DateTimeFormat | undefined;
+    let dayMonth: Intl.DateTimeFormat | undefined;
+    let dayMonthYear: Intl.DateTimeFormat | undefined;
+    return (timestamp, now) => {
+        if (!Number.isFinite(timestamp)) return ""; // Non-finite → no throw, empty string.
+        const then = new Date(timestamp);
+        if (Number.isNaN(then.getTime())) return ""; // Invalid Date → Intl.format would throw; bail.
+        const today = new Date(now);
+        const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        const dayMs = 86_400_000;
+        const daysAgo = Math.round((startOf(today) - startOf(then)) / dayMs);
+        if (daysAgo === 0) {
+            // Today (including same-day minor-future skew) → clock.
+            clock ??= new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+            return clock.format(then);
+        }
+        if (daysAgo >= 1 && daysAgo <= 6) {
+            weekday ??= new Intl.DateTimeFormat(undefined, { weekday: "short" });
+            return weekday.format(then);
+        }
+        // Older than six days or a genuinely future calendar day falls through to a dated label.
+        if (then.getFullYear() === today.getFullYear()) {
+            dayMonth ??= new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+            return dayMonth.format(then);
+        }
+        dayMonthYear ??= new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
+        return dayMonthYear.format(then);
+    };
+}
+
 // EXPORTED: the render callsite uses it, and unit tests import it directly to inject `now`.
 // `formatTime` stays private; only this helper needs the test seam.
 export function formatRelativeDay(timestamp: number, now: number = Date.now()): string {
-    if (!Number.isFinite(timestamp)) return ""; // Non-finite → no throw, empty string.
-    const then = new Date(timestamp);
-    if (Number.isNaN(then.getTime())) return ""; // Invalid Date → Intl.format would throw; bail.
-    const today = new Date(now);
-    const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-    const dayMs = 86_400_000;
-    const daysAgo = Math.round((startOf(today) - startOf(then)) / dayMs);
-    if (daysAgo === 0) return formatTime(timestamp); // Today (including same-day minor-future skew) → clock.
-    if (daysAgo >= 1 && daysAgo <= 6) {
-        return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(then);
-    }
-    // Older than six days or a genuinely future calendar day falls through to a dated label.
-    const sameYear = then.getFullYear() === today.getFullYear();
-    return new Intl.DateTimeFormat(
-        undefined,
-        sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" },
-    ).format(then);
+    return makeRelativeDayFormatter()(timestamp, now);
 }
 
 // True when two epoch-ms timestamps fall on the same local calendar day.
@@ -1528,6 +1552,9 @@ function ConversationList({
     // renders top-level; a child renders top-level only when childSidebarPlacement says so
     // (orphan → always; parent exists → running-only, and then only when it can't nest).
     const sidebarIndex = buildSidebarIndex(state.conversations, state.archivedIds, state.collapsedSubagentParentIds);
+    // Every row asks for its children; grouping once keeps a render linear in the conversation
+    // count instead of quadratic (childrenOf scans the whole list per call).
+    const childrenByParent = useMemo(() => groupChildrenByParent(state.conversations), [state.conversations]);
     const isTopLevelRow = (conversation: Conversation): boolean => rendersAsTopLevelRow(conversation, sidebarIndex);
     const conversations = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
@@ -1604,6 +1631,7 @@ function ConversationList({
     };
 
     const renderNow = Date.now();
+    const relativeDay = makeRelativeDayFormatter();
     const renderConversation = (
         conversation: ClientState["conversations"][number],
         isSubagent = false,
@@ -1614,7 +1642,7 @@ function ConversationList({
         const unread = effectiveUnread(conversation, state.unreadOverrideIds);
         const name = conversationTitle(conversation);
         const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
-        const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
+        const relativeTimestamp = relativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
         // Developer view off: the preview never shows a command line or markdown source — a tool
         // call reads as its activity ("Reading paths.py…"), anything else as one line of prose.
         // Developer view on keeps the snippet's words, with only the markdown dropped (#111).
@@ -1633,7 +1661,7 @@ function ConversationList({
             !isSubagent &&
             state.collapsedSubagentParentIds.has(conversation.id) &&
             hasSubagentChildRows(conversation, sidebarIndex)
-                ? childrenOf(state.conversations, conversation.id).filter(
+                ? (childrenByParent.get(conversation.id) ?? []).filter(
                       (child) => !state.archivedIds.has(child.id) && child.session_state === "running",
                   ).length
                 : 0;
@@ -1984,7 +2012,7 @@ function ConversationList({
                                         ? visibleRows.map((conversation) => renderConversation(conversation, false))
                                         : visibleRows.flatMap((conversation) => [
                                               renderConversation(conversation, false),
-                                              ...childrenOf(state.conversations, conversation.id)
+                                              ...(childrenByParent.get(conversation.id) ?? [])
                                                   .filter(
                                                       (child) =>
                                                           !state.archivedIds.has(child.id) &&
