@@ -84,6 +84,79 @@ describe("design drift ratchet", () => {
         expect(Object.keys(HEIGHT_EXEMPT).filter((sel) => !seen.has(sel))).toEqual([]);
     });
 
+    it("uses a radius token for every radius", () => {
+        const RADIUS = /^(var\(--cpd-radius-[a-z]+\)|calc\(var\(--cpd-radius-[a-z]+\) - \dpx\)|50%|0|inherit)$/;
+        const offenders: string[] = [];
+        for (const { root } of SHEETS)
+            root.walkDecls(/radius$/, (d) => {
+                const parts = d.value.trim().split(/\s+(?![^(]*\))/);
+                if (!parts.every((part) => RADIUS.test(part)))
+                    offenders.push(`${where(d)} ${norm(ruleOf(d)?.selector ?? "")} { ${d.prop}: ${d.value} }`);
+            });
+        expect(offenders).toEqual([]);
+    });
+
+    it("keeps every px font size on the type scale", () => {
+        const SCALE = new Set([10, 11, 12, 13, 14, 15, 16, 18, 20]);
+        const EXEMPT: Record<string, string> = {
+            html: "the root size (15px, derived from --cpd-font-size-root)",
+            ".mj_InlineCode": "inline code is sized relative to the prose around it (em)",
+            ".mj_TrackerItemRow_thumb": "an emoji glyph used as a thumbnail, not text",
+        };
+        const offenders: string[] = [];
+        for (const { root } of SHEETS)
+            root.walkDecls(/^(font|font-size)$/, (d) => {
+                const sel = norm(ruleOf(d)?.selector ?? "");
+                if (sel === ":root" || EXEMPT[sel]) return;
+                // Strip var() fallbacks: a defined token wins, and undefined ones fail elsewhere.
+                const value = d.value.replace(/var\([^)]*\)/g, "");
+                // The size is the first px length (a shorthand's line-height follows its slash).
+                const size = /(\d+(?:\.\d+)?)px/.exec(value);
+                if (size && !SCALE.has(Number(size[1]))) offenders.push(`${where(d)} ${sel} { ${d.prop}: ${d.value} }`);
+                if (/\d(em|rem)\b|calc\(/.test(value)) offenders.push(`${where(d)} ${sel} { ${d.prop}: ${d.value} }`);
+            });
+        expect(offenders).toEqual([]);
+    });
+
+    it("draws one focus ring (var(--mj-focus-ring) with a token offset)", () => {
+        const OFFSET_EXEMPT: Record<string, string> = {
+            ".mj_MobileNav_tab:focus-visible": "the ring sits inside the 52px tab's touch padding",
+        };
+        const offenders: string[] = [];
+        for (const { root } of SHEETS)
+            root.walkRules(/:focus-visible/, (rule) => {
+                rule.walkDecls("outline", (d) => {
+                    if (!/^(var\(--mj-focus-ring\)|none)$/.test(d.value.trim()))
+                        offenders.push(`${where(d)} ${norm(rule.selector)} { outline: ${d.value} }`);
+                });
+                rule.walkDecls("outline-offset", (d) => {
+                    if (OFFSET_EXEMPT[norm(rule.selector)]) return;
+                    if (!/^(var\(--mj-focus-offset[\w-]*\)|0)$/.test(d.value.trim()))
+                        offenders.push(`${where(d)} ${norm(rule.selector)} { outline-offset: ${d.value} }`);
+                });
+            });
+        expect(offenders).toEqual([]);
+    });
+
+    it("sizes square controls from the scale on both axes", () => {
+        // A token height with a literal width turns a 32x32 button into a 32x44 pill on phones.
+        const offenders: string[] = [];
+        for (const { root } of SHEETS)
+            root.walkRules((rule) => {
+                let tokenHeight = false;
+                rule.walkDecls(/^(height|min-height)$/, (d) => {
+                    if (/var\(--mj-control-h(-lg)?\)/.test(d.value)) tokenHeight = true;
+                });
+                if (!tokenHeight) return;
+                rule.walkDecls(/^(width|min-width)$/, (d) => {
+                    const m = /^(\d+)px$/.exec(d.value.trim());
+                    if (m && Number(m[1]) >= BAND_MIN && Number(m[1]) <= BAND_MAX)
+                        offenders.push(`${where(d)} ${norm(rule.selector)} { ${d.prop}: ${d.value} }`);
+                });
+            });
+        expect(offenders).toEqual([]);
+    });
+
     it("never references an undefined custom property", () => {
         const defined = new Set<string>();
         for (const { root } of SHEETS) root.walkDecls(/^--/, (d) => void defined.add(d.prop));

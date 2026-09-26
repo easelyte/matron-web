@@ -399,7 +399,7 @@ button {
     justify-content: center;
     gap: 8px;
     border: 1px solid rgb(13 148 136 / 25%);
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: var(--cpd-state-selected);
     color: var(--cpd-color-text-action-accent);
     cursor: pointer;
@@ -418,8 +418,8 @@ button {
 }
 
 .mj_NewSessionButton:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_IconButton {
@@ -461,7 +461,7 @@ button {
     height: var(--mj-control-h);
     align-items: center;
     gap: var(--cpd-space-2x);
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-secondary);
     padding: 0 12px;
@@ -1049,8 +1049,7 @@ button {
 
 .mx_SlashPalette_trigger {
     font:
-        500 12.5px/18px "Fira Code",
-        monospace;
+        500 12px/18px "Fira Code", monospace;
     white-space: nowrap;
 }
 
@@ -1178,7 +1177,7 @@ button {
 /* v4 send button: 32×32, radius 9px, filled --m-accent-deep, always present.
    Disabled (empty composer) keeps its footprint at opacity .45; pointer-events kept. */
 .mx_MessageComposer_sendMessage {
-    border-radius: 9px;
+    border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-accent);
     color: var(--cpd-color-text-on-accent);
 }
@@ -1193,8 +1192,8 @@ button {
 
 .mx_MessageComposer_button:focus-visible,
 .mx_MessageComposer_sendMessage:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mx_MessageComposer_button[aria-disabled="true"] {
@@ -1254,7 +1253,7 @@ button {
 .mx_AuthPage_modal {
     width: min(440px, 100%);
     overflow: hidden;
-    border-radius: 16px;
+    border-radius: var(--cpd-radius-xl);
     background: var(--cpd-color-bg-scrim-auth);
     box-shadow: 0 16px 48px rgb(18 16 14 / 12%);
 }
@@ -1290,7 +1289,7 @@ button {
     height: 48px;
     padding: 18px 12px 6px;
     border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     outline: 0;
     background: var(--cpd-color-bg-canvas-default);
 }
