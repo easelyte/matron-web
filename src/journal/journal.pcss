@@ -4842,6 +4842,20 @@ button.mj_File {
     padding: 0 14px 14px;
 }
 
+/* Side by side, the list's breadcrumb bar and the preview's name bar share one height, so the two
+   hairlines under them run as a single line across the split (they sat 12px apart). */
+@media (min-width: 761px) {
+    .mj_FilesBreadcrumb,
+    .mj_FilesPreview_header {
+        min-height: var(--mj-subbar-h);
+        box-sizing: border-box;
+    }
+    .mj_FilesPreview_header {
+        padding-top: 0;
+        padding-bottom: 0;
+    }
+}
+
 /* Mobile: stack the two panes; the preview drops below the list. */
 @media (max-width: 760px) {
     .mj_FilesPane_body {
