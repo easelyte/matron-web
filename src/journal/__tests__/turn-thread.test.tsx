@@ -235,6 +235,26 @@ describe("Show the work OFF (default)", () => {
         );
     });
 
+    it("shows the card for a turn whose first step is still running (nothing journaled yet)", async () => {
+        const stream = {
+            messageRef: "s",
+            command: "pnpm test",
+            tool: "Bash",
+            content: "",
+            offset: 0,
+            headTruncated: false,
+        };
+        await render(client([user("run the tests", 0)], { toolStreams: { s: stream } }, "running"));
+        expect(card()?.classList.contains("mj_TurnCard_running")).toBe(true);
+        expect(container.querySelector(".mj_TurnCard_liveText")?.textContent).toBe("Running the tests…");
+    });
+
+    it("never files agent prose that happens to start with an emoji as a notice", async () => {
+        await render(client([user("status?", 0), say("⚡ Quick summary: all green.\n\n- tests pass", 1)]));
+        expect(container.querySelector(".mj_SystemNotice")).toBeNull();
+        expect(container.textContent).toContain("tests pass");
+    });
+
     it("keeps the typing indicator while a running turn has no card yet", async () => {
         await render(client([user("hi", 0)], { activity: { state: "thinking" } }, "running"));
         expect(card()).toBeNull();

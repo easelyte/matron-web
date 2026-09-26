@@ -70,6 +70,8 @@ export interface TurnCardProps {
     onStop?: () => void;
     /** The deep-detail body of one step: the existing tool / diff card markup. */
     renderDetail: (step: Step) => React.ReactNode;
+    /** Narration body (the agent's markdown). Default: plain text. */
+    renderNarration?: (text: string) => React.ReactNode;
 }
 
 const GROUP_STATUS_LABEL: Record<Group["status"], string> = {
@@ -195,6 +197,7 @@ export function TurnCard({
     durationMs,
     onStop,
     renderDetail,
+    renderNarration,
 }: TurnCardProps): React.ReactElement {
     const baseId = useId();
     const bodyId = `${baseId}-body`;
@@ -459,9 +462,9 @@ export function TurnCard({
                 {sequence.map((entry, index) => {
                     if (entry.type === "narration") {
                         return (
-                            <p className="mj_TurnCard_narration" key={`n-${index}`}>
-                                {entry.text}
-                            </p>
+                            <div className="mj_TurnCard_narration" key={`n-${index}`}>
+                                {renderNarration ? renderNarration(entry.text) : entry.text}
+                            </div>
                         );
                     }
                     return (

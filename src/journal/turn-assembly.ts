@@ -36,13 +36,13 @@ const NOTICE_PATTERNS: readonly RegExp[] = [
     /^🗜️?\s*(Context compacted|\/compact is already queued)/u,
     /^✅\s*Compacted\b/u,
     /^⏳\s*(Session was idle|A restart is pending)/u,
-    /^⚡\s/u,
+    /^[⚡📬]\s*(Sending \d+ queued messages?|Sending \/compact|No queued messages)/u,
     /^🔄\s*Restarting\b/u,
     /^(Claude|Codex) session restarted\./,
     /^Waiting for turn to finish before restarting\b/,
     /^Session stopped\.$/,
     /^\[Session ended \(exit 0\)\]$/,
-    /^👋\s/u,
+    /^👋\s*Logged out\b/u,
     /^✅\s*(Allowed once|Always allowing)\b/u,
 ];
 
@@ -291,11 +291,14 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
  * The thread as rows: each turn's operator bubble, then its agent tile (only when it has
  * anything to show), then its notices and peer messages in the order they happened.
  */
-export function threadRows(turns: readonly Turn[]): ThreadRow[] {
+export function threadRows(turns: readonly Turn[], options: { liveLastTurn?: boolean } = {}): ThreadRow[] {
     const rows: ThreadRow[] = [];
     for (const turn of turns) {
         if (turn.operator) rows.push({ kind: "operator", event: turn.operator });
         if (
+            // A live last turn gets its tile before anything is journaled: the running step
+            // (a command publishes only when it completes) shows as the card's live line.
+            (options.liveLastTurn && turn === turns[turns.length - 1]) ||
             turn.items.length ||
             turn.breaks.length ||
             turn.replies.length ||

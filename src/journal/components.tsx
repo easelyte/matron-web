@@ -4829,6 +4829,8 @@ function TurnBlock({
             ref={ref}
             className={`mj_TurnBlock${highlighted ? " mj_EventRow_searchHighlighted" : ""}`}
             data-event-id={event.seq}
+            aria-live="polite"
+            aria-atomic="true"
             {...handlers}
         >
             {children}
@@ -4905,7 +4907,13 @@ function AgentTurnRow({
     );
     return (
         <li
-            className="mx_EventTile mx_EventTile_lastInSection mj_AgentTurn"
+            className={`mx_EventTile mx_EventTile_lastInSection mj_AgentTurn${
+                highlightedSeq !== undefined &&
+                turn.events.some((event) => event.seq === highlightedSeq) &&
+                ![...turn.breaks, ...turn.answer, ...turn.errors].some((event) => event.seq === highlightedSeq)
+                    ? " mj_EventRow_searchHighlighted"
+                    : ""
+            }`}
             tabIndex={-1}
             data-layout="bubble"
             data-self="false"
@@ -4935,6 +4943,7 @@ function AgentTurnRow({
                                 runningSince={live.runningSince}
                                 durationMs={turn.endTs - turn.startTs}
                                 renderDetail={renderDetail}
+                                renderNarration={(text) => <MarkdownBody text={text} label={`narration-${turn.key}`} />}
                             />
                         )}
                         {breaks.map(block)}
@@ -4945,7 +4954,11 @@ function AgentTurnRow({
                                 rowHandlers={rowHandlers}
                                 highlighted={highlightedSeq === event.seq}
                             >
-                                <TurnErrorRow text={noticeText(asString(event.payload.body))} />
+                                <TurnErrorRow
+                                    text={asString(event.payload.body)
+                                        .trim()
+                                        .replace(/^\[(.*)\]$/, "$1")}
+                                />
                             </TurnBlock>
                         ))}
                         {turn.answer.map(block)}
@@ -4963,6 +4976,7 @@ function SystemNoticeRow({ event, highlighted }: { event: JournalEvent; highligh
         <li
             className={`mj_SystemNotice${highlighted ? " mj_EventRow_searchHighlighted" : ""}`}
             data-event-id={event.seq}
+            aria-live="polite"
             title={body}
         >
             {noticeText(body)}
@@ -5146,6 +5160,7 @@ function Timeline({
     }>();
     const [sourceEvent, setSourceEvent] = useState<JournalEvent>();
     const [showTheWork] = useShowTheWork();
+    const turnsRef = useRef<Turn[]>([]);
     // Show the work toggled: re-render instantly, keeping the operator message nearest the top
     // where it was (GENERATIVE-SYSTEM §7). Captured during render, while the DOM still shows the
     // previous rendering; restored in the layout effect below.
@@ -5416,9 +5431,21 @@ function Timeline({
     useLayoutEffect(() => {
         const targetSeq = state.pendingScrollSeq;
         if (targetSeq === undefined) return;
-        const target = [...(scrollRef.current?.querySelectorAll<HTMLElement>("[data-event-id]") ?? [])].find(
+        let target = [...(scrollRef.current?.querySelectorAll<HTMLElement>("[data-event-id]") ?? [])].find(
             (row) => row.dataset.eventId === String(targetSeq),
         );
+        // Show the work OFF: steps and narration live inside a turn's card, so a hit on one of
+        // them lands on its turn tile.
+        if (!target) {
+            const turn = turnsRef.current.find((candidate) =>
+                candidate.events.some((event) => event.seq === targetSeq),
+            );
+            if (turn) {
+                target = [...(scrollRef.current?.querySelectorAll<HTMLElement>("[data-turn]") ?? [])].find(
+                    (row) => row.tagName === "LI" && row.dataset.turn === turn.key,
+                );
+            }
+        }
         if (target) {
             target.scrollIntoView({ block: "nearest" });
             setHighlightedSearchTarget({ conversationId: state.selectedConversationId, seq: targetSeq });
@@ -5455,7 +5482,7 @@ function Timeline({
 
     // ---- v6: "Show the work" OFF — one agent tile per operator turn with an Under-the-hood card.
     const turns = useMemo(() => (showTheWork ? [] : assembleTurns(visibleEvents)), [showTheWork, visibleEvents]);
-    const rows = useMemo(() => threadRows(turns), [turns]);
+    turnsRef.current = turns;
     const lastTurn = turns[turns.length - 1];
     // First-seen time of each live step, so the elapsed counter and slow state survive re-renders.
     const liveSeenRef = useRef(new Map<string, number>());
@@ -5467,6 +5494,26 @@ function Timeline({
         sessionRunning && !state.viewingHistoryWindow && state.activity?.state === "tool"
             ? state.activity.detail || ""
             : "";
+    // The running step, stable across stream chunks (keyed on the stream, not its content).
+    const lastStream = liveStreams.at(-1);
+    const streamKey = lastStream
+        ? `${lastStream.messageRef}\u0000${lastStream.command ?? ""}\u0000${lastStream.tool ?? ""}`
+        : "";
+    const streamStep = useMemo((): Step | null => {
+        if (!streamKey) return null;
+        const [messageRef, command, tool] = streamKey.split("\u0000");
+        return {
+            kind: "step",
+            id: `live-${messageRef}`,
+            tool: tool && tool !== "Bash" && !command ? tool : "Bash",
+            input: { command: command || tool },
+            status: "running",
+        };
+    }, [streamKey]);
+    const activityRunning = useMemo(
+        () => (activityDetail ? activityStep(activityDetail, "live-activity") : null),
+        [activityDetail],
+    );
     const lastTurnLive = useMemo((): TurnLive => {
         if (!lastTurn) return { mode: "done" };
         const lastStep = stepsOf(lastTurn.items).at(-1);
@@ -5477,27 +5524,22 @@ function Timeline({
         if (!sessionRunning || state.viewingHistoryWindow)
             return { mode: lastStep?.status === "stopped" ? "stopped" : "done" };
         const seen = liveSeenRef.current;
+        // Only the step running NOW keeps a clock: a repeat of the same command later starts fresh.
         const since = (key: string): number => {
+            for (const known of [...seen.keys()]) if (known !== key) seen.delete(known);
             const known = seen.get(key);
             if (known !== undefined) return known;
             const now = Date.now();
             seen.set(key, now);
             return now;
         };
-        const stream = liveStreams.at(-1);
-        if (stream) {
-            const command = stream.command || stream.tool || "";
-            const running: Step = {
-                kind: "step",
-                id: `live-${stream.messageRef}`,
-                tool: stream.tool && stream.tool !== "Bash" && !stream.command ? stream.tool : "Bash",
-                input: { command },
-                status: "running",
-            };
-            return { mode: "running", running, runningSince: since(`stream:${stream.messageRef}`) };
+        if (streamStep) {
+            return { mode: "running", running: streamStep, runningSince: since(`stream:${streamStep.id}`) };
         }
-        const activity = activityDetail ? activityStep(activityDetail, `live-activity`) : null;
-        if (activity) return { mode: "running", running: activity, runningSince: since(`activity:${activityDetail}`) };
+        if (activityRunning) {
+            return { mode: "running", running: activityRunning, runningSince: since(`activity:${activityDetail}`) };
+        }
+        seen.clear();
         const thinking =
             state.activity?.state === "thinking" && state.activity.detail
                 ? narrationLiveLine(state.activity.detail)
@@ -5509,11 +5551,16 @@ function Timeline({
         sessionRunning,
         state.viewingHistoryWindow,
         state.activity,
-        liveStreams,
+        streamStep,
+        activityRunning,
         activityDetail,
         answeredPromptReplies,
         spawnOutcomes,
     ]);
+    const rows = useMemo(
+        () => threadRows(turns, { liveLastTurn: lastTurnLive.mode === "running" && Boolean(lastTurnLive.running) }),
+        [turns, lastTurnLive],
+    );
     // Forget first-seen stamps once nothing is running, so a later step starts its own clock.
     useEffect(() => {
         if (!sessionRunning) liveSeenRef.current.clear();
