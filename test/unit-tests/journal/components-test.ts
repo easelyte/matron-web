@@ -371,7 +371,7 @@ describe("usage limit accessibility", () => {
         const labels = Array.from(menu?.querySelectorAll('[role="menuitem"]') ?? []).map((item) =>
             item.textContent?.trim(),
         );
-        expect(labels).toEqual(["Pin", "Add to Favorites", "Mark as unread", "Archive"]);
+        expect(labels).toEqual(["Pin", "Add to Favorites", "Mark as unread", "Enable browser tools", "Archive"]);
     });
 });
 
