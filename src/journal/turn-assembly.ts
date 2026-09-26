@@ -251,7 +251,9 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
         if (!current) current = emptyTurn(event);
         const turn = current;
         turn.events.push(event);
-        turn.endTs = Math.max(turn.endTs, event.ts);
+        // Duration ends at the turn's last own event: bridge notices and peers don't extend it.
+        if (event.type !== "peer_message" && !(event.type === "text" && bridgeTextKind(agentText(event)) === "notice"))
+            turn.endTs = Math.max(turn.endTs, event.ts);
         if (isOperatorEvent(event)) {
             turn.replies.push(event);
             lastTs = event.ts;

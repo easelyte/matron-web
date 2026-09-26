@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import { resetShowTheWorkForTests, SHOW_THE_WORK_KEY } from "../../../src/journal/show-the-work";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { TextEncoder as NodeTextEncoder } from "node:util";
@@ -131,7 +132,13 @@ async function openMenu(container: HTMLElement): Promise<void> {
     });
 }
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+    localStorage.clear();
+    // These suites pin the per-event thread (Show the work ON = the pre-v6 rendering). The v6
+    // default (OFF: one Under-the-hood card per turn) is covered in __tests__/turn-thread.test.tsx.
+    localStorage.setItem(SHOW_THE_WORK_KEY, "true");
+    resetShowTheWorkForTests();
+});
 
 describe("session-control banners", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;

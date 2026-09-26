@@ -281,8 +281,15 @@ function outcome(steps: Step[]): Outcome {
     return { status: "failed", text: "failed" };
 }
 
+/** The file a step touches: its path, or the file argument of a shell read (`cat x`, `sed -n … x`). */
+export function stepPath(step: Step): string | undefined {
+    if (step.input.path) return step.input.path;
+    if (isShellStep(step) && classify(step).key === "look") return lastArg(commandOf(step)) || undefined;
+    return undefined;
+}
+
 function distinctPaths(steps: Step[]): string[] {
-    return [...new Set(steps.map((step) => step.input.path).filter((path): path is string => Boolean(path)))];
+    return [...new Set(steps.map(stepPath).filter((path): path is string => Boolean(path)))];
 }
 
 function groupSentence(key: ActivityClass, steps: Step[]): string {
