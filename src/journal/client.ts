@@ -14,6 +14,7 @@ import { JournalDatabase } from "./database";
 import { buildEditFileParams, classifyEditFileReply, type EditFileInput, type EditFileOutcome } from "./edit-file";
 import { buildReadFileParams, classifyReadFileReply, type ReadFileInput, type ReadFileOutcome } from "./read-file";
 import { mergeSessionStatus } from "./status";
+import { sectionStateFromReply, type JournalMetrics, type OpsSection, type OpsSectionState } from "./ops/model";
 import {
     asNumber,
     buildSidebarIndex,
@@ -848,6 +849,7 @@ export class MatronJournalClient {
             // selectedConversationId; the tracker also takes precedence over Files).
             filesView: undefined,
             trackerView: undefined,
+            opsView: undefined,
             events: [],
             pendingMessages: [],
             loadingHistory: false,
@@ -1770,6 +1772,7 @@ export class MatronJournalClient {
         // Symmetric to openTrackerView closing Files: one main-region surface at a time, so
         // opening Files closes the tracker (the tracker takes render precedence otherwise).
         this.closeTrackerView();
+        this.closeOpsView();
         // Bump the invocation token whenever a target is supplied, so re-opening the SAME file (e.g.
         // the operator clicks the same deep link again after browsing elsewhere) is a distinct
         // invocation FilesPane will act on, not a no-op deduped by the unchanged path string.
@@ -1874,6 +1877,7 @@ export class MatronJournalClient {
         } = {},
     ): void {
         this.closeFilesView();
+        this.closeOpsView();
         const prev = this.state.trackerView;
         const next: TrackerViewState = {
             open: true,
@@ -1896,6 +1900,39 @@ export class MatronJournalClient {
     public closeTrackerView(): void {
         if (!this.state.trackerView) return;
         this.patch({ trackerView: undefined });
+    }
+
+    // ── Ops pane (loop #542 phase B) ───────────────────────────────────────────────
+    // Boxes, quotas, host, alerts, timers, usage. Same one-surface-at-a-time rule as Files and the
+    // tracker. Its data is fetched by the pane on open (GET /devices, GET /metrics, and one
+    // `ops_snapshot` agent RPC per section); only live `box_status` reports land in the store.
+
+    public openOpsView(): void {
+        this.closeFilesView();
+        this.closeTrackerView();
+        if (this.state.opsView?.open) return;
+        this.patch({ opsView: { open: true } });
+    }
+
+    public closeOpsView(): void {
+        if (!this.state.opsView) return;
+        this.patch({ opsView: undefined });
+    }
+
+    /** Journal health for the Ops page; null when the server has no /metrics or it failed. */
+    public async journalMetrics(): Promise<JournalMetrics | null> {
+        if (!this.api) return null;
+        try {
+            return await this.api.metrics();
+        } catch {
+            return null;
+        }
+    }
+
+    /** One `ops_snapshot` section from a box, mapped onto the page's section state. Read-only. */
+    public async opsSnapshot<S extends OpsSection>(agentDeviceId: number, section: S): Promise<OpsSectionState<S>> {
+        const reply = await this.agentRpc(agentDeviceId, "ops_snapshot", { section });
+        return sectionStateFromReply(section, reply);
     }
 
     // Deep-link / row-tap entry points: select the row (last-tap-wins) and switch to its view.
@@ -2770,6 +2807,10 @@ export class MatronJournalClient {
         }
         if (frame.kind === "ephemeral") {
             this.handleEphemeral(frame);
+            return;
+        }
+        if (frame.kind === "box_status") {
+            this.patch({ boxStatusLive: { ...this.state.boxStatusLive, [frame.device_id]: frame.status } });
             return;
         }
         if (frame.kind === "control" && frame.op === "error") {

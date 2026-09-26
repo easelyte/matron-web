@@ -1,0 +1,933 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+/*
+ * Ops pane (loop #542 phase B). Imported after work.pcss. Builds on the tracker pane chrome
+ * (.mj_TrackerPane_top / _title / _close) and the control primitives (mj_Btn, mj_Seg); only the
+ * page's own pieces live here: section frames, cards, meters, tiles, rows, the daily chart.
+ *
+ * Rules this page follows:
+ *  - Breakpoints measure the PANE (container `ops`), never the viewport: the pane is narrower than
+ *    the window whenever the sidebar is open.
+ *  - Status colour is tint + dot + word, never a solid fill and never colour alone. Quota and
+ *    host meters use the header's usage scale (green < 50, amber < 85, red), so a 38% reads the
+ *    same here as in a conversation header.
+ *  - Magnitude bars (processes, cost by model/machine, the daily chart) are one hue: the accent.
+ *    Values stay in text ink; the bar carries no meaning a label doesn't also say.
+ *  - Numbers are tabular so columns of figures line up.
+ */
+
+.mj_OpsPane {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    width: 100%;
+    background: var(--cpd-color-bg-room-canvas, var(--cpd-color-bg-canvas-default));
+}
+
+.mj_OpsBoxSwitch {
+    margin-left: var(--cpd-space-2x);
+}
+
+.mj_OpsPane_updated {
+    margin-left: auto;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-tertiary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.mj_OpsPane_refresh {
+    margin-left: var(--cpd-space-1x);
+}
+
+.mj_OpsPane_body {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-color: var(--mj-scrollbar) transparent;
+    container: ops / inline-size;
+}
+
+.mj_OpsPane_column {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-6x);
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: var(--cpd-space-5x) var(--cpd-space-6x) var(--cpd-space-12x);
+}
+
+@container ops (max-width: 560px) {
+    .mj_OpsPane_column {
+        gap: var(--cpd-space-5x);
+        padding: var(--cpd-space-4x) var(--cpd-space-3x) var(--cpd-space-10x);
+    }
+}
+
+/* — Summary line — */
+.mj_OpsSummary {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    border: 1px solid transparent;
+    border-radius: var(--cpd-radius-lg);
+    font: var(--cpd-font-body-strong);
+}
+.mj_OpsSummary_glyph {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: var(--cpd-icon-md);
+    height: var(--cpd-icon-md);
+}
+.mj_OpsSummary_glyph svg {
+    width: var(--cpd-icon-md);
+    height: var(--cpd-icon-md);
+}
+.mj_OpsSummary_ok {
+    border-color: var(--mj-accent-border);
+    background: var(--cpd-state-selected);
+    color: var(--cpd-color-text-action-accent);
+}
+.mj_OpsSummary_warn {
+    border-color: var(--mj-warn-tint);
+    background: var(--mj-warn-tint);
+    color: var(--mj-warn-ink);
+}
+.mj_OpsSummary_warn .mj_OpsDot {
+    background: var(--mj-warn-dot);
+}
+.mj_OpsSummary_critical {
+    border-color: var(--mj-critical-border);
+    background: var(--mj-critical-tint);
+    color: var(--cpd-color-text-critical-primary);
+}
+
+/* — Section frame — */
+.mj_OpsSection {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--cpd-space-2x);
+}
+.mj_OpsSection_title {
+    display: flex;
+    align-items: baseline;
+    gap: var(--cpd-space-2x);
+    margin: 0;
+    padding: 0 var(--cpd-space-1x);
+    font: var(--cpd-font-body-xs-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--cpd-color-text-tertiary);
+}
+.mj_OpsSection_meta {
+    min-width: 0;
+    overflow: hidden;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* — Card — */
+.mj_OpsCard {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--cpd-space-4x);
+    box-sizing: border-box;
+    padding: var(--cpd-space-4x);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
+}
+.mj_OpsCard_loading {
+    gap: var(--cpd-space-3x);
+}
+.mj_OpsSkeleton {
+    display: block;
+    width: 100%;
+    height: 12px;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-secondary);
+    animation: mj_OpsPulse 1.4s ease-in-out infinite;
+}
+.mj_OpsSkeleton_short {
+    width: 55%;
+}
+@keyframes mj_OpsPulse {
+    50% {
+        opacity: 0.45;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .mj_OpsSkeleton {
+        animation: none;
+    }
+}
+
+/* — Notes (degrade states) — */
+.mj_OpsNote {
+    margin: 0;
+    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    border: 1px dashed var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-lg);
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+}
+.mj_OpsNote strong {
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+}
+.mj_OpsNote_update {
+    border-style: solid;
+    border-color: var(--mj-accent-border);
+    background: var(--cpd-state-selected);
+}
+.mj_OpsNote_error {
+    border-style: solid;
+    border-color: var(--mj-critical-border);
+    background: var(--mj-critical-tint);
+    color: var(--cpd-color-text-critical-primary);
+}
+.mj_OpsFootnote {
+    margin: var(--cpd-space-1x) var(--cpd-space-1x) 0;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-tertiary);
+}
+
+/* — Shared small pieces — */
+.mj_OpsDot {
+    display: inline-block;
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.mj_OpsState {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: none;
+    padding: 2px var(--cpd-space-2x);
+    border-radius: var(--cpd-radius-pill);
+    font: var(--mj-font-label-sm);
+    white-space: nowrap;
+}
+.mj_OpsState_online {
+    background: var(--cpd-state-selected);
+    color: var(--cpd-color-text-action-accent);
+}
+.mj_OpsState_online .mj_OpsDot {
+    background: var(--cpd-color-usage-low);
+}
+.mj_OpsState_asleep {
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+}
+.mj_OpsState_asleep .mj_OpsDot {
+    background: var(--cpd-color-text-tertiary);
+}
+
+.mj_OpsSev {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: none;
+    padding: 1px var(--cpd-space-2x);
+    border-radius: var(--cpd-radius-pill);
+    font: var(--cpd-font-meta);
+    font-weight: 600;
+    white-space: nowrap;
+}
+.mj_OpsSev .mj_OpsDot {
+    width: 6px;
+    height: 6px;
+}
+.mj_OpsSev svg {
+    width: 12px;
+    height: 12px;
+}
+.mj_OpsSev_critical {
+    background: var(--mj-critical-tint);
+    color: var(--cpd-color-text-critical-primary);
+}
+.mj_OpsSev_warn {
+    background: var(--mj-warn-tint);
+    color: var(--mj-warn-ink);
+}
+.mj_OpsSev_warn .mj_OpsDot {
+    background: var(--mj-warn-dot);
+}
+.mj_OpsSev_info {
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+}
+.mj_OpsSev_ok {
+    background: var(--cpd-state-selected);
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_OpsTag {
+    margin-left: var(--cpd-space-2x);
+    padding: 0 6px;
+    border-radius: var(--cpd-radius-xs);
+    font: var(--cpd-font-micro);
+    font-weight: 600;
+    vertical-align: 1px;
+}
+.mj_OpsTag_critical {
+    background: var(--mj-critical-tint);
+    color: var(--cpd-color-text-critical-primary);
+}
+.mj_OpsTag_warn {
+    background: var(--mj-warn-tint);
+    color: var(--mj-warn-ink);
+}
+
+.mj_OpsEmpty {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    margin: 0;
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+}
+.mj_OpsEmpty svg {
+    width: var(--cpd-icon-sm);
+    height: var(--cpd-icon-sm);
+    color: var(--cpd-color-usage-low);
+}
+
+/* — Boxes — */
+.mj_OpsBoxes {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: var(--cpd-space-3x);
+}
+@container ops (max-width: 560px) {
+    .mj_OpsBoxes {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+.mj_OpsBox {
+    gap: var(--cpd-space-3x);
+}
+.mj_OpsBox_selected {
+    border-color: var(--mj-accent-border);
+}
+.mj_OpsBox_head {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    min-width: 0;
+}
+.mj_OpsBox_name {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    font: var(--cpd-font-title);
+    color: var(--cpd-color-text-primary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mj_OpsBox_seen {
+    margin-left: auto;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-tertiary);
+    white-space: nowrap;
+}
+.mj_OpsBox_sub {
+    margin: calc(-1 * var(--cpd-space-2x)) 0 0;
+    overflow: hidden;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mj_OpsBox_empty {
+    margin: 0;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-tertiary);
+}
+.mj_OpsBox_group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-2x);
+    padding-top: var(--cpd-space-3x);
+    border-top: 1px solid var(--cpd-color-border-subtle);
+}
+.mj_OpsBox_groupTitle {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--cpd-space-2x);
+    margin: 0;
+    font: var(--cpd-font-body-xs-semibold);
+    color: var(--cpd-color-text-secondary);
+}
+.mj_OpsBox_groupMeta {
+    font: var(--cpd-font-meta);
+    color: var(--mj-warn-ink);
+}
+.mj_OpsBox_host_stale .mj_OpsMeter_track {
+    opacity: 0.5;
+}
+.mj_OpsBox_folders {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-1x);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.mj_OpsBox_folders li {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--cpd-space-2x);
+    font: var(--cpd-font-meta);
+}
+.mj_OpsBox_folder {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--cpd-color-text-primary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mj_OpsBox_folderCount {
+    flex: none;
+    color: var(--cpd-color-text-tertiary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* — Meter: label | track | percent | detail — */
+.mj_OpsMeter {
+    display: grid;
+    grid-template-columns: minmax(64px, 96px) minmax(48px, 1fr) 4ch minmax(0, 13ch);
+    align-items: center;
+    gap: var(--cpd-space-3x);
+    font: var(--cpd-font-meta);
+}
+.mj_OpsMeter_label {
+    overflow: hidden;
+    color: var(--cpd-color-text-primary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mj_OpsMeter_track,
+.mj_OpsTile_track,
+.mj_OpsBarCell_track,
+.mj_OpsBars_track {
+    display: block;
+    height: 6px;
+    overflow: hidden;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-usage-track);
+}
+.mj_OpsMeter_value {
+    font-weight: 600;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.mj_OpsMeter_detail {
+    overflow: hidden;
+    color: var(--cpd-color-text-tertiary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* — Tiles — */
+.mj_OpsTiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+    gap: var(--cpd-space-2x);
+}
+.mj_OpsTiles_three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.mj_OpsTile {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--cpd-space-3x);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-raised);
+}
+.mj_OpsTile_label {
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-secondary);
+}
+.mj_OpsTile_value {
+    font: var(--cpd-font-heading);
+    color: var(--cpd-color-text-primary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.mj_OpsTile_sub {
+    overflow: hidden;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-tertiary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mj_OpsTile_track {
+    margin-top: var(--cpd-space-2x);
+}
+@container ops (max-width: 420px) {
+    .mj_OpsTiles {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .mj_OpsTiles_three {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .mj_OpsTiles_three .mj_OpsTile_value {
+        font: var(--cpd-font-title);
+    }
+    .mj_OpsTiles_three .mj_OpsTile_sub {
+        white-space: normal;
+    }
+}
+
+/* — Table (processes) — */
+.mj_OpsTable {
+    width: 100%;
+    border-collapse: collapse;
+    font: var(--cpd-font-meta);
+    font-variant-numeric: tabular-nums;
+    table-layout: fixed;
+}
+.mj_OpsTable_caption {
+    padding-bottom: var(--cpd-space-2x);
+    font: var(--cpd-font-body-xs-semibold);
+    color: var(--cpd-color-text-secondary);
+    text-align: left;
+}
+.mj_OpsTable th {
+    padding: 0 var(--cpd-space-2x) var(--cpd-space-1x);
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    font-weight: 400;
+    color: var(--cpd-color-text-tertiary);
+    text-align: left;
+}
+.mj_OpsTable td {
+    padding: var(--cpd-space-1-5x) var(--cpd-space-2x);
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    color: var(--cpd-color-text-secondary);
+    white-space: nowrap;
+}
+.mj_OpsTable th:first-child,
+.mj_OpsTable td:first-child {
+    padding-left: 0;
+}
+.mj_OpsTable th:last-child,
+.mj_OpsTable td:last-child {
+    padding-right: 0;
+}
+.mj_OpsTable tbody tr:last-child td {
+    border-bottom: 0;
+}
+.mj_OpsTable_user {
+    width: 72px;
+}
+.mj_OpsTable_num {
+    width: 56px;
+    text-align: right;
+}
+.mj_OpsTable th.mj_OpsTable_num {
+    text-align: right;
+}
+.mj_OpsTable_mem {
+    width: 38%;
+}
+.mj_OpsProcs_name {
+    overflow: hidden;
+    color: var(--cpd-color-text-primary);
+    text-overflow: ellipsis;
+}
+td.mj_OpsProcs_name {
+    color: var(--cpd-color-text-primary);
+}
+.mj_OpsBarCell {
+    display: grid;
+    grid-template-columns: minmax(24px, 1fr) 7ch;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+}
+.mj_OpsBarCell_fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--cpd-color-icon-accent-primary);
+}
+.mj_OpsBarCell_value {
+    text-align: right;
+}
+@container ops (max-width: 520px) {
+    .mj_OpsTable_user {
+        display: none;
+    }
+    .mj_OpsTable_mem {
+        width: 44%;
+    }
+}
+
+/* — Rows (alerts, timers, sessions) — */
+.mj_OpsList {
+    gap: var(--cpd-space-3x);
+    padding-top: var(--cpd-space-2x);
+    padding-bottom: var(--cpd-space-2x);
+}
+.mj_OpsList > .mj_OpsEmpty {
+    padding: var(--cpd-space-2x) 0;
+}
+.mj_OpsList_toolbar {
+    display: flex;
+    padding-top: var(--cpd-space-2x);
+}
+.mj_OpsRows {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.mj_OpsRow {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--cpd-space-3x);
+    min-width: 0;
+    padding: var(--cpd-space-3x) 0;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+}
+.mj_OpsRow:last-child {
+    border-bottom: 0;
+}
+.mj_OpsRow > .mj_OpsSev {
+    margin-top: 1px;
+}
+.mj_OpsRow_main {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+}
+.mj_OpsRow_lead {
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-primary);
+    overflow-wrap: anywhere;
+}
+.mj_OpsRow_meta {
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-tertiary);
+    overflow-wrap: anywhere;
+    font-variant-numeric: tabular-nums;
+}
+.mj_OpsRow_aside {
+    flex: none;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-secondary);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.mj_OpsRow_aside_num {
+    display: flex;
+    flex-direction: column;
+    font-weight: 600;
+    color: var(--cpd-color-text-primary);
+}
+.mj_OpsRow_asideSub {
+    font-weight: 400;
+    color: var(--cpd-color-text-tertiary);
+}
+.mj_OpsRows_quiet .mj_OpsRow_lead {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_OpsTimer_dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    margin-top: 6px;
+    border-radius: 50%;
+    background: var(--cpd-color-usage-low);
+}
+.mj_OpsTimer_dot_critical {
+    background: var(--cpd-color-usage-high);
+}
+.mj_OpsTimer_dot_warn {
+    background: var(--mj-warn-dot);
+}
+.mj_OpsTimer_dot_run {
+    background: var(--cpd-color-icon-accent-primary);
+}
+.mj_OpsTimer_name {
+    font-weight: 500;
+}
+@container ops (max-width: 480px) {
+    .mj_OpsTimer {
+        flex-wrap: wrap;
+    }
+    .mj_OpsTimer .mj_OpsRow_aside {
+        flex-basis: 100%;
+        padding-left: calc(8px + var(--cpd-space-3x));
+        text-align: left;
+    }
+}
+
+.mj_OpsCron {
+    align-items: baseline;
+}
+.mj_OpsCron_schedule {
+    flex: none;
+    min-width: 13ch;
+    font: var(--mj-font-mono);
+    color: var(--cpd-color-text-secondary);
+}
+
+/* — Disclosure — */
+.mj_OpsDisclosure {
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    padding-top: var(--cpd-space-1x);
+}
+.mj_OpsDisclosure_toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    margin: 0;
+    padding: var(--cpd-space-2x) 0;
+    border: 0;
+    background: none;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-label);
+    cursor: pointer;
+}
+.mj_OpsDisclosure_toggle:hover {
+    color: var(--cpd-color-text-primary);
+}
+.mj_OpsDisclosure_toggle:focus-visible {
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
+    border-radius: var(--cpd-radius-xs);
+}
+.mj_OpsChevron {
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform var(--cpd-dur-fast) var(--cpd-ease);
+}
+.mj_OpsDisclosure_toggle[aria-expanded="true"] .mj_OpsChevron {
+    transform: rotate(45deg);
+}
+
+/* — Usage — */
+.mj_OpsUsage {
+    gap: var(--cpd-space-5x);
+}
+.mj_OpsChart {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-2x);
+    margin: 0;
+}
+.mj_OpsChart_caption {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--cpd-space-1x) var(--cpd-space-3x);
+    font: var(--cpd-font-body-xs-semibold);
+    color: var(--cpd-color-text-secondary);
+}
+.mj_OpsChart_readout {
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-primary);
+    font-variant-numeric: tabular-nums;
+}
+.mj_OpsChart_plot {
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    height: 96px;
+    border-bottom: 1px solid var(--cpd-color-border-strong);
+}
+.mj_OpsChart_bar {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    align-items: flex-end;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: default;
+}
+.mj_OpsChart_bar:hover,
+.mj_OpsChart_bar_on {
+    background: var(--cpd-state-hover);
+}
+.mj_OpsChart_bar:focus-visible {
+    outline: var(--mj-focus-ring);
+    outline-offset: 0;
+}
+.mj_OpsChart_fill {
+    display: block;
+    width: 100%;
+    border-radius: var(--cpd-radius-xs) var(--cpd-radius-xs) 0 0;
+    background: var(--cpd-color-icon-accent-primary);
+    opacity: 0.85;
+}
+.mj_OpsChart_bar_on .mj_OpsChart_fill {
+    opacity: 1;
+}
+.mj_OpsChart_axis {
+    display: flex;
+    justify-content: space-between;
+    font: var(--cpd-font-micro);
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_OpsBars_pair {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--cpd-space-6x);
+}
+@container ops (max-width: 640px) {
+    .mj_OpsBars_pair {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--cpd-space-5x);
+    }
+}
+.mj_OpsBars {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--cpd-space-2x);
+}
+.mj_OpsBars ul {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-2x);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.mj_OpsBars_row {
+    display: grid;
+    grid-template-columns: minmax(0, 17ch) minmax(40px, 1fr) 7ch 5ch;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    font: var(--cpd-font-meta);
+    font-variant-numeric: tabular-nums;
+}
+.mj_OpsBars_name {
+    overflow: hidden;
+    color: var(--cpd-color-text-primary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mj_OpsBars_value {
+    font-weight: 600;
+    color: var(--cpd-color-text-primary);
+    text-align: right;
+}
+.mj_OpsBars_sub {
+    color: var(--cpd-color-text-tertiary);
+    text-align: right;
+}
+.mj_OpsRecent {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-1x);
+}
+
+/* — Posture — */
+.mj_OpsPosture {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--cpd-space-6x);
+}
+@container ops (max-width: 640px) {
+    .mj_OpsPosture {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--cpd-space-5x);
+    }
+}
+.mj_OpsPosture_security,
+.mj_OpsPosture_api {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--cpd-space-2x);
+}
+.mj_OpsPosture_status {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    margin: 0;
+}
+.mj_OpsPosture_actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-1x);
+    margin: 0;
+    padding-left: var(--cpd-space-4x);
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-primary);
+}
+.mj_OpsPosture_actions li::marker {
+    color: var(--cpd-color-text-tertiary);
+}
+
+/* — Agents without a box report — */
+.mj_OpsAgents {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-1x);
+    margin: var(--cpd-space-1x) 0 0;
+    padding: 0 var(--cpd-space-1x);
+    list-style: none;
+}
+.mj_OpsAgents_row {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    min-width: 0;
+    font: var(--cpd-font-meta);
+}
+.mj_OpsAgents_name {
+    font: var(--cpd-font-label);
+    color: var(--cpd-color-text-primary);
+}
+.mj_OpsAgents_meta {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--cpd-color-text-tertiary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Phones: the disclosure rows are tap targets. */
+@media (max-width: 700px) {
+    .mj_OpsDisclosure_toggle {
+        min-height: var(--mj-control-h-touch);
+    }
+}

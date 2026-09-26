@@ -18,7 +18,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useState } from "react";
 
 import type { MatronJournalClient } from "./client";
-import { ChatsIcon, ChecklistIcon, FolderIcon } from "./icons";
+import { ChatsIcon, ChecklistIcon, FolderIcon, PulseIcon } from "./icons";
 import type { ClientState, ConnectionState } from "./types";
 
 /**
@@ -29,7 +29,10 @@ import type { ClientState, ConnectionState } from "./types";
  */
 export function mainSurfaceOpen(state: ClientState, filesAvailable: boolean): boolean {
     return Boolean(
-        state.trackerView?.open || (filesAvailable && state.filesView?.open) || state.selectedConversationId,
+        state.trackerView?.open ||
+        state.opsView?.open ||
+        (filesAvailable && state.filesView?.open) ||
+        state.selectedConversationId,
     );
 }
 
@@ -62,7 +65,7 @@ export function trackerLabel(count: number | undefined, partial = false): string
     return text === null ? "Tracker" : `Tracker, ${text} need you`;
 }
 
-type NavKey = "chats" | "tracker" | "files";
+type NavKey = "chats" | "tracker" | "files" | "ops";
 
 export function MobileNav({
     client,
@@ -75,14 +78,18 @@ export function MobileNav({
 }): React.ReactElement | null {
     const tracker = Boolean(state.trackerView?.open);
     const files = filesAvailable && Boolean(state.filesView?.open);
+    const ops = Boolean(state.opsView?.open);
     // Inside an open conversation the composer owns the bottom edge; the header back button leads
     // to the list, which carries this nav.
-    if (!tracker && !files && state.selectedConversationId) return null;
-    const current: NavKey = tracker ? "tracker" : files ? "files" : "chats";
+    if (!tracker && !files && !ops && state.selectedConversationId) return null;
+    const current: NavKey = tracker ? "tracker" : files ? "files" : ops ? "ops" : "chats";
     const go = (key: NavKey): void => {
         if (key === "chats") {
             client.closeTrackerView();
             client.closeFilesView();
+            client.closeOpsView();
+        } else if (key === "ops") {
+            if (!ops) client.openOpsView();
         } else if (key === "tracker") {
             if (!tracker) client.openTrackerView();
         } else if (!files) {
@@ -112,6 +119,7 @@ export function MobileNav({
             {tab("chats", "Chats", <ChatsIcon />)}
             {tab("tracker", "Tracker", <ChecklistIcon />, state.trackerNeedsYou)}
             {filesAvailable && tab("files", "Files", <FolderIcon />)}
+            {tab("ops", "Ops", <PulseIcon />)}
         </nav>
     );
 }

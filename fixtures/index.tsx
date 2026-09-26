@@ -41,11 +41,14 @@ import type {
 import { SHOW_THE_WORK_KEY } from "../src/journal/show-the-work";
 import { v6Fixture, type V6Scenario } from "./v6-thread";
 import { workFixture, type WorkFixtureMode } from "./work";
+import { opsDevices, opsMetrics, opsReply, type OpsFixtureMode } from "./ops";
+import { parseBoxStatus, parseMetrics, sectionStateFromReply, type OpsSection } from "../src/journal/ops/model";
 import "../src/journal/shell.pcss";
 import "../src/journal/controls.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
 import "../src/journal/work.pcss";
+import "../src/journal/ops.pcss";
 import "../src/journal/mobile.pcss";
 
 const SESSION: Session = {
@@ -427,9 +430,35 @@ if (v6Scenario) {
 
 // Stub the new-session data path so a driver click on "New session" reaches the folders
 // form (agent → recent folders) where the themed inputs / checkbox / Start live.
-(client as unknown as { listAgents: () => Promise<unknown[]> }).listAgents = async () => [
-    { device_id: "dev-local", connected: true, label: "workstation", hostname: "workstation", name: "workstation" },
-];
+// The Ops page (`openOps(mode)`) swaps in its own box roster, parsed exactly as GET /devices is.
+let opsMode: OpsFixtureMode | null = null;
+(client as unknown as { listAgents: () => Promise<unknown[]> }).listAgents = async () =>
+    opsMode
+        ? opsDevices(opsMode).map((d) => {
+              const raw = d as Record<string, unknown>;
+              const status = parseBoxStatus(raw.status);
+              return status ? { ...raw, status } : raw;
+          })
+        : [
+              {
+                  device_id: "dev-local",
+                  connected: true,
+                  label: "workstation",
+                  hostname: "workstation",
+                  name: "workstation",
+              },
+          ];
+(client as unknown as { journalMetrics: () => Promise<unknown> }).journalMetrics = async () =>
+    parseMetrics({
+        user: { head_seq: opsMetrics.head_seq, devices: opsMetrics.devices },
+        sockets_connected: opsMetrics.sockets_connected,
+        journal_row_count: opsMetrics.journal_row_count,
+        db_file_size_bytes: opsMetrics.db_file_size_bytes,
+    });
+(client as unknown as { opsSnapshot: (id: number, section: OpsSection) => Promise<unknown> }).opsSnapshot = async (
+    id,
+    section,
+) => sectionStateFromReply(section, await opsReply(opsMode ?? "ok", id, section));
 (client as unknown as { recentFolders: () => Promise<unknown[]> }).recentFolders = async () => [
     { path: "/opt/matron/web-journal" },
     { path: "/opt/matron/journal" },
@@ -942,6 +971,10 @@ let workMode: WorkFixtureMode = "ok";
     openWorkLoop: (id: number, mode: WorkFixtureMode = "ok") => {
         workMode = mode;
         patchState({ filesView: undefined, trackerView: { open: true, view: "work", selectedLoopId: id } });
+    },
+    openOps: (mode: OpsFixtureMode = "ok") => {
+        opsMode = mode;
+        patchState({ filesView: undefined, trackerView: undefined, opsView: { open: true } });
     },
     stageImage: (name = "screenshot.png") => client.stageFiles([imageFile(name)]),
     // Single NON-image file → hatched "image preview" placeholder + the single-file case

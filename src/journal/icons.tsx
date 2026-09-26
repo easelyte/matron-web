@@ -114,6 +114,15 @@ export function ChecklistIcon(props: IconProps): React.ReactElement {
     );
 }
 
+export function PulseIcon(props: IconProps): React.ReactElement {
+    // Ops entry point: a heartbeat trace, read as "how the boxes are doing".
+    return (
+        <Icon {...props}>
+            <path d="M3 12h4l2.5-6 5 12 2.5-6h4" />
+        </Icon>
+    );
+}
+
 export function MarkReadIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>

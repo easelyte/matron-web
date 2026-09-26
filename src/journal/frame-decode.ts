@@ -13,6 +13,7 @@ import {
     type ServerFrame,
     isObject,
 } from "./types";
+import { parseBoxStatusFrame } from "./ops/model";
 
 // Runtime decoding at the WebSocket frame boundary (#753). connection.ts used to
 // cast `JSON.parse(data) as ServerFrame` with no validation, so every downstream
@@ -242,6 +243,13 @@ export function decodeServerFrame(raw: unknown): FrameDecodeResult {
             return decodeRpc(raw);
         case "ephemeral":
             return decodeEphemeral(raw);
+        case "box_status": {
+            // Not sequenced and not conversation-scoped: an unreadable report is dropped whole
+            // (the page keeps the last good one from GET /devices or an earlier frame).
+            const parsed = parseBoxStatusFrame(raw);
+            if (!parsed) return { ok: false, reason: "bad_box_status" };
+            return { ok: true, frame: { kind: "box_status", device_id: parsed.deviceId, status: parsed.status } };
+        }
         default:
             return { ok: false, reason: "unknown_kind" };
     }
