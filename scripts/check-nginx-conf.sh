@@ -86,10 +86,20 @@ if [[ -z $spa_block ]] ||
     missing+=("index.html/SPA no-cache block (location / with Cache-Control \"no-cache\")")
 fi
 
+# Block 4: response compression. Without an explicit gzip_types nginx compresses
+# only text/html, so the JS bundle and every journal JSON body (the /snapshot a
+# fresh device syncs from is ~1.5 MB) ship uncompressed. Directives only — the
+# comment-stripped input means a commented-out line cannot satisfy this.
+if ! grep -Eq '^[[:space:]]*gzip[[:space:]]+on[[:space:]]*;' <<<"$stripped" ||
+    ! grep -Eq '^[[:space:]]*gzip_types[[:space:]][^;]*application/json' <<<"$stripped" ||
+    ! grep -Eq '^[[:space:]]*gzip_types[[:space:]][^;]*application/javascript' <<<"$stripped"; then
+    missing+=("response compression (gzip on + gzip_types covering application/json and application/javascript)")
+fi
+
 if ((${#missing[@]} > 0)); then
     echo "check-nginx-conf: $CONF is missing required hardening blocks:" >&2
     printf '  - %s\n' "${missing[@]}" >&2
     exit 1
 fi
 
-echo "check-nginx-conf: OK — all three hardening blocks present and correctly scoped in $CONF"
+echo "check-nginx-conf: OK — all hardening blocks present and correctly scoped in $CONF"

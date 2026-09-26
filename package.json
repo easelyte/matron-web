@@ -16,7 +16,7 @@
         "lint:fix": "prettier --write src test webpack.config.mjs jest.config.cjs babel.config.cjs",
         "lint:types": "tsc --noEmit",
         "test": "jest --runInBand",
-        "test:shell": "bash scripts/test/test-nginx-bin-resolution.sh",
+        "test:shell": "bash scripts/test/test-nginx-bin-resolution.sh && bash scripts/test/test-check-nginx-conf.sh",
         "coverage": "jest --runInBand --coverage",
         "build:fixtures": "webpack --config webpack.fixtures.mjs --mode production"
     },
