@@ -256,7 +256,41 @@ it("still settles when every host reply is slower than the poll interval", async
     await unmount();
 });
 
-it("does not call a box that went offline 'All quiet'", async () => {
+it("does not call a box that went offline after a good read 'All quiet'", async () => {
+    jest.useFakeTimers({ doNotFake: ["setTimeout", "queueMicrotask", "nextTick", "setImmediate"] });
+    const ok = (section: OpsSection): Reply => ({
+        ok: true,
+        result: {
+            data:
+                section === "alerts"
+                    ? { active: [], resolved_24h: [] }
+                    : section === "timers"
+                      ? { timers: [], cron: [] }
+                      : { processes: [], windows: {}, security: null },
+        },
+    });
+    const client = fakeClient(ok, [bridge]);
+    const { container, unmount } = await mount(client);
+    const summary = () => container.querySelector('[data-spec="ops.summary"]')!.textContent;
+    expect(summary()).toContain("All quiet");
+    // The box drops: its polls now fail and the next roster read lists it offline.
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) =>
+        sectionStateFromReply(section, { ok: false, code: "agent_unreachable" }),
+    );
+    client.listAgents.mockResolvedValue([{ ...bridge, connected: false }]);
+    await act(async () => {
+        jest.advanceTimersByTime(60_000);
+    });
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(summary()).not.toContain("All quiet");
+    expect(summary()).toContain("is offline");
+    jest.useRealTimers();
+    await unmount();
+});
+
+it("trusts a successful reply over an older 'offline' roster entry (the request woke the box)", async () => {
     const ok = (section: OpsSection): Reply => ({
         ok: true,
         result: {
@@ -269,9 +303,15 @@ it("does not call a box that went offline 'All quiet'", async () => {
         },
     });
     const client = fakeClient(ok, [{ ...bridge, connected: false }]);
+    // Replies land a tick after the roster read, as they do for a box the request woke.
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) => {
+        await new Promise((r) => setTimeout(r, 5));
+        return sectionStateFromReply(section, ok(section));
+    });
     const { container, unmount } = await mount(client);
-    const summary = container.querySelector('[data-spec="ops.summary"]')!;
-    expect(summary.textContent).not.toContain("All quiet");
-    expect(summary.textContent).toContain("is offline");
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(container.querySelector('[data-spec="ops.summary"]')!.textContent).toContain("All quiet");
     await unmount();
 });
