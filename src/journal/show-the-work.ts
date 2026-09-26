@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 /*
  * "Developer view" (named "Show the work" in the v6 handoff; renamed in design round 2) — the one
  * v6 thread setting (CONTRACTS 6). A per-operator client preference,
- * default OFF: the thread tucks each turn's steps into one "Under the hood" card. ON renders
+ * default OFF: the thread tucks each turn's steps into one turn card. ON renders
  * the thread exactly as before v6.
  */
 

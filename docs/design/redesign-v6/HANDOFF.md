@@ -69,14 +69,14 @@
 
 **Card**
 - The collapsed summary is **one row in every state** (done / running / slow / waiting / stopped). The live line occupies the same slot as "N steps · duration", so finishing a turn never changes the card's height. A two-line variant was rejected because it jumps on resolve.
-- Row layout: `16px glyph · "Under the hood" · meta · (Stop) · chevron`, min-height 36, padding 9/12, the same rhythm as the `.mj_ToolCard` summary. Title row is `--cpd-color-bg-canvas-raised`; the expanded body is `--cpd-color-bg-canvas-default`.
+- Row layout: `16px glyph · meta · (Stop) · chevron` (no title since 2026-09-26, see §7a), min-height 36, padding 9/12, the same rhythm as the `.mj_ToolCard` summary. Title row is `--cpd-color-bg-canvas-raised`; the expanded body is `--cpd-color-bg-canvas-default`.
 - Glyph:
-  - `.mj_LiveDot` pulse while working
+  - `.mj_TurnCard_spinner` (a 12px rotating ring) while working; was the `.mj_LiveDot` pulse until 2026-09-26, see §7a
   - check (secondary ink) when done cleanly
   - **amber dot (`--mj-warn-dot`) when done but any step failed along the way**. So turn 1 shows the amber dot, because its type check failed once.
   - a static accent dot while waiting
-- Meta, done: `· {n} steps · {duration}`. n counts steps only, never narration. Turn 1 = **11 steps · 3m 12s** (the count comes from the fixture, not the brief's example "14").
-- Running: `· {live line}` plus ` · 42s` once the current step passes 10s.
+- Meta, done: `{n} steps · {duration}`. n counts steps only, never narration. Turn 1 = **11 steps · 3m 12s** (the count comes from the fixture, not the brief's example "14").
+- Running: `{live line}` plus ` · 42s` once the current step passes 10s.
 - Slow (step ≥ 5 min): the line turns `--mj-warn-ink` and a "Stop" text button appears. Stop ends the turn as `Stopped · N steps` with the amber dot.
 - Waiting: "Waiting for you" in accent ink, no animation.
 - Expanded order: **Changed files** block (first 5 + "Show all N files"), then groups interleaved with narration **in the order they happened**. Groups show step lists capped at 12 + "Show all {k}", and must virtualize past about 200 rows.
@@ -128,7 +128,7 @@
 
 ## 5. Exact copy strings
 
-- Card: `Under the hood` · `{n} steps` / `1 step` · `Waiting for you` · `Stop` · `Stopped` · `Changed files` · `Show all {n} files` · `Show all {k}` · `Back to steps` · `Back to files` · `Load full output` · `Open helper`
+- Card: ~~`Under the hood`~~ (removed 2026-09-26; toggle accessible name `Show steps` / `Hide steps`, region `Agent steps`) · `{n} steps` / `1 step` · `Waiting for you` · `Stop` · `Stopped` · `Changed files` · `Show all {n} files` · `Show all {k}` · `Back to steps` · `Back to files` · `Load full output` · `Open helper`
 - Group sentences and step sentences: the template table in `GENERATIVE-SYSTEM.md §1`. Outcomes: `passed`, `failed`, `failed once, then passed`, `failed {n}×, then passed`.
 - Live lines (examples, template-driven): `Reading {file}…` · `Searching for {pattern}…` · `Running the tests…` · `Checking the types…` · `Asking a helper to {description}…`
 - Turn error (fixture): `The session couldn’t resume. Send a message to start fresh.`
@@ -180,6 +180,15 @@ All seven open decisions above were confirmed as final, with the defaults as pro
 5. **Turn duration** runs from the operator message to the turn's last event.
 6. **Failed step deep view** shows the next passing rerun only.
 7. **400 MB** is fixed copy until the bridge reports a per-box figure.
+
+### Operator decision, 2026-09-26: turn card has no title, spinner while running
+
+The collapsed turn card drops the "Under the hood" label entirely and swaps the pulsing dot for a spinner.
+
+- **Running:** a small CSS-only rotating ring (`.mj_TurnCard_spinner`, 12px, `--cpd-color-border-strong` track, `--cpd-color-icon-accent-primary` arc, amber `--mj-warn-dot` arc when slow) + the live line only, e.g. `Reading the test files…`. Same ring on running group rows and the expanded "now" row. Under `prefers-reduced-motion` the ring keeps turning but slowly (3s per turn) so the state stays legible.
+- **Done:** no label; the step summary (`{n} steps · {duration}`) + the chevron. Done-with-a-failure keeps the amber dot; the turn-ending error keeps `.mj_TurnError`.
+- **Accessibility:** the toggle's accessible name is `Show steps` / `Hide steps` (with `aria-expanded`), described by the status text (`Done, 4 steps`, `Working: …`); the card region is labelled `Agent steps`.
+- **Order of sacrifice:** the done-state step count is now the row's only label and is never dropped; at ≤340px it is the done duration that goes.
 
 ### Round 2 changes to v6 (operator-accepted)
 

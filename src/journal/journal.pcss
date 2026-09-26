@@ -5150,7 +5150,7 @@ button.mj_File {
 }
 
 /* ===========================================================================================
-   Redesign v6 — "Under the hood" (docs/design/redesign-v6). Show the work OFF renders one
+   Redesign v6 — the turn card (docs/design/redesign-v6; was "Under the hood"). Show the work OFF renders one
    agent tile per operator turn: the card, then break-throughs, then a turn-ending error, then
    the answer prose. No height animation anywhere; the collapsed card is one row in every state.
    =========================================================================================== */
@@ -5192,7 +5192,7 @@ button.mj_File {
 
 .mj_TurnCard_toggle {
     display: grid;
-    grid-template-columns: 16px auto minmax(0, 1fr) auto 13px;
+    grid-template-columns: 16px minmax(0, 1fr) auto 13px;
     align-items: center;
     column-gap: var(--cpd-space-2x);
     width: 100%;
@@ -5256,9 +5256,21 @@ button.mj_File {
     background: var(--cpd-color-icon-accent-primary);
 }
 
-.mj_TurnCard_title {
-    font: var(--cpd-font-label);
-    white-space: nowrap;
+/* Running: a small rotating ring in place of the old pulsing dot (operator decision
+   2026-09-26, HANDOFF §7a). Muted track, accent arc; amber arc once the step runs slow. */
+.mj_TurnCard_spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    box-sizing: border-box;
+    border: 2px solid var(--cpd-color-border-strong);
+    border-top-color: var(--cpd-color-icon-accent-primary);
+    border-radius: 50%;
+    animation: mj-spin 0.8s linear infinite;
+}
+
+.mj_TurnCard_slow .mj_TurnCard_row .mj_TurnCard_spinner {
+    border-top-color: var(--mj-warn-dot);
 }
 
 .mj_TurnCard_meta,
@@ -5279,6 +5291,7 @@ button.mj_File {
 .mj_TurnCard_sep,
 .mj_TurnCard_elapsedWrap,
 .mj_TurnCard_count_meta,
+.mj_TurnCard_countLabel,
 .mj_TurnCard_elapsedTotal,
 .mj_TurnCard_stoppedLabel {
     flex: 0 0 auto;
@@ -5746,6 +5759,11 @@ button.mj_File {
     .mj_TurnCard.is-resolved .mj_TurnCard_glyph > *,
     .mj_TurnCard.is-resolved .mj_TurnCard_meta {
         animation: none;
+    }
+
+    /* Reduced motion: the ring still turns, but slowly, so "working" stays legible. */
+    .mj_TurnCard_spinner {
+        animation-duration: 3s;
     }
 
     .mj_TurnCard_chevron {
@@ -6396,7 +6414,8 @@ button.mj_SwitchButton:focus-visible {
 /* ---- v6 chat-pane breakpoints (data-pane on .mx_RoomView_body, set by a ResizeObserver).
    Order of sacrifice at narrow (GENERATIVE-SYSTEM §3): card row drops the total duration;
    group rows drop the count column, then the step indent shrinks 24 → 12; the deep panel
-   pulls out to the card edge. Glyph, title, chevron and Stop are never dropped. ---- */
+   pulls out to the card edge. Glyph, the live line / step summary, chevron and Stop are never
+   dropped (there is no title since 2026-09-26). ---- */
 [data-pane="narrow"] .mj_TurnCard_count,
 [data-pane="narrow"] .mj_TurnCard_elapsedTotal {
     display: none;
@@ -6427,9 +6446,11 @@ button.mj_SwitchButton:focus-visible {
     margin-left: -12px;
 }
 
-/* Very tight panes: the step count goes too; the live line keeps what is left. */
+/* Very tight panes: the stopped-state count and the done duration go too; the live line keeps
+   what is left. The done-state step count stays: it is the row's only label. */
 @container (max-width: 340px) {
-    .mj_TurnCard_count_meta {
+    .mj_TurnCard_count_meta,
+    .mj_TurnCard_elapsedTotal {
         display: none;
     }
 }

@@ -7,7 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 /*
  * Redesign v6 thread assembly with Show the work OFF (the default): one agent tile per operator
- * turn with an "Under the hood" card, break-throughs after it, system notices as one quiet line.
+ * turn with a collapsed turn card, break-throughs after it, system notices as one quiet line.
  */
 
 import { act } from "react";
@@ -114,8 +114,14 @@ describe("Show the work OFF (default)", () => {
         await render(client(sheetTurn()));
         expect(card()).not.toBeNull();
         expect(toggle().getAttribute("aria-expanded")).toBe("false");
-        expect(toggle().textContent).toContain("Under the hood");
-        expect(container.querySelector(".mj_TurnCard_metaVisible")?.textContent).toBe("·4 steps·3m 12s");
+        // No visible title (operator decision 2026-09-26): the summary is the label, and the
+        // toggle keeps an accessible name of its own plus the status as its description.
+        expect(toggle().textContent).not.toContain("Under the hood");
+        expect(toggle().getAttribute("aria-label")).toBe("Show steps");
+        const describedBy = toggle().getAttribute("aria-describedby");
+        expect(describedBy && document.getElementById(describedBy)?.textContent).toContain("4 steps");
+        expect(container.querySelector(".mj_TurnCard_metaVisible")?.textContent).toBe("4 steps·3m 12s");
+        expect(toggle().querySelector(".mj_TurnCard_chevron")).not.toBeNull();
         // The step cards are tucked away; the answer and the operator bubble read as a chat.
         expect(container.querySelector(".mj_ToolCard")).toBeNull();
         expect(container.textContent).toContain("The labels sit too close to the wrong field.");
@@ -160,6 +166,7 @@ describe("Show the work OFF (default)", () => {
         });
         expect(container.querySelector(".mj_TurnCard_deep")).toBeNull();
         expect(toggle().getAttribute("aria-expanded")).toBe("true");
+        expect(toggle().getAttribute("aria-label")).toBe("Hide steps");
         expect(document.activeElement).toBe(container.querySelectorAll(".mj_TurnCard_step")[0]);
     });
 
@@ -227,7 +234,9 @@ describe("Show the work OFF (default)", () => {
         );
         expect(card()?.classList.contains("mj_TurnCard_running")).toBe(true);
         expect(container.querySelector(".mj_TurnCard_liveText")?.textContent).toBe("Running the tests…");
-        expect(container.querySelector(".mj_TurnCard_glyph .mj_LiveDot")).not.toBeNull();
+        expect(container.querySelector(".mj_TurnCard_glyph .mj_TurnCard_spinner")).not.toBeNull();
+        expect(container.querySelector(".mj_TurnCard .mj_LiveDot")).toBeNull();
+        expect(container.querySelector(".mj_TurnCard_metaVisible")?.textContent).toBe("Running the tests…");
         expect(container.querySelector(".mj_LiveTool")).toBeNull();
         expect(container.querySelector(".mj_Activity")).toBeNull();
         expect(container.querySelector('.mj_TurnCard_statusRegion[role="status"]')?.textContent).toContain(
