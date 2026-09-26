@@ -73,6 +73,11 @@ export interface TurnCardProps {
     renderDetail: (step: Step) => React.ReactNode;
     /** Narration body (the agent's markdown). Default: plain text. */
     renderNarration?: (text: string) => React.ReactNode;
+    /**
+     * Body only, always open, no summary row: the step list inside another card (a subagent
+     * card shows its helper's steps with the same groups, rows and deep detail).
+     */
+    embedded?: boolean;
 }
 
 const GROUP_STATUS_LABEL: Record<Group["status"], string> = {
@@ -199,11 +204,12 @@ export function TurnCard({
     onStop,
     renderDetail,
     renderNarration,
+    embedded = false,
 }: TurnCardProps): React.ReactElement {
     const baseId = useId();
     const bodyId = `${baseId}-body`;
     const statusId = `${baseId}-status`;
-    const [open, setOpen] = useState(false);
+    const [open, setOpen] = useState(embedded);
     const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(() => new Set());
     const [showAll, setShowAll] = useState<ReadonlySet<string>>(() => new Set());
     const [deep, setDeep] = useState<DeepState | null>(null);
@@ -414,96 +420,106 @@ export function TurnCard({
     }
 
     const fileCap = showAll.has("files") ? files.length : FILE_CAP;
+    const body = (
+        <div className="mj_TurnCard_body" id={bodyId} onKeyDown={onBodyKeyDown}>
+            {files.length > 0 && (
+                <div className="mj_TurnCard_changed">
+                    <div className="mj_TurnCard_label">Changed files</div>
+                    {files.slice(0, fileCap).map((file) => {
+                        const key = `files:${file.stepId}`;
+                        const isOpen = deep?.from === "files" && deep.stepId === file.stepId;
+                        const step = stepById(file.stepId);
+                        return (
+                            <React.Fragment key={file.path}>
+                                <button
+                                    ref={(node) => {
+                                        if (node) rowRefs.current.set(key, node);
+                                        else rowRefs.current.delete(key);
+                                    }}
+                                    type="button"
+                                    className="mj_TurnCard_file"
+                                    aria-expanded={isOpen}
+                                    title={file.path}
+                                    onClick={() => openDeep(file.stepId, "files")}
+                                >
+                                    <span className="mj_TurnCard_icon" aria-hidden="true">
+                                        <V6Icon name="file" />
+                                    </span>
+                                    <span className="mj_TurnCard_name">{file.name}</span>
+                                    <span className="mj_TurnCard_counts">
+                                        <span className="mj_TurnCard_add">+{file.added}</span>
+                                        <span className="mj_TurnCard_del">−{file.removed}</span>
+                                    </span>
+                                    <V6Icon name="chevR" className="mj_TurnCard_go" />
+                                </button>
+                                {isOpen && step && renderDeep(step, "files", [step])}
+                            </React.Fragment>
+                        );
+                    })}
+                    {files.length > fileCap && (
+                        <button
+                            type="button"
+                            className="mj_TurnCard_more"
+                            onClick={() => setShowAll((current) => new Set(current).add("files"))}
+                        >
+                            Show all {files.length} files
+                        </button>
+                    )}
+                </div>
+            )}
+            {sequence.map((entry, index) => {
+                if (entry.type === "narration") {
+                    return (
+                        <div className="mj_TurnCard_narration" key={`n-${index}`}>
+                            {renderNarration ? renderNarration(entry.text) : entry.text}
+                        </div>
+                    );
+                }
+                return (
+                    <GroupBlock
+                        key={entry.id}
+                        group={entry}
+                        open={openGroups.has(entry.id)}
+                        showAll={showAll.has(entry.id)}
+                        deep={deep?.from === "group" ? deep.stepId : null}
+                        listId={`${baseId}-${entry.id}`}
+                        onToggle={toggleGroup}
+                        onShowAll={() => setShowAll((current) => new Set(current).add(entry.id))}
+                        onOpenStep={(stepId) => openDeep(stepId, "group")}
+                        registerGroupRow={(node) => {
+                            if (node) groupRowRefs.current.set(entry.id, node);
+                            else groupRowRefs.current.delete(entry.id);
+                        }}
+                        registerStepRow={(stepId, node) => {
+                            const key = `group:${stepId}`;
+                            if (node) rowRefs.current.set(key, node);
+                            else rowRefs.current.delete(key);
+                        }}
+                        renderDeep={(step) => renderDeep(step, "group", entry.steps)}
+                    />
+                );
+            })}
+            {(visualMode === "running" || visualMode === "slow") && (
+                <div className="mj_TurnCard_now" aria-hidden="true">
+                    <span className="mj_TurnCard_glyph">
+                        <span className="mj_TurnCard_spinner" />
+                    </span>
+                    <span>{live.current}</span>
+                </div>
+            )}
+        </div>
+    );
+    if (embedded) {
+        return (
+            <div className="mj_TurnCard mj_TurnCard_embedded is-open" data-turn={turnKey}>
+                {body}
+            </div>
+        );
+    }
     return (
         <section className={className} aria-label="Agent steps" data-turn={turnKey}>
             {row}
-            <div className="mj_TurnCard_body" id={bodyId} onKeyDown={onBodyKeyDown}>
-                {files.length > 0 && (
-                    <div className="mj_TurnCard_changed">
-                        <div className="mj_TurnCard_label">Changed files</div>
-                        {files.slice(0, fileCap).map((file) => {
-                            const key = `files:${file.stepId}`;
-                            const isOpen = deep?.from === "files" && deep.stepId === file.stepId;
-                            const step = stepById(file.stepId);
-                            return (
-                                <React.Fragment key={file.path}>
-                                    <button
-                                        ref={(node) => {
-                                            if (node) rowRefs.current.set(key, node);
-                                            else rowRefs.current.delete(key);
-                                        }}
-                                        type="button"
-                                        className="mj_TurnCard_file"
-                                        aria-expanded={isOpen}
-                                        title={file.path}
-                                        onClick={() => openDeep(file.stepId, "files")}
-                                    >
-                                        <span className="mj_TurnCard_icon" aria-hidden="true">
-                                            <V6Icon name="file" />
-                                        </span>
-                                        <span className="mj_TurnCard_name">{file.name}</span>
-                                        <span className="mj_TurnCard_counts">
-                                            <span className="mj_TurnCard_add">+{file.added}</span>
-                                            <span className="mj_TurnCard_del">−{file.removed}</span>
-                                        </span>
-                                        <V6Icon name="chevR" className="mj_TurnCard_go" />
-                                    </button>
-                                    {isOpen && step && renderDeep(step, "files", [step])}
-                                </React.Fragment>
-                            );
-                        })}
-                        {files.length > fileCap && (
-                            <button
-                                type="button"
-                                className="mj_TurnCard_more"
-                                onClick={() => setShowAll((current) => new Set(current).add("files"))}
-                            >
-                                Show all {files.length} files
-                            </button>
-                        )}
-                    </div>
-                )}
-                {sequence.map((entry, index) => {
-                    if (entry.type === "narration") {
-                        return (
-                            <div className="mj_TurnCard_narration" key={`n-${index}`}>
-                                {renderNarration ? renderNarration(entry.text) : entry.text}
-                            </div>
-                        );
-                    }
-                    return (
-                        <GroupBlock
-                            key={entry.id}
-                            group={entry}
-                            open={openGroups.has(entry.id)}
-                            showAll={showAll.has(entry.id)}
-                            deep={deep?.from === "group" ? deep.stepId : null}
-                            listId={`${baseId}-${entry.id}`}
-                            onToggle={toggleGroup}
-                            onShowAll={() => setShowAll((current) => new Set(current).add(entry.id))}
-                            onOpenStep={(stepId) => openDeep(stepId, "group")}
-                            registerGroupRow={(node) => {
-                                if (node) groupRowRefs.current.set(entry.id, node);
-                                else groupRowRefs.current.delete(entry.id);
-                            }}
-                            registerStepRow={(stepId, node) => {
-                                const key = `group:${stepId}`;
-                                if (node) rowRefs.current.set(key, node);
-                                else rowRefs.current.delete(key);
-                            }}
-                            renderDeep={(step) => renderDeep(step, "group", entry.steps)}
-                        />
-                    );
-                })}
-                {(visualMode === "running" || visualMode === "slow") && (
-                    <div className="mj_TurnCard_now" aria-hidden="true">
-                        <span className="mj_TurnCard_glyph">
-                            <span className="mj_TurnCard_spinner" />
-                        </span>
-                        <span>{live.current}</span>
-                    </div>
-                )}
-            </div>
+            {body}
         </section>
     );
 }

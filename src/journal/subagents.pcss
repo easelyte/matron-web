@@ -1,0 +1,277 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+/*
+ * Helpers (Claude subagents + Codex runs), 2026-09-26: the subagent card in the thread and the
+ * child rows in the sidebar. Built on the v6 turn card (journal.pcss .mj_TurnCard*): the card
+ * reuses its row, glyph, spinner, chevron and group rows; only what is new lives here.
+ */
+
+/* ---- subagent card ---- */
+
+/* Two-line summary: name over the live line / "{n} steps · {duration}"; the worker on the
+   right, before the chevron. Same four-column grid as the turn card's summary row. */
+.mj_SubagentCard_text {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.mj_SubagentCard_name,
+.mj_SubagentCard_meta {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SubagentCard_name {
+    font: var(--cpd-font-label);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_SubagentCard_meta {
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_SubagentCard_kind {
+    padding: 0 var(--cpd-space-2x);
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-pill);
+    font: var(--mj-font-label-sm);
+    color: var(--cpd-color-text-secondary);
+    white-space: nowrap;
+}
+
+.mj_SubagentCard_failed .mj_TurnCard_glyph,
+.mj_SubagentCard_failed .mj_SubagentCard_meta {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_SubagentCard_stopped .mj_SubagentCard_meta {
+    color: var(--mj-warn-ink);
+}
+
+.mj_SubagentCard_dot_idle {
+    background: var(--cpd-color-border-strong);
+}
+
+.mj_SubagentCard.is-open .mj_TurnCard_row .mj_TurnCard_chevron {
+    transform: rotate(0deg);
+}
+
+.mj_SubagentCard_body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-2x);
+    padding: 10px 12px 12px;
+    background: var(--cpd-color-bg-canvas-default);
+    animation: mj-v6-fade-in var(--mj-card-expand) var(--cpd-ease);
+}
+
+/* The result, Developer view off: one paragraph of prose, three lines at most. */
+.mj_SubagentCard_result_plain {
+    display: -webkit-box;
+    margin: 0;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    font: var(--cpd-font-body);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_SubagentCard_result p:first-child {
+    margin-top: 0;
+}
+
+.mj_SubagentCard_result p:last-child {
+    margin-bottom: 0;
+}
+
+.mj_SubagentCard_empty {
+    margin: 0;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-secondary);
+}
+
+/* The helper's steps: the turn card's body, without its own frame. */
+.mj_TurnCard_embedded {
+    overflow: visible;
+    margin: 0 -6px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+.mj_TurnCard_embedded .mj_TurnCard_body {
+    padding: 0;
+    background: transparent;
+    animation: none;
+}
+
+/* Developer view: the raw step lines, as the helper's own transcript shows them. */
+.mj_SubagentCard_raw {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.mj_SubagentCard_raw code {
+    display: block;
+    overflow: hidden;
+    font: var(--mj-font-mono);
+    color: var(--cpd-color-text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SubagentCard_foot {
+    display: flex;
+}
+
+.mj_TurnCard_helperOpen {
+    display: inline-flex;
+    min-height: var(--mj-control-h-sm);
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    padding: 0 var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    font: var(--cpd-font-label);
+    color: var(--cpd-color-text-primary);
+    transition: background var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_TurnCard_helperOpen:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_TurnCard_helperOpen:focus-visible {
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
+}
+
+.mj_TurnCard_helperOpen .mj_V6Icon {
+    width: 14px;
+    height: 14px;
+}
+
+/* The helper step's deep detail inside the turn card: the card body under a one-line head. */
+.mj_SubagentCard_bodyOnly .mj_SubagentCard_head {
+    display: grid;
+    grid-template-columns: 16px minmax(0, auto) minmax(0, 1fr);
+    align-items: center;
+    column-gap: var(--cpd-space-2x);
+    padding: 10px 12px 0;
+}
+
+.mj_SubagentCard_bodyOnly .mj_SubagentCard_body {
+    background: transparent;
+    animation: none;
+}
+
+/* A step the bridge reported as a text line: its sentence, then its target in monospace. */
+.mj_StepDetail p {
+    margin: 0 0 var(--cpd-space-2x);
+}
+
+.mj_StepDetail_target code {
+    display: block;
+    font: var(--mj-font-mono);
+    color: var(--cpd-color-text-secondary);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+/* Developer view: a helper card in the flat timeline sits in the agent column. */
+.mj_HelperTile .mj_SubagentCard {
+    width: 100%;
+}
+
+/* ---- sidebar child rows ---- */
+
+/* The child row hangs off its parent on a hairline rail under the parent's status dot (its
+   centre sits at 17px: 10px padding + the dot's 3px inset + half its 8px), with a short elbow
+   into its own status glyph. The glyph sits where the parent's title starts (34px), so the
+   hierarchy reads as one column step. The last child's rail stops at its elbow. */
+.mj_RoomListItem_sub {
+    gap: var(--cpd-space-2x);
+    padding-left: 34px;
+}
+
+.mj_RoomListItem_sub::after {
+    content: "";
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    left: 17px;
+    width: 1px;
+    background: var(--cpd-color-border-strong);
+    pointer-events: none;
+}
+
+.mj_RoomListItem_subLast::after {
+    bottom: 50%;
+}
+
+.mj_RoomListSubStatus {
+    display: grid;
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+    place-items: center;
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_RoomListItem_sub .mj_RoomListSubStatus::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 17px;
+    width: 14px;
+    height: 1px;
+    background: var(--cpd-color-border-strong);
+    pointer-events: none;
+}
+
+.mj_RoomListSubStatus > * {
+    grid-area: 1 / 1;
+}
+
+.mj_RoomListSubStatus .mj_V6Icon {
+    width: 14px;
+    height: 14px;
+}
+
+.mj_RoomListSubStatus_failed {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_RoomListSubStatus_dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--cpd-color-border-strong);
+}
+
+.mj_RoomListSubStatus_interrupted .mj_RoomListSubStatus_dot {
+    background: var(--mj-warn-dot);
+}
+
+/* The header's subagent pills carry the same glyph. */
+.mj_SubagentPill .mj_RoomListSubStatus {
+    width: 13px;
+    height: 13px;
+    flex-basis: 13px;
+}

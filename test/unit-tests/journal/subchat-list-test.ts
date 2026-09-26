@@ -84,9 +84,9 @@ describe("subchat conversation list", () => {
 
         const rows = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListItem")];
         const names = rows.map((row) => row.querySelector('[data-testid="room-name"]')?.textContent);
-        // #532: the linked child now renders nested (↳ prefix) beneath its parent; the orphan
+        // #532: the linked child now renders nested (indented on a rail) beneath its parent; the orphan
         // (missing parent) stays a top-level fallback.
-        expect(names).toEqual(["Root", "↳ Linked child", "Orphan child"]);
+        expect(names).toEqual(["Root", "Linked child", "Orphan child"]);
         const childRow = rows[1];
         expect(childRow.classList.contains("mj_RoomListItem_sub")).toBe(true);
         // The parent's own row is NOT a subagent row.
@@ -125,7 +125,7 @@ describe("subchat conversation list", () => {
         };
 
         // Active: only the RUNNING child nests; the done child does NOT render a sidebar row.
-        expect(names()).toEqual(["Root", "↳ Running child"]);
+        expect(names()).toEqual(["Root", "Running child"]);
         expect(names().some((name) => name.includes("Done child"))).toBe(false);
 
         // The done child is NOT dropped from the store — it stays in state.conversations so the
@@ -299,7 +299,7 @@ describe("subchat conversation list", () => {
         const names = rows.map((row) => row.querySelector('[data-testid="room-name"]')?.textContent);
         // Grandparent, its nested running child, then the running grandchild as a top-level row.
         // The done grandchild is hidden. No running descendant is lost.
-        expect(names).toEqual(["Grandparent", "↳ Parent child", "Grandchild"]);
+        expect(names).toEqual(["Grandparent", "Parent child", "Grandchild"]);
         // The grandchild renders as a top-level row (not an indented subagent row).
         const grandchildRow = rows[2];
         expect(grandchildRow.classList.contains("mj_RoomListItem_sub")).toBe(false);
@@ -467,7 +467,7 @@ describe("subchat conversation list", () => {
         await act(async () => root.render(React.createElement(MatronApp, { client })));
 
         // Expanded (default): the running child nests beneath its parent.
-        expect(names()).toEqual(["Root", "↳ Linked child"]);
+        expect(names()).toEqual(["Root", "Linked child"]);
         expect(container.querySelector(".mj_RoomListCollapsedSubs")).toBeNull();
 
         // Collapse via the row menu → child row suppressed, count affordance appears on the parent.
@@ -484,7 +484,7 @@ describe("subchat conversation list", () => {
         await openRowMenu("Root");
         expect(menuItem("Collapse subagents")).toBeUndefined();
         await act(async () => menuItem("Show subagents")!.click());
-        expect(names()).toEqual(["Root", "↳ Linked child"]);
+        expect(names()).toEqual(["Root", "Linked child"]);
         expect(container.querySelector(".mj_RoomListCollapsedSubs")).toBeNull();
     });
 

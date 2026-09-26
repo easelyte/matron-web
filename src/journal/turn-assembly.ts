@@ -26,6 +26,7 @@ Please see LICENSE files in the repository root for full details.
  * stop-gap until the bridge marks them (see docs/design/redesign-v6/HANDOFF.md, bridge gaps).
  */
 
+import { indicatorStep, payloadStep } from "./activity-text";
 import { type JournalEvent } from "./types";
 import { type Step, stepsOf, type TurnItem } from "./turn-grouping";
 
@@ -133,7 +134,14 @@ export function eventToStep(event: JournalEvent, previousTs?: number): Step | nu
             source: event,
         };
     }
-    const codexItem = CODEX_ITEM_TEXT.exec(agentText(event).trim());
+    // A tool call the bridge reports as a text line (a Claude subagent's calls, and the parent's
+    // Task / WebSearch indicators): `payload.step` from a newer bridge, else the fixed wording.
+    const body = agentText(event);
+    const indicator = body
+        ? (payloadStep(payload.step, `e${event.seq}`) ?? indicatorStep(body, `e${event.seq}`))
+        : null;
+    if (indicator) return { ...indicator, ms, source: event };
+    const codexItem = CODEX_ITEM_TEXT.exec(body.trim());
     if (codexItem) {
         const name = codexItem[1];
         return {

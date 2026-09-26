@@ -86,6 +86,10 @@ export interface Conversation {
         never written or an older server — the surface then shows no age label rather than a
         1970 date. Server-observed, so treat it as a lower bound on the digest's real age. */
     summary_updated_at?: number;
+    /** Client-only (never sent by the server): the tool call the last message event reported,
+        when it was one — the sidebar reads it as plain English with Developer view off. Absent
+        after a snapshot replace; the preview then falls back to the server snippet. */
+    last_step?: { tool: string; input: Record<string, string | undefined> } | null;
 }
 
 export interface SnapshotResponse {
