@@ -50,8 +50,7 @@ type Pending = { phase: "sent" | "queued" | "restarting"; force: boolean } | nul
 /**
  * Derive the browser-tools state of one conversation from its events (oldest first).
  * `sessionRunning` covers the moment between sending the request and the bridge's first reply
- * (a busy agent means a plain request waits for the turn; `--force` restarts at once), and a
- * parked request whose turn ended without a restart (the bridge dropped it) reads as idle again.
+ * (a busy agent means a plain request waits for the turn; `--force` restarts at once).
  */
 export function browserToolsState(events: readonly JournalEvent[], sessionRunning: boolean): BrowserToolsState {
     let on = false;
@@ -86,11 +85,10 @@ export function browserToolsState(events: readonly JournalEvent[], sessionRunnin
     if (!pending) return on ? "on" : "idle";
     if (pending.phase === "restarting") return "restarting";
     if (pending.force) return "restarting";
-    if (pending.phase === "queued" || sessionRunning) {
-        // Parked behind the turn. Once the turn is over with no restart notice, the bridge
-        // dropped it (crash, replaced, failed replay): offer the action again.
-        return sessionRunning ? "queued" : on ? "on" : "idle";
-    }
+    // Parked behind the turn. session_state can't tell "turn over" from "waiting on a prompt"
+    // (both read 'waiting'), so a parked request stays queued until the bridge answers; the
+    // ABANDONED replies above cover the ways it drops one.
+    if (pending.phase === "queued" || sessionRunning) return "queued";
     return "restarting";
 }
 
