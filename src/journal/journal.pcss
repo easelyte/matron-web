@@ -47,8 +47,8 @@ textarea {
    components with their own :focus-visible (menus at offset −2px, etc.) are more specific
    and win, so no double ring; this only catches elements that had no explicit rule. */
 :focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 /* WebKit scrollbar boxes for legacy parity, SCOPED to the surfaces that intentionally show
@@ -77,7 +77,7 @@ textarea {
 .mj_EventSource_json::-webkit-scrollbar-thumb,
 .mj_EventSource_body::-webkit-scrollbar-thumb {
     border: 3px solid transparent;
-    border-radius: 99px;
+    border-radius: var(--cpd-radius-pill);
     background: var(--mj-scrollbar);
     background-clip: content-box;
 }
@@ -213,7 +213,7 @@ textarea {
 
 .mj_HeaderSubagentBadge {
     flex: 0 0 auto;
-    border-radius: 999px;
+    border-radius: var(--cpd-radius-pill);
     background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-secondary);
     padding: 0 7px;
@@ -397,9 +397,9 @@ textarea {
 }
 
 .mj_SubagentSwitcherButton:focus-visible {
-    border-radius: 4px;
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 2px;
+    border-radius: var(--cpd-radius-xs);
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_SubagentSwitcherMenu {
@@ -427,8 +427,8 @@ textarea {
 }
 
 .mj_SubagentSwitcherMenu button:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 1px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-field);
 }
 
 .mj_UsageCluster {
@@ -487,7 +487,7 @@ textarea {
     align-items: center;
     column-gap: 7px;
     font-family: "Fira Code", monospace;
-    font-size: 10.5px;
+    font-size: 11px;
     line-height: 13px;
 }
 
@@ -590,8 +590,8 @@ textarea {
 }
 
 .mj_UsageCluster_collapsed:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_UsagePopover {
@@ -635,8 +635,8 @@ textarea {
 }
 
 .mj_HeaderTitleDisclosure:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_HeaderTitleDisclosure svg {
@@ -760,7 +760,7 @@ textarea {
     gap: var(--cpd-space-2x);
     box-sizing: border-box;
     border: 1px solid var(--cpd-color-border-disabled);
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-canvas-default);
     box-shadow: 0 8px 24px rgb(15, 23, 42, 0.14);
     color: var(--cpd-color-text-primary);
@@ -777,7 +777,7 @@ textarea {
 .mj_HeaderMenu button {
     min-height: var(--mj-control-h);
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-primary);
     cursor: pointer;
@@ -822,7 +822,7 @@ textarea {
     gap: 6px;
     margin-right: 10px;
     border: 1px solid rgb(13 148 136 / 28%);
-    border-radius: 999px;
+    border-radius: var(--cpd-radius-pill);
     background: var(--cpd-state-selected);
     color: var(--cpd-color-text-action-accent);
     padding: 0 11px 0 8px;
@@ -851,8 +851,8 @@ textarea {
 }
 
 .mj_SubagentBack:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 /* Hairline separating the escape from the pill run (§10.7 — a hairline, not a gap). */
@@ -889,7 +889,7 @@ textarea {
     overflow: hidden;
     box-sizing: border-box;
     border: 1px solid var(--cpd-color-border-disabled);
-    border-radius: 9999px;
+    border-radius: var(--cpd-radius-pill);
     background: var(--cpd-state-selected);
     color: var(--cpd-color-text-primary);
     cursor: pointer;
@@ -920,8 +920,8 @@ textarea {
 }
 
 .mj_SubagentPill:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_SubagentPill_finished {
@@ -1008,8 +1008,8 @@ textarea {
 }
 
 .mj_PinnedSummary_bar:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: -2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-inset);
 }
 
 .mj_PinnedSummary_pin {
@@ -1142,6 +1142,10 @@ textarea {
     padding: 2px 0;
     cursor: pointer;
 }
+.mj_PinnedSummary_more:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
 
 @media (prefers-reduced-motion: reduce) {
     .mj_PinnedSummary_shimmer {
@@ -1173,7 +1177,7 @@ textarea {
     padding: 0;
     transform: translateY(-50%);
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-canvas-default);
     color: var(--cpd-color-icon-secondary);
     cursor: pointer;
@@ -1184,13 +1188,18 @@ textarea {
 .mj_RoomItemMenu_trigger:focus-visible {
     opacity: 1;
     pointer-events: auto;
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: -2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-inset);
 }
 
 .mj_RoomItemMenu_trigger svg {
     width: 20px;
     height: 20px;
+}
+/* The trigger floats on an opaque chip over the row, so hover darkens the chip rather than
+   swapping it for a translucent layer the row's selected tint would show through. */
+.mj_RoomItemMenu_trigger:hover {
+    background: var(--cpd-color-bg-subtle-primary);
 }
 
 .mj_RoomListTabs {
@@ -1227,7 +1236,7 @@ textarea {
     width: min(224px, calc(100vw - var(--cpd-space-4x)));
     max-height: calc(100vh - var(--cpd-space-4x));
     gap: 0;
-    border-radius: 10px;
+    border-radius: var(--cpd-radius-lg);
     padding: 4px;
     overflow-y: auto;
 }
@@ -1235,7 +1244,7 @@ textarea {
 .mj_EventRowMenu {
     width: min(224px, calc(100vw - var(--cpd-space-4x)));
     gap: 0;
-    border-radius: 10px;
+    border-radius: var(--cpd-radius-lg);
     padding: 4px;
 }
 
@@ -1245,12 +1254,11 @@ textarea {
     grid-template-columns: 16px 1fr;
     align-items: center;
     gap: 10px;
-    border-radius: 7px;
+    border-radius: var(--cpd-radius-md);
     padding: 7px 8px;
     text-align: left;
     font:
-        500 12.5px/16px Inter,
-        sans-serif;
+        var(--cpd-font-label);
 }
 
 /* #527: item buttons ride the panel surface directly. The generic
@@ -1268,8 +1276,8 @@ textarea {
 }
 
 .mj_RoomItemMenu_item:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: -2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-inset);
     background: var(--cpd-color-bg-subtle-primary);
 }
 
@@ -1330,7 +1338,7 @@ textarea {
     right: var(--cpd-space-4x);
     bottom: var(--cpd-space-4x);
     display: inline-flex;
-    width: 32px;
+    width: var(--mj-control-h);
     height: var(--mj-control-h);
     align-items: center;
     justify-content: center;
@@ -1350,8 +1358,8 @@ textarea {
 }
 
 .mj_JumpToBottom:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_JumpToLatest {
@@ -1362,7 +1370,7 @@ textarea {
     transform: translateX(-50%);
     padding: var(--cpd-space-2x) var(--cpd-space-3x);
     border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: 999px;
+    border-radius: var(--cpd-radius-pill);
     background: var(--cpd-color-bg-canvas-default);
     box-shadow: 0 2px 8px rgb(15 23 42 / 18%);
     color: var(--cpd-color-text-action-accent);
@@ -1375,8 +1383,8 @@ textarea {
 }
 
 .mj_JumpToLatest:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_EventRow_searchHighlighted {
@@ -1531,7 +1539,7 @@ textarea {
 }
 
 .mj_InlineCode {
-    border-radius: 4px;
+    border-radius: var(--cpd-radius-xs);
     background: var(--cpd-color-bg-subtle-secondary);
     padding: 1px var(--cpd-space-1x);
     font-family: "Fira Code", monospace;
@@ -1619,8 +1627,8 @@ textarea {
 }
 
 .mj_CodeBlock_copy:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 1px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-field);
 }
 
 .hljs {
@@ -1718,7 +1726,7 @@ textarea {
     align-items: center;
     justify-content: center;
     border: 2px dashed var(--cpd-color-icon-accent-primary);
-    border-radius: 12px;
+    border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-scrim-drag);
     box-shadow: 0 8px 24px rgb(15 23 42 / 14%);
     color: var(--cpd-color-text-action-accent);
@@ -1749,7 +1757,7 @@ textarea {
     box-sizing: border-box;
     overflow: hidden;
     border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: 14px;
+    border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-canvas-default);
     box-shadow: var(--cpd-shadow-lg);
     color: var(--cpd-color-text-primary);
@@ -1780,7 +1788,7 @@ textarea {
 
 .mj_EventSource_typeChip {
     flex: 0 0 auto;
-    border-radius: 999px;
+    border-radius: var(--cpd-radius-pill);
     background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-secondary);
     padding: 1px 8px;
@@ -1801,7 +1809,7 @@ textarea {
     align-items: center;
     justify-content: center;
     border: 0;
-    border-radius: 7px;
+    border-radius: var(--cpd-radius-sm);
     background: transparent;
     color: var(--cpd-color-text-tertiary);
     cursor: pointer;
@@ -1870,7 +1878,7 @@ textarea {
     margin: 0;
     overflow: auto;
     border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: 10px;
+    border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-canvas-raised);
     padding: 12px;
     color: var(--cpd-color-text-primary);
@@ -1902,8 +1910,8 @@ textarea {
 }
 
 .mj_EventSource_close:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_UploadConfirm_scrim {
@@ -1928,7 +1936,7 @@ textarea {
     box-sizing: border-box;
     overflow: auto;
     border: 1px solid rgb(28 24 20 / 10%);
-    border-radius: 12px;
+    border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-canvas-default);
     box-shadow: 0 16px 48px rgb(18 16 14 / 24%);
     color: var(--cpd-color-text-primary);
@@ -1944,7 +1952,7 @@ textarea {
     gap: 0;
     overflow: hidden;
     border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: 14px;
+    border-radius: var(--cpd-radius-lg);
     box-shadow: var(--cpd-shadow-lg);
     padding: 0;
 }
@@ -1985,7 +1993,7 @@ textarea {
     align-items: center;
     justify-content: center;
     border: 0;
-    border-radius: 7px;
+    border-radius: var(--cpd-radius-sm);
     background: transparent;
     color: var(--cpd-color-icon-tertiary);
     font-size: 15px;
@@ -1998,8 +2006,8 @@ textarea {
 }
 
 .mj_UploadConfirm_close:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_UploadConfirm_close:disabled {
@@ -2033,7 +2041,7 @@ textarea {
 /* "n of N" chip (multi-file). Borderless to match the design chip. */
 .mj_UploadConfirm_count {
     flex: 0 0 auto;
-    border-radius: 999px;
+    border-radius: var(--cpd-radius-pill);
     background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-secondary);
     padding: 1px 9px;
@@ -2049,8 +2057,7 @@ textarea {
     overflow: hidden;
     color: var(--cpd-color-text-primary);
     font:
-        500 12.5px/16px Inter,
-        sans-serif;
+        var(--cpd-font-label);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -2061,7 +2068,7 @@ textarea {
     position: relative;
     overflow: hidden;
     border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: 10px;
+    border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-canvas-raised);
 }
 
@@ -2110,7 +2117,7 @@ textarea {
     box-sizing: border-box;
     overflow: hidden;
     border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-canvas-raised);
     color: var(--cpd-color-icon-secondary);
 }
@@ -2183,8 +2190,7 @@ textarea {
     padding: var(--cpd-space-3x);
     /* v4 modal caption input: body.sm 400 13.5/20. */
     font:
-        400 13.5px/20px Inter,
-        sans-serif;
+        var(--cpd-font-body-sm-regular);
     resize: vertical;
 }
 
@@ -2301,7 +2307,7 @@ textarea {
 .mj_AttachmentChip_actions button {
     min-height: var(--mj-control-h-sm);
     border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-canvas-default);
     color: var(--cpd-color-text-primary);
     padding: var(--cpd-space-1x) var(--cpd-space-2x);
@@ -2313,8 +2319,8 @@ textarea {
 }
 
 .mj_AttachmentChip_actions button:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 li.mj_AttachmentChip_error {
@@ -2331,7 +2337,7 @@ li.mj_AttachmentChip_error {
 .mj_LoadHistory,
 .mj_TextButton {
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-primary);
     cursor: pointer;
@@ -2358,7 +2364,7 @@ li.mj_AttachmentChip_error {
     gap: 10px;
     box-sizing: border-box;
     border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: 10px;
+    border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-canvas-default);
     padding: 12px 14px;
 }
@@ -2384,8 +2390,7 @@ li.mj_AttachmentChip_error {
     -webkit-line-clamp: 1;
     overflow: hidden;
     font:
-        600 13.5px/20px Inter,
-        sans-serif;
+        var(--cpd-font-body-sm-semibold);
 }
 
 .mj_SpawnDetails {
@@ -2418,7 +2423,7 @@ li.mj_AttachmentChip_error {
     overflow: auto;
     white-space: pre-wrap;
     word-break: break-word;
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-subtle-secondary);
     padding: 10px 12px;
     font:
@@ -2616,8 +2621,8 @@ li.mj_AttachmentChip_error {
 }
 
 .mj_PeerMessage:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 /* Priority variant (net-new, loop #688): medium loudness at rest — a 3px accent edge +
@@ -2712,8 +2717,7 @@ li.mj_AttachmentChip_error {
 
 .mj_PromptQuestion {
     font:
-        400 13.5px/20px Inter,
-        sans-serif;
+        var(--cpd-font-body-sm-regular);
 }
 
 .mj_PromptOptions,
@@ -2729,13 +2733,12 @@ li.mj_AttachmentChip_error {
     min-height: var(--mj-control-h);
     box-sizing: border-box;
     border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: transparent;
     color: var(--cpd-color-text-primary);
     padding: 0 14px;
     font:
-        500 12.5px/16px Inter,
-        sans-serif;
+        var(--cpd-font-label);
 }
 
 .mj_PromptText input {
@@ -2767,8 +2770,8 @@ li.mj_AttachmentChip_error {
 .mj_PromptOptions button:focus-visible,
 .mj_PromptText button:focus-visible,
 .mj_PromptText input:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_PromptText button:disabled {
@@ -2840,8 +2843,7 @@ li.mj_AttachmentChip_error {
     background: transparent;
     padding: 0;
     font:
-        500 12.5px/18px "Fira Code",
-        monospace;
+        500 12px/18px "Fira Code", monospace;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -2854,7 +2856,7 @@ li.mj_AttachmentChip_error {
    the 11px label clears WCAG AA on the translucent tint (green text on green tint fails). */
 .mj_ToolBadge {
     flex: 0 0 auto;
-    border-radius: 999px;
+    border-radius: var(--cpd-radius-pill);
     background: var(--cpd-color-bg-diff-add);
     color: var(--cpd-color-text-primary);
     padding: 1px 8px;
@@ -2883,7 +2885,7 @@ li.mj_AttachmentChip_error {
     /* v5: fills the shared agent content width. */
     max-width: 100%;
     border: 1px dashed var(--cpd-color-border-strong);
-    border-radius: 10px;
+    border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-canvas-raised);
     padding: 10px 12px;
 }
@@ -2897,7 +2899,7 @@ li.mj_AttachmentChip_error {
     max-height: 360px;
     overflow: auto;
     box-sizing: border-box;
-    border-radius: 6px;
+    border-radius: var(--cpd-radius-sm);
     background: var(--cpd-color-bg-subtle-secondary);
     padding: var(--cpd-space-3x);
     white-space: pre-wrap;
@@ -2955,9 +2957,9 @@ li.mj_AttachmentChip_error {
 }
 
 .mj_DiffCard_header > button:focus-visible {
-    border-radius: 4px;
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 1px;
+    border-radius: var(--cpd-radius-xs);
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-field);
 }
 
 .mj_DiffCard_filename {
@@ -2965,8 +2967,7 @@ li.mj_AttachmentChip_error {
     overflow-wrap: anywhere;
     /* v5 mock: mono.filename 600 12.5/18. */
     font:
-        600 12.5px/18px "Fira Code",
-        monospace;
+        600 12px/18px "Fira Code", monospace;
 }
 
 .mj_DiffCard_link {
@@ -2983,9 +2984,9 @@ li.mj_AttachmentChip_error {
 }
 
 .mj_DiffCard_link:focus-visible {
-    border-radius: 2px;
-    outline: 2px solid var(--cpd-color-border-interactive-primary);
-    outline-offset: 2px;
+    border-radius: var(--cpd-radius-xs);
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_DiffCard_label,
@@ -2999,7 +3000,7 @@ li.mj_AttachmentChip_error {
 }
 
 .mj_DiffCard_badge {
-    border-radius: 999px;
+    border-radius: var(--cpd-radius-pill);
     background: var(--cpd-color-bg-subtle-primary);
     padding: 1px var(--cpd-space-2x);
     font: var(--cpd-font-body-xs-semibold);
@@ -3158,7 +3159,7 @@ button.mj_File {
     max-width: 100%;
     max-height: 520px;
     overflow: hidden;
-    border-radius: 6px;
+    border-radius: var(--cpd-radius-sm);
 }
 
 .mj_ImageFrame_sized img {
@@ -3179,7 +3180,7 @@ button.mj_File {
     display: block;
     max-width: 100%;
     max-height: 520px;
-    border-radius: 6px;
+    border-radius: var(--cpd-radius-sm);
 }
 
 .mj_Image figcaption {
@@ -3314,15 +3315,14 @@ button.mj_File {
     color: var(--cpd-color-text-secondary);
     /* v4: mono m:ss timer. */
     font:
-        500 12.5px/18px "Fira Code",
-        monospace;
+        500 12px/18px "Fira Code", monospace;
     font-variant-numeric: tabular-nums;
     text-align: center;
 }
 
 .mj_VoiceRecording_action {
     display: inline-flex;
-    width: 32px;
+    width: var(--mj-control-h);
     height: var(--mj-control-h);
     flex: 0 0 auto;
     align-items: center;
@@ -3344,8 +3344,8 @@ button.mj_File {
 }
 
 .mj_VoiceRecording_action:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_VoiceRecording_action:disabled {
@@ -3575,8 +3575,8 @@ button.mj_File {
 }
 
 .mj_Image_zoomable:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 /* Renderable file chip that opens the viewer instead of downloading — same look as .mj_File
@@ -3609,7 +3609,7 @@ button.mj_File {
     box-sizing: border-box;
     overflow: hidden;
     border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: 14px;
+    border-radius: var(--cpd-radius-lg);
     background: var(--cpd-color-bg-canvas-default);
     box-shadow: var(--cpd-shadow-lg);
     color: var(--cpd-color-text-primary);
@@ -3665,8 +3665,8 @@ button.mj_File {
 .mj_MediaViewer_pageThumb:focus-visible,
 .mj_MediaViewer_retry:focus-visible,
 .mj_MediaViewer_downloadBtn:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_MediaViewer_close {
@@ -3708,7 +3708,7 @@ button.mj_File {
     top: 50%;
     z-index: 2;
     display: inline-flex;
-    width: 40px;
+    width: var(--mj-control-h-lg);
     height: var(--mj-control-h-lg);
     align-items: center;
     justify-content: center;
@@ -4164,7 +4164,7 @@ button.mj_File {
     border: 0;
     background: transparent;
     padding: 2px 4px;
-    border-radius: var(--cpd-radius-sm, 4px);
+    border-radius: var(--cpd-radius-sm);
     color: var(--cpd-color-text-action-accent);
     cursor: pointer;
     font: inherit;
@@ -4181,8 +4181,8 @@ button.mj_File {
 }
 
 .mj_FilesBreadcrumb_seg:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 1px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-field);
 }
 
 .mj_FilesBreadcrumb_sep {
@@ -4237,8 +4237,8 @@ button.mj_File {
 }
 
 .mj_FilesRow:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: -2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-inset);
 }
 
 .mj_FilesRow_icon {
@@ -4521,8 +4521,8 @@ button.mj_File {
 }
 
 .mj_FilesRetry:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 1px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-field);
 }
 
 /* ─── Files pane writes (Phase 2) ──────────────────────────────────────────────────────────────
@@ -4554,7 +4554,7 @@ button.mj_File {
     align-items: center;
     justify-content: center;
     border: 0;
-    border-radius: var(--cpd-radius-sm, 6px);
+    border-radius: var(--cpd-radius-sm);
     background: transparent;
     color: var(--cpd-color-icon-tertiary);
     cursor: pointer;
@@ -4576,8 +4576,8 @@ button.mj_File {
 }
 
 .mj_FilesRow_action:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: -2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-inset);
 }
 
 /* Directory-level actions, directly under the breadcrumb. */
@@ -4711,8 +4711,8 @@ button.mj_File {
 }
 
 .mj_FilesAction:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 1px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-field);
 }
 
 .mj_FilesAction:disabled,
@@ -4781,18 +4781,14 @@ button.mj_File {
     max-height: 46vh;
     resize: vertical;
     font:
-        400 12.5px/18px "Fira Code",
-        ui-monospace,
-        monospace;
+        var(--mj-font-mono);
 }
 
 /* Resolved absolute destination / character count — quiet, monospaced, never truncated silently. */
 .mj_FileWrite_dest {
     color: var(--cpd-color-text-tertiary);
     font:
-        400 11.5px/16px "Fira Code",
-        ui-monospace,
-        monospace;
+        400 12px/16px "Fira Code", monospace;
     overflow-wrap: anywhere;
 }
 
@@ -4817,9 +4813,7 @@ button.mj_File {
 .mj_FileWrite_targetPath {
     color: var(--cpd-color-text-tertiary);
     font:
-        400 11.5px/16px "Fira Code",
-        ui-monospace,
-        monospace;
+        400 12px/16px "Fira Code", monospace;
     overflow-wrap: anywhere;
 }
 
@@ -4830,7 +4824,7 @@ button.mj_File {
     margin: 0;
     padding: var(--cpd-space-2x) var(--cpd-space-3x);
     border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: var(--cpd-radius-md, 8px);
+    border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-subtle-primary);
     color: var(--cpd-color-text-secondary);
     font: var(--cpd-font-body-sm-regular);
@@ -4923,8 +4917,8 @@ button.mj_File {
 }
 
 .mj_TurnCard_toggle:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: -2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-inset);
     border-radius: var(--cpd-radius-lg);
 }
 
@@ -5143,8 +5137,8 @@ button.mj_File {
 .mj_TurnCard_back:focus-visible,
 .mj_TurnCard_more:focus-visible,
 .mj_TurnCard_stop:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: -2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-inset);
 }
 
 .mj_TurnCard_name {
@@ -5731,7 +5725,7 @@ button.mj_File {
     flex: 1 1 auto;
     padding: 0 10px;
     border: 0;
-    border-radius: 7px 0 0 7px;
+    border-radius: calc(var(--cpd-radius-md) - 1px) 0 0 calc(var(--cpd-radius-md) - 1px);
     background: transparent;
     color: inherit;
 }
@@ -5744,7 +5738,7 @@ button.mj_File {
     justify-content: center;
     padding: 0;
     border: 0;
-    border-radius: 0 7px 7px 0;
+    border-radius: 0 calc(var(--cpd-radius-md) - 1px) calc(var(--cpd-radius-md) - 1px) 0;
     background: transparent;
     color: inherit;
     cursor: pointer;
@@ -5760,8 +5754,8 @@ button.mj_File {
 .mj_NewSessionSplit_more:focus-visible {
     position: relative;
     z-index: 1;
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_NewSessionSplit button:disabled {
@@ -5910,8 +5904,8 @@ button.mj_File {
 }
 
 .mj_FolderOption:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: -2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-inset);
 }
 
 .mj_FolderOption[aria-checked="true"] {
@@ -5986,8 +5980,8 @@ button.mj_SwitchButton:disabled {
 }
 
 button.mj_SwitchButton:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
 }
 
 .mj_CheckRow {

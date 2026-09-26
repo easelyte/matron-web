@@ -84,6 +84,108 @@ describe("design drift ratchet", () => {
         expect(Object.keys(HEIGHT_EXEMPT).filter((sel) => !seen.has(sel))).toEqual([]);
     });
 
+    it("uses a radius token for every radius", () => {
+        const RADIUS = /^(var\(--cpd-radius-[a-z]+\)|calc\(var\(--cpd-radius-[a-z]+\) - \dpx\)|50%|0|inherit)$/;
+        const offenders: string[] = [];
+        for (const { root } of SHEETS)
+            root.walkDecls(/radius$/, (d) => {
+                const parts = d.value.trim().split(/\s+(?![^(]*\))/);
+                if (!parts.every((part) => RADIUS.test(part)))
+                    offenders.push(`${where(d)} ${norm(ruleOf(d)?.selector ?? "")} { ${d.prop}: ${d.value} }`);
+            });
+        expect(offenders).toEqual([]);
+    });
+
+    it("keeps every px font size on the type scale", () => {
+        const SCALE = new Set([10, 11, 12, 13, 14, 15, 16, 18, 20]);
+        const EXEMPT: Record<string, string> = {
+            html: "the root size (15px, derived from --cpd-font-size-root)",
+            ".mj_InlineCode": "inline code is sized relative to the prose around it (em)",
+            ".mj_TrackerItemRow_thumb": "an emoji glyph used as a thumbnail, not text",
+        };
+        const offenders: string[] = [];
+        for (const { root } of SHEETS)
+            root.walkDecls(/^(font|font-size)$/, (d) => {
+                const sel = norm(ruleOf(d)?.selector ?? "");
+                if (sel === ":root" || EXEMPT[sel]) return;
+                // Strip var() fallbacks: a defined token wins, and undefined ones fail elsewhere.
+                const value = d.value.replace(/var\([^)]*\)/g, "");
+                // The size is the first px length (a shorthand's line-height follows its slash).
+                const size = /(\d+(?:\.\d+)?)px/.exec(value);
+                if (size && !SCALE.has(Number(size[1]))) offenders.push(`${where(d)} ${sel} { ${d.prop}: ${d.value} }`);
+                if (/\d(em|rem)\b|calc\(/.test(value)) offenders.push(`${where(d)} ${sel} { ${d.prop}: ${d.value} }`);
+            });
+        expect(offenders).toEqual([]);
+    });
+
+    it("defines every font token on the type scale", () => {
+        // Rules use var(--cpd-font-*); this checks the tokens themselves, so a token edit to an
+        // off-scale size cannot slip past the per-rule check.
+        const SCALE = new Set([10, 11, 12, 13, 14, 15, 16, 18, 20]);
+        const offenders: string[] = [];
+        for (const { root } of SHEETS)
+            root.walkDecls(/^--(cpd-font|mj-font)/, (d) => {
+                const size = /(\d+(?:\.\d+)?)px/.exec(d.value);
+                if (size && !SCALE.has(Number(size[1]))) offenders.push(`${where(d)} ${d.prop}: ${d.value}`);
+            });
+        expect(offenders).toEqual([]);
+    });
+
+    it("draws one focus ring (var(--mj-focus-ring) with a token offset)", () => {
+        const OFFSET_EXEMPT: Record<string, string> = {
+            ".mj_MobileNav_tab:focus-visible": "the ring sits inside the 52px tab's touch padding",
+        };
+        // `outline: none` on focus-visible only where another element carries the indicator.
+        const NONE_OK: Record<string, string> = {
+            ".mx_BasicMessageComposer_input:focus, .mx_BasicMessageComposer_input:focus-visible":
+                ".mx_MessageComposer_row:focus-within draws the accent border around the whole composer",
+            ".mj_UploadConfirm_caption:focus, .mj_UploadConfirm_caption:focus-visible":
+                "design v5 neutral-focus exception: the caption is autofocused on open, so its focus is the darker border, not an accent ring",
+        };
+        const offenders: string[] = [];
+        const composerRow = SHEETS.some(({ root }) => {
+            let ok = false;
+            root.walkRules(/^\.mx_MessageComposer_row:focus-within$/, (r) =>
+                r.walkDecls("border-color", () => void (ok = true)),
+            );
+            return ok;
+        });
+        if (!composerRow) offenders.push("the composer's focus-within border (NONE_OK replacement) is gone");
+        for (const { root } of SHEETS)
+            root.walkRules(/:focus-visible/, (rule) => {
+                rule.walkDecls("outline", (d) => {
+                    if (d.value.trim() === "none" && NONE_OK[norm(rule.selector)]) return;
+                    if (!/^var\(--mj-focus-ring\)$/.test(d.value.trim()))
+                        offenders.push(`${where(d)} ${norm(rule.selector)} { outline: ${d.value} }`);
+                });
+                rule.walkDecls("outline-offset", (d) => {
+                    if (OFFSET_EXEMPT[norm(rule.selector)]) return;
+                    if (!/^(var\(--mj-focus-offset[\w-]*\)|0)$/.test(d.value.trim()))
+                        offenders.push(`${where(d)} ${norm(rule.selector)} { outline-offset: ${d.value} }`);
+                });
+            });
+        expect(offenders).toEqual([]);
+    });
+
+    it("sizes square controls from the scale on both axes", () => {
+        // A token height with a literal width turns a 32x32 button into a 32x44 pill on phones.
+        const offenders: string[] = [];
+        for (const { root } of SHEETS)
+            root.walkRules((rule) => {
+                let tokenHeight = false;
+                rule.walkDecls(/^(height|min-height)$/, (d) => {
+                    if (/var\(--mj-control-h(-lg)?\)/.test(d.value)) tokenHeight = true;
+                });
+                if (!tokenHeight) return;
+                rule.walkDecls(/^(width|min-width)$/, (d) => {
+                    const m = /^(\d+)px$/.exec(d.value.trim());
+                    if (m && Number(m[1]) >= BAND_MIN && Number(m[1]) <= BAND_MAX)
+                        offenders.push(`${where(d)} ${norm(rule.selector)} { ${d.prop}: ${d.value} }`);
+                });
+            });
+        expect(offenders).toEqual([]);
+    });
+
     it("never references an undefined custom property", () => {
         const defined = new Set<string>();
         for (const { root } of SHEETS) root.walkDecls(/^--/, (d) => void defined.add(d.prop));
