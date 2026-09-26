@@ -2559,6 +2559,9 @@ export class MatronJournalClient {
             onFrame: async (frame) => {
                 if (current()) await this.handleFrame(frame);
             },
+            onJournalBatch: async (frames) => {
+                if (current()) await this.handleJournalBatch(frames);
+            },
             onReady: async () => {
                 if (current()) await this.handleReady();
             },
@@ -2878,6 +2881,114 @@ export class MatronJournalClient {
         if (frame.kind === "control" && frame.op === "error") {
             this.patch({ connectionError: frame.detail || `Journal operation failed: ${frame.code ?? "unknown"}` });
         }
+    }
+
+    /**
+     * A coalesced run of sequenced journal frames (see JournalConnection.onJournalBatch). One frame
+     * takes the ordinary per-frame path unchanged. A longer run — a reconnect replay, or a burst
+     * that arrived while the previous run was still being applied — is applied in ONE store
+     * transaction, and the sidebar / open timeline are refreshed ONCE for the whole run instead of
+     * once per frame. Per-frame side effects (tracker markers, outbox reconciliation, stream
+     * retirement, acks, read scheduling) still run for every frame, in order. A malformed frame
+     * ends the batched prefix: it and everything after it take the per-frame path, which owns the
+     * #766 halt-and-resync handling.
+     */
+    private async handleJournalBatch(events: JournalEvent[]): Promise<void> {
+        if (events.length === 1) {
+            await this.handleJournal(events[0]);
+            return;
+        }
+        const database = this.database;
+        if (!database || this.journalHalted) return;
+        const firstBad = events.findIndex(
+            (event) =>
+                !Number.isSafeInteger(event.seq) ||
+                event.seq < 0 ||
+                typeof event.convo_id !== "string" ||
+                !event.convo_id,
+        );
+        const prefix = firstBad === -1 ? events : events.slice(0, firstBad);
+        if (prefix.length > 0) await this.applyJournalRun(prefix, database);
+        if (firstBad === -1) return;
+        for (const event of events.slice(firstBad)) await this.handleJournal(event);
+    }
+
+    private async applyJournalRun(events: JournalEvent[], database: JournalDatabase): Promise<void> {
+        for (const event of events) this.handleTrackerMarker(event);
+        const applied =
+            typeof database.applyJournalBatch === "function"
+                ? await database.applyJournalBatch(events)
+                : await (async () => {
+                      const results: boolean[] = [];
+                      for (const event of events) results.push(await database.applyJournal(event));
+                      return results;
+                  })();
+        if (this.database !== database) return;
+        const selectedId = this.state.selectedConversationId;
+        let refreshConversations = false;
+        let abortUploads = false;
+        let refreshSelected = false;
+        let maxAppliedSeq: number | undefined;
+        const reads: Array<[string, number]> = [];
+        for (let index = 0; index < events.length; index++) {
+            const event = events[index];
+            this.clearRpcCreateWatchdog(event.convo_id);
+            const removed = await database.reconcileOwnMessage(event);
+            if (removed) {
+                this.pendingFiles.delete(removed);
+                this.transientAttachmentErrors.delete(removed);
+            }
+            if (!applied[index]) {
+                // Mirrors handleJournal's duplicate-frame branch (P48): a peer tab already wrote it.
+                if (removed && event.convo_id === selectedId) refreshSelected = true;
+                if (event.type === "session_status") {
+                    refreshConversations = true;
+                    if (event.convo_id === selectedId && this.history.get(event.convo_id)?.hasMoreNewer !== true) {
+                        refreshSelected = true;
+                    }
+                }
+                if (event.type === "convo_meta") {
+                    refreshConversations = true;
+                    if (this.uploadConvos.size > 0) abortUploads = true;
+                }
+                continue;
+            }
+            maxAppliedSeq = Math.max(maxAppliedSeq ?? event.seq, event.seq);
+            const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
+            if (messageRef) {
+                this.retiredStreamRefs.add(`${event.convo_id}:${messageRef}`);
+                const text = this.textStreams.get(event.convo_id);
+                const tools = this.toolStreams.get(event.convo_id);
+                if (text) delete text[messageRef];
+                if (tools) delete tools[messageRef];
+            }
+            refreshConversations = true;
+            abortUploads = true;
+            if (event.convo_id === selectedId) {
+                const history = this.history.get(event.convo_id);
+                const viewingHistoryWindow = history?.hasMoreNewer === true;
+                if (!viewingHistoryWindow) {
+                    if (history) {
+                        history.newestSeq = Math.max(history.newestSeq ?? event.seq, event.seq);
+                        this.history.set(event.convo_id, history);
+                    }
+                    refreshSelected = true;
+                    if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
+                        reads.push([event.convo_id, event.seq]);
+                    }
+                }
+            }
+        }
+        if (maxAppliedSeq !== undefined) {
+            this.clearHistoryError();
+            this.scheduleAck(maxAppliedSeq);
+        }
+        if (refreshConversations) await this.refreshConversations();
+        if (abortUploads) this.abortUploadsForChildConvos();
+        if (refreshSelected && selectedId !== undefined && this.state.selectedConversationId === selectedId) {
+            await this.refreshSelectedConversation(selectedId);
+        }
+        for (const [conversationId, seq] of reads) this.scheduleRead(conversationId, seq);
     }
 
     private async handleJournal(event: JournalEvent): Promise<void> {

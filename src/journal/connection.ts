@@ -6,11 +6,18 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import { decodeServerFrame } from "./frame-decode";
-import { type ConnectionState, type RpcReply, type ServerFrame, websocketUrl } from "./types";
+import { type ConnectionState, type JournalEvent, type RpcReply, type ServerFrame, websocketUrl } from "./types";
 
 interface JournalConnectionCallbacks {
     cursor(): Promise<number>;
     onFrame(frame: ServerFrame): Promise<void>;
+    /**
+     * Optional batched sink for sequenced journal frames. When present, consecutive journal frames
+     * that arrive while earlier work is still being processed are coalesced (in arrival order,
+     * never across a non-journal frame) and handed over as one run, so a replay backlog costs one
+     * store transaction and one render per run instead of per frame. Absent → onFrame per frame.
+     */
+    onJournalBatch?(frames: JournalEvent[]): Promise<void>;
     onReady(): Promise<void>;
     onSnapshotRequired(): Promise<void>;
     onRevoked(): void;
@@ -21,6 +28,16 @@ const RETRY_DELAYS_MS = [0, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 // A socket that upgrades but never receives hello_ok would otherwise sit in "connecting" forever
 // (no close → no retry). Past this deadline it is closed, and the normal onclose retry takes over.
 export const WELCOME_TIMEOUT_MS = 20_000;
+// Upper bound on one coalesced journal run: keeps a single IndexedDB transaction and the render
+// that follows it bounded, and lets the UI paint between runs during a long replay.
+export const MAX_JOURNAL_BATCH = 500;
+// Client-side replay valve. Replaying a large gap frame by frame is far slower than re-snapshotting
+// (the server's own valve, MATRON_MAX_REPLAY, defaults to 50000). Measured on a 3,029-conversation
+// journal: a 1,000-frame replay moves ~2.2 MB and took ~5.5 s even batched; a re-snapshot is one
+// ~250 KB gzipped GET and took ~3 s whatever the gap. The limit is sent in `hello` as
+// `max_replay` (a journal that knows the field answers snapshot_required before replaying anything);
+// a journal that ignores it is caught on hello_ok, whose `seq` is the head, and resynced the same way.
+export const MAX_CLIENT_REPLAY = 500;
 
 export class JournalConnection {
     private socket?: WebSocket;
@@ -35,6 +52,14 @@ export class JournalConnection {
     private helloSocket?: WebSocket;
     private replacingSnapshot = false;
     private processing = Promise.resolve();
+    // The journal run still accepting frames (queued, not yet started). Closed by any non-journal
+    // frame, by the run starting, or by reaching MAX_JOURNAL_BATCH, so order is always preserved.
+    private openJournalBatch?: { socket: WebSocket; frames: JournalEvent[] };
+    // Cursor each socket said hello with, for the hello_ok gap check (old-journal fallback).
+    private helloCursor = new WeakMap<WebSocket, number>();
+    // A socket abandoned by the replay valve: its already-received replay frames are stale (the
+    // snapshot that follows supersedes them) and are dropped instead of applied.
+    private abandonedSocket?: WebSocket;
     private pendingRpc = new Map<
         string,
         {
@@ -224,7 +249,10 @@ export class JournalConnection {
                 .cursor()
                 .then((cursor) => {
                     if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) return;
-                    socket.send(JSON.stringify({ op: "hello", token: this.token, cursor }));
+                    if (typeof cursor === "number") this.helloCursor.set(socket, cursor);
+                    socket.send(
+                        JSON.stringify({ op: "hello", token: this.token, cursor, max_replay: MAX_CLIENT_REPLAY }),
+                    );
                 })
                 .catch((error) => {
                     this.callbacks.onState(
@@ -361,6 +389,19 @@ export class JournalConnection {
                 // A welcome drained from the queue after its socket was replaced belongs to a dead
                 // socket: it must not mark the replacement online or clear its welcome deadline.
                 if (socket !== this.socket) return;
+                const helloCursor = this.helloCursor.get(socket);
+                if (
+                    helloCursor !== undefined &&
+                    typeof frame.seq === "number" &&
+                    frame.seq - helloCursor > MAX_CLIENT_REPLAY
+                ) {
+                    // A journal that ignored hello.max_replay is about to replay a gap too large to be
+                    // worth it. Abandon this socket (its queued replay frames are dropped) and take the
+                    // same path as the server's snapshot_required valve.
+                    this.abandonedSocket = socket;
+                    await this.resyncFromSnapshot(socket);
+                    return;
+                }
                 this.welcomed = true;
                 this.clearWelcomeTimer();
                 this.retryAttempt = 0;
@@ -369,14 +410,7 @@ export class JournalConnection {
                 return;
             }
             if (frame.op === "snapshot_required") {
-                this.replacingSnapshot = true;
-                socket.close(1000, "replacing snapshot");
-                try {
-                    await this.callbacks.onSnapshotRequired();
-                } finally {
-                    this.replacingSnapshot = false;
-                }
-                this.scheduleReconnect(0);
+                await this.resyncFromSnapshot(socket);
                 return;
             }
             if (frame.op === "error" && frame.code === "revoked") {
@@ -386,7 +420,46 @@ export class JournalConnection {
                 return;
             }
         }
+        if (frame.kind === "journal" && socket === this.abandonedSocket) return;
         await this.callbacks.onFrame(frame);
+    }
+
+    /**
+     * Drop `socket`, re-snapshot, reconnect with the fresh cursor — the server's snapshot_required
+     * valve and the client's own replay valve share it. A failed snapshot must not wedge the
+     * connection: the socket's close event was swallowed while replacingSnapshot was set, so this
+     * method owns the reconnect on both paths. After a failure it backs off (the retry ladder)
+     * instead of reconnecting at once, since the same gap would just trip the valve again.
+     */
+    private async resyncFromSnapshot(socket: WebSocket): Promise<void> {
+        this.replacingSnapshot = true;
+        socket.close(1000, "replacing snapshot");
+        // Detach now rather than waiting for the close event (as forceResync does): the reconnect
+        // below must not find this socket still current, and onclose's identity guard then makes
+        // the late event a no-op.
+        if (this.socket === socket) {
+            this.socket = undefined;
+            this.welcomed = false;
+            this.clearWelcomeTimer();
+        }
+        let failed = false;
+        try {
+            await this.callbacks.onSnapshotRequired();
+        } catch (error) {
+            failed = true;
+            console.warn("matron:resync", { event: "snapshot_failed" });
+            this.callbacks.onState("connecting", error instanceof Error ? error.message : "Sync failed");
+        } finally {
+            this.replacingSnapshot = false;
+        }
+        if (this.stopped) return;
+        if (failed) this.scheduleReconnect();
+        else this.scheduleReconnect(0);
+    }
+
+    private async handleJournalBatch(frames: JournalEvent[], socket: WebSocket): Promise<void> {
+        if (socket === this.abandonedSocket) return;
+        await this.callbacks.onJournalBatch!(frames);
     }
 
     private resolveRpc(
@@ -444,11 +517,28 @@ export class JournalConnection {
             this.clearWelcomeTimer();
         }
 
+        if (frame.kind === "journal" && this.callbacks.onJournalBatch) {
+            const open = this.openJournalBatch;
+            if (open && open.socket === socket && open.frames.length < MAX_JOURNAL_BATCH) {
+                open.frames.push(frame);
+                return;
+            }
+            const batch = { socket, frames: [frame] };
+            this.openJournalBatch = batch;
+            this.processing = this.processing
+                .then(() => {
+                    if (this.openJournalBatch === batch) this.openJournalBatch = undefined;
+                    return this.handleJournalBatch(batch.frames, socket);
+                })
+                .catch((error) => this.handleProcessingError(error, socket));
+            return;
+        }
         if (this.isFastPathFrame(frame)) {
             void this.handleFrame(frame, socket).catch((error) => this.handleProcessingError(error, socket));
             return;
         }
 
+        this.openJournalBatch = undefined;
         this.processing = this.processing
             .then(() => this.handleFrame(frame, socket))
             .catch((error) => this.handleProcessingError(error, socket));
