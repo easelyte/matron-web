@@ -940,3 +940,16 @@ td.mj_OpsProcs_name {
         min-height: var(--mj-control-h-touch);
     }
 }
+
+/* A tracked count with no quota: label and figure, no empty meter. */
+.mj_OpsCount {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--cpd-space-3x);
+    font: var(--cpd-font-meta);
+}
+.mj_OpsCount_value {
+    color: var(--cpd-color-text-secondary);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}

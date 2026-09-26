@@ -226,3 +226,31 @@ it("drops a slow host reply that a newer one already superseded", async () => {
     jest.useRealTimers();
     await unmount();
 });
+
+it("still settles when every host reply is slower than the poll interval", async () => {
+    jest.useFakeTimers({ doNotFake: ["setTimeout", "queueMicrotask", "nextTick", "setImmediate"] });
+    const resolvers: ((v: unknown) => void)[] = [];
+    const client = fakeClient(() => ({ ok: false, code: "unknown_method" }));
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) => {
+        if (section !== "host") return sectionStateFromReply(section, { ok: false, code: "unknown_method" });
+        return new Promise((resolve) => resolvers.push(resolve)) as never;
+    });
+    const hostReply = (cpu: number) =>
+        sectionStateFromReply("host", { ok: true, result: { data: { cpu_pct: cpu, processes: [] } } });
+    const { container, unmount } = await mount(client);
+    await act(async () => {
+        jest.advanceTimersByTime(15_000);
+    });
+    // The older request answers first, while the newer one is still out: it must land.
+    await act(async () => {
+        resolvers[0](hostReply(5));
+    });
+    const tile = () => container.querySelector('[data-spec="ops.host"] [data-spec="ops.tile"]');
+    expect(tile()?.textContent).toContain("5%");
+    await act(async () => {
+        resolvers[1](hostReply(9));
+    });
+    expect(tile()?.textContent).toContain("9%");
+    jest.useRealTimers();
+    await unmount();
+});

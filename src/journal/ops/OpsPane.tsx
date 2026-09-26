@@ -98,9 +98,10 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
     const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
     const [refreshing, setRefreshing] = useState(false);
     const generation = useRef(0);
-    // Latest request issued per section: a reply only lands if no newer request for that section
-    // went out after it, so a slow host poll can never overwrite a fresher one.
-    const latest = useRef<Record<string, number>>({});
+    // Newest request whose reply has landed, per section. A reply lands unless a NEWER one already
+    // did, so a slow host poll can never overwrite a fresher reading, yet a box that is always
+    // slower than the poll interval still settles (every reply is newer than the last applied).
+    const applied = useRef<Record<string, number>>({});
     const seq = useRef(0);
 
     const loadDevices = useCallback(async (): Promise<void> => {
@@ -126,9 +127,9 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
             await Promise.all(
                 wanted.map(async (section) => {
                     const ticket = ++seq.current;
-                    latest.current[section] = ticket;
                     const result = await client.opsSnapshot(deviceId, section);
-                    if (generation.current !== gen || latest.current[section] !== ticket) return;
+                    if (generation.current !== gen || (applied.current[section] ?? 0) > ticket) return;
+                    applied.current[section] = ticket;
                     setSections((prev) => {
                         // Keep the last good data on a transient failure of a periodic refresh.
                         const before = prev[section];
@@ -1182,6 +1183,13 @@ function PostureView({ posture, now }: { posture: OpsPosture; now: number }): Re
                             a.used !== null
                                 ? `${formatCount(a.used)}${a.limit ? ` of ${formatCount(a.limit)}` : ""}${a.unit ? ` ${a.unit}` : ""}${a.period ? ` / ${a.period}` : ""}`
                                 : undefined;
+                        if (pctUsed === null)
+                            return (
+                                <div key={a.name} className="mj_OpsCount">
+                                    <span className="mj_OpsMeter_label">{a.name}</span>
+                                    <span className="mj_OpsCount_value">{detail ?? "—"}</span>
+                                </div>
+                            );
                         return <Meter key={a.name} label={a.name} percent={pctUsed} detail={detail} />;
                     })
                 ) : (

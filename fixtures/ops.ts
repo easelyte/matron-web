@@ -311,7 +311,7 @@ function posture(mode: OpsFixtureMode): unknown {
         },
         api_usage: [
             { name: "Tavily", used: 612, limit: 1000, unit: "credits", period: "month" },
-            { name: "Gmail send", used: 38, limit: 500, unit: null, period: "day" },
+            { name: "Gmail send", used: 38, limit: null, unit: "calls", period: "month" },
             { name: "Vercel builds", used: 71, limit: 100, unit: null, period: "day" },
         ],
     };
