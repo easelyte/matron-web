@@ -666,8 +666,7 @@ Please see LICENSE files in the repository root for full details.
     padding-left: var(--cpd-space-4x);
     padding-right: var(--cpd-space-4x);
 }
-.mj_TrackerTextarea,
-.mj_TrackerComposer_input {
+.mj_TrackerTextarea {
     width: 100%;
     box-sizing: border-box;
     resize: vertical;
@@ -679,8 +678,7 @@ Please see LICENSE files in the repository root for full details.
     padding: var(--cpd-space-2x) var(--cpd-space-3x);
     font: var(--cpd-font-body);
 }
-.mj_TrackerTextarea:focus-visible,
-.mj_TrackerComposer_input:focus-visible {
+.mj_TrackerTextarea:focus-visible {
     outline: var(--mj-focus-ring);
     outline-offset: 0;
 }
@@ -882,11 +880,9 @@ Please see LICENSE files in the repository root for full details.
     color: var(--cpd-color-text-tertiary);
 }
 
-/* — Composer — */
+/* — Composer — the chat composer's shell (.mx_MessageComposer_row: bordered field, borderless
+   textarea, send inside), so the reply box looks and grows like the chat's (operator call T3). — */
 .mj_TrackerComposer {
-    display: flex;
-    align-items: flex-end;
-    gap: var(--cpd-space-2x);
     width: 100%;
     max-width: 720px;
     margin: 0 auto;
@@ -895,26 +891,22 @@ Please see LICENSE files in the repository root for full details.
     border-top: 1px solid var(--cpd-color-border-subtle);
     background: var(--cpd-color-bg-canvas-default);
 }
+/* No attach button on the left here, so the textarea gets the same inset the send button has. */
+.mj_TrackerComposer_row {
+    padding-left: var(--cpd-space-2x);
+}
 .mj_TrackerComposer_input {
-    min-height: var(--mj-control-h-lg);
     flex: 1 1 auto;
+    min-width: 0;
+    max-height: 160px;
+    resize: none;
+    color: var(--cpd-color-text-primary);
 }
 .mj_TrackerComposer_send {
     flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: var(--mj-control-h-lg);
-    height: var(--mj-control-h-lg);
-    border: 0;
-    border-radius: var(--cpd-radius-md);
-    background: var(--cpd-color-bg-accent);
-    color: var(--cpd-color-text-on-accent);
     cursor: pointer;
-    font-size: 18px;
 }
 .mj_TrackerComposer_send:disabled {
-    opacity: 0.5;
     cursor: default;
 }
 

@@ -21,10 +21,19 @@ Please see LICENSE files in the repository root for full details.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { List, type RowComponentProps } from "react-window";
+import { List, type ListImperativeAPI, type RowComponentProps } from "react-window";
 
 import type { MatronJournalClient } from "../client";
-import { ChevronRightIcon, CloseIcon, FileEditIcon, FileIcon, FolderIcon, TrashIcon, UploadTrayIcon } from "../icons";
+import {
+    ChevronLeftIcon,
+    ChevronRightIcon,
+    CloseIcon,
+    FileEditIcon,
+    FileIcon,
+    FolderIcon,
+    TrashIcon,
+    UploadTrayIcon,
+} from "../icons";
 import type { ClientState } from "../types";
 import { FileWriteDialog } from "./FileWriteDialog";
 import type { FileEntry, FileListing, FilesApiLike } from "./filesApi";
@@ -312,6 +321,51 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
     );
     const canEditSelected = writable && selectedEntry !== undefined && isEditableText(selectedEntry, INLINE_EDIT_MAX);
 
+    // Phone (<=760px): the list is full height and a file's preview is its own screen, reached by
+    // tapping the file and left by the back button in the pane header (CSS shows one or the other;
+    // desktop keeps both side by side and never shows the back button). Going back puts focus on
+    // the row the preview came from, so a keyboard or screen-reader user keeps their place.
+    const pane = useRef<HTMLDivElement>(null);
+    const bodyRef = useRef<HTMLDivElement>(null);
+    const backRef = useRef<HTMLButtonElement>(null);
+    const listRef = useRef<ListImperativeAPI>(null);
+    const returnFocusTo = useRef<string | undefined>(undefined);
+    const backToList = useCallback(() => {
+        returnFocusTo.current = selected?.name;
+        setSelected(undefined);
+    }, [selected?.name]);
+    // Opening a file on a phone hides the list, and with it the focused row: move focus to Back,
+    // the first control of the new screen (a deep-link selection lands here too). The back button
+    // is display:none side by side, so desktop focus is left where it was.
+    useEffect(() => {
+        const back = backRef.current;
+        if (selected && back && back.offsetParent !== null) back.focus();
+    }, [selected]);
+    useEffect(() => {
+        const name = returnFocusTo.current;
+        if (selected || name === undefined) return;
+        returnFocusTo.current = undefined;
+        // The list is virtualised, and on a phone it was display:none a moment ago, so it lays out
+        // and renders its rows a few frames after it reappears. Keep asking it to scroll the row
+        // into its window and focus the row once it exists; give up to the close button after ~20
+        // frames rather than leave focus on <body>.
+        const index = listing.data?.entries.findIndex((entry) => entry.name === name) ?? -1;
+        let frame = 0;
+        let tries = 0;
+        const attempt = (): void => {
+            if (index >= 0) listRef.current?.scrollToRow({ index, align: "smart" });
+            const names = bodyRef.current?.querySelectorAll<HTMLElement>(".mj_FilesRow_name");
+            const row = names
+                ? [...names].find((candidate) => candidate.textContent === name)?.closest<HTMLElement>(".mj_FilesRow")
+                : undefined;
+            if (row) return row.focus();
+            if (++tries < 20) frame = requestAnimationFrame(attempt);
+            else pane.current?.querySelector<HTMLElement>(".mj_FilesPane_close")?.focus();
+        };
+        frame = requestAnimationFrame(attempt);
+        return () => cancelAnimationFrame(frame);
+    }, [selected, listing.data?.entries]);
+
     // Breadcrumb spans root → path ONLY (never above the read-root jail, F4). Falls back to the
     // path as its own root before the first listing loads (single crumb, nothing above).
     const crumbs = useMemo(
@@ -332,7 +386,7 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
     );
 
     return (
-        <div className="mj_FilesPane">
+        <div className="mj_FilesPane" ref={pane}>
             {/* While a write dialog is up the rest of the pane is INERT (the same treatment the
                 app gives its own upload modal). Without it, `aria-modal` is a lie: a keyboard or
                 assistive-tech user could reach "Close files" behind the scrim and unmount the pane
@@ -346,6 +400,17 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
                 >
                     <CloseIcon />
                 </button>
+                {selected ? (
+                    <button
+                        ref={backRef}
+                        type="button"
+                        className="mj_IconButton mj_FilesPane_back"
+                        aria-label="Back to folder"
+                        onClick={backToList}
+                    >
+                        <ChevronLeftIcon />
+                    </button>
+                ) : null}
                 <h1 className="mj_FilesPane_title">Files</h1>
                 <label className="mj_FilesPane_hidden">
                     <input
@@ -357,7 +422,11 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
                 </label>
             </div>
 
-            <div className="mj_FilesPane_body" inert={writes.state ? true : undefined}>
+            <div
+                ref={bodyRef}
+                className={`mj_FilesPane_body${selected ? " mj_FilesPane_body_previewing" : ""}`}
+                inert={writes.state ? true : undefined}
+            >
                 <div className="mj_FilesPane_nav">
                     <nav className="mj_FilesBreadcrumb" aria-label="Path">
                         {crumbs.map((crumb, index) => (
@@ -426,6 +495,7 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
                             <PreviewStatus variant="empty">This folder is empty.</PreviewStatus>
                         ) : (
                             <List
+                                listRef={listRef}
                                 className="mj_FilesList"
                                 rowComponent={FileRow}
                                 rowCount={rowData.entries.length}

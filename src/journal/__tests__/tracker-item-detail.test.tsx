@@ -440,3 +440,44 @@ describe("ItemDetail", () => {
         expect(prChip.getAttribute("target")).toBe("_blank");
     });
 });
+
+describe("ItemDetail reply box (operator call T3: the chat composer's shape)", () => {
+    it("keeps Send inside the field, starts one line tall, grows with its text and resets after sending", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({ num: 7 })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+        const row = container.querySelector(".mj_TrackerComposer_row")!;
+        const textarea = row.querySelector<HTMLTextAreaElement>("textarea.mj_TrackerComposer_input")!;
+        expect(row.querySelector(".mj_TrackerComposer_send")).not.toBeNull();
+        expect(textarea.rows).toBe(1);
+
+        // jsdom has no layout: stand in for the content height the browser would measure.
+        Object.defineProperty(textarea, "scrollHeight", { configurable: true, get: () => 96 });
+        const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+        await act(async () => {
+            setValue.call(textarea, "line one\nline two\nline three\nline four");
+            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        expect(textarea.style.height).toBe("96px");
+
+        Object.defineProperty(textarea, "scrollHeight", { configurable: true, get: () => 400 });
+        await act(async () => {
+            setValue.call(textarea, `${"x\n".repeat(20)}end`);
+            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        expect(textarea.style.height).toBe("160px");
+
+        await act(async () => {
+            container.querySelector<HTMLButtonElement>(".mj_TrackerComposer_send")!.click();
+        });
+        expect(client.commentItem).toHaveBeenCalled();
+        expect(textarea.value).toBe("");
+        expect(textarea.style.height).toBe("auto");
+    });
+});

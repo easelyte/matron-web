@@ -1085,7 +1085,8 @@ button {
     color: var(--cpd-color-text-secondary);
 }
 
-.mx_MessageComposer_row {
+.mx_MessageComposer_row,
+.mj_TrackerComposer_row {
     display: flex;
     align-items: flex-end;
     /* v5 composer.shell: the input row IS the bordered field — attach (left),
@@ -1107,6 +1108,11 @@ button {
     border-color: var(--cpd-color-text-action-accent);
 }
 
+/* The tracker reply box is the same shell (operator call T3), with the same focus treatment. */
+.mj_TrackerComposer_row:focus-within {
+    border-color: var(--cpd-color-text-action-accent);
+}
+
 .mx_SendMessageComposer {
     display: flex;
     justify-content: center;
@@ -1117,7 +1123,8 @@ button {
     align-items: center;
 }
 
-.mx_BasicMessageComposer_input {
+.mx_BasicMessageComposer_input,
+.mj_TrackerComposer_input {
     /* v5 composer.input: borderless + transparent — the bordered --m-panel shell
        (.mx_MessageComposer_row) is the visible field; the textarea just sits inside it.
        body.md 400 14/22 (fixed, not inherited — root is 15px). The line box is one control tall
@@ -1144,7 +1151,13 @@ button {
     outline: none;
 }
 
-.mx_BasicMessageComposer_input::placeholder {
+.mj_TrackerComposer_input:focus,
+.mj_TrackerComposer_input:focus-visible {
+    outline: none;
+}
+
+.mx_BasicMessageComposer_input::placeholder,
+.mj_TrackerComposer_input::placeholder {
     color: var(--cpd-color-text-tertiary);
 }
 
@@ -1157,7 +1170,8 @@ button {
 }
 
 .mx_MessageComposer_button,
-.mx_MessageComposer_sendMessage {
+.mx_MessageComposer_sendMessage,
+.mj_TrackerComposer_send {
     display: inline-flex;
     width: var(--mj-control-h);
     height: var(--mj-control-h);
@@ -1174,7 +1188,8 @@ button {
 }
 
 .mx_MessageComposer_button svg,
-.mx_MessageComposer_sendMessage svg {
+.mx_MessageComposer_sendMessage svg,
+.mj_TrackerComposer_send svg {
     width: 19px;
     height: 19px;
 }
@@ -1191,22 +1206,26 @@ button {
 
 /* v4 send button: 32×32, radius 9px, filled --m-accent-deep, always present.
    Disabled (empty composer) keeps its footprint at opacity .45; pointer-events kept. */
-.mx_MessageComposer_sendMessage {
+.mx_MessageComposer_sendMessage,
+.mj_TrackerComposer_send {
     border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-accent);
     color: var(--cpd-color-text-on-accent);
 }
 
-.mx_MessageComposer_sendMessage:hover:not(:disabled) {
+.mx_MessageComposer_sendMessage:hover:not(:disabled),
+.mj_TrackerComposer_send:hover:not(:disabled) {
     filter: brightness(1.08);
 }
 
-.mx_MessageComposer_sendMessage:disabled {
+.mx_MessageComposer_sendMessage:disabled,
+.mj_TrackerComposer_send:disabled {
     opacity: 0.45;
 }
 
 .mx_MessageComposer_button:focus-visible,
-.mx_MessageComposer_sendMessage:focus-visible {
+.mx_MessageComposer_sendMessage:focus-visible,
+.mj_TrackerComposer_send:focus-visible {
     outline: var(--mj-focus-ring);
     outline-offset: var(--mj-focus-offset);
 }
