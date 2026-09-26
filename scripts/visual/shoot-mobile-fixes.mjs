@@ -26,10 +26,18 @@ import sharp from "sharp";
 const [BEFORE, AFTER, OUT] = process.argv.slice(2).map((p) => path.resolve(p));
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2", ".json": "application/json" };
 function serve(dir) {
+    const root = fs.realpathSync(dir);
     return new Promise((resolve) => {
         const server = http.createServer((req, res) => {
             const u = decodeURIComponent(req.url.split("?")[0]);
-            const f = path.join(dir, u === "/" ? "index.html" : u.replace(/^\/+/, ""));
+            let f;
+            try {
+                // Contained in the build dir after resolving .. and symlinks, or refused.
+                f = fs.realpathSync(path.resolve(root, u === "/" ? "index.html" : u.replace(/^\/+/, "")));
+            } catch {
+                return res.writeHead(404).end();
+            }
+            if (f !== root && !f.startsWith(root + path.sep)) return res.writeHead(403).end();
             fs.readFile(f, (e, d) => {
                 if (e) return res.writeHead(404).end();
                 res.writeHead(200, { "content-type": MIME[path.extname(f)] ?? "application/octet-stream" }).end(d);

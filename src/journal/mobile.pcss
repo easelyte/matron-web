@@ -25,6 +25,12 @@ Please see LICENSE files in the repository root for full details.
     .mx_MatrixChat_wrapper:has(.mj_MobileNav, .mx_MessageComposer) {
         padding-bottom: 0;
     }
+
+    /* A focused field hides the tab bar (below), so nothing visible owns the bottom edge: the
+       frame pads it again. (:has matches the hidden nav too, so this has to be explicit.) */
+    .mx_MatrixChat_wrapper:has(.mj_MobileNav):has(textarea:focus, input:focus) {
+        padding-bottom: env(safe-area-inset-bottom, 0);
+    }
 }
 
 .mx_MatrixChat_wrapper > .mx_MatrixChat {
