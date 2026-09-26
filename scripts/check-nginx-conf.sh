@@ -88,12 +88,23 @@ fi
 
 # Block 4: response compression. Without an explicit gzip_types nginx compresses
 # only text/html, so the JS bundle and every journal JSON body (the /snapshot a
-# fresh device syncs from is ~1.5 MB) ship uncompressed. Directives only — the
-# comment-stripped input means a commented-out line cannot satisfy this.
-if ! grep -Eq '^[[:space:]]*gzip[[:space:]]+on[[:space:]]*;' <<<"$stripped" ||
-    ! grep -Eq '^[[:space:]]*gzip_types[[:space:]][^;]*application/json' <<<"$stripped" ||
-    ! grep -Eq '^[[:space:]]*gzip_types[[:space:]][^;]*application/javascript' <<<"$stripped"; then
-    missing+=("response compression (gzip on + gzip_types covering application/json and application/javascript)")
+# fresh device syncs from is ~1.5 MB) ship uncompressed. The directives must sit
+# at SERVER level (brace depth 1) so every location — /journal/ included —
+# inherits them; one moved into a single location would compress only that one.
+# Comment-stripped input, so a commented-out line cannot satisfy this either.
+server_level=$(awk '
+    {
+        line = $0
+        if (depth == 1) print
+        o = gsub(/[{]/, "{", line)
+        c = gsub(/[}]/, "}", line)
+        depth += o - c
+    }
+' <<<"$stripped")
+if ! grep -Eq '^[[:space:]]*gzip[[:space:]]+on[[:space:]]*;' <<<"$server_level" ||
+    ! grep -Eq '^[[:space:]]*gzip_types[[:space:]][^;]*application/json' <<<"$server_level" ||
+    ! grep -Eq '^[[:space:]]*gzip_types[[:space:]][^;]*application/javascript' <<<"$server_level"; then
+    missing+=("server-level response compression (gzip on + gzip_types covering application/json and application/javascript)")
 fi
 
 if ((${#missing[@]} > 0)); then

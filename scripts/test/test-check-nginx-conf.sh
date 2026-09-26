@@ -47,6 +47,16 @@ expect "a commented-out gzip_types does not satisfy the guard" fail "$work/comme
 sed 's/^\([[:space:]]*\)gzip on;/\1gzip off;/' "$CONF" >"$work/gzip-off.conf"
 expect "conf with gzip off fails" fail "$work/gzip-off.conf"
 
+# Move gzip_types out of server scope into the /assets/ location: nginx -t accepts
+# it, but /journal/ would no longer compress JSON.
+awk '
+    /^[[:space:]]*gzip_types/ { held = $0; next }
+    { print }
+    /location[[:space:]]+\/assets\/[[:space:]]*[{]/ { print held }
+' "$CONF" >"$work/misplaced.conf"
+grep -q 'gzip_types' "$work/misplaced.conf" || { echo "FAIL - fixture lost gzip_types"; fails=$((fails + 1)); }
+expect "gzip_types scoped to a single location fails" fail "$work/misplaced.conf"
+
 if ((fails > 0)); then
     echo "$fails check(s) failed" >&2
     exit 1
