@@ -7,6 +7,8 @@ Please see LICENSE files in the repository root for full details.
 
 import {
     availableResolutions,
+    isFromViewedConvo,
+    itemOriginTitle,
     itemStatusText,
     kindLabel,
     needsUser,
@@ -178,5 +180,30 @@ describe("oneLine", () => {
     });
     it("returns an empty string for whitespace-only input", () => {
         expect(oneLine("  \n \n ")).toBe("");
+    });
+});
+
+describe("itemOriginTitle", () => {
+    it("returns the trimmed title the journal put on the item", () => {
+        expect(itemOriginTitle({ origin_convo_title: "  Auth refactor " })).toBe("Auth refactor");
+    });
+
+    it("is null when the field is absent, null, blank, or not a string", () => {
+        expect(itemOriginTitle({})).toBeNull();
+        expect(itemOriginTitle({ origin_convo_title: null })).toBeNull();
+        expect(itemOriginTitle({ origin_convo_title: "   " })).toBeNull();
+        expect(itemOriginTitle({ origin_convo_title: 42 as unknown as string })).toBeNull();
+    });
+});
+
+describe("isFromViewedConvo", () => {
+    it("is true only when the viewed conversation is the item's origin", () => {
+        expect(isFromViewedConvo({ origin_convo_id: "c1" }, "c1")).toBe(true);
+        expect(isFromViewedConvo({ origin_convo_id: "c1" }, "c2")).toBe(false);
+    });
+
+    it("treats an unknown viewer as another session", () => {
+        expect(isFromViewedConvo({ origin_convo_id: "c1" }, null)).toBe(false);
+        expect(isFromViewedConvo({ origin_convo_id: "c1" }, undefined)).toBe(false);
     });
 });

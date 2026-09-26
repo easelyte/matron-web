@@ -86,3 +86,51 @@ describe("TrackerPane selection/detail matching (F1)", () => {
         expect(container.querySelector(".mj_TrackerComposer")).not.toBeNull();
     });
 });
+
+describe("Decisions inbox origin notes", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("labels rows from other conversations and leaves the viewed conversation's rows bare", async () => {
+        const client = fakeClient();
+        client.getSnapshot.mockReturnValue({
+            selectedConversationId: "c-here",
+            conversations: [
+                { id: "c-here", title: "This chat" },
+                { id: "c-listed", title: "Listed chat" },
+            ],
+        });
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "inbox" },
+                    inboxItems: [
+                        trackerItem({
+                            id: "it_a",
+                            num: 1,
+                            updated_at: 4,
+                            origin_convo_id: "c-here",
+                            origin_convo_title: "This chat",
+                        }),
+                        trackerItem({ id: "it_b", num: 2, updated_at: 3, origin_convo_id: "c-listed" }),
+                        trackerItem({
+                            id: "it_c",
+                            num: 3,
+                            updated_at: 2,
+                            origin_convo_id: "c-old",
+                            origin_convo_title: "Auth refactor",
+                        }),
+                        trackerItem({ id: "it_d", num: 4, updated_at: 1, origin_convo_id: "c-gone" }),
+                    ],
+                })}
+            />,
+        );
+
+        const origins = Array.from(container.querySelectorAll(".mj_TrackerItemRow")).map(
+            (row) => row.querySelector(".mj_TrackerItemRow_origin")?.textContent ?? null,
+        );
+        expect(origins).toEqual([null, "from Listed chat", "from Auth refactor", "from Another chat"]);
+    });
+});

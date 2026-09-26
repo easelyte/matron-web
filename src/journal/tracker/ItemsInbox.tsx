@@ -9,14 +9,16 @@ Please see LICENSE files in the repository root for full details.
  * The app-wide Decisions inbox — every open item across conversations. A toggle switches between
  * "Needs you" (open && awaiting user, the default) and "All open". Rows use the full ItemRow with
  * an "all" scope so the origin conversation is named. The origin title is resolved best-effort from
- * the client's conversation list; an unresolved origin reads "Another chat".
+ * the client's conversation list, then from the title the journal carries on the item
+ * (origin_convo_title); an unresolved origin reads "Another chat". Rows filed from the conversation
+ * being viewed carry no origin note.
  */
 
 import React, { useMemo, useState } from "react";
 
 import type { MatronJournalClient } from "../client";
 import type { TrackerItem } from "../types";
-import { needsUser } from "./format";
+import { itemOriginTitle, needsUser } from "./format";
 import { ItemRow } from "./ItemRow";
 
 type InboxFilter = "needs-you" | "all-open";
@@ -86,7 +88,10 @@ export function ItemsInbox({
                             key={item.id}
                             item={item}
                             scope="all"
-                            originTitle={originTitles.get(item.origin_convo_id) ?? "Another chat"}
+                            originTitle={
+                                originTitles.get(item.origin_convo_id) ?? itemOriginTitle(item) ?? "Another chat"
+                            }
+                            currentConvoId={client.getSnapshot().selectedConversationId}
                             onOpen={onOpenItem}
                         />
                     ))}

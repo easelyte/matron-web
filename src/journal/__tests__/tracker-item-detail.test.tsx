@@ -353,4 +353,51 @@ describe("ItemDetail", () => {
         expect(statusRow?.textContent).toBe("Agent closed this as done");
         expect(container.textContent).not.toContain("PRIVATE-ELIDED-BODY");
     });
+
+    describe("origin line", () => {
+        it("falls back to the journal-supplied origin title for a conversation not in the loaded list", async () => {
+            const client = fakeClient();
+            client.getSnapshot.mockReturnValue({ selectedConversationId: "c-here", conversations: [] });
+            const { container } = await mount(
+                <ItemDetail
+                    item={trackerItem({ origin_convo_id: "c-old", origin_convo_title: "Auth refactor" })}
+                    comments={[]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+            expect(container.querySelector(".mj_TrackerOrigin")?.textContent).toBe("Opened from Auth refactor");
+        });
+
+        it("prefers the live conversation title over the one on the item", async () => {
+            const client = fakeClient();
+            client.getSnapshot.mockReturnValue({
+                selectedConversationId: "c-here",
+                conversations: [{ id: "c-old", title: "Renamed chat" }],
+            });
+            const { container } = await mount(
+                <ItemDetail
+                    item={trackerItem({ origin_convo_id: "c-old", origin_convo_title: "Auth refactor" })}
+                    comments={[]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+            expect(container.querySelector(".mj_TrackerOrigin")?.textContent).toBe("Opened from Renamed chat");
+        });
+
+        it("reads 'another chat' when neither source has a title (an older journal)", async () => {
+            const client = fakeClient();
+            client.getSnapshot.mockReturnValue({ selectedConversationId: "c-here", conversations: [] });
+            const { container } = await mount(
+                <ItemDetail
+                    item={trackerItem({ origin_convo_id: "c-old" })}
+                    comments={[]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+            expect(container.querySelector(".mj_TrackerOrigin")?.textContent).toBe("Opened from another chat");
+        });
+    });
 });

@@ -93,4 +93,58 @@ describe("ItemRow", () => {
 
         expect(onOpen).toHaveBeenCalledWith(77);
     });
+
+    describe("origin note", () => {
+        it("names the origin conversation for a row from another conversation", async () => {
+            const { container } = await mount(
+                <ItemRow
+                    item={trackerItem({ origin_convo_id: "c-other" })}
+                    scope="all"
+                    originTitle="Auth refactor"
+                    currentConvoId="c-here"
+                    onOpen={jest.fn()}
+                />,
+            );
+            expect(container.querySelector(".mj_TrackerItemRow_origin")?.textContent).toBe("from Auth refactor");
+            expect(container.querySelector("button")?.getAttribute("aria-label")).toContain("from Auth refactor");
+        });
+
+        it("adds no origin note to a row filed from the conversation being viewed", async () => {
+            const { container } = await mount(
+                <ItemRow
+                    item={trackerItem({ origin_convo_id: "c-here" })}
+                    scope="all"
+                    originTitle="This chat"
+                    currentConvoId="c-here"
+                    onOpen={jest.fn()}
+                />,
+            );
+            expect(container.querySelector(".mj_TrackerItemRow_origin")).toBeNull();
+            expect(container.querySelector("button")?.getAttribute("aria-label")).not.toContain("This chat");
+        });
+
+        it("still names the origin when the viewer is unknown", async () => {
+            const { container } = await mount(
+                <ItemRow
+                    item={trackerItem({ origin_convo_id: "c1" })}
+                    scope="all"
+                    originTitle="Brand chat"
+                    onOpen={jest.fn()}
+                />,
+            );
+            expect(container.querySelector(".mj_TrackerItemRow_origin")?.textContent).toBe("from Brand chat");
+        });
+
+        it("adds no origin note in the chat scope", async () => {
+            const { container } = await mount(
+                <ItemRow
+                    item={trackerItem({ origin_convo_id: "c-other" })}
+                    originTitle="Auth refactor"
+                    currentConvoId="c-here"
+                    onOpen={jest.fn()}
+                />,
+            );
+            expect(container.querySelector(".mj_TrackerItemRow_origin")).toBeNull();
+        });
+    });
 });

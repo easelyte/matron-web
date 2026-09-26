@@ -369,6 +369,10 @@ export interface TrackerItem {
     links: TrackerLink[];
     supersedes: string | null;
     origin_convo_id: string;
+    /** Title of the origin conversation as the journal resolved it, for provenance labels. Absent
+     *  on a journal that predates the field; null or "" when the origin conversation is gone or
+     *  untitled. */
+    origin_convo_title?: string | null;
     origin_device_id?: number;
     created_by: TrackerActor;
     created_at: number;

@@ -16,6 +16,23 @@ export function needsUser(item: Pick<TrackerItem, "state" | "awaiting">): boolea
     return item.state === "open" && item.awaiting === "user";
 }
 
+/** The origin conversation's title as carried on the item, or null when the journal did not send
+ *  one (an older journal, a deleted or untitled conversation). Narrowed with typeof because the
+ *  field crosses a JSON boundary: a non-string must degrade to "no title", not throw in a render. */
+export function itemOriginTitle(item: Pick<TrackerItem, "origin_convo_title">): string | null {
+    const raw = item.origin_convo_title;
+    return typeof raw === "string" ? raw.trim() || null : null;
+}
+
+/** Whether the item was filed from the conversation being viewed. An unknown viewer is never
+ *  "this session", so provenance falls back to labelling the origin rather than hiding it. */
+export function isFromViewedConvo(
+    item: Pick<TrackerItem, "origin_convo_id">,
+    viewedConvoId: string | null | undefined,
+): boolean {
+    return !!viewedConvoId && item.origin_convo_id === viewedConvoId;
+}
+
 /** Human label for a resolution (title case). */
 export function resolutionLabel(resolution: TrackerResolution): string {
     switch (resolution) {

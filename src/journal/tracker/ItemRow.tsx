@@ -15,21 +15,26 @@ Please see LICENSE files in the repository root for full details.
 import React from "react";
 
 import type { TrackerItem } from "../types";
-import { itemStatusText, kindLabel, needsUser, oneLine, resolutionLabel } from "./format";
+import { isFromViewedConvo, itemStatusText, kindLabel, needsUser, oneLine, resolutionLabel } from "./format";
 import { CommentBubbleGlyph, ImagePlaceholderGlyph, TrackerGlyph } from "./glyphs";
 
 export function ItemRow({
     item,
     scope = "chat",
     originTitle,
+    currentConvoId,
     onOpen,
 }: {
     item: TrackerItem;
     scope?: "chat" | "all";
     originTitle?: string;
+    /** The conversation being viewed. A row filed from it carries no origin note (it is "this
+     *  session"); a row from any other conversation reads "from <title>". */
+    currentConvoId?: string | null;
     onOpen: (num: number) => void;
 }): React.ReactElement {
     const urgent = needsUser(item);
+    const origin = scope === "all" && originTitle && !isFromViewedConvo(item, currentConvoId) ? originTitle : null;
     const body = oneLine(item.body);
     // ONE status token: needs-you (orange) → closed-with-resolution → with-the-agent. An open item
     // awaiting nobody-in-particular shows no token (the row itself is the "open" signal).
@@ -47,7 +52,7 @@ export function ItemRow({
         kindLabel(item.kind),
         `number ${item.num}`,
         item.title,
-        scope === "all" && originTitle ? `in ${originTitle}` : "",
+        origin ? `from ${origin}` : "",
         itemStatusText(item),
     ]
         .filter(Boolean)
@@ -70,9 +75,7 @@ export function ItemRow({
                 </span>
                 {body ? <span className="mj_TrackerItemRow_body">{body}</span> : null}
                 <span className="mj_TrackerItemRow_meta">
-                    {scope === "all" && originTitle ? (
-                        <span className="mj_TrackerItemRow_origin">{originTitle}</span>
-                    ) : null}
+                    {origin ? <span className="mj_TrackerItemRow_origin">from {origin}</span> : null}
                     {statusToken}
                     {item.comment_count > 0 ? (
                         <span className="mj_TrackerItemRow_comments">
