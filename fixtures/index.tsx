@@ -43,6 +43,7 @@ import { v6Fixture, type V6Scenario } from "./v6-thread";
 import { workFixture, type WorkFixtureMode } from "./work";
 import { opsDevices, opsMetrics, opsReply, type OpsFixtureMode } from "./ops";
 import { parseBoxStatus, parseMetrics, sectionStateFromReply, type OpsSection } from "../src/journal/ops/model";
+import { subagentFixture, type SubagentScenario } from "./subagents";
 import "../src/journal/shell.pcss";
 import "../src/journal/controls.pcss";
 import "../src/journal/journal.pcss";
@@ -423,6 +424,20 @@ if (v6Scenario) {
                 : conversation,
         );
     }
+}
+
+// Subagent cards + sidebar child rows: `?sub=thread|child|codex` swaps in a parent session with
+// Claude subagents and a Codex exec child (fixtures/subagents.ts).
+const subScenario = v6Params.get("sub") as SubagentScenario | null;
+if (subScenario) {
+    const fixture = subagentFixture(subScenario);
+    state.conversations = fixture.conversations;
+    state.selectedConversationId = fixture.selected;
+    state.events = fixture.events;
+    state.activity = fixture.activity;
+    state.toolStreams = {};
+    (client as unknown as { conversationEvents: (id: string) => Promise<JournalEvent[]> }).conversationEvents =
+        async (id: string) => fixture.childEvents[id] ?? [];
 }
 
 // The client keeps its state private; mirror the test harness's internal override.
