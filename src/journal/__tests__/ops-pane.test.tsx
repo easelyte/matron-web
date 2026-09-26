@@ -431,3 +431,31 @@ it("a failed Refresh keeps a known alert, marked stale", async () => {
     expect(container.querySelector(".mj_OpsFootnote_stale")).not.toBeNull();
     await unmount();
 });
+
+it("a definitive 'unknown_method' after a good reading replaces it (bridge rolled back)", async () => {
+    const good = (section: OpsSection): Reply => ({
+        ok: true,
+        result: {
+            data:
+                section === "alerts"
+                    ? { active: [], resolved_24h: [] }
+                    : section === "timers"
+                      ? { timers: [], cron: [] }
+                      : { processes: [], windows: {}, security: null },
+        },
+    });
+    const client = fakeClient(good, [bridge]);
+    const { container, unmount } = await mount(client);
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) =>
+        sectionStateFromReply(section, { ok: false, code: "unknown_method" }),
+    );
+    await act(async () => {
+        container.querySelector<HTMLButtonElement>(".mj_OpsPane_refresh")!.click();
+    });
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(container.textContent).toContain("Needs bridge update");
+    expect(container.querySelector(".mj_OpsFootnote_stale")).toBeNull();
+    await unmount();
+});

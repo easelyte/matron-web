@@ -134,7 +134,10 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
                         const before = prev[section];
                         // A failed re-read (poll, Refresh, offline re-check) never erases a good
                         // reading: it stays on screen, marked stale, until the box answers again.
-                        if (result.phase !== "ok" && before.phase === "ok")
+                        // Only for a transient failure: a definitive answer (unsupported,
+                        // not_configured) is the current state and replaces the reading.
+                        const transient = result.phase === "error" || result.phase === "asleep";
+                        if (transient && before.phase === "ok")
                             return before.stale ? prev : { ...prev, [section]: { ...before, stale: true } };
                         return { ...prev, [section]: result };
                     });
