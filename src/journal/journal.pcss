@@ -5913,3 +5913,159 @@ button.mj_File {
         transition: none;
     }
 }
+
+/* ---- v6 + round 2: Settings menu (identity · connection · Theme · Developer view · Sign out) ---- */
+.mj_HeaderMenu.mj_AccountMenu {
+    width: min(272px, calc(100vw - var(--cpd-space-4x)));
+}
+
+.mj_AccountMenu_who {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    gap: 10px;
+    margin-bottom: 4px;
+    padding: 8px 8px 10px;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+}
+
+.mj_AccountMenu_who > .mj_V6Icon {
+    margin-top: 1px;
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_AccountMenu_who b {
+    display: block;
+    overflow: hidden;
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-label);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_AccountMenu_who span {
+    display: block;
+    font: var(--cpd-font-meta);
+    white-space: nowrap;
+}
+
+.mj_AccountMenu .mj_AccountStatus {
+    padding: 4px 8px;
+    font: var(--cpd-font-meta);
+}
+
+.mj_HeaderMenu .mj_MenuLabel {
+    min-width: 0;
+    overflow: hidden;
+    color: inherit;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_RoomItemMenu_item_switch,
+.mj_RoomItemMenu_item_value {
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+}
+
+.mj_HeaderMenu .mj_MenuValue {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-meta);
+}
+
+.mj_RoomItemMenu_item[aria-disabled="true"] {
+    cursor: default;
+}
+
+.mj_RoomItemMenu_item[aria-disabled="true"] .mj_MenuLabel {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_MenuText {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mj_HeaderMenu .mj_MenuHint {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-micro);
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+/* Switch (.mj_Switch): 30×18 pill, thumb slides 12px. */
+.mj_Switch {
+    position: relative;
+    display: inline-block;
+    width: 30px;
+    height: 18px;
+    flex: none;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-border-strong);
+    transition: background var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_Switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: var(--cpd-shadow-sm);
+    transition: transform var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_Switch.is-on {
+    background: var(--cpd-color-bg-accent);
+}
+
+.mj_Switch.is-on::after {
+    transform: translateX(12px);
+}
+
+.mj_Switch.is-disabled {
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_Switch.is-disabled::after {
+    background: var(--cpd-color-border-strong);
+    box-shadow: none;
+}
+
+.mj_AccountMenu_scrim {
+    display: none;
+}
+
+/* Phone: the same Settings content as a bottom sheet. */
+@media (max-width: 700px) {
+    .mj_AccountMenu_scrim {
+        position: fixed;
+        z-index: 999;
+        inset: 0;
+        display: block;
+        background: var(--mj-scrim-modal);
+    }
+
+    .mj_HeaderMenu.mj_AccountMenu {
+        position: fixed;
+        top: auto;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        max-height: 80vh;
+        border-radius: var(--cpd-radius-xl) var(--cpd-radius-xl) 0 0;
+        padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+        box-shadow: var(--cpd-shadow-lg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mj_Switch,
+    .mj_Switch::after {
+        transition: none;
+    }
+}

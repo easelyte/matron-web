@@ -118,6 +118,7 @@ import { conversationSummary } from "./summary";
 import { useShowTheWork } from "./show-the-work";
 import { assembleTurns, type Turn, threadRows, type ThreadRow } from "./turn-assembly";
 import { noticeText, TurnCard, type TurnCardMode, TurnErrorRow } from "./turn-card";
+import { V6Icon } from "./v6-icons";
 import { type Step, stepsOf } from "./turn-grouping";
 import {
     compactTokens,
@@ -268,6 +269,97 @@ export function ThemeToggle(): React.ReactElement {
         >
             {icon}
         </button>
+    );
+}
+
+/**
+ * The Settings menu (redesign v6 + round 2): opened by the sliders icon, the last action in the
+ * sidebar header; a bottom sheet on the phone. Contents: identity (username + server) ·
+ * connection status (Reconnect when not online) · Theme · Developer view · hairline · Sign out.
+ */
+export function SettingsMenu({
+    client,
+    state,
+    panelRef,
+    onClose,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    panelRef: React.RefObject<HTMLDivElement | null>;
+    onClose: (restoreFocus: boolean) => void;
+}): React.ReactElement {
+    const [developerView, setDeveloperView] = useShowTheWork();
+    const theme = useSyncExternalStore(subscribe, getSnapshot);
+    const themeLabel = theme === null ? "System" : theme === "light" ? "Light" : "Dark";
+    const themeIcon = theme === null ? <SystemThemeIcon /> : theme === "light" ? <LightThemeIcon /> : <DarkThemeIcon />;
+    useLayoutEffect(() => {
+        panelRef.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus();
+    }, [panelRef]);
+    const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+        const items = Array.from(
+            event.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"], [data-action="reconnect"]'),
+        );
+        const index = items.findIndex((item) => item === document.activeElement);
+        if (event.key === "Tab") {
+            // Leaving the menu with Tab closes it; focus moves on as usual.
+            onClose(false);
+        } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            const step = event.key === "ArrowDown" ? 1 : -1;
+            const next =
+                index === -1 ? (step === 1 ? 0 : items.length - 1) : (index + step + items.length) % items.length;
+            items[next]?.focus();
+        } else if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose(true);
+        }
+    };
+    return (
+        <div
+            className="mj_HeaderMenu mj_RoomItemMenu mj_AccountMenu"
+            role="menu"
+            aria-label="Settings"
+            ref={panelRef}
+            onKeyDown={onKeyDown}
+        >
+            <div className="mj_AccountMenu_who" role="presentation">
+                <V6Icon name="user" />
+                <div>
+                    <b>{state.session?.username}</b>
+                    <span title={state.session?.serverUrl}>{state.session?.serverUrl}</span>
+                </div>
+            </div>
+            <div role="presentation">
+                <ConnectionStatus client={client} state={state} />
+            </div>
+            <button
+                className="mj_RoomItemMenu_item mj_RoomItemMenu_item_value"
+                type="button"
+                role="menuitem"
+                aria-label={`Theme: ${themeLabel}`}
+                onClick={() => setTheme(nextThemePref(theme))}
+            >
+                {themeIcon}
+                <span className="mj_MenuLabel">Theme</span>
+                <span className="mj_MenuValue">{themeLabel}</span>
+            </button>
+            <button
+                className="mj_RoomItemMenu_item mj_RoomItemMenu_item_switch"
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={developerView}
+                onClick={() => setDeveloperView(!developerView)}
+            >
+                <V6Icon name="terminal" />
+                <span className="mj_MenuLabel">Developer view</span>
+                <span className={`mj_Switch${developerView ? " is-on" : ""}`} aria-hidden="true" />
+            </button>
+            <button className="mj_RoomItemMenu_item" type="button" role="menuitem" onClick={() => void client.logout()}>
+                <V6Icon name="logout" />
+                <span className="mj_MenuLabel">Sign out</span>
+            </button>
+        </div>
     );
 }
 
@@ -1453,7 +1545,31 @@ function ConversationList({
     const [tab, setTab] = useState<"active" | "favorites" | "archived">("active");
     const [accountOpen, setAccountOpen] = useState(false);
     const [newSessionOpen, setNewSessionOpen] = useState(false);
-    const [editFileOpen, setEditFileOpen] = useState(false);
+    const settingsOpenerRef = useRef<HTMLButtonElement>(null);
+    const settingsPanelRef = useRef<HTMLDivElement>(null);
+    const closeSettings = useCallback(() => setAccountOpen(false), []);
+    // Outside tap / Escape close the menu. No scroll-dismiss (unlike the header popovers): the
+    // menu is anchored to the sidebar header, and a streaming thread scrolls itself.
+    useEffect(() => {
+        if (!accountOpen) return;
+        const onPointerDown = (event: PointerEvent): void => {
+            const target = event.target as Element;
+            if (target.closest?.(".mj_AccountMenu_scrim")) return; // the scrim's click closes it
+            if (!settingsOpenerRef.current?.contains(target) && !settingsPanelRef.current?.contains(target))
+                closeSettings();
+        };
+        const onKeyDown = (event: KeyboardEvent): void => {
+            if (event.key !== "Escape") return;
+            closeSettings();
+            settingsOpenerRef.current?.focus();
+        };
+        document.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("keydown", onKeyDown);
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown);
+            document.removeEventListener("keydown", onKeyDown);
+        };
+    }, [accountOpen, closeSettings]);
     const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
     const roomMenuRef = useRef(roomMenu);
     const roomMenuElementRef = useRef<HTMLDivElement>(null);
@@ -1902,7 +2018,6 @@ function ConversationList({
                                         </h1>
                                     </div>
                                     <div className="mj_RoomListHeaderActions">
-                                        <ThemeToggle />
                                         {tab !== "archived" && hasActiveUnread && (
                                             <button
                                                 className="mj_IconButton mj_MarkAllReadButton"
@@ -1961,9 +2076,12 @@ function ConversationList({
                                             />
                                         </button>
                                         <button
+                                            ref={settingsOpenerRef}
                                             className="mj_IconButton"
                                             type="button"
                                             aria-label="Settings"
+                                            aria-haspopup="menu"
+                                            aria-expanded={accountOpen}
                                             onClick={() => {
                                                 setNewSessionOpen(false);
                                                 setAccountOpen((open) => !open);
@@ -2126,23 +2244,22 @@ function ConversationList({
                     </div>
                 </div>
                 {accountOpen && (
-                    <div className="mj_HeaderMenu mj_AccountMenu">
-                        <strong>{state.session?.username}</strong>
-                        <span>{state.session?.serverUrl}</span>
-                        <ConnectionStatus client={client} state={state} />
-                        <button
-                            onClick={() => {
-                                setAccountOpen(false);
-                                setEditFileOpen(true);
-                            }}
-                        >
-                            Edit a file
-                        </button>
-                        <button onClick={() => void client.logout()}>Sign out</button>
-                    </div>
+                    // Phone only (CSS): the bottom sheet's scrim; a tap on it closes the sheet
+                    // without reaching the row underneath.
+                    <div className="mj_AccountMenu_scrim" aria-hidden="true" onClick={closeSettings} />
+                )}
+                {accountOpen && (
+                    <SettingsMenu
+                        client={client}
+                        state={state}
+                        panelRef={settingsPanelRef}
+                        onClose={(restoreFocus) => {
+                            setAccountOpen(false);
+                            if (restoreFocus) settingsOpenerRef.current?.focus();
+                        }}
+                    />
                 )}
                 {newSessionOpen && <NewSessionSheet client={client} onClose={() => setNewSessionOpen(false)} />}
-                {editFileOpen && <EditFileSheet client={client} onClose={() => setEditFileOpen(false)} />}
                 {roomMenu && menuConversation && (
                     <div
                         className="mj_HeaderMenu mj_RoomItemMenu"
@@ -4815,11 +4932,14 @@ function TurnBlock({
     event,
     rowHandlers,
     highlighted,
+    live = true,
     children,
 }: {
     event: JournalEvent;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
     highlighted: boolean;
+    /** Announce new content politely; off where the child is already an alert. */
+    live?: boolean;
     children: React.ReactNode;
 }): React.ReactElement {
     const ref = useRef<HTMLDivElement>(null);
@@ -4829,8 +4949,8 @@ function TurnBlock({
             ref={ref}
             className={`mj_TurnBlock${highlighted ? " mj_EventRow_searchHighlighted" : ""}`}
             data-event-id={event.seq}
-            aria-live="polite"
-            aria-atomic="true"
+            aria-live={live ? "polite" : undefined}
+            aria-atomic={live ? "true" : undefined}
             {...handlers}
         >
             {children}
@@ -4943,7 +5063,13 @@ function AgentTurnRow({
                                 runningSince={live.runningSince}
                                 durationMs={turn.endTs - turn.startTs}
                                 renderDetail={renderDetail}
-                                renderNarration={(text) => <MarkdownBody text={text} label={`narration-${turn.key}`} />}
+                                renderNarration={(text) => (
+                                    <MarkdownBody
+                                        text={text}
+                                        label={`narration-${turn.key}`}
+                                        onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                                    />
+                                )}
                             />
                         )}
                         {breaks.map(block)}
@@ -4953,10 +5079,12 @@ function AgentTurnRow({
                                 event={event}
                                 rowHandlers={rowHandlers}
                                 highlighted={highlightedSeq === event.seq}
+                                live={false}
                             >
                                 <TurnErrorRow
                                     text={asString(event.payload.body)
                                         .trim()
+                                        .replace(/^⚠️?\s*/u, "")
                                         .replace(/^\[(.*)\]$/, "$1")}
                                 />
                             </TurnBlock>
