@@ -109,12 +109,14 @@ export function NewSessionSplit({
     const hint = box ? defaultsHint(remembered, undefined) : undefined;
 
     const startingRef = useRef(false);
-    const start = async (retry = false): Promise<void> => {
+    const start = async (): Promise<void> => {
         if (startingRef.current) return;
         startingRef.current = true;
         setState({ kind: "starting" });
         mainRef.current?.focus();
-        if (!retry || !intentRef.current) intentRef.current = crypto.randomUUID();
+        // Kept across an uncertain or unreachable start (a re-tap may re-answer the same session);
+        // cleared once the start is settled one way or the other.
+        if (!intentRef.current) intentRef.current = crypto.randomUUID();
         // A fresh roster per tap: the box may have come up (or gone) since the sidebar loaded.
         let target: DeviceDTO | undefined;
         try {
@@ -208,7 +210,7 @@ export function NewSessionSplit({
             {state.kind === "error" && (
                 <div className="mj_NewSessionSplit_note mj_NewSessionSplit_note_error" role="alert">
                     {state.message}{" "}
-                    <button type="button" onClick={() => void start(true)}>
+                    <button type="button" onClick={() => void start()}>
                         Retry
                     </button>{" "}
                     ·{" "}
