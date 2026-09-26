@@ -101,6 +101,27 @@ Please see LICENSE files in the repository root for full details.
     --mj-z-menu: 30;
     --mj-z-modal: 50;
 
+    /* --- Control scale (2026-09-26 polish). Every interactive control's box height comes from
+       here, so controls that share a row share a height. Default 32: fields, selects, segmented
+       tracks, toolbar and dialog buttons. sm 28: compact chips, in-row actions, sheet close
+       buttons. lg 40: the page's one big action (sign in) and the tracker reply composer. touch
+       44: phones, where --mj-control-h and --mj-control-h-lg both become the touch target (the
+       max-width block below). Primitives live in controls.pcss; the drift test fails on an
+       off-scale literal height. --- */
+    --mj-control-h-sm: 28px;
+    --mj-control-h: 32px;
+    --mj-control-h-lg: 40px;
+    --mj-control-h-touch: 44px;
+    --mj-control-pad-x: var(--cpd-space-3x);
+    /* A segmented track insets its segments by this on every side (segment = control - 2×inset). */
+    --mj-seg-inset: 2px;
+    /* One focus treatment: a 2px accent outline. Standalone controls sit it 2px outside the box,
+       bordered fields 1px outside their border, full-bleed rows/menu items 2px inside. */
+    --mj-focus-ring: 2px solid var(--cpd-color-text-action-accent);
+    --mj-focus-offset: 2px;
+    --mj-focus-offset-field: 1px;
+    --mj-focus-offset-inset: -2px;
+
     /* --- v2 motion + focus --- */
     --cpd-focus-ring: 0 0 0 2px var(--cpd-color-bg-canvas-default), 0 0 0 4px var(--cpd-color-text-action-accent);
     --cpd-dur-fast: 120ms; /* @kind other */
@@ -130,6 +151,7 @@ Please see LICENSE files in the repository root for full details.
     --cpd-font-body-xs-regular: 400 12px/16px Inter, sans-serif;
     --cpd-font-body-xs-semibold: 600 12px/16px Inter, sans-serif;
     --cpd-font-body-sm-regular: 400 14px/20px Inter, sans-serif;
+    --cpd-font-body-sm-semibold: 600 14px/20px Inter, sans-serif;
     --cpd-font-body-md-regular: 400 16px/24px Inter, sans-serif;
     --cpd-font-heading-sm-semibold: 600 18px/28px Inter, sans-serif;
     --cpd-font-heading-md-semibold: 600 20px/28px Inter, sans-serif;
@@ -153,6 +175,7 @@ Please see LICENSE files in the repository root for full details.
     /* --- v2 spacing: 4px base, non-linear ramp (Refactoring UI) --- */
     --cpd-space-0-5x: 2px;
     --cpd-space-1x: 4px;
+    --cpd-space-1-5x: 6px;
     --cpd-space-2x: 8px;
     --cpd-space-3x: 12px;
     --cpd-space-4x: 16px;
@@ -231,6 +254,15 @@ Please see LICENSE files in the repository root for full details.
     --cpd-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
     --cpd-shadow-md: 0 4px 12px rgb(0 0 0 / 0.4);
     --cpd-shadow-lg: 0 16px 48px rgb(0 0 0 / 0.5);
+}
+
+/* Phones (the same 700px line mobile.pcss uses): the default and large controls become the 44px
+   touch target, so every control built on the scale grows together and a row stays one height. */
+@media (max-width: 700px) {
+    :root {
+        --mj-control-h: var(--mj-control-h-touch);
+        --mj-control-h-lg: var(--mj-control-h-touch);
+    }
 }
 
 body {
@@ -362,7 +394,7 @@ button {
 .mj_NewSessionButton {
     display: flex;
     width: 100%;
-    height: 34px;
+    height: var(--mj-control-h);
     align-items: center;
     justify-content: center;
     gap: 8px;
@@ -392,8 +424,8 @@ button {
 
 .mj_IconButton {
     display: inline-flex;
-    width: 32px;
-    height: 32px;
+    width: var(--mj-control-h);
+    height: var(--mj-control-h);
     align-items: center;
     justify-content: center;
     padding: var(--cpd-space-1x);
@@ -426,7 +458,7 @@ button {
 .mx_RoomListSearch_inputWrapper {
     display: flex;
     width: 100%;
-    height: 36px;
+    height: var(--mj-control-h);
     align-items: center;
     gap: var(--cpd-space-2x);
     border-radius: 8px;
@@ -1074,11 +1106,13 @@ button {
 .mx_BasicMessageComposer_input {
     /* v5 composer.input: borderless + transparent — the bordered --m-panel shell
        (.mx_MessageComposer_row) is the visible field; the textarea just sits inside it.
-       body.md 400 14/22 (fixed, not inherited — root is 15px); padding 6/4. */
-    min-height: 28px;
+       body.md 400 14/22 (fixed, not inherited — root is 15px). The line box is one control tall
+       with the 22px line centred in it, so the placeholder sits on the icon buttons' centre line
+       at every breakpoint (32px desktop, 44px phone). */
+    min-height: var(--mj-control-h);
     box-sizing: border-box;
     margin: 0;
-    padding: 6px 4px;
+    padding: calc((var(--mj-control-h) - 22px) / 2) 4px;
     border: 0;
     background: transparent;
     font:
@@ -1111,8 +1145,8 @@ button {
 .mx_MessageComposer_button,
 .mx_MessageComposer_sendMessage {
     display: inline-flex;
-    width: 32px;
-    height: 32px;
+    width: var(--mj-control-h);
+    height: var(--mj-control-h);
     align-items: center;
     justify-content: center;
     padding: 0;
@@ -1283,23 +1317,6 @@ button {
 
 .mx_ErrorMessage {
     margin-bottom: 16px;
-}
-
-.mx_Login_submit {
-    min-height: 40px;
-    border: 0;
-    border-radius: 8px;
-    background: var(--cpd-color-bg-accent);
-    color: var(--cpd-color-text-on-accent);
-    font-weight: 600;
-}
-
-[data-theme="dark"] .mx_Login_submit {
-    color: #f5f7fa;
-}
-
-.mx_Login_submit:disabled {
-    opacity: 0.6;
 }
 
 .mx_AutoHideScrollbar {

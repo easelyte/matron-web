@@ -289,7 +289,7 @@ export function MissionDetail({
                                     </button>
                                     <button
                                         type="button"
-                                        className="mj_TrackerButton mj_TrackerButton_danger"
+                                        className="mj_Btn mj_Btn_danger mj_TrackerButton"
                                         disabled={busy}
                                         onClick={() => void doClose()}
                                     >
@@ -300,7 +300,7 @@ export function MissionDetail({
                         ) : (
                             <button
                                 type="button"
-                                className="mj_TrackerButton"
+                                className="mj_Btn mj_Btn_primary mj_TrackerButton"
                                 disabled={!summary.trim() || busy}
                                 onClick={() => setConfirming(true)}
                             >

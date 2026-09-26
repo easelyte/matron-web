@@ -96,37 +96,12 @@ Please see LICENSE files in the repository root for full details.
 
 .mj_TrackerPane_title {
     margin: 0;
-    font: var(--cpd-font-body-lg-semibold, 600 16px/22px Inter, sans-serif);
+    font: var(--cpd-font-title);
     color: var(--cpd-color-text-primary);
 }
 
 .mj_TrackerViewSwitch {
-    display: inline-flex;
     margin-left: auto;
-    padding: 2px;
-    gap: 2px;
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-subtle-primary);
-}
-
-.mj_TrackerViewSwitch_tab {
-    border: 0;
-    background: transparent;
-    padding: var(--cpd-space-1x) var(--cpd-space-3x);
-    border-radius: var(--cpd-radius-pill);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
-    cursor: pointer;
-}
-.mj_TrackerViewSwitch_tab_active {
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
-    font-weight: 600;
-    box-shadow: var(--cpd-shadow-sm);
-}
-.mj_TrackerViewSwitch_tab:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 1px;
 }
 
 .mj_TrackerPane_spinner {
@@ -412,28 +387,8 @@ Please see LICENSE files in the repository root for full details.
 
 /* — Inbox filter toggle — */
 .mj_TrackerInboxToggle {
-    display: inline-flex;
     align-self: center;
     margin: var(--cpd-space-2x) 0;
-    padding: 2px;
-    gap: 2px;
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-subtle-primary);
-}
-.mj_TrackerToggleTab {
-    border: 0;
-    background: transparent;
-    padding: var(--cpd-space-1x) var(--cpd-space-4x);
-    border-radius: var(--cpd-radius-pill);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
-    cursor: pointer;
-}
-.mj_TrackerToggleTab_active {
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
-    font-weight: 600;
-    box-shadow: var(--cpd-shadow-sm);
 }
 
 /* — Detail shell — */
@@ -493,22 +448,6 @@ Please see LICENSE files in the repository root for full details.
 
 .mj_TrackerButton {
     align-self: flex-start;
-    border: 0;
-    border-radius: var(--cpd-radius-md);
-    background: var(--cpd-color-bg-accent);
-    color: var(--cpd-color-text-on-accent);
-    padding: var(--cpd-space-2x) var(--cpd-space-4x);
-    font: var(--cpd-font-body-sm-regular);
-    font-weight: 600;
-    cursor: pointer;
-}
-.mj_TrackerButton:disabled {
-    opacity: 0.5;
-    cursor: default;
-}
-.mj_TrackerButton_danger {
-    background: var(--cpd-color-text-critical-primary);
-    color: #fff;
 }
 
 /* — Mission head — */
@@ -950,7 +889,7 @@ Please see LICENSE files in the repository root for full details.
     background: var(--cpd-color-bg-canvas-default);
 }
 .mj_TrackerComposer_input {
-    min-height: 40px;
+    min-height: var(--mj-control-h-lg);
     flex: 1 1 auto;
 }
 .mj_TrackerComposer_send {
@@ -958,8 +897,8 @@ Please see LICENSE files in the repository root for full details.
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 40px;
-    height: 40px;
+    width: var(--mj-control-h-lg);
+    height: var(--mj-control-h-lg);
     border: 0;
     border-radius: var(--cpd-radius-md);
     background: var(--cpd-color-bg-accent);

@@ -70,13 +70,14 @@ Please see LICENSE files in the repository root for full details.
 
 .mj_ConnectionBanner_action {
     flex: none;
-    min-height: 28px;
+    min-height: var(--mj-control-h-sm);
     padding: 0 var(--cpd-space-3x);
     border: 1px solid var(--cpd-color-border-interactive-secondary);
     border-radius: var(--cpd-radius-pill);
     background: transparent;
     color: var(--cpd-color-text-primary);
-    font: var(--cpd-font-body-sm-semibold, 600 13px/18px Inter, sans-serif);
+    font: var(--cpd-font-label);
+    font-weight: 600;
 }
 
 /* ─── Settings-menu connection status ───────────────────────────────────────────────────────── */
@@ -94,7 +95,7 @@ Please see LICENSE files in the repository root for full details.
 
 .mj_HeaderMenu .mj_AccountStatus_reconnect {
     flex: none;
-    min-height: 28px;
+    min-height: var(--mj-control-h-sm);
     padding: 0 var(--cpd-space-3x);
 }
 
@@ -188,13 +189,11 @@ Please see LICENSE files in the repository root for full details.
     .mx_MessageComposer_sendMessage,
     .mj_FilesRow_action,
     .mj_FilesAction {
-        width: 44px;
-        height: 44px;
+        width: var(--mj-control-h-touch);
+        height: var(--mj-control-h-touch);
     }
 
     .mj_BackButton {
-        width: 44px;
-        height: 44px;
         left: 0;
     }
 
@@ -202,21 +201,9 @@ Please see LICENSE files in the repository root for full details.
         padding-inline-start: 46px;
     }
 
-    .mj_RoomListTab {
-        min-height: 36px;
-    }
-
-    .mj_TrackerViewSwitch_tab {
-        min-height: 36px;
-    }
-
     .mj_TrackerBack {
-        min-width: 44px;
-        min-height: 44px;
-    }
-
-    .mj_HeaderMenu button {
-        min-height: 44px;
+        min-width: var(--mj-control-h-touch);
+        min-height: var(--mj-control-h-touch);
     }
 
     /* No shift+enter on a touch keyboard; the "Jump to latest" notice still shows. */

@@ -1,0 +1,296 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+/*
+ * Control primitives: the one field, segmented control and button that every toolbar, filter
+ * row, sheet and dialog uses. Imported straight after shell.pcss (which owns the tokens), so a
+ * component rule later in the cascade may still place a control (margin, flex, width) but must
+ * not restate its height, radius, type or state colours; those come from here. The control
+ * height scale is --mj-control-h-sm / --mj-control-h / --mj-control-h-lg (28 / 32 / 40), and on
+ * phones --mj-control-h itself becomes the 44px touch target (see shell.pcss). The drift test
+ * (src/journal/__tests__/design-drift.test.ts) fails on an off-scale literal height.
+ *
+ * Shared row rule: controls that sit in one row share one height. A segmented track is a
+ * control-height box whose segments are inset by --mj-seg-inset, so a track next to a field is
+ * exactly as tall as the field.
+ */
+
+/* ───────────── Input: text input, search input, select, textarea ───────────── */
+
+.mj_Input {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    height: var(--mj-control-h);
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0 var(--mj-control-pad-x);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background-color: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+    transition: border-color var(--cpd-dur-fast) var(--cpd-ease);
+}
+.mj_Input::placeholder {
+    color: var(--cpd-color-text-placeholder);
+}
+.mj_Input:hover:not(:disabled, :focus) {
+    border-color: var(--cpd-color-border-interactive-primary);
+}
+.mj_Input:focus {
+    border-color: var(--cpd-color-border-interactive-primary);
+    outline: none;
+}
+.mj_Input:focus-visible {
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-field);
+}
+.mj_Input:disabled {
+    background-color: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    cursor: default;
+}
+.mj_Input_error {
+    border-color: var(--mj-critical-border);
+}
+/* The engine's own clear glyph is a blue x in Chromium dark; the fields that want a clear
+   affordance draw their own. */
+.mj_Input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+/* Phones: 16px stops iOS Safari zooming the page when a field takes focus. */
+@media (max-width: 700px) {
+    .mj_Input {
+        font-size: 16px;
+    }
+}
+
+/* Pill shape: fields that sit in one row with a pill segmented track (the Work filter row). */
+.mj_Input_pill {
+    border-radius: var(--cpd-radius-pill);
+}
+
+/* Leading icon slot: wrap the input in .mj_InputIcon with the svg before it. */
+.mj_InputIcon {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+.mj_InputIcon > svg {
+    position: absolute;
+    left: var(--mj-control-pad-x);
+    width: var(--cpd-icon-md);
+    height: var(--cpd-icon-md);
+    color: var(--cpd-color-icon-tertiary);
+    pointer-events: none;
+}
+.mj_InputIcon > .mj_Input {
+    padding-left: calc(var(--mj-control-pad-x) + var(--cpd-icon-md) + var(--cpd-space-2x));
+}
+
+/* Select: a drawn chevron keeps the control identical in both themes and across engines. */
+.mj_Input_select {
+    padding-right: calc(var(--mj-control-pad-x) + 16px);
+    appearance: none;
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--cpd-color-icon-secondary) 50%),
+        linear-gradient(135deg, var(--cpd-color-icon-secondary) 50%, transparent 50%);
+    background-position:
+        calc(100% - var(--mj-control-pad-x) - 5px) 50%,
+        calc(100% - var(--mj-control-pad-x)) 50%;
+    background-size:
+        5px 5px,
+        5px 5px;
+    background-repeat: no-repeat;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+.mj_Input_select option {
+    background: var(--cpd-color-bg-canvas-raised);
+    color: var(--cpd-color-text-primary);
+    font-weight: 400;
+}
+
+/* Multi-line: grows from the control height, keeps the field's border, type and states. */
+.mj_Input_multiline {
+    height: auto;
+    min-height: 64px;
+    padding: var(--cpd-space-2x) var(--mj-control-pad-x);
+    resize: vertical;
+}
+
+/* ───────────── Segmented control ─────────────
+   Track = one control-height box; segments are inset by --mj-seg-inset on every side, so the
+   track is exactly as tall as a field beside it. Selection changes surface and ink, never
+   weight, so a segment's label does not reflow when it becomes active. */
+
+.mj_Seg {
+    display: inline-flex;
+    height: var(--mj-control-h);
+    box-sizing: border-box;
+    flex: none;
+    gap: var(--mj-seg-inset);
+    padding: var(--mj-seg-inset);
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+/* Full-width track (sidebar filter, sheet pickers): a block-level flex box, so it fills its
+   container inside any margin instead of overflowing it. */
+.mj_Seg_fill {
+    display: flex;
+}
+.mj_Seg_item {
+    display: inline-flex;
+    flex: 0 1 auto;
+    min-width: 0;
+    height: 100%;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin: 0;
+    padding: 0 var(--mj-control-pad-x);
+    border: 0;
+    border-radius: var(--cpd-radius-pill);
+    background: transparent;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-label);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        color var(--cpd-dur-fast) var(--cpd-ease);
+}
+.mj_Seg_fill > .mj_Seg_item {
+    flex: 1 1 0;
+}
+.mj_Seg_item:hover {
+    color: var(--cpd-color-text-primary);
+}
+.mj_Seg_item_on,
+.mj_Seg_item[aria-checked="true"] {
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-sm);
+    color: var(--cpd-color-text-primary);
+}
+.mj_Seg_item:focus-visible {
+    outline: var(--mj-focus-ring);
+    outline-offset: 0;
+}
+
+/* ───────────── Button ─────────────
+   .mj_Btn is the standalone button; `.mj_UploadConfirm_actions button` is the same primitive as
+   every sheet/dialog footer already spells it (nine dialogs), so both selectors share one block.
+   Default = outlined secondary. _primary = accent fill, _ghost = no border, _danger = critical
+   tint. _sm / _lg pick the other two heights of the scale. */
+
+.mj_Btn,
+.mj_UploadConfirm_actions button {
+    display: inline-flex;
+    flex: none;
+    height: var(--mj-control-h);
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin: 0;
+    padding: 0 var(--mj-control-pad-x);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-label);
+    white-space: nowrap;
+    text-decoration: none;
+    cursor: pointer;
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        border-color var(--cpd-dur-fast) var(--cpd-ease),
+        color var(--cpd-dur-fast) var(--cpd-ease);
+}
+.mj_Btn svg,
+.mj_UploadConfirm_actions button svg {
+    width: var(--cpd-icon-sm);
+    height: var(--cpd-icon-sm);
+    flex: 0 0 auto;
+}
+.mj_Btn:hover:not(:disabled),
+.mj_UploadConfirm_actions button:hover:not(:disabled) {
+    background: var(--cpd-state-hover);
+}
+.mj_Btn:active:not(:disabled),
+.mj_UploadConfirm_actions button:active:not(:disabled) {
+    background: var(--cpd-state-active);
+}
+.mj_Btn:focus-visible,
+.mj_UploadConfirm_actions button:focus-visible {
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
+}
+.mj_Btn:disabled,
+.mj_UploadConfirm_actions button:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.mj_Btn_primary,
+.mj_UploadConfirm_actions button.mj_UploadConfirm_send {
+    border-color: transparent;
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+    font-weight: 600;
+}
+.mj_Btn_primary:hover:not(:disabled),
+.mj_UploadConfirm_actions button.mj_UploadConfirm_send:hover:not(:disabled) {
+    background: var(--cpd-color-bg-accent);
+    filter: brightness(1.08);
+}
+.mj_Btn_primary:active:not(:disabled),
+.mj_UploadConfirm_actions button.mj_UploadConfirm_send:active:not(:disabled) {
+    background: var(--cpd-color-bg-accent);
+    filter: brightness(0.96);
+}
+
+.mj_Btn_ghost {
+    border-color: transparent;
+    color: var(--cpd-color-text-secondary);
+}
+.mj_Btn_ghost:hover:not(:disabled) {
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_Btn_danger,
+.mj_UploadConfirm_actions button.mj_FileWrite_danger {
+    border-color: var(--mj-critical-border);
+    background: var(--mj-critical-tint);
+    color: var(--cpd-color-text-critical-primary);
+}
+.mj_Btn_danger:hover:not(:disabled),
+.mj_UploadConfirm_actions button.mj_FileWrite_danger:hover:not(:disabled) {
+    background: var(--mj-critical-tint-strong);
+    color: var(--cpd-color-text-critical-primary);
+    filter: none;
+}
+
+.mj_Btn_sm {
+    height: var(--mj-control-h-sm);
+    padding: 0 10px;
+}
+.mj_Btn_lg {
+    height: var(--mj-control-h-lg);
+    padding: 0 var(--cpd-space-4x);
+}
+/* A pill button (header chips) keeps the same heights; only the shape changes. */
+.mj_Btn_pill {
+    border-radius: var(--cpd-radius-pill);
+}

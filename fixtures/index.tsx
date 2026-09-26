@@ -42,6 +42,7 @@ import { SHOW_THE_WORK_KEY } from "../src/journal/show-the-work";
 import { v6Fixture, type V6Scenario } from "./v6-thread";
 import { workFixture, type WorkFixtureMode } from "./work";
 import "../src/journal/shell.pcss";
+import "../src/journal/controls.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
 import "../src/journal/work.pcss";

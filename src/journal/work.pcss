@@ -21,66 +21,14 @@ Please see LICENSE files in the repository root for full details.
 }
 
 .mj_WorkSearch {
-    position: relative;
-    display: flex;
-    align-items: center;
     flex: 1 1 220px;
-    min-width: 0;
-}
-.mj_WorkSearch_icon {
-    position: absolute;
-    left: var(--cpd-space-3x);
-    width: 16px;
-    height: 16px;
-    color: var(--cpd-color-icon-tertiary);
-    pointer-events: none;
-}
-.mj_WorkSearch_input {
-    width: 100%;
-    box-sizing: border-box;
-    height: 36px;
-    padding: 0 var(--cpd-space-3x) 0 calc(var(--cpd-space-3x) + 16px + var(--cpd-space-2x));
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
-    font: var(--cpd-font-body-sm-regular);
-}
-.mj_WorkSearch_input::placeholder {
-    color: var(--cpd-color-text-placeholder);
-}
-.mj_WorkSearch_input:focus-visible,
-.mj_WorkSelect:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 0;
 }
 
 .mj_WorkSelect {
     flex: 0 1 auto;
-    min-width: 0;
+    /* The input primitive is full-width; a filter select sizes to its value. */
+    width: auto;
     max-width: 100%;
-    height: 36px;
-    box-sizing: border-box;
-    padding: 0 calc(var(--cpd-space-3x) + 14px) 0 var(--cpd-space-3x);
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: var(--cpd-radius-pill);
-    /* A drawn chevron keeps the control identical in both themes and across engines. */
-    appearance: none;
-    background-color: var(--cpd-color-bg-canvas-default);
-    background-image:
-        linear-gradient(45deg, transparent 50%, currentColor 50%),
-        linear-gradient(135deg, currentColor 50%, transparent 50%);
-    background-position:
-        calc(100% - 15px) 50%,
-        calc(100% - 10px) 50%;
-    background-size:
-        5px 5px,
-        5px 5px;
-    background-repeat: no-repeat;
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
-    text-overflow: ellipsis;
-    cursor: pointer;
 }
 /* A non-default filter reads as "on" in the same accent-tint language as a selected row. */
 .mj_WorkSelect_set {
@@ -88,11 +36,6 @@ Please see LICENSE files in the repository root for full details.
     background-color: var(--cpd-state-selected);
     color: var(--cpd-color-text-action-accent);
     font-weight: 600;
-}
-.mj_WorkSelect option {
-    color: var(--cpd-color-text-primary);
-    background: var(--cpd-color-bg-canvas-raised);
-    font-weight: 400;
 }
 
 .mj_WorkGroupToggle {
@@ -364,16 +307,8 @@ Please see LICENSE files in the repository root for full details.
         order: 2;
         flex: 1 1 calc(50% - var(--cpd-space-2x));
     }
-    .mj_WorkSearch_input,
-    .mj_WorkSelect {
-        height: 44px;
-        font-size: 16px; /* 16px stops iOS Safari zooming the page on focus. */
-    }
-    .mj_WorkGroupToggle .mj_TrackerToggleTab {
-        min-height: 40px;
-    }
     .mj_WorkView .mj_TrackerTextButton {
-        min-height: 44px;
+        min-height: var(--mj-control-h-touch);
     }
     .mj_WorkMeta {
         grid-template-columns: repeat(2, minmax(0, 1fr));
