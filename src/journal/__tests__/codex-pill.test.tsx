@@ -178,9 +178,11 @@ describe("Codex and Claude worker pills", () => {
 
         rendered = await render(<MatronApp client={client} />);
 
+        // Sidebar child rows carry one status glyph (the v6 spinner while running) and no worker
+        // mark: the worker is named on the helper's card in the thread (2026-09-26).
         const row = rendered.container.querySelector(".mj_RoomListItem_sub");
-        expect(row?.querySelector(".mj_OpenAIMark")).not.toBeNull();
-        expect(row?.querySelector(".mj_Spinner")).not.toBeNull();
+        expect(row?.querySelector(".mj_OpenAIMark, .mj_AnthropicMark")).toBeNull();
+        expect(row?.querySelector(".mj_RoomListSubStatus_running .mj_TurnCard_spinner")).not.toBeNull();
         expect(row?.getAttribute("aria-label")).toContain(", running,");
 
         const finishedClient = signedInClient(

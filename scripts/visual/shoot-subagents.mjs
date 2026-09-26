@@ -70,7 +70,11 @@ function serve(dir) {
     });
 }
 
-const WIDTHS = { 1280: { width: 1280, height: 900 }, 768: { width: 768, height: 1024 }, 390: { width: 390, height: 844 } };
+const WIDTHS = {
+    1280: { width: 1280, height: 900 },
+    768: { width: 768, height: 1024 },
+    390: { width: 390, height: 844 },
+};
 
 // Open the first subagent card (after), tolerating its absence (before).
 const openFirstCard = async (page) => {
@@ -83,12 +87,17 @@ const openCardSteps = async (page) => {
     if (await group.count()) await group.click();
 };
 const openTurnHelper = async (page) => {
-    const toggle = page.locator(".mj_TurnCard_toggle").last();
+    // The first turn's card (not a helper card), then its helper group, then the helper step.
+    const toggle = page
+        .locator("section.mj_TurnCard:not(.mj_SubagentCard) > .mj_TurnCard_row .mj_TurnCard_toggle")
+        .first();
     if (await toggle.count()) await toggle.click();
-    const helper = page.locator(".mj_TurnCard_groupRow", { hasText: /helper/i }).last();
+    const helper = page
+        .locator("section.mj_TurnCard:not(.mj_SubagentCard) .mj_TurnCard_groupRow", { hasText: /helper/i })
+        .first();
     if (await helper.count()) {
         await helper.click();
-        const step = page.locator(".mj_TurnCard_step").first();
+        const step = page.locator("section.mj_TurnCard:not(.mj_SubagentCard) .mj_TurnCard_step").first();
         if (await step.count()) await step.click();
     }
 };
@@ -99,7 +108,7 @@ const STATES = [
     { name: "thread", query: "sub=thread" },
     { name: "thread-card-open", query: "sub=thread", setup: openFirstCard, scrollTo: ".mj_SubagentCard.is-open" },
     { name: "thread-card-steps", query: "sub=thread", setup: openCardSteps, scrollTo: ".mj_SubagentCard.is-open" },
-    { name: "thread-helper-deep", query: "sub=thread", setup: openTurnHelper, scrollTo: ".mj_TurnCard.is-open" },
+    { name: "thread-helper-deep", query: "sub=thread", setup: openTurnHelper, scrollTo: ".mj_TurnCard_deep" },
     { name: "child", query: "sub=child" },
     { name: "codex", query: "sub=codex" },
 ];
@@ -135,7 +144,10 @@ for (const spec of STATES) {
                     await page.mouse.move(0, 0);
                     await page.waitForTimeout(400);
                     if (spec.scrollTo) {
-                        await page.evaluate((sel) => document.querySelector(sel)?.scrollIntoView({ block: "center" }), spec.scrollTo);
+                        await page.evaluate(
+                            (sel) => document.querySelector(sel)?.scrollIntoView({ block: "center" }),
+                            spec.scrollTo,
+                        );
                         await page.waitForTimeout(150);
                     }
                     const file = path.join(SHOTS, `${spec.name}__${w}__${dev}__${theme}.png`);

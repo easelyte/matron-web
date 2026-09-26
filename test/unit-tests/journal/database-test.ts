@@ -50,6 +50,36 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("records the last message's tool call for the plain-English sidebar preview", async () => {
+        const database = await JournalDatabase.open("https://last-step.example", 12, "dan");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+        await database.applyJournal(
+            event(1, "agent:dev", "tool_output", { command: "pnpm tsc --noEmit", snippet: "error TS2322" }),
+        );
+        expect((await database.conversations())[0]).toMatchObject({
+            snippet: "error TS2322",
+            last_step: { tool: "Bash", input: { command: "pnpm tsc --noEmit" } },
+        });
+        await database.applyJournal(event(2, "agent:dev", "text", { body: "📖 /repo/a.ts" }));
+        expect((await database.conversations())[0].last_step).toEqual({ tool: "Read", input: { path: "/repo/a.ts" } });
+        await database.applyJournal(event(3, "agent:dev", "text", { body: "All done." }));
+        expect((await database.conversations())[0].last_step).toBeUndefined();
+        database.close();
+    });
+
     it("hydrates peer message payloads intact and counts them unread in an inactive conversation", async () => {
         const serverUrl = "https://peer-hydration.example";
         const database = await JournalDatabase.open(serverUrl, 11, "dan");

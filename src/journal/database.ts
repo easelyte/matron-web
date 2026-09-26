@@ -15,6 +15,7 @@ import {
     type PendingMessage,
     type SnapshotResponse,
 } from "./types";
+import { eventToStep } from "./turn-assembly";
 
 const DATABASE_VERSION = 1;
 const CURSOR_KEY = "cursor";
@@ -413,6 +414,14 @@ export class JournalDatabase {
             // message" line can never dangle out of sync with the row's slot.
             conversation.last_ts = Math.max(conversation.last_ts ?? 0, event.ts);
             conversation.snippet = eventSnippet(event.type, event.payload);
+            const step = event.sender.startsWith("user:") ? null : eventToStep(event);
+            if (step) {
+                // Capped: only a sentence is ever derived from it (the last argument of a read).
+                const input = Object.fromEntries(
+                    Object.entries(step.input).map(([key, value]) => [key, String(value ?? "").slice(0, 300)]),
+                );
+                conversation.last_step = { tool: step.tool, input };
+            } else delete conversation.last_step;
             if (!event.sender.startsWith("user:")) {
                 conversation.unread_count += 1;
             }

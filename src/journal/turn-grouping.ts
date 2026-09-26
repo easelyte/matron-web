@@ -226,6 +226,7 @@ export function stepSentence(step: Step): string {
     }
     if (c === "helper") return `Asked a helper to ${i.description ?? "help"}`;
     if (step.tool === "Browser") return `Took a screenshot of ${host(i.url)}`;
+    if (step.tool === "WebSearch") return i.pattern ? `Searched the web for ${i.pattern}` : "Searched the web";
     if (c === "web") return `Opened ${host(i.url)}`;
     if (c === "look") return `Read ${basename(i.path ?? lastArg(commandOf(step)))}`;
     if (c === "search") return "Searched the code";
@@ -233,9 +234,14 @@ export function stepSentence(step: Step): string {
     return "Did a step";
 }
 
-/** The last whitespace-separated argument of a command (the file of `cat x` / `head -n 5 x`). */
+/**
+ * The last whitespace-separated argument of a command's first stage (the file of `cat x` /
+ * `head -n 5 x` / `sed -n 1,60p x | grep -n y`): a pipe or `&&` ends the read, so the argument of
+ * the filter after it is never mistaken for the file.
+ */
 function lastArg(cmd: string): string {
-    const parts = cmd.split(/\s+/).filter((part) => part && !part.startsWith("-"));
+    const stage = cmd.split(/\s(?:\|\|?|&&|;)\s/)[0] ?? "";
+    const parts = stage.split(/\s+/).filter((part) => part && !part.startsWith("-"));
     return parts.length > 1 ? parts[parts.length - 1] : "";
 }
 
@@ -254,6 +260,7 @@ export function liveLine(step: Step): string {
     if (c === "history") return "Checking the history…";
     if (c === "git") return "Updating the branch…";
     if (c === "helper") return `Asking a helper to ${i.description ?? "help"}…`;
+    if (step.tool === "WebSearch") return "Searching the web…";
     if (c === "web") return "Looking at a web page…";
     return "Working…";
 }

@@ -50,6 +50,7 @@ import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
 import "../src/journal/work.pcss";
 import "../src/journal/ops.pcss";
+import "../src/journal/subagents.pcss";
 import "../src/journal/mobile.pcss";
 
 const SESSION: Session = {
@@ -436,8 +437,9 @@ if (subScenario) {
     state.events = fixture.events;
     state.activity = fixture.activity;
     state.toolStreams = {};
-    (client as unknown as { conversationEvents: (id: string) => Promise<JournalEvent[]> }).conversationEvents =
-        async (id: string) => fixture.childEvents[id] ?? [];
+    (client as unknown as { conversationEvents: (id: string) => Promise<JournalEvent[]> }).conversationEvents = async (
+        id: string,
+    ) => fixture.childEvents[id] ?? [];
 }
 
 // The client keeps its state private; mirror the test harness's internal override.

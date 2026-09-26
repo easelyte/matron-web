@@ -32,7 +32,8 @@ function at(convo: string, sec: number, sender: string, type: string, payload: R
     seq += 1;
     return { seq, convo_id: convo, ts: BASE + sec * 1000, sender, type, payload };
 }
-const op = (convo: string, sec: number, body: string): JournalEvent => at(convo, sec, "user:operator", "text", { body });
+const op = (convo: string, sec: number, body: string): JournalEvent =>
+    at(convo, sec, "user:operator", "text", { body });
 const say = (convo: string, sec: number, body: string): JournalEvent =>
     at(convo, sec, "agent:claude", "text", { body, from: "assistant" });
 const cmd = (convo: string, sec: number, command: string, exit_code: number | null, snippet: string): JournalEvent =>
@@ -118,7 +119,10 @@ function leaksEvents(): JournalEvent[] {
 function premiseEvents(): JournalEvent[] {
     return [
         say(S_PREMISE, 6, "Checking #791 against the current code."),
-        at(S_PREMISE, 8, "agent:claude", "text", { body: "📖 /root/.openclaw/workspace/anton/core/paths.py", from: "assistant" }),
+        at(S_PREMISE, 8, "agent:claude", "text", {
+            body: "📖 /root/.openclaw/workspace/anton/core/paths.py",
+            from: "assistant",
+        }),
         at(S_PREMISE, 12, "agent:claude", "text", { body: "🔍 hardcoded workspace", from: "assistant" }),
         at(S_PREMISE, 20, "agent:claude", "text", {
             body: "🔧 `rg -n '/root/.openclaw/workspace' anton scripts | wc -l`",
@@ -128,7 +132,10 @@ function premiseEvents(): JournalEvent[] {
             body: "🔧 `git log --oneline -5 -- anton/core/paths.py`",
             from: "assistant",
         }),
-        at(S_PREMISE, 60, "agent:claude", "text", { body: "📖 /root/.openclaw/workspace/docs/filesystem-layout.md", from: "assistant" }),
+        at(S_PREMISE, 60, "agent:claude", "text", {
+            body: "📖 /root/.openclaw/workspace/docs/filesystem-layout.md",
+            from: "assistant",
+        }),
         say(
             S_PREMISE,
             244,
@@ -235,7 +242,8 @@ export function subagentFixture(scenario: SubagentScenario): SubagentFixture {
             session_outcome: "completed",
             last_seq: childEvents[S_PREMISE].at(-1)!.seq,
             unread_count: 0,
-            snippet: "**The premise holds.** `anton/core/paths.py` still hardcodes the workspace root in 3 places, and nothing on main has…",
+            snippet:
+                "**The premise holds.** `anton/core/paths.py` still hardcodes the workspace root in 3 places, and nothing on main has…",
             created_at: BASE + 6_000,
             last_ts: lastTs(childEvents[S_PREMISE]),
             parent_convo_id: PARENT,
@@ -249,7 +257,8 @@ export function subagentFixture(scenario: SubagentScenario): SubagentFixture {
             session_outcome: "failed",
             last_seq: childEvents[S_CODEX].at(-1)!.seq,
             unread_count: 0,
-            snippet: "src/retention.ts(40,7): error TS2322: Type 'string | undefined' is not assignable to type 'Date'.",
+            snippet:
+                "src/retention.ts(40,7): error TS2322: Type 'string | undefined' is not assignable to type 'Date'.",
             created_at: BASE + 300_500,
             last_ts: lastTs(childEvents[S_CODEX]),
             parent_convo_id: PARENT,
@@ -273,7 +282,8 @@ export function subagentFixture(scenario: SubagentScenario): SubagentFixture {
             session_state: "idle",
             last_seq: 9,
             unread_count: 11,
-            snippet: "Pushed. Session closed. ## Session summary **Done:** bumped the default model and restarted the bridge…",
+            snippet:
+                "Pushed. Session closed. ## Session summary **Done:** bumped the default model and restarted the bridge…",
             created_at: BASE - 86_400_000 * 3,
             last_ts: BASE - 86_400_000 * 3 + 120_000,
             read_up_to_seq: 0,
