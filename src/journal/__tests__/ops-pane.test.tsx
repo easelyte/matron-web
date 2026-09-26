@@ -1,0 +1,461 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+
+import type { MatronJournalClient } from "../client";
+import { decodeServerFrame } from "../frame-decode";
+import { effectiveStatus, nextRunText, OpsPane, snapshotTargets } from "../ops/OpsPane";
+import { sectionStateFromReply, type OpsSection } from "../ops/model";
+import type { ClientState, DeviceDTO } from "../types";
+
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const NOW = Date.now();
+
+const bridge: DeviceDTO = {
+    device_id: 1,
+    kind: "agent",
+    name: "operator-bridge",
+    connected: true,
+    is_self: false,
+    last_seen_at: NOW,
+    status: {
+        reported_at: NOW - 60_000,
+        limits: {
+            as_of: NOW,
+            lines: [
+                { id: "session", label: "Session", percent: 38 },
+                { id: "codex:codex:primary", label: "Codex · 5-hour", percent: 12 },
+            ],
+        },
+        disk: { free_bytes: 40, total_bytes: 100 },
+        account: { email: "op@example.com" },
+        vitals: { cpu_pct: 23, ram_pct: 61, sampled_at_ms: NOW },
+    },
+};
+const scheduler: DeviceDTO = { device_id: 15, kind: "agent", name: "scheduler", connected: true, is_self: false };
+
+type Reply = { ok: true; result: unknown } | { ok: false; code: string };
+
+function fakeClient(reply: (section: OpsSection) => Reply, devices: DeviceDTO[] = [bridge, scheduler]) {
+    return {
+        listAgents: jest.fn().mockResolvedValue(devices),
+        journalMetrics: jest.fn().mockResolvedValue(null),
+        opsSnapshot: jest.fn(async (_id: number, section: OpsSection) =>
+            sectionStateFromReply(section, reply(section)),
+        ),
+        closeOpsView: jest.fn(),
+    };
+}
+
+async function mount(client: ReturnType<typeof fakeClient>, state: Partial<ClientState> = {}) {
+    const container = document.createElement("div");
+    document.body.append(container);
+    let root!: Root;
+    await act(async () => {
+        root = createRoot(container);
+        root.render(
+            <OpsPane
+                client={client as unknown as MatronJournalClient}
+                state={{ opsView: { open: true }, ...state } as ClientState}
+            />,
+        );
+    });
+    // Let the device fetch and the section RPCs settle.
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+    });
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+    });
+    return { container, unmount: () => act(() => root.unmount()) };
+}
+
+afterEach(() => {
+    document.body.innerHTML = "";
+});
+
+it("says 'needs bridge update' for an old bridge instead of an error", async () => {
+    const client = fakeClient(() => ({ ok: false, code: "unknown_method" }));
+    const { container, unmount } = await mount(client);
+    const notes = [...container.querySelectorAll(".mj_OpsNote_update")];
+    // Said once, not once per section.
+    expect(notes).toHaveLength(1);
+    expect(notes[0].textContent).toContain("Needs bridge update");
+    expect(container.querySelector(".mj_OpsNote_error")).toBeNull();
+    // Only the reporting bridge is asked; the non-bridge agent never is.
+    expect(new Set(client.opsSnapshot.mock.calls.map((c) => c[0]))).toEqual(new Set([1]));
+    await unmount();
+});
+
+it("renders the box card with Claude and Codex quotas, and the non-bridge agent as a line", async () => {
+    const client = fakeClient(() => ({ ok: false, code: "unknown_method" }));
+    const { container, unmount } = await mount(client);
+    const card = container.querySelector('[data-spec="ops.box"]')!;
+    expect(card.textContent).toContain("operator-bridge");
+    expect(card.textContent).toContain("Claude");
+    expect(card.textContent).toContain("Codex");
+    expect(card.textContent).toContain("op@example.com");
+    expect(container.querySelectorAll('[data-spec="ops.box"]')).toHaveLength(1);
+    expect(container.querySelector('[data-spec="ops.agent"]')!.textContent).toContain("scheduler");
+    await unmount();
+});
+
+it("renders host, alerts and timers when the bridge answers", async () => {
+    const data: Record<OpsSection, unknown> = {
+        host: {
+            cpu_pct: 20,
+            memory: { total_bytes: 100, available_bytes: 25 },
+            processes: [{ pid: 7, name: "node index.js", rss_bytes: 1024, cpu_pct: 1 }],
+        },
+        alerts: {
+            active: [{ key: "AUDIT_NET_DOWN", severity: "P1", message: "Audit net is not recording" }],
+            resolved_24h: [],
+        },
+        timers: {
+            timers: [
+                { unit: "ops-watchdog-15m.timer", result: "success", stale: false },
+                { unit: "ops-daily.timer", result: "failed", stale: false },
+            ],
+            cron: [],
+        },
+        usage: { windows: {}, daily: [] },
+        posture: { security: { status: "green", actions: [] }, api_usage: [] },
+    };
+    const client = fakeClient((section) => ({ ok: true, result: { section, data: data[section] } }));
+    const { container, unmount } = await mount(client);
+    expect(container.querySelector('[data-spec="ops.processes"]')!.textContent).toContain("node index.js");
+    expect(container.querySelector('[data-spec="ops.alert"]')!.textContent).toContain("Audit net is not recording");
+    // Problems first: only the failed timer shows until "All" is picked.
+    expect(container.querySelectorAll('[data-spec="ops.timer"]')).toHaveLength(1);
+    expect(container.querySelector('[data-spec="ops.summary"]')!.textContent).toContain("1 open alert");
+    await unmount();
+});
+
+it("shows the empty state with no boxes and asks nothing", async () => {
+    const client = fakeClient(() => ({ ok: false, code: "unknown_method" }), []);
+    const { container, unmount } = await mount(client);
+    expect(container.textContent).toContain("No agent boxes");
+    expect(client.opsSnapshot).not.toHaveBeenCalled();
+    await unmount();
+});
+
+it("prefers a newer live box report over the fetched one", () => {
+    const newer = { reported_at: NOW + 1000, account: { email: "new@example.com" } };
+    expect(effectiveStatus(bridge, { 1: newer })?.account?.email).toBe("new@example.com");
+    const older = { reported_at: NOW - 999_999, account: { email: "old@example.com" } };
+    expect(effectiveStatus(bridge, { 1: older })?.account?.email).toBe("op@example.com");
+    expect(snapshotTargets([bridge, scheduler]).map((d) => d.device_id)).toEqual([1]);
+});
+
+it("words a missed timer run as overdue, not 'next … ago'", () => {
+    expect(nextRunText(NOW - 2 * 3_600_000, NOW)).toBe("was due 2h ago");
+    expect(nextRunText(NOW + 600_000, NOW)).toBe("next in 10m");
+    expect(nextRunText(null, NOW)).toBe("not scheduled");
+});
+
+it("decodes the live box_status frame (it used to be dropped as an unknown kind)", () => {
+    const result = decodeServerFrame({
+        kind: "box_status",
+        device_id: 1,
+        reported_at: 5,
+        disk: { free_bytes: 1, total_bytes: 2 },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.frame).toEqual({
+        kind: "box_status",
+        device_id: 1,
+        status: { reported_at: 5, disk: { free_bytes: 1, total_bytes: 2 } },
+    });
+    expect(decodeServerFrame({ kind: "box_status" }).ok).toBe(false);
+});
+
+it("never claims 'All quiet' when alerts and timers could not be read", async () => {
+    const client = fakeClient(() => ({ ok: false, code: "unknown_method" }));
+    const { container, unmount } = await mount(client);
+    const summary = container.querySelector('[data-spec="ops.summary"]')!;
+    expect(summary.textContent).not.toContain("All quiet");
+    expect(summary.textContent).toContain("until this box's bridge is updated");
+    await unmount();
+});
+
+it("asks a box whose first report arrived live, after the roster fetch", async () => {
+    const unreported = { ...bridge, status: undefined };
+    const client = fakeClient(() => ({ ok: false, code: "unknown_method" }), [unreported]);
+    const { unmount } = await mount(client, { boxStatusLive: { 1: bridge.status! } });
+    expect(client.opsSnapshot).toHaveBeenCalled();
+    await unmount();
+});
+
+it("treats a success without the section's required list as unreadable, not empty", () => {
+    expect(sectionStateFromReply("alerts", { ok: true, result: { data: {} } }).phase).toBe("error");
+    expect(sectionStateFromReply("timers", { ok: true, result: { data: { cron: [] } } }).phase).toBe("error");
+    expect(sectionStateFromReply("alerts", { ok: true, result: { data: { active: [] } } }).phase).toBe("ok");
+});
+
+it("drops a slow host reply that a newer one already superseded", async () => {
+    jest.useFakeTimers({ doNotFake: ["setTimeout", "queueMicrotask", "nextTick", "setImmediate"] });
+    const resolvers: ((v: unknown) => void)[] = [];
+    const client = fakeClient(() => ({ ok: false, code: "unknown_method" }));
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) => {
+        if (section !== "host") return sectionStateFromReply(section, { ok: false, code: "unknown_method" });
+        return new Promise((resolve) => resolvers.push(resolve)) as never;
+    });
+    const hostReply = (cpu: number) =>
+        sectionStateFromReply("host", { ok: true, result: { data: { cpu_pct: cpu, processes: [] } } });
+    const { container, unmount } = await mount(client);
+    // First (initial) host request is in flight; fire the 15 s poll for a second one.
+    await act(async () => {
+        jest.advanceTimersByTime(15_000);
+    });
+    expect(resolvers).toHaveLength(2);
+    await act(async () => {
+        resolvers[1](hostReply(80));
+    });
+    await act(async () => {
+        resolvers[0](hostReply(5));
+    });
+    const cpuTile = container.querySelector('[data-spec="ops.host"] [data-spec="ops.tile"]')!;
+    expect(cpuTile.textContent).toContain("80%");
+    jest.useRealTimers();
+    await unmount();
+});
+
+it("still settles when every host reply is slower than the poll interval", async () => {
+    jest.useFakeTimers({ doNotFake: ["setTimeout", "queueMicrotask", "nextTick", "setImmediate"] });
+    const resolvers: ((v: unknown) => void)[] = [];
+    const client = fakeClient(() => ({ ok: false, code: "unknown_method" }));
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) => {
+        if (section !== "host") return sectionStateFromReply(section, { ok: false, code: "unknown_method" });
+        return new Promise((resolve) => resolvers.push(resolve)) as never;
+    });
+    const hostReply = (cpu: number) =>
+        sectionStateFromReply("host", { ok: true, result: { data: { cpu_pct: cpu, processes: [] } } });
+    const { container, unmount } = await mount(client);
+    await act(async () => {
+        jest.advanceTimersByTime(15_000);
+    });
+    // The older request answers first, while the newer one is still out: it must land.
+    await act(async () => {
+        resolvers[0](hostReply(5));
+    });
+    const tile = () => container.querySelector('[data-spec="ops.host"] [data-spec="ops.tile"]');
+    expect(tile()?.textContent).toContain("5%");
+    await act(async () => {
+        resolvers[1](hostReply(9));
+    });
+    expect(tile()?.textContent).toContain("9%");
+    jest.useRealTimers();
+    await unmount();
+});
+
+it("does not call a box that went offline after a good read 'All quiet'", async () => {
+    jest.useFakeTimers({ doNotFake: ["setTimeout", "queueMicrotask", "nextTick", "setImmediate"] });
+    const ok = (section: OpsSection): Reply => ({
+        ok: true,
+        result: {
+            data:
+                section === "alerts"
+                    ? { active: [], resolved_24h: [] }
+                    : section === "timers"
+                      ? { timers: [], cron: [] }
+                      : { processes: [], windows: {}, security: null },
+        },
+    });
+    const client = fakeClient(ok, [bridge]);
+    const { container, unmount } = await mount(client);
+    const summary = () => container.querySelector('[data-spec="ops.summary"]')!.textContent;
+    expect(summary()).toContain("All quiet");
+    // The box drops: its polls now fail and the next roster read lists it offline.
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) =>
+        sectionStateFromReply(section, { ok: false, code: "agent_unreachable" }),
+    );
+    client.listAgents.mockResolvedValue([{ ...bridge, connected: false }]);
+    await act(async () => {
+        jest.advanceTimersByTime(60_000);
+    });
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(summary()).not.toContain("All quiet");
+    expect(summary()).toContain("is offline");
+    jest.useRealTimers();
+    await unmount();
+});
+
+it("trusts a successful reply over an older 'offline' roster entry (the request woke the box)", async () => {
+    const ok = (section: OpsSection): Reply => ({
+        ok: true,
+        result: {
+            data:
+                section === "alerts"
+                    ? { active: [], resolved_24h: [] }
+                    : section === "timers"
+                      ? { timers: [], cron: [] }
+                      : { processes: [], windows: {}, security: null },
+        },
+    });
+    const client = fakeClient(ok, [{ ...bridge, connected: false }]);
+    // Replies land a tick after the roster read, as they do for a box the request woke.
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) => {
+        await new Promise((r) => setTimeout(r, 5));
+        return sectionStateFromReply(section, ok(section));
+    });
+    const { container, unmount } = await mount(client);
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(container.querySelector('[data-spec="ops.summary"]')!.textContent).toContain("All quiet");
+    await unmount();
+});
+
+it("a host-only poll that succeeds does not restore 'All quiet' after an offline roster read", async () => {
+    jest.useFakeTimers({ doNotFake: ["setTimeout", "queueMicrotask", "nextTick", "setImmediate"] });
+    const good = (section: OpsSection): Reply => ({
+        ok: true,
+        result: {
+            data:
+                section === "alerts"
+                    ? { active: [], resolved_24h: [] }
+                    : section === "timers"
+                      ? { timers: [], cron: [] }
+                      : { processes: [], windows: {}, security: null },
+        },
+    });
+    const client = fakeClient(good, [bridge]);
+    const { container, unmount } = await mount(client);
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) =>
+        sectionStateFromReply(section, section === "host" ? good("host") : { ok: false, code: "agent_unreachable" }),
+    );
+    client.listAgents.mockResolvedValue([{ ...bridge, connected: false }]);
+    await act(async () => {
+        jest.advanceTimersByTime(60_000);
+    });
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(container.querySelector('[data-spec="ops.summary"]')!.textContent).not.toContain("All quiet");
+    jest.useRealTimers();
+    await unmount();
+});
+
+it("drops 'All quiet' the moment the roster says offline, before the re-check answers", async () => {
+    jest.useFakeTimers({ doNotFake: ["setTimeout", "queueMicrotask", "nextTick", "setImmediate"] });
+    const good = (section: OpsSection): Reply => ({
+        ok: true,
+        result: {
+            data:
+                section === "alerts"
+                    ? { active: [], resolved_24h: [] }
+                    : section === "timers"
+                      ? { timers: [], cron: [] }
+                      : { processes: [], windows: {}, security: null },
+        },
+    });
+    const client = fakeClient(good, [bridge]);
+    const { container, unmount } = await mount(client);
+    client.opsSnapshot.mockImplementation(() => new Promise(() => undefined) as never);
+    client.listAgents.mockResolvedValue([{ ...bridge, connected: false }]);
+    await act(async () => {
+        jest.advanceTimersByTime(60_000);
+    });
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(container.querySelector('[data-spec="ops.summary"]')?.textContent ?? "").not.toContain("All quiet");
+    jest.useRealTimers();
+    await unmount();
+});
+
+it("keeps a known failure visible, marked stale, when the box goes offline", async () => {
+    jest.useFakeTimers({ doNotFake: ["setTimeout", "queueMicrotask", "nextTick", "setImmediate"] });
+    const withAlert = (section: OpsSection): Reply => ({
+        ok: true,
+        result: {
+            data:
+                section === "alerts"
+                    ? { active: [{ key: "X", severity: "P1", message: "Audit net down" }], resolved_24h: [] }
+                    : section === "timers"
+                      ? { timers: [], cron: [] }
+                      : { processes: [], windows: {}, security: null },
+        },
+    });
+    const client = fakeClient(withAlert, [bridge]);
+    const { container, unmount } = await mount(client);
+    client.opsSnapshot.mockImplementation(() => new Promise(() => undefined) as never);
+    client.listAgents.mockResolvedValue([{ ...bridge, connected: false }]);
+    await act(async () => {
+        jest.advanceTimersByTime(60_000);
+    });
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(container.querySelector('[data-spec="ops.alert"]')!.textContent).toContain("Audit net down");
+    expect(container.querySelector(".mj_OpsFootnote_stale")).not.toBeNull();
+    expect(container.querySelector('[data-spec="ops.summary"]')!.textContent).toContain("1 open alert");
+    jest.useRealTimers();
+    await unmount();
+});
+
+it("a failed Refresh keeps a known alert, marked stale", async () => {
+    const withAlert = (section: OpsSection): Reply => ({
+        ok: true,
+        result: {
+            data:
+                section === "alerts"
+                    ? { active: [{ key: "X", severity: "P1", message: "Audit net down" }], resolved_24h: [] }
+                    : section === "timers"
+                      ? { timers: [], cron: [] }
+                      : { processes: [], windows: {}, security: null },
+        },
+    });
+    const client = fakeClient(withAlert, [bridge]);
+    const { container, unmount } = await mount(client);
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) =>
+        sectionStateFromReply(section, { ok: false, code: "agent_unreachable" }),
+    );
+    await act(async () => {
+        container.querySelector<HTMLButtonElement>(".mj_OpsPane_refresh")!.click();
+    });
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(container.querySelector('[data-spec="ops.alert"]')!.textContent).toContain("Audit net down");
+    expect(container.querySelector(".mj_OpsFootnote_stale")).not.toBeNull();
+    await unmount();
+});
+
+it("a definitive 'unknown_method' after a good reading replaces it (bridge rolled back)", async () => {
+    const good = (section: OpsSection): Reply => ({
+        ok: true,
+        result: {
+            data:
+                section === "alerts"
+                    ? { active: [], resolved_24h: [] }
+                    : section === "timers"
+                      ? { timers: [], cron: [] }
+                      : { processes: [], windows: {}, security: null },
+        },
+    });
+    const client = fakeClient(good, [bridge]);
+    const { container, unmount } = await mount(client);
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) =>
+        sectionStateFromReply(section, { ok: false, code: "unknown_method" }),
+    );
+    await act(async () => {
+        container.querySelector<HTMLButtonElement>(".mj_OpsPane_refresh")!.click();
+    });
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(container.textContent).toContain("Needs bridge update");
+    expect(container.querySelector(".mj_OpsFootnote_stale")).toBeNull();
+    await unmount();
+});

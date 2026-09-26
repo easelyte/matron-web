@@ -40,6 +40,7 @@ import {
     ArchiveIcon,
     AttachmentIcon,
     ChecklistIcon,
+    PulseIcon,
     CheckIcon,
     ChevronDownIcon,
     ChevronLeftIcon,
@@ -92,6 +93,7 @@ import { MarkdownBody, markdownToPlainText } from "./markdown";
 import { snippetText } from "./plain-text";
 import { ConnectionBanner, ConnectionStatus, mainSurfaceOpen, MobileNav, NavBadge, trackerLabel } from "./mobile-shell";
 import { isRenderableItemMarker, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
+import { OpsPane } from "./ops/OpsPane";
 import { TrackerPane } from "./tracker/TrackerPane";
 import {
     buildMediaCorpus,
@@ -1820,6 +1822,21 @@ function ConversationList({
                                                 count={state.trackerNeedsYou}
                                                 partial={state.trackerNeedsYouPartial}
                                             />
+                                        </button>
+                                        {/* Ops: boxes, quotas, host, alerts, timers,
+                                            usage. JournalApi + agent RPC only, so not Electron-gated.
+                                            Hidden at phone widths like Tracker; the bottom nav carries it. */}
+                                        <button
+                                            className="mj_IconButton mj_HeaderNavButton"
+                                            type="button"
+                                            aria-label="Ops"
+                                            aria-pressed={state.opsView?.open ?? false}
+                                            title="Boxes and ops"
+                                            onClick={() =>
+                                                state.opsView?.open ? client.closeOpsView() : client.openOpsView()
+                                            }
+                                        >
+                                            <PulseIcon />
                                         </button>
                                         <button
                                             ref={settingsOpenerRef}
@@ -7609,6 +7626,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                 >
                     {state.trackerView?.open ? (
                         <TrackerPane client={client} state={state} />
+                    ) : state.opsView?.open ? (
+                        <OpsPane client={client} state={state} />
                     ) : state.filesView?.open && !isElectronRuntime() ? (
                         <FilesPane client={client} state={state} />
                     ) : state.selectedConversationId ? (

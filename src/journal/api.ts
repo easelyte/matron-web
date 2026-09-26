@@ -25,6 +25,7 @@ import {
     type TrackerLink,
     type TrackerResolution,
 } from "./types";
+import { parseBoxStatus, parseMetrics, type JournalMetrics } from "./ops/model";
 import { parseWorkViewEnvelope, type WorkViewEnvelope, type WorkViewGroupBy } from "./work-view";
 
 interface ElectronJournalResponse {
@@ -131,6 +132,11 @@ function parseDevice(raw: unknown): DeviceParseResult {
             last_seen_at: device.last_seen_at,
             connected: device.connected,
             is_self: device.is_self,
+            // Box report. Parsed, never trusted: a malformed block is dropped
+            // and a device that never reported keeps no `status` key at all.
+            ...(device.status !== undefined && parseBoxStatus(device.status)
+                ? { status: parseBoxStatus(device.status) }
+                : {}),
         } as DeviceDTO,
         reasons: [],
     };
@@ -193,6 +199,11 @@ export class JournalApi {
             authenticated: false,
             body: { username, password, device_name: deviceName },
         });
+    }
+
+    /** GET /metrics: journal health for the Ops page (head seq, per-device lag, DB size). */
+    public async metrics(): Promise<JournalMetrics | null> {
+        return parseMetrics(await this.json<unknown>("/metrics"));
     }
 
     public snapshot(signal?: AbortSignal): Promise<SnapshotResponse> {
