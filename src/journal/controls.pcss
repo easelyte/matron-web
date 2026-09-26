@@ -58,11 +58,23 @@ Please see LICENSE files in the repository root for full details.
 .mj_Input_error {
     border-color: var(--mj-critical-border);
 }
-/* The engine's own clear glyph is a blue x in Chromium dark; the fields that want a clear
-   affordance draw their own. */
+/* Search fields keep the engine's clear (x) affordance, redrawn in the icon ink so it matches
+   both themes (Chromium's own glyph is a blue x in dark). Same hit area and behaviour. */
 .mj_Input::-webkit-search-cancel-button {
     -webkit-appearance: none;
     appearance: none;
+    width: var(--cpd-icon-sm);
+    height: var(--cpd-icon-sm);
+    margin: 0;
+    background-color: var(--cpd-color-icon-secondary);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 4l8 8M12 4l-8 8' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E")
+        center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 4l8 8M12 4l-8 8' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E")
+        center / contain no-repeat;
+    cursor: pointer;
+}
+.mj_Input::-webkit-search-cancel-button:hover {
+    background-color: var(--cpd-color-text-primary);
 }
 
 /* Phones: 16px stops iOS Safari zooming the page when a field takes focus. */
