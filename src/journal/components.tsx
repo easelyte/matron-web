@@ -296,9 +296,14 @@ export function SettingsMenu({
         panelRef.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus();
     }, [panelRef]);
     const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
-        const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"]'));
+        const items = Array.from(
+            event.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"], [data-action="reconnect"]'),
+        );
         const index = items.findIndex((item) => item === document.activeElement);
-        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        if (event.key === "Tab") {
+            // Leaving the menu with Tab closes it; focus moves on as usual.
+            onClose(false);
+        } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
             event.preventDefault();
             const step = event.key === "ArrowDown" ? 1 : -1;
             const next =
@@ -318,14 +323,16 @@ export function SettingsMenu({
             ref={panelRef}
             onKeyDown={onKeyDown}
         >
-            <div className="mj_AccountMenu_who">
+            <div className="mj_AccountMenu_who" role="presentation">
                 <V6Icon name="user" />
                 <div>
                     <b>{state.session?.username}</b>
                     <span title={state.session?.serverUrl}>{state.session?.serverUrl}</span>
                 </div>
             </div>
-            <ConnectionStatus client={client} state={state} />
+            <div role="presentation">
+                <ConnectionStatus client={client} state={state} />
+            </div>
             <button
                 className="mj_RoomItemMenu_item mj_RoomItemMenu_item_value"
                 type="button"
@@ -1541,7 +1548,28 @@ function ConversationList({
     const settingsOpenerRef = useRef<HTMLButtonElement>(null);
     const settingsPanelRef = useRef<HTMLDivElement>(null);
     const closeSettings = useCallback(() => setAccountOpen(false), []);
-    useDismissablePopover(accountOpen, closeSettings, { openerRef: settingsOpenerRef, panelRef: settingsPanelRef });
+    // Outside tap / Escape close the menu. No scroll-dismiss (unlike the header popovers): the
+    // menu is anchored to the sidebar header, and a streaming thread scrolls itself.
+    useEffect(() => {
+        if (!accountOpen) return;
+        const onPointerDown = (event: PointerEvent): void => {
+            const target = event.target as Element;
+            if (target.closest?.(".mj_AccountMenu_scrim")) return; // the scrim's click closes it
+            if (!settingsOpenerRef.current?.contains(target) && !settingsPanelRef.current?.contains(target))
+                closeSettings();
+        };
+        const onKeyDown = (event: KeyboardEvent): void => {
+            if (event.key !== "Escape") return;
+            closeSettings();
+            settingsOpenerRef.current?.focus();
+        };
+        document.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("keydown", onKeyDown);
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown);
+            document.removeEventListener("keydown", onKeyDown);
+        };
+    }, [accountOpen, closeSettings]);
     const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
     const roomMenuRef = useRef(roomMenu);
     const roomMenuElementRef = useRef<HTMLDivElement>(null);
@@ -2215,6 +2243,11 @@ function ConversationList({
                         </div>
                     </div>
                 </div>
+                {accountOpen && (
+                    // Phone only (CSS): the bottom sheet's scrim; a tap on it closes the sheet
+                    // without reaching the row underneath.
+                    <div className="mj_AccountMenu_scrim" aria-hidden="true" onClick={closeSettings} />
+                )}
                 {accountOpen && (
                     <SettingsMenu
                         client={client}

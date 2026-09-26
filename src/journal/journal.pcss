@@ -6035,8 +6035,20 @@ button.mj_File {
     box-shadow: none;
 }
 
+.mj_AccountMenu_scrim {
+    display: none;
+}
+
 /* Phone: the same Settings content as a bottom sheet. */
 @media (max-width: 700px) {
+    .mj_AccountMenu_scrim {
+        position: fixed;
+        z-index: 999;
+        inset: 0;
+        display: block;
+        background: var(--mj-scrim-modal);
+    }
+
     .mj_HeaderMenu.mj_AccountMenu {
         position: fixed;
         top: auto;

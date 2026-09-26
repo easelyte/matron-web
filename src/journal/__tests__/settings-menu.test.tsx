@@ -110,4 +110,16 @@ describe("Settings menu (v6 + round 2)", () => {
         expect(menu()).toBeNull();
         expect(document.activeElement).toBe(settingsButton());
     });
+
+    it("stays open while the thread scrolls, and closes on Tab out", async () => {
+        await act(async () => settingsButton().click());
+        await act(async () => {
+            document.body.dispatchEvent(new Event("scroll", { bubbles: true }));
+        });
+        expect(menu()).not.toBeNull();
+        await act(async () => {
+            menu()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+        });
+        expect(menu()).toBeNull();
+    });
 });
