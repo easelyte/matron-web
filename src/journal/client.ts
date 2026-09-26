@@ -751,6 +751,8 @@ export class MatronJournalClient {
         const database = this.database;
         const api = this.api;
         if (!database || !api) return Promise.resolve(false);
+        // The catch below compares against this to forget only its own request.
+        const slot: { request?: Promise<boolean> } = {};
         const request = (async (): Promise<boolean> => {
             let timer: ReturnType<typeof setTimeout> | undefined;
             try {
@@ -767,13 +769,17 @@ export class MatronJournalClient {
                 await database.putHistory(response.events);
                 return response.events.length > 0;
             } catch {
-                // Let a later mount retry; the stored events still render meanwhile.
-                this.conversationTailFetches.delete(conversationId);
+                // Let a later mount retry; the stored events still render meanwhile. Only forget
+                // THIS request: a reset may have cleared the map and a newer one taken the slot.
+                if (this.conversationTailFetches.get(conversationId) === slot.request) {
+                    this.conversationTailFetches.delete(conversationId);
+                }
                 return false;
             } finally {
                 if (timer !== undefined) clearTimeout(timer);
             }
         })();
+        slot.request = request;
         this.conversationTailFetches.set(conversationId, request);
         return request;
     }

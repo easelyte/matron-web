@@ -102,6 +102,25 @@ export function plainLine(markdown: string): string {
         .trim();
 }
 
+const DIAGNOSTIC =
+    /\(\d+,\d+\): (?:error|warning)|\berror TS\d+|Traceback \(most recent call|npm ERR!|^\s*at \S+ \(|\bexit(?:ed)? (?:code|status) \d+/m;
+const GREP_HIT = /(?:^|\s)[\w./-]+\.\w+:\d+(?::\d+)?(?:[:\s]|$)/;
+
+/**
+ * Does a snippet read as a command's output rather than a sentence? Conservative: a compiler or
+ * runtime diagnostic, JSON, or dense punctuation; for a Codex session also `file.ts:12` grep hits
+ * (its prose rarely looks like that, its tool output often does).
+ */
+export function looksLikeOutput(snippet: string, codex = false): boolean {
+    const text = snippet.trim();
+    if (text.length < 8) return false;
+    if (/^[[{]\s*["{[]/.test(text)) return true;
+    if (DIAGNOSTIC.test(text)) return true;
+    if (codex && GREP_HIT.test(text)) return true;
+    const symbols = text.replace(/[^{}[\]();=<>|$\\]/g, "").length;
+    return text.length >= 24 && symbols / text.length > 0.12;
+}
+
 /** Present-progressive while running ("Reading paths.py…"), past tense once done ("Read paths.py"). */
 export function activitySentence(step: Step, running: boolean): string {
     return running ? liveLine(step) : stepSentence(step);
@@ -135,9 +154,11 @@ export function previewLine(conversation: PreviewSource): string {
     // The server's placeholder for a message it has no text for.
     if (snippet.trim() === "[diff]") return running ? "Changing a file…" : "Changed a file";
     if (snippet.trim() === "[tool_output]") return running ? "Running a command…" : "Ran a command";
-    // A Codex session's snippet is often a command's OUTPUT (tool_output carries its output as
-    // the snippet). Without the recorded step (after a snapshot) it cannot be told from prose,
-    // so while it runs the row says what is knowable rather than risk printing a diagnostic.
+    // A tool_output's snippet is the command's OUTPUT, which the server hands back as the row's
+    // snippet. With no recorded step (after a snapshot) the row cannot know it was output, so
+    // anything that reads as output — a diagnostic, a stack, JSON, grep hits — or anything at all
+    // from a running Codex session is described instead of printed.
+    if (looksLikeOutput(snippet, conversation.worker === "codex")) return running ? "Working…" : "Ran a command";
     if (running && conversation.worker === "codex") return "Working…";
     return snippetText(snippet);
 }

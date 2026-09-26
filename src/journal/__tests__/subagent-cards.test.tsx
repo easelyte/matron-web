@@ -160,6 +160,26 @@ describe("sidebar preview (Developer view off)", () => {
         expect(previewLine(codex)).toBe("Working…");
         expect(previewLine(row("[diff]", "running"))).toBe("Changing a file…");
         expect(previewLine(row("[tool_output]", "done"))).toBe("Ran a command");
+        // A finished session restored from a snapshot, last message a diagnostic: described.
+        const doneCodex = {
+            ...row("src/retention.ts(40,7): error TS2322: Type 'string'", "done"),
+            worker: "codex" as const,
+        };
+        expect(previewLine(doneCodex)).toBe("Ran a command");
+        expect(
+            previewLine({ ...row("scripts/lib/retention.py:12:    cutoff = now()", "idle"), worker: "codex" as const }),
+        ).toBe("Ran a command");
+        expect(previewLine(row('{"type":"item.started","item":{"type":"web_search"}}', "idle"))).toBe("Ran a command");
+        // Prose stays prose, including a Codex final answer that names a file.
+        expect(
+            previewLine({
+                ...row("Two type errors in src/retention.ts, lines 40 and 58.", "done"),
+                worker: "codex" as const,
+            }),
+        ).toBe("Two type errors in src/retention.ts, lines 40 and 58.");
+        expect(previewLine(row("The first wave is finished. #779 and #783 shipped.", "idle"))).toBe(
+            "The first wave is finished. #779 and #783 shipped.",
+        );
     });
 
     it("drops markdown from prose instead of showing its source", () => {
@@ -271,6 +291,25 @@ describe("client helper reads", () => {
         // Settled: later cards do not refetch this session.
         await client.refreshConversationTail("p:sub:a");
         expect(messages).toHaveBeenCalledTimes(1);
+    });
+
+    it("a stale request timing out after a reset never evicts the newer request", async () => {
+        jest.useFakeTimers();
+        try {
+            const messages = jest.fn(() => new Promise<never>(() => undefined));
+            const { client } = withStore(messages);
+            void client.refreshConversationTail("p:sub:a");
+            (client as unknown as { conversationTailFetches: Map<string, unknown> }).conversationTailFetches.clear();
+            jest.advanceTimersByTime(10_000);
+            void client.refreshConversationTail("p:sub:a"); // newer request, 10s into the old one
+            jest.advanceTimersByTime(5_000); // the OLD one times out
+            await Promise.resolve();
+            await Promise.resolve();
+            void client.refreshConversationTail("p:sub:a"); // shares the newer, still in flight
+            expect(messages).toHaveBeenCalledTimes(2);
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("gives up on a stalled request and lets a later card retry", async () => {
