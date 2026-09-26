@@ -1823,7 +1823,7 @@ function ConversationList({
                                                 partial={state.trackerNeedsYouPartial}
                                             />
                                         </button>
-                                        {/* Ops (loop #542 phase B): boxes, quotas, host, alerts, timers,
+                                        {/* Ops: boxes, quotas, host, alerts, timers,
                                             usage. JournalApi + agent RPC only, so not Electron-gated.
                                             Hidden at phone widths like Tracker; the bottom nav carries it. */}
                                         <button

@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 /*
  * Ops page data model: the box report a bridge persists in the journal (`box_status`, served as
  * `status` on GET /devices and fanned live as a `box_status` frame) and the on-demand
- * `ops_snapshot` agent RPC. Wire contract: loop #542 phase B (bridge lib/ops-snapshot.js, journal
+ * `ops_snapshot` agent RPC. Wire contract: (bridge lib/ops-snapshot.js, journal
  * src/spawns.js sanitizeBoxStatus). Every parser here is total: it never throws, drops what it
  * cannot read, and returns null for a block that is unusable, so an older or newer bridge degrades
  * to "less shown", never to a broken page.

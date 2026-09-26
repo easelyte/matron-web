@@ -132,7 +132,7 @@ function parseDevice(raw: unknown): DeviceParseResult {
             last_seen_at: device.last_seen_at,
             connected: device.connected,
             is_self: device.is_self,
-            // Box report (loop #542 phase B). Parsed, never trusted: a malformed block is dropped
+            // Box report. Parsed, never trusted: a malformed block is dropped
             // and a device that never reported keeps no `status` key at all.
             ...(device.status !== undefined && parseBoxStatus(device.status)
                 ? { status: parseBoxStatus(device.status) }

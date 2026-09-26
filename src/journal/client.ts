@@ -1902,7 +1902,7 @@ export class MatronJournalClient {
         this.patch({ trackerView: undefined });
     }
 
-    // ── Ops pane (loop #542 phase B) ───────────────────────────────────────────────
+    // ── Ops pane ───────────────────────────────────────────────
     // Boxes, quotas, host, alerts, timers, usage. Same one-surface-at-a-time rule as Files and the
     // tracker. Its data is fetched by the pane on open (GET /devices, GET /metrics, and one
     // `ops_snapshot` agent RPC per section); only live `box_status` reports land in the store.

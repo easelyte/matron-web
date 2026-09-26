@@ -6,8 +6,8 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * The Ops pane (loop #542 phase B): the standing page that replaces the useful half of Mission
- * Control. Two data paths, both read-only:
+ * The Ops pane: the standing page for the boxes behind this account. Two data paths, both
+ * read-only:
  *
  *  - Boxes: GET /devices (`status` = each bridge's persisted box report: Claude + Codex quotas,
  *    live sessions, disk, account, host vitals), refreshed live by `box_status` frames.
@@ -675,7 +675,7 @@ function BoxCard({
     );
 }
 
-/** Agents that never send a box report (e.g. the anton agent): one quiet line each, not a card. */
+/** Agents that never send a box report (an agent process that is not a bridge): one quiet line each, not a card. */
 function OtherAgents({ agents, now }: { agents: DeviceDTO[]; now: number }): React.ReactElement | null {
     if (!agents.length) return null;
     return (

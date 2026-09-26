@@ -6,14 +6,14 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * Ops page fixtures (loop #542 phase B). Shapes follow the wire contract
+ * Ops page fixtures. Shapes follow the wire contract
  * (bridge docs/agent-rpc.md, journal docs/protocol.md): the box report is a live device_status
  * row of 2026-09-26 plus the phase-B additions (Codex lines, vitals); the snapshot sections are the
  * bridge's ops_snapshot result envelopes. Times are relative to page load so relative labels read
  * naturally in screenshots.
  *
  * Modes:
- *   ok         — one healthy bridge box + the non-bridge anton agent; every section answers.
+ *   ok         — one healthy bridge box + a non-bridge agent; every section answers.
  *   problems   — open P1/P2 alerts, a failed and an overdue timer, a 91% weekly quota.
  *   old-bridge — today's live bridge: no Codex lines, no vitals, and ops_snapshot unknown_method.
  *   two-boxes  — a second (asleep) box, so the box switch shows.
@@ -89,10 +89,10 @@ export function opsDevices(mode: OpsFixtureMode): unknown[] {
         last_seen_at: NOW - 20_000,
         status: boxStatus(mode, 1),
     };
-    const anton = {
+    const scheduler = {
         device_id: 15,
         kind: "agent",
-        name: "anton",
+        name: "scheduler",
         connected: true,
         is_self: false,
         last_seen_at: NOW - M,
@@ -109,7 +109,7 @@ export function opsDevices(mode: OpsFixtureMode): unknown[] {
             status: boxStatus(mode, 21),
         });
     }
-    devices.push(anton);
+    devices.push(scheduler);
     return devices;
 }
 
@@ -178,17 +178,17 @@ function timers(mode: OpsFixtureMode): unknown {
         timers: [
             ...(hot
                 ? [
-                      t("anton-sysadmin-maintenance-daily.timer", "Daily maintenance", 86_400, 26 * H, {
+                      t("ops-sysadmin-maintenance-daily.timer", "Daily maintenance", 86_400, 26 * H, {
                           result: "failed",
                       }),
                       t("snafu-studio-cron@reconcile.timer", "SNAFU reconcile", 3600, 5 * H, { stale: true }),
                   ]
                 : []),
-            t("anton-watchdog-15m.timer", "Watchdog probes", 900, 6 * M),
+            t("ops-watchdog-15m.timer", "Watchdog probes", 900, 6 * M),
             t("matron-codex-prune.timer", "Prune Codex run sinks", 86_400, 13 * H),
-            t("anton-production-truth-sync-daily.timer", "Production truth sync", 86_400, 4 * H),
-            t("anton-auto-fix-loop.timer", "Auto-fix loop", 1800, 11 * M, { result: hot ? "running" : "success" }),
-            t("anton-metrics-anomaly-detector-daily.timer", "Anomaly detector", 86_400, 4 * H + 20 * M),
+            t("ops-production-truth-sync-daily.timer", "Production truth sync", 86_400, 4 * H),
+            t("ops-auto-fix-loop.timer", "Auto-fix loop", 1800, 11 * M, { result: hot ? "running" : "success" }),
+            t("ops-metrics-anomaly-detector-daily.timer", "Anomaly detector", 86_400, 4 * H + 20 * M),
             t("snafu-studio-backup.timer", "SNAFU studio backup", 86_400, 20 * H),
         ],
         cron: [
@@ -275,7 +275,7 @@ function usage(): unknown {
                 ended_ms: NOW - 14 * M,
                 machine: "vps",
                 model: "claude-opus-5-5",
-                project: "son-of-anton",
+                project: "workspace",
                 tokens: 2_310_000,
                 cost_usd: 6.12,
                 duration_s: 3 * 3600 + 12 * 60,

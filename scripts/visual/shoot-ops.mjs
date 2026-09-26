@@ -6,7 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * Ops-page visual driver (loop #542 phase B), modelled on shoot-work.mjs. Serves the fixtures
+ * Ops-page visual driver, modelled on shoot-work.mjs. Serves the fixtures
  * build (.fixtures-dist) and shoots the Ops pane through the REAL components at phone / tablet /
  * desktop widths in both themes: healthy, problems, expanded disclosures + chart hover, an old
  * bridge (needs update), two boxes (switch + asleep), loading and empty. Viewports are tall so the

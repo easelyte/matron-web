@@ -39,11 +39,11 @@ const bridge: DeviceDTO = {
         vitals: { cpu_pct: 23, ram_pct: 61, sampled_at_ms: NOW },
     },
 };
-const anton: DeviceDTO = { device_id: 15, kind: "agent", name: "anton", connected: true, is_self: false };
+const scheduler: DeviceDTO = { device_id: 15, kind: "agent", name: "scheduler", connected: true, is_self: false };
 
 type Reply = { ok: true; result: unknown } | { ok: false; code: string };
 
-function fakeClient(reply: (section: OpsSection) => Reply, devices: DeviceDTO[] = [bridge, anton]) {
+function fakeClient(reply: (section: OpsSection) => Reply, devices: DeviceDTO[] = [bridge, scheduler]) {
     return {
         listAgents: jest.fn().mockResolvedValue(devices),
         journalMetrics: jest.fn().mockResolvedValue(null),
@@ -89,7 +89,7 @@ it("says 'needs bridge update' for an old bridge instead of an error", async () 
     expect(notes).toHaveLength(1);
     expect(notes[0].textContent).toContain("Needs bridge update");
     expect(container.querySelector(".mj_OpsNote_error")).toBeNull();
-    // Only the reporting bridge is asked; the anton agent never is.
+    // Only the reporting bridge is asked; the non-bridge agent never is.
     expect(new Set(client.opsSnapshot.mock.calls.map((c) => c[0]))).toEqual(new Set([1]));
     await unmount();
 });
@@ -103,7 +103,7 @@ it("renders the box card with Claude and Codex quotas, and the non-bridge agent 
     expect(card.textContent).toContain("Codex");
     expect(card.textContent).toContain("op@example.com");
     expect(container.querySelectorAll('[data-spec="ops.box"]')).toHaveLength(1);
-    expect(container.querySelector('[data-spec="ops.agent"]')!.textContent).toContain("anton");
+    expect(container.querySelector('[data-spec="ops.agent"]')!.textContent).toContain("scheduler");
     await unmount();
 });
 
@@ -120,8 +120,8 @@ it("renders host, alerts and timers when the bridge answers", async () => {
         },
         timers: {
             timers: [
-                { unit: "anton-watchdog-15m.timer", result: "success", stale: false },
-                { unit: "anton-daily.timer", result: "failed", stale: false },
+                { unit: "ops-watchdog-15m.timer", result: "success", stale: false },
+                { unit: "ops-daily.timer", result: "failed", stale: false },
             ],
             cron: [],
         },
@@ -151,7 +151,7 @@ it("prefers a newer live box report over the fetched one", () => {
     expect(effectiveStatus(bridge, { 1: newer })?.account?.email).toBe("new@example.com");
     const older = { reported_at: NOW - 999_999, account: { email: "old@example.com" } };
     expect(effectiveStatus(bridge, { 1: older })?.account?.email).toBe("op@example.com");
-    expect(snapshotTargets([bridge, anton]).map((d) => d.device_id)).toEqual([1]);
+    expect(snapshotTargets([bridge, scheduler]).map((d) => d.device_id)).toEqual([1]);
 });
 
 it("words a missed timer run as overdue, not 'next … ago'", () => {

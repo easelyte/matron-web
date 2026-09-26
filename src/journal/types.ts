@@ -50,8 +50,8 @@ export interface DeviceDTO {
     last_seen_at?: number;
     connected: boolean;
     is_self: boolean;
-    // The box's last capacity report (journal `box_status`, loop #542 phase B). Absent for a
-    // device that never reported (clients, the anton agent) or an older journal.
+    // The box's last capacity report (journal `box_status`). Absent for a
+    // device that never reported (clients, non-bridge agents) or an older journal.
     status?: BoxStatus;
 }
 
@@ -408,7 +408,7 @@ export interface ClientState {
     //   trackerMission       = the open mission detail, null = none.
     // Undefined = never loaded this session; all reset to undefined via `...blankState()` on logout.
     trackerView?: TrackerViewState;
-    // Ops pane (loop #542 phase B): boxes, host, alerts, timers, usage. Another main-region
+    // Ops pane: boxes, host, alerts, timers, usage. Another main-region
     // discriminant, one surface at a time with Files and the tracker. The pane owns its fetched
     // data; the store only carries the open flag and the live box_status reports by device id
     // (newest reported_at wins against what GET /devices returned).
