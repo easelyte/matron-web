@@ -1,0 +1,570 @@
+{
+  "$source": "parsed from src/app.css by tools/export.js; do not hand-edit",
+  "themes": [
+    "light",
+    "dark"
+  ],
+  "color": {
+    "--cpd-color-bg-app": {
+      "value": "#f4f2ee",
+      "dark": "#121316",
+      "status": "existing"
+    },
+    "--cpd-color-bg-canvas-default": {
+      "value": "#fff",
+      "dark": "#1a1c20",
+      "status": "existing"
+    },
+    "--cpd-color-bg-canvas-raised": {
+      "value": "#faf8f4",
+      "dark": "#212429",
+      "status": "existing"
+    },
+    "--cpd-color-bg-room-canvas": {
+      "value": "#efece6",
+      "dark": "#151619",
+      "status": "existing"
+    },
+    "--cpd-color-bg-subtle-primary": {
+      "value": "#f2efe9",
+      "dark": "#212429",
+      "status": "existing"
+    },
+    "--cpd-color-bg-subtle-secondary": {
+      "value": "#eae5dd",
+      "dark": "#282c32",
+      "status": "existing"
+    },
+    "--cpd-color-bg-self-bubble": {
+      "value": "#e6f4ef",
+      "dark": "#123530",
+      "status": "existing"
+    },
+    "--cpd-color-bg-accent": {
+      "value": "#0f766e",
+      "status": "existing"
+    },
+    "--cpd-color-bg-diff-add": {
+      "value": "rgb(52 199 89 / 0.13)",
+      "dark": "rgb(52 199 89 / 0.12)",
+      "status": "existing"
+    },
+    "--cpd-color-bg-diff-del": {
+      "value": "rgb(255 59 48 / 0.09)",
+      "dark": "rgb(255 107 107 / 0.1)",
+      "status": "existing"
+    },
+    "--cpd-color-text-primary": {
+      "value": "#1b1815",
+      "dark": "#e7e4df",
+      "status": "existing"
+    },
+    "--cpd-color-text-secondary": {
+      "value": "#6b655c",
+      "dark": "#9a948b",
+      "status": "existing"
+    },
+    "--cpd-color-text-tertiary": {
+      "value": "#9a938a",
+      "dark": "#6d675f",
+      "status": "existing"
+    },
+    "--cpd-color-text-action-accent": {
+      "value": "#0d9488",
+      "dark": "#2dd4bf",
+      "status": "existing"
+    },
+    "--cpd-color-text-critical-primary": {
+      "value": "#bd2020",
+      "dark": "#ff6a6a",
+      "status": "existing"
+    },
+    "--cpd-color-text-on-accent": {
+      "value": "#fff",
+      "status": "existing"
+    },
+    "--cpd-color-text-placeholder": {
+      "value": "#9a938a",
+      "dark": "#6d675f",
+      "status": "existing"
+    },
+    "--cpd-color-icon-accent-primary": {
+      "value": "#0d9488",
+      "dark": "#2dd4bf",
+      "status": "existing"
+    },
+    "--cpd-color-icon-secondary": {
+      "value": "#6b655c",
+      "dark": "#9a948b",
+      "status": "existing"
+    },
+    "--cpd-color-icon-tertiary": {
+      "value": "#9a938a",
+      "dark": "#6d675f",
+      "status": "existing"
+    },
+    "--cpd-color-border-subtle": {
+      "value": "#e7e2d9",
+      "dark": "#2a2d33",
+      "status": "existing"
+    },
+    "--cpd-color-border-strong": {
+      "value": "#d8d1c5",
+      "dark": "#3a3f46",
+      "status": "existing"
+    },
+    "--cpd-color-border-disabled": {
+      "value": "#ded8ce",
+      "dark": "#2a2d33",
+      "status": "existing"
+    },
+    "--cpd-color-border-interactive-primary": {
+      "value": "#b3aa9c",
+      "dark": "#5a5f67",
+      "status": "existing"
+    },
+    "--cpd-color-border-interactive-secondary": {
+      "value": "#d8d1c5",
+      "dark": "#3a3f46",
+      "status": "existing"
+    },
+    "--cpd-color-usage-low": {
+      "value": "#34c759",
+      "status": "existing"
+    },
+    "--cpd-color-usage-medium": {
+      "value": "#ff9500",
+      "status": "existing"
+    },
+    "--cpd-state-hover": {
+      "value": "rgb(28 24 20 / 0.05)",
+      "dark": "rgb(255 255 255 / 0.06)",
+      "status": "existing"
+    },
+    "--cpd-state-active": {
+      "value": "rgb(28 24 20 / 0.09)",
+      "dark": "rgb(255 255 255 / 0.1)",
+      "status": "existing"
+    },
+    "--cpd-state-selected": {
+      "value": "rgb(13 148 136 / 0.1)",
+      "dark": "rgb(45 212 191 / 0.14)",
+      "status": "existing"
+    },
+    "--mj-selection": {
+      "value": "rgb(13 148 136 / 0.2)",
+      "dark": "rgb(45 212 191 / 0.26)",
+      "status": "existing"
+    },
+    "--mj-scrollbar": {
+      "value": "rgb(28 24 20 / 0.22)",
+      "dark": "rgb(255 255 255 / 0.2)",
+      "status": "existing"
+    },
+    "--mj-scrollbar-hover": {
+      "value": "rgb(28 24 20 / 0.34)",
+      "dark": "rgb(255 255 255 / 0.32)",
+      "status": "existing"
+    },
+    "--mj-scrim-modal": {
+      "value": "rgb(18 16 14 / 55%)",
+      "status": "existing"
+    },
+    "--mj-critical-tint": {
+      "value": "rgb(189 32 32 / 10%)",
+      "dark": "rgb(255 106 106 / 14%)",
+      "status": "existing"
+    },
+    "--mj-critical-border": {
+      "value": "rgb(189 32 32 / 45%)",
+      "dark": "rgb(255 106 106 / 45%)",
+      "status": "existing"
+    },
+    "--mj-warn-ink": {
+      "value": "#9a5700",
+      "dark": "#ffb454",
+      "status": "new",
+      "intent": "amber TEXT that clears 4.5:1 on canvas + raised; --cpd-color-usage-medium is a fill, 2.2:1 as text"
+    },
+    "--mj-warn-dot": {
+      "value": "var(--cpd-color-usage-medium)",
+      "status": "new",
+      "intent": "the \"something went wrong along the way\" dot"
+    },
+    "--mj-warn-tint": {
+      "value": "rgb(255 149 0 / 10%)",
+      "dark": "rgb(255 180 84 / 12%)",
+      "status": "new",
+      "intent": "hover fill behind the amber Stop"
+    },
+    "--mj-accent-border": {
+      "value": "rgb(13 148 136 / 25%)",
+      "dark": "rgb(45 212 191 / 28%)",
+      "status": "new"
+    }
+  },
+  "type": {
+    "--cpd-font-micro": {
+      "value": "400 11px/14px Inter,sans-serif",
+      "status": "existing",
+      "intent": "timestamps, hints under menu rows",
+      "weight": 400,
+      "size": "11px",
+      "lineHeight": "14px",
+      "family": "Inter,sans-serif"
+    },
+    "--cpd-font-meta": {
+      "value": "400 12px/16px Inter,sans-serif",
+      "status": "existing",
+      "intent": "card meta, live line, captions, system notice",
+      "weight": 400,
+      "size": "12px",
+      "lineHeight": "16px",
+      "family": "Inter,sans-serif"
+    },
+    "--cpd-font-label": {
+      "value": "500 13px/16px Inter,sans-serif",
+      "status": "existing",
+      "intent": "control labels, card title, menu rows, buttons",
+      "weight": 500,
+      "size": "13px",
+      "lineHeight": "16px",
+      "family": "Inter,sans-serif"
+    },
+    "--cpd-font-body-sm-regular": {
+      "value": "400 14px/20px Inter,sans-serif",
+      "status": "existing",
+      "intent": "step rows and dense secondary text",
+      "weight": 400,
+      "size": "14px",
+      "lineHeight": "20px",
+      "family": "Inter,sans-serif"
+    },
+    "--cpd-font-body": {
+      "value": "400 14px/21px Inter,sans-serif",
+      "status": "existing",
+      "intent": "prose: answers, bubbles, group sentences, narration",
+      "weight": 400,
+      "size": "14px",
+      "lineHeight": "21px",
+      "family": "Inter,sans-serif"
+    },
+    "--cpd-font-title": {
+      "value": "600 15px/20px Inter,sans-serif",
+      "status": "existing",
+      "intent": "header title, sidebar brand",
+      "weight": 600,
+      "size": "15px",
+      "lineHeight": "20px",
+      "family": "Inter,sans-serif"
+    },
+    "--mj-font-modal-title": {
+      "value": "600 14px/19px Inter,sans-serif",
+      "status": "live-literal",
+      "liveLiteralIn": ".mj_UploadConfirm_title",
+      "intent": "modal title",
+      "weight": 600,
+      "size": "14px",
+      "lineHeight": "19px",
+      "family": "Inter,sans-serif"
+    },
+    "--mj-font-label-sm": {
+      "value": "500 12px/16px Inter,sans-serif",
+      "status": "live-literal",
+      "liveLiteralIn": ".mj_NewSessionSheet label",
+      "intent": "field labels, section labels, +N −M counts",
+      "weight": 500,
+      "size": "12px",
+      "lineHeight": "16px",
+      "family": "Inter,sans-serif"
+    },
+    "--mj-font-mono": {
+      "value": "400 12px/18px \"Fira Code\",monospace",
+      "status": "existing",
+      "intent": "raw command, output, diff lines — deep detail only",
+      "weight": 400,
+      "size": "12px",
+      "lineHeight": "18px",
+      "family": "\"Fira Code\",monospace"
+    },
+    "--mj-font-mono-strong": {
+      "value": "500 12.5px/18px \"Fira Code\",monospace",
+      "status": "live-literal",
+      "liveLiteralIn": ".mj_ToolCard summary code",
+      "intent": "the $ command line",
+      "weight": 500,
+      "size": "12.5px",
+      "lineHeight": "18px",
+      "family": "\"Fira Code\",monospace"
+    }
+  },
+  "spacing": {
+    "--cpd-space-0-5x": {
+      "value": "2px",
+      "status": "existing"
+    },
+    "--cpd-space-1x": {
+      "value": "4px",
+      "status": "existing"
+    },
+    "--cpd-space-2x": {
+      "value": "8px",
+      "status": "existing"
+    },
+    "--cpd-space-3x": {
+      "value": "12px",
+      "status": "existing"
+    },
+    "--cpd-space-4x": {
+      "value": "16px",
+      "status": "existing"
+    },
+    "--cpd-space-5x": {
+      "value": "20px",
+      "status": "existing"
+    },
+    "--cpd-space-6x": {
+      "value": "24px",
+      "status": "existing"
+    },
+    "--cpd-space-8x": {
+      "value": "32px",
+      "status": "existing"
+    },
+    "--cpd-space-10x": {
+      "value": "40px",
+      "status": "existing"
+    },
+    "--cpd-space-12x": {
+      "value": "48px",
+      "status": "existing"
+    }
+  },
+  "radii": {
+    "--cpd-radius-xs": {
+      "value": "4px",
+      "status": "existing"
+    },
+    "--cpd-radius-sm": {
+      "value": "6px",
+      "status": "existing"
+    },
+    "--cpd-radius-md": {
+      "value": "8px",
+      "status": "existing"
+    },
+    "--cpd-radius-lg": {
+      "value": "12px",
+      "status": "existing"
+    },
+    "--cpd-radius-xl": {
+      "value": "16px",
+      "status": "existing"
+    },
+    "--cpd-radius-pill": {
+      "value": "999px",
+      "status": "existing"
+    }
+  },
+  "shadows": {
+    "--cpd-shadow-sm": {
+      "value": "0 1px 2px rgb(28 24 20 / 0.06)",
+      "dark": "0 1px 2px rgb(0 0 0 / 0.3)",
+      "status": "existing"
+    },
+    "--cpd-shadow-md": {
+      "value": "0 4px 12px rgb(28 24 20 / 0.1)",
+      "dark": "0 4px 12px rgb(0 0 0 / 0.4)",
+      "status": "existing"
+    },
+    "--cpd-shadow-lg": {
+      "value": "0 16px 48px rgb(28 24 20 / 0.16)",
+      "dark": "0 16px 48px rgb(0 0 0 / 0.5)",
+      "status": "existing"
+    }
+  },
+  "motion": {
+    "--cpd-dur-fast": {
+      "value": "120ms",
+      "status": "existing"
+    },
+    "--cpd-dur-med": {
+      "value": "180ms",
+      "status": "existing"
+    },
+    "--cpd-ease": {
+      "value": "cubic-bezier(0.2,0,0,1)",
+      "status": "existing"
+    },
+    "--mj-live-xfade": {
+      "value": "240ms",
+      "status": "new",
+      "intent": "live line: outgoing and incoming text cross-fade (opacity only)"
+    },
+    "--mj-live-min-interval": {
+      "value": "1200ms",
+      "status": "new",
+      "intent": "live line changes at most once per interval; newer text replaces a queued one"
+    },
+    "--mj-live-elapsed-after": {
+      "value": "10s",
+      "status": "new",
+      "intent": "elapsed \"· 42s\" appears once the current step passes this"
+    },
+    "--mj-slow-after": {
+      "value": "300s",
+      "status": "new",
+      "intent": "a step at or past this turns the line amber and shows Stop"
+    },
+    "--mj-card-expand": {
+      "value": "var(--cpd-dur-fast)",
+      "status": "new",
+      "intent": "chevron rotates; body fades in, height is NOT animated"
+    },
+    "--mj-group-expand": {
+      "value": "var(--cpd-dur-fast)",
+      "status": "new",
+      "intent": "group chevron rotates; step list appears, no height animation"
+    },
+    "--mj-deep-open": {
+      "value": "var(--cpd-dur-med)",
+      "status": "new",
+      "intent": "deep panel fades in place; closing is instant"
+    },
+    "--mj-resolve": {
+      "value": "var(--cpd-dur-med)",
+      "status": "new",
+      "intent": "running→done: glyph and meta cross-fade in the same box, no size change"
+    },
+    "$choreography": {
+      "liveLineCrossfade": {
+        "property": "opacity",
+        "duration": "var(--mj-live-xfade)",
+        "easing": "var(--cpd-ease)",
+        "minInterval": "var(--mj-live-min-interval)",
+        "rule": "outgoing + incoming text stacked in one grid cell; a newer text replaces a queued one; height never changes"
+      },
+      "cardExpand": {
+        "chevron": "rotate(-90deg → 0) over var(--mj-card-expand)",
+        "body": "opacity 0→1 over var(--mj-card-expand)",
+        "height": "not animated"
+      },
+      "groupExpand": {
+        "chevron": "rotate over var(--mj-group-expand)",
+        "list": "appears immediately",
+        "height": "not animated"
+      },
+      "deepDetail": {
+        "open": "opacity 0→1 over var(--mj-deep-open)",
+        "close": "instant"
+      },
+      "runningToDone": {
+        "glyph": "live dot → check or amber dot, fade over var(--mj-resolve)",
+        "meta": "live line → 'N steps · duration' in the same box, fade over var(--mj-resolve)",
+        "size": "unchanged — the summary is one row in every state"
+      },
+      "reducedMotion": "pulse/spin stop; every fade becomes instant"
+    }
+  },
+  "breakpoints": {
+    "--mj-bp-pane-narrow": {
+      "value": "480px",
+      "status": "new",
+      "intent": "chat pane (ResizeObserver) width ≤ this → data-pane=\"narrow\""
+    },
+    "--mj-bp-pane-medium": {
+      "value": "760px",
+      "status": "new",
+      "intent": "chat pane width ≤ this → data-pane=\"medium\""
+    },
+    "--mj-bp-sidebar-min": {
+      "value": "224px",
+      "status": "new",
+      "intent": "smallest sidebar the split button is designed for"
+    },
+    "$measuredElement": "the chat pane (.mx_RoomView_body / [data-chat-pane]) via ResizeObserver — never the viewport. The phone layout (@media max-width:700px) is unchanged and separate."
+  },
+  "layering": {
+    "--mj-z-menu": {
+      "value": "30",
+      "status": "existing"
+    },
+    "--mj-z-modal": {
+      "value": "50",
+      "status": "existing",
+      "intent": "popovers / modal scrim + card (v4 layering)"
+    }
+  },
+  "layout": {
+    "--mj-content-width": {
+      "value": "100%",
+      "status": "existing"
+    }
+  },
+  "surfaceLadder": {
+    "light": [
+      {
+        "token": "--cpd-color-bg-room-canvas",
+        "value": "#efece6"
+      },
+      {
+        "token": "--cpd-color-bg-app",
+        "value": "#f4f2ee"
+      },
+      {
+        "token": "--cpd-color-bg-subtle-secondary",
+        "value": "#eae5dd"
+      },
+      {
+        "token": "--cpd-color-bg-subtle-primary",
+        "value": "#f2efe9"
+      },
+      {
+        "token": "--cpd-color-bg-canvas-raised",
+        "value": "#faf8f4"
+      },
+      {
+        "token": "--cpd-color-bg-canvas-default",
+        "value": "#fff"
+      }
+    ],
+    "dark": [
+      {
+        "token": "--cpd-color-bg-app",
+        "value": "#121316"
+      },
+      {
+        "token": "--cpd-color-bg-room-canvas",
+        "value": "#151619"
+      },
+      {
+        "token": "--cpd-color-bg-canvas-default",
+        "value": "#1a1c20"
+      },
+      {
+        "token": "--cpd-color-bg-canvas-raised",
+        "value": "#212429"
+      },
+      {
+        "token": "--cpd-color-bg-subtle-secondary",
+        "value": "#282c32"
+      }
+    ],
+    "rule": "Dark is a lightness ladder, darkest first: app < room canvas (the thread) < canvas-default (panels, card bodies, menus, modals, deep panels) < canvas-raised (card title rows, deep-detail head, tool-card summary) < subtle-secondary (tracks, disabled fields). In dark, subtle-primary == canvas-raised by design. In light the order inverts for panels: white is the top rung.",
+    "turnCard": "title row = canvas-raised; expanded body + deep panel = canvas-default (one rung down, same as .mj_ToolCard summary/body)"
+  },
+  "keyframes": [
+    {
+      "name": "mj-pulse",
+      "body": "0%,100%{opacity:.35}50%{opacity:1}"
+    },
+    {
+      "name": "mj-spin",
+      "body": "to{transform:rotate(360deg)}"
+    },
+    {
+      "name": "mj-fade-in",
+      "body": "from{opacity:0}to{opacity:1}"
+    }
+  ]
+}
