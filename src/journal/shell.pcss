@@ -113,6 +113,9 @@ Please see LICENSE files in the repository root for full details.
     --mj-control-h-lg: 40px;
     --mj-control-h-touch: 44px;
     --mj-control-pad-x: var(--cpd-space-3x);
+    /* A pane's sub-header bar (Files: the list's breadcrumb and the preview's name bar). Side-by-
+       side panes share it so their hairlines run as one line across the split. */
+    --mj-subbar-h: 52px;
     /* A segmented track insets its segments by this on every side (segment = control - 2×inset). */
     --mj-seg-inset: 2px;
     /* One focus treatment: a 2px accent outline. Standalone controls sit it 2px outside the box,
@@ -1285,6 +1288,9 @@ button {
 }
 
 .mx_Field input {
+    /* Border-box: the 48px floating-label field includes its padding and border. Content-box made
+       it 74x386 inside a 360px form, so it overran the card's padding (and the viewport at 390). */
+    box-sizing: border-box;
     width: 100%;
     height: 48px;
     padding: 18px 12px 6px;
