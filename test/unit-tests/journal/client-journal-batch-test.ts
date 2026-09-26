@@ -6,6 +6,8 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import { MatronJournalClient } from "../../../src/journal/client";
+import { JournalConnection } from "../../../src/journal/connection";
+import { JournalDatabase } from "../../../src/journal/database";
 import { type ClientState, type Conversation, type JournalEvent, type Session } from "../../../src/journal/types";
 
 const SESSION: Session = { serverUrl: "https://journal.example", token: "t", deviceId: 1, userId: 2, username: "dan" };
@@ -162,5 +164,32 @@ describe("MatronJournalClient.handleJournalBatch", () => {
         expect(sent).toContainEqual({ op: "ack", cursor: 14 });
         expect(sent).toContainEqual({ op: "read_marker", convo_id: "c1", up_to_seq: 14 });
         expect(internal.history.get("c1")?.newestSeq).toBe(14);
+    });
+});
+
+describe("MatronJournalClient startup", () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    it("paints the sidebar without waiting for the tool-log expiry pass", async () => {
+        const client = new MatronJournalClient();
+        const expire = jest.fn(() => new Promise<void>(() => undefined)); // never settles
+        const database = {
+            close: jest.fn(),
+            expireToolLogs: expire,
+            cursor: jest.fn().mockResolvedValue(10),
+            reconcilePersistedOwnMessages: jest.fn().mockResolvedValue([]),
+            outbox: jest.fn().mockResolvedValue([]),
+            addToOutbox: jest.fn().mockResolvedValue(undefined),
+            conversations: jest.fn().mockResolvedValue(CONVERSATIONS),
+            events: jest.fn().mockResolvedValue([]),
+        };
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+
+        await (client as unknown as { startSession(session: Session): Promise<void> }).startSession(SESSION);
+
+        expect(expire).toHaveBeenCalledTimes(1);
+        expect(client.getSnapshot().phase).toBe("signed-in");
+        expect(client.getSnapshot().conversations.map((conversation) => conversation.id)).toEqual(["c1", "c2"]);
     });
 });
