@@ -595,7 +595,7 @@ export class MatronJournalClient {
         agentDeviceId: number,
         workdir: string,
         browser: boolean,
-        choice: { model?: string; agent?: "claude" | "codex" } = {},
+        choice: { model?: string; agent?: "claude" | "codex"; idempotencyKey?: string } = {},
     ): Promise<StartOutcome> {
         if (this.startSessionRequest) {
             return Promise.resolve({ kind: "error", message: "A session is already starting — please wait." });
@@ -614,14 +614,23 @@ export class MatronJournalClient {
         agentDeviceId: number,
         workdir: string,
         browser: boolean,
-        choice: { model?: string; agent?: "claude" | "codex" } = {},
+        choice: { model?: string; agent?: "claude" | "codex"; idempotencyKey?: string } = {},
     ): Promise<StartOutcome> {
-        const params: { workdir?: string; browser?: true; model?: string; agent?: string } = {};
+        const params: {
+            workdir?: string;
+            browser?: true;
+            model?: string;
+            agent?: string;
+            idempotency_key?: string;
+        } = {};
         const normalizedWorkdir = workdir.trim();
         if (normalizedWorkdir) params.workdir = normalizedWorkdir;
         if (browser) params.browser = true;
         if (choice.model) params.model = choice.model;
         if (choice.agent) params.agent = choice.agent;
+        // One key per operator intent: a retry after an uncertain start re-answers the same
+        // conversation instead of spawning a second one (bridge start dedup).
+        if (choice.idempotencyKey) params.idempotency_key = choice.idempotencyKey;
 
         const reply = await this.agentRpc(agentDeviceId, "start", params);
         if (reply.ok) {

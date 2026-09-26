@@ -1256,16 +1256,27 @@ function ConversationList({
     useEffect(() => {
         if (state.connection !== "online") return;
         let live = true;
-        client.listAgents().then(
-            (agents) => {
-                if (live) setNewSessionBoxes(agents);
-            },
-            () => undefined,
-        );
+        const refresh = (): void => {
+            client.listAgents().then(
+                (agents) => {
+                    if (live) setNewSessionBoxes(agents);
+                },
+                () => undefined,
+            );
+        };
+        refresh();
+        // A box can come up or drop while the tab sits open: re-check when the operator returns.
+        const onVisible = (): void => {
+            if (document.visibilityState === "visible") refresh();
+        };
+        window.addEventListener("focus", refresh);
+        document.addEventListener("visibilitychange", onVisible);
         return () => {
             live = false;
+            window.removeEventListener("focus", refresh);
+            document.removeEventListener("visibilitychange", onVisible);
         };
-    }, [client, state.connection]);
+    }, [client, state.connection, newSessionOpen]);
     const settingsOpenerRef = useRef<HTMLButtonElement>(null);
     const settingsPanelRef = useRef<HTMLDivElement>(null);
     const closeSettings = useCallback(() => setAccountOpen(false), []);
@@ -1979,10 +1990,11 @@ function ConversationList({
                 {newSessionOpen && (
                     <NewSessionSheet
                         client={client}
-                        onClose={() => {
+                        onClose={(started) => {
                             setNewSessionOpen(false);
-                            // Focus returns to ⋯ when the sheet closes (v6 §5).
-                            requestAnimationFrame(() => newSessionMoreRef.current?.focus());
+                            // Focus returns to ⋯ when the sheet is dismissed (v6 §5); after a
+                            // start it stays with the new conversation.
+                            if (!started) requestAnimationFrame(() => newSessionMoreRef.current?.focus());
                         }}
                     />
                 )}

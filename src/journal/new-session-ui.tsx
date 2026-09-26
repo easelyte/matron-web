@@ -18,10 +18,13 @@ import { type MatronJournalClient, type StartOutcome } from "./client";
 import {
     type AgentKind,
     defaultsHint,
+    forgetRememberedDefaults,
     oneTapStart,
+    pickBox,
     readRememberedDefaults,
     type RememberedDefaults,
     type SessionOptions,
+    writeRememberedBox,
     writeRememberedDefaults,
 } from "./new-session";
 import { type DeviceDTO } from "./types";
@@ -31,10 +34,36 @@ function boxName(box: DeviceDTO): string {
     return box.name?.trim() || `Agent ${box.device_id}`;
 }
 
-/** After a start: open the conversation and send the first task as an ordinary message. */
+/** Resolves once the client knows the conversation (its row can lag the start reply). */
+function waitForConversation(client: MatronJournalClient, convoId: string, timeoutMs = 20_000): Promise<void> {
+    const known = (): boolean => client.getSnapshot().conversations.some((conversation) => conversation.id === convoId);
+    if (known()) return Promise.resolve();
+    return new Promise((resolve) => {
+        const done = (): void => {
+            unsubscribe();
+            window.clearTimeout(timer);
+            resolve();
+        };
+        const unsubscribe = client.subscribe(() => {
+            if (known()) done();
+        });
+        const timer = window.setTimeout(done, timeoutMs);
+    });
+}
+
+/**
+ * After a start: open the conversation and send the first task as an ordinary message
+ * (CONTRACTS 5) once the conversation exists on the journal, so the send isn't refused.
+ */
 async function openStarted(client: MatronJournalClient, convoId: string, task: string): Promise<void> {
-    await client.selectConversation(convoId, { fromRpcCreate: true });
-    if (task.trim()) await client.sendMessage(task, convoId);
+    try {
+        await client.selectConversation(convoId, { fromRpcCreate: true });
+        if (!task.trim()) return;
+        await waitForConversation(client, convoId);
+        await client.sendMessage(task, convoId);
+    } catch (error) {
+        console.warn("matron: opening the new session failed", error);
+    }
 }
 
 type SplitState = { kind: "idle" } | { kind: "starting" } | { kind: "error"; message: string } | { kind: "uncertain" };
@@ -60,7 +89,9 @@ export function NewSessionSplit({
 }): React.ReactElement {
     const [state, setState] = useState<SplitState>({ kind: "idle" });
     const mainRef = useRef<HTMLButtonElement>(null);
-    const box = boxes?.find((candidate) => candidate.connected);
+    // One key per start intent, reused by Retry, so an uncertain start can't spawn twice.
+    const intentRef = useRef<string | undefined>(undefined);
+    const box = boxes ? pickBox(boxes) : undefined;
     const nobox = boxes !== undefined && !box;
     const [remembered, setRemembered] = useState<RememberedDefaults | undefined>(() =>
         box ? readRememberedDefaults(box.device_id) : undefined,
@@ -77,33 +108,46 @@ export function NewSessionSplit({
     }, [box]);
     const hint = box ? defaultsHint(remembered, undefined) : undefined;
 
-    const start = async (): Promise<void> => {
-        if (state.kind === "starting") return;
-        let target = box;
-        if (!target) {
-            try {
-                target = (await client.listAgents()).find((candidate) => candidate.connected);
-            } catch {
-                target = undefined;
-            }
+    const startingRef = useRef(false);
+    const start = async (retry = false): Promise<void> => {
+        if (startingRef.current) return;
+        startingRef.current = true;
+        setState({ kind: "starting" });
+        mainRef.current?.focus();
+        if (!retry || !intentRef.current) intentRef.current = crypto.randomUUID();
+        // A fresh roster per tap: the box may have come up (or gone) since the sidebar loaded.
+        let target: DeviceDTO | undefined;
+        try {
+            target = pickBox(await client.listAgents());
+        } catch {
+            target = box;
         }
         if (!target) {
+            startingRef.current = false;
             setState({ kind: "error", message: "Couldn’t reach the box." });
             return;
         }
-        setState({ kind: "starting" });
-        mainRef.current?.focus();
         const params = oneTapStart(readRememberedDefaults(target.device_id));
         const outcome: StartOutcome = await client.startSessionRpc(target.device_id, params.workdir, false, {
             model: params.model,
             agent: params.agent,
+            idempotencyKey: intentRef.current,
         });
+        startingRef.current = false;
         if (outcome.kind === "created") {
+            intentRef.current = undefined;
             setState({ kind: "idle" });
             onStartedFocus?.();
             void openStarted(client, outcome.convoId, "");
         } else if (outcome.kind === "uncertain") {
             setState({ kind: "uncertain" });
+        } else if (outcome.code === "bad_workdir" || outcome.code === "bad_model" || outcome.code === "bad_agent") {
+            // The saved defaults no longer work on this box: forget them, so the next tap uses
+            // the box's own defaults, and point at Options.
+            forgetRememberedDefaults(target.device_id);
+            setRemembered(undefined);
+            intentRef.current = undefined;
+            setState({ kind: "error", message: "Your saved defaults don’t work on this box any more." });
         } else {
             setState({ kind: "error", message: outcome.reach ? "Couldn’t reach the box." : outcome.message });
         }
@@ -151,7 +195,8 @@ export function NewSessionSplit({
                     className="mj_NewSessionSplit_more"
                     aria-label="New session options"
                     aria-haspopup="dialog"
-                    disabled={disabled}
+                    // Stays enabled with no box: the sheet re-checks and says so itself.
+                    disabled={starting}
                     onClick={() => {
                         if (state.kind === "error") setState({ kind: "idle" });
                         onOpenSheet();
@@ -163,7 +208,7 @@ export function NewSessionSplit({
             {state.kind === "error" && (
                 <div className="mj_NewSessionSplit_note mj_NewSessionSplit_note_error" role="alert">
                     {state.message}{" "}
-                    <button type="button" onClick={() => void start()}>
+                    <button type="button" onClick={() => void start(true)}>
                         Retry
                     </button>{" "}
                     ·{" "}
@@ -207,10 +252,11 @@ type SheetState =
 /** The New session options sheet (`.mj_NewSessionSheet` on the upload-confirm shell). */
 export function NewSessionSheet({
     client,
-    onClose,
+    onClose: close,
 }: {
     client: MatronJournalClient;
-    onClose: () => void;
+    /** `started` = closed because a session started (focus then stays with the new chat). */
+    onClose: (started?: boolean) => void;
 }): React.ReactElement {
     const [sheet, setSheet] = useState<SheetState>({ step: "loading" });
     const [boxes, setBoxes] = useState<DeviceDTO[]>([]);
@@ -229,6 +275,11 @@ export function NewSessionSheet({
     const dialogRef = useRef<HTMLDivElement>(null);
     const otherRef = useRef<HTMLInputElement>(null);
     const ids = useId();
+    const intentRef = useRef(crypto.randomUUID());
+    // No closing mid-start: the typed first task would be lost with the sheet.
+    const onClose = (): void => {
+        if (!starting) close(false);
+    };
 
     const loadBox = useCallback(
         (box: DeviceDTO): void => {
@@ -246,7 +297,11 @@ export function NewSessionSheet({
                     );
                     const preferredAgent = remembered?.agent ?? options.defaultAgent ?? "claude";
                     setAgent(options.agents.includes(preferredAgent) ? preferredAgent : options.agents[0]);
-                    setModel(remembered?.model ?? options.defaultModel ?? "");
+                    const rememberedModel =
+                        remembered?.model && options.models.some((option) => option.value === remembered.model)
+                            ? remembered.model
+                            : undefined;
+                    setModel(rememberedModel ?? options.defaultModel ?? "");
                     setSheet({ step: "form", box, options });
                 },
                 () => {
@@ -311,22 +366,25 @@ export function NewSessionSheet({
         const outcome = await client.startSessionRpc(form.box.device_id, workdir, !codex && browser, {
             model: codex || !model ? undefined : model,
             agent: showAgents ? agent : undefined,
+            idempotencyKey: intentRef.current,
         });
-        if (!mountedRef.current) return;
-        setStarting(false);
         if (outcome.kind === "created") {
+            // Runs even if the sheet is already gone: the session exists, the task must follow it.
             if (remember) {
                 writeRememberedDefaults(form.box.device_id, {
                     folder: workdir || undefined,
                     model: codex ? undefined : model || undefined,
                     agent: showAgents ? agent : undefined,
                 });
+                writeRememberedBox(form.box.device_id);
                 window.dispatchEvent(new Event("matron:new-session-defaults"));
             }
-            onClose();
             void openStarted(client, outcome.convoId, task);
+            if (mountedRef.current) close(true);
             return;
         }
+        if (!mountedRef.current) return;
+        setStarting(false);
         if (outcome.kind === "uncertain") {
             setSheet({ step: "uncertain" });
             return;
@@ -380,7 +438,13 @@ export function NewSessionSheet({
                         New session
                     </h2>
                     <span className="mj_UploadConfirm_headerSpacer" />
-                    <button type="button" className="mj_UploadConfirm_close" aria-label="Close" onClick={onClose}>
+                    <button
+                        type="button"
+                        className="mj_UploadConfirm_close"
+                        aria-label="Close"
+                        disabled={starting}
+                        onClick={onClose}
+                    >
                         <V6Icon name="x" />
                     </button>
                 </header>
@@ -595,7 +659,7 @@ export function NewSessionSheet({
                 </div>
                 <footer className="mj_UploadConfirm_footer">
                     <div className="mj_UploadConfirm_actions">
-                        <button type="button" onClick={onClose}>
+                        <button type="button" disabled={starting} onClick={onClose}>
                             {sheet.step === "uncertain" ? "Close" : "Cancel"}
                         </button>
                         {form && (

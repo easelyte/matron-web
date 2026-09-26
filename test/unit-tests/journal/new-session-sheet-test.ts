@@ -110,7 +110,11 @@ describe("New session split button (one tap)", () => {
         expect(main().getAttribute("aria-label")).toBe("Start a new session");
         expect(rendered.container.querySelector(".mj_NewSessionSplit_hint")).toBeNull();
         await act(async () => main().click());
-        expect(start).toHaveBeenCalledWith(10, "", false, { model: undefined, agent: undefined });
+        expect(start).toHaveBeenCalledWith(10, "", false, {
+            model: undefined,
+            agent: undefined,
+            idempotencyKey: expect.any(String),
+        });
         expect(rendered.container.querySelector('[role="dialog"]')).toBeNull();
         expect(select).toHaveBeenCalledWith("new", { fromRpcCreate: true });
     });
@@ -129,17 +133,50 @@ describe("New session split button (one tap)", () => {
         expect(main().getAttribute("aria-label")).toBe("Start a new session: Sonnet · workspace");
         expect(rendered.container.querySelector(".mj_NewSessionSplit_hint")?.textContent).toBe("Sonnet · workspace");
         await act(async () => main().click());
-        expect(start).toHaveBeenCalledWith(10, "/home/user/workspace", false, { model: "sonnet", agent: "claude" });
+        expect(start).toHaveBeenCalledWith(10, "/home/user/workspace", false, {
+            model: "sonnet",
+            agent: "claude",
+            idempotencyKey: expect.any(String),
+        });
     });
 
-    it("says No box connected and disables both segments when no box is up", async () => {
+    it("says No box connected and disables one tap (⋯ stays, the sheet re-checks)", async () => {
         const client = new MatronJournalClient();
         signedIn(client);
         jest.spyOn(client, "listAgents").mockResolvedValue([{ ...AGENT_A, connected: false }]);
         rendered = await render(React.createElement(MatronApp, { client }));
         expect(main().disabled).toBe(true);
-        expect(rendered.container.querySelector<HTMLButtonElement>(".mj_NewSessionSplit_more")!.disabled).toBe(true);
+        expect(rendered.container.querySelector<HTMLButtonElement>(".mj_NewSessionSplit_more")!.disabled).toBe(false);
         expect(rendered.container.querySelector(".mj_NewSessionSplit_note")?.textContent).toBe("No box connected");
+    });
+
+    it("forgets saved defaults the box refuses, and says so", async () => {
+        localStorage.setItem("matron.newSessionDefaults.10", JSON.stringify({ folder: "/gone", model: "opus" }));
+        const client = new MatronJournalClient();
+        signedIn(client);
+        jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A]);
+        jest.spyOn(client, "startSessionRpc").mockResolvedValue({
+            kind: "error",
+            code: "bad_workdir",
+            message: "That folder doesn’t exist on the box.",
+        });
+        rendered = await render(React.createElement(MatronApp, { client }));
+        await act(async () => main().click());
+        expect(localStorage.getItem("matron.newSessionDefaults.10")).toBeNull();
+        expect(rendered.container.querySelector(".mj_NewSessionSplit_note")?.textContent).toContain(
+            "Your saved defaults don’t work on this box any more.",
+        );
+    });
+
+    it("prefers the box the defaults were saved for", async () => {
+        localStorage.setItem("matron.newSessionBox", "11");
+        const client = new MatronJournalClient();
+        signedIn(client);
+        jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, { ...AGENT_A, device_id: 11, name: "Box B" }]);
+        const start = jest.spyOn(client, "startSessionRpc").mockResolvedValue({ kind: "uncertain" });
+        rendered = await render(React.createElement(MatronApp, { client }));
+        await act(async () => main().click());
+        expect(start.mock.calls[0][0]).toBe(11);
     });
 
     it("shows Retry · Options when the box can't be reached, and never auto-retries", async () => {
@@ -232,6 +269,11 @@ describe("New session options sheet", () => {
         const start = jest.spyOn(client, "startSessionRpc").mockResolvedValue({ kind: "created", convoId: "new" });
         jest.spyOn(client, "selectConversation").mockResolvedValue(undefined);
         const send = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        // The new conversation is known to the client, so the first task goes out at once.
+        jest.spyOn(client, "getSnapshot").mockReturnValue({
+            ...new MatronJournalClient().getSnapshot(),
+            conversations: [{ id: "new" } as never],
+        });
         const onClose = jest.fn();
         const dialog = await openSheet(client, onClose);
         await act(async () => byText(dialog, '.mj_FolderList [role="radio"]', "/home/user/workspace").click());
@@ -249,10 +291,15 @@ describe("New session options sheet", () => {
         });
         await act(async () => dialog.querySelector<HTMLInputElement>('.mj_CheckRow input[type="checkbox"]')!.click());
         await act(async () => byText(dialog, "button", "Start session").click());
-        expect(start).toHaveBeenCalledWith(10, "/home/user/workspace", true, { model: "sonnet", agent: "claude" });
+        expect(start).toHaveBeenCalledWith(10, "/home/user/workspace", true, {
+            model: "sonnet",
+            agent: "claude",
+            idempotencyKey: expect.any(String),
+        });
         expect(onClose).toHaveBeenCalled();
         await act(async () => undefined);
         expect(send).toHaveBeenCalledWith("Fix the flaky test.", "new");
+        expect(localStorage.getItem("matron.newSessionBox")).toBe("10");
         expect(JSON.parse(localStorage.getItem("matron.newSessionDefaults.10")!)).toEqual({
             folder: "/home/user/workspace",
             model: "sonnet",

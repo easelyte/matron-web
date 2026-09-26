@@ -105,11 +105,12 @@ export function basename(path: string): string {
     return path.split(/[\\/]/).filter(Boolean).pop() || path;
 }
 
-/** Short model name for the hint: "Opus 4.5" → "Opus", an alias → Capitalised. */
+/** Short model name for the hint: "Opus 4.5" → "Opus", "claude-sonnet-4-5" → "Sonnet". */
 function shortModel(model: string, models: readonly ModelOption[]): string {
     const label = models.find((option) => option.value === model)?.label ?? model;
-    const first = label.split(/\s+/)[0] ?? label;
-    return first.charAt(0).toUpperCase() + first.slice(1);
+    const family = /(opus|sonnet|haiku|fable)/i.exec(label)?.[1];
+    const first = family ?? label.split(/\s+/)[0] ?? label;
+    return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
 }
 
 /**
@@ -142,4 +143,38 @@ export function oneTapStart(remembered: RememberedDefaults | undefined): {
         agent: remembered?.agent,
         browser: false,
     };
+}
+
+const REMEMBERED_BOX_KEY = "matron.newSessionBox";
+
+/** The box the operator last saved defaults for; one tap prefers it while it is connected. */
+export function readRememberedBox(): number | undefined {
+    try {
+        const raw = Number(localStorage.getItem(REMEMBERED_BOX_KEY));
+        return Number.isFinite(raw) && raw > 0 ? raw : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+export function writeRememberedBox(boxId: number): void {
+    try {
+        localStorage.setItem(REMEMBERED_BOX_KEY, String(boxId));
+    } catch {
+        // Storage unavailable: one tap falls back to the first connected box.
+    }
+}
+
+export function forgetRememberedDefaults(boxId: number | string): void {
+    try {
+        localStorage.removeItem(rememberKey(boxId));
+    } catch {
+        // Nothing to forget.
+    }
+}
+
+/** The one-tap target: the remembered box when connected, else the first connected box. */
+export function pickBox<T extends { device_id: number; connected: boolean }>(boxes: readonly T[]): T | undefined {
+    const remembered = readRememberedBox();
+    return boxes.find((box) => box.connected && box.device_id === remembered) ?? boxes.find((box) => box.connected);
 }
