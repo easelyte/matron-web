@@ -196,6 +196,20 @@ describe("groupTurn — segments, outcomes and the running step", () => {
     });
 });
 
+describe("shell reads", () => {
+    it("counts distinct files across cat / sed -n / head reads", () => {
+        const [group] = groupsOf(
+            groupTurn([
+                S("a", "Bash", { command: "sed -n '1,200p' src/journal/components.tsx" }),
+                S("b", "Bash", { command: "cat src/journal/client.ts" }),
+                S("c", "Bash", { command: "head -n 40 src/journal/components.tsx" }),
+            ]),
+        );
+        expect(group.sentence).toBe("Looked through 2 files");
+        expect(stepRowSentences(group.steps)).toEqual(["Read components.tsx", "Read client.ts", "Read components.tsx"]);
+    });
+});
+
 describe("classify — Claude tools and Codex (decision §7.3)", () => {
     const keyOf = (tool: string, input: Step["input"]): string => classify(S("x", tool, input)).key;
 

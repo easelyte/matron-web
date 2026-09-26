@@ -20,6 +20,8 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import "@fontsource/fira-code/latin-400.css";
 import "@fontsource/inter/latin-400.css";
+// Inter 500 (labels, menu rows, card titles): without it the browser matches 500 to 400.
+import "@fontsource/inter/latin-500.css";
 import "@fontsource/inter/latin-600.css";
 
 import { JournalApiError } from "../src/journal/api";
@@ -36,6 +38,8 @@ import type {
     TrackerComment,
     TrackerItem,
 } from "../src/journal/types";
+import { SHOW_THE_WORK_KEY } from "../src/journal/show-the-work";
+import { v6Fixture, type V6Scenario } from "./v6-thread";
 import "../src/journal/shell.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
@@ -364,6 +368,22 @@ const state: ClientState = {
     favoriteIds: favoriteStore.read(SESSION).ids,
     unreadOverrideIds: unreadStore.read(SESSION).ids,
 };
+// Redesign v6: `?v6=<scenario>` swaps in the design's six-turn thread built from real journal
+// shapes; `?work=on` turns Show the work on (the pre-v6 rendering).
+const v6Params = new URLSearchParams(window.location.search);
+const v6Scenario = v6Params.get("v6") as V6Scenario | null;
+if (v6Params.get("work") === "on") localStorage.setItem(SHOW_THE_WORK_KEY, "true");
+else localStorage.removeItem(SHOW_THE_WORK_KEY);
+if (v6Scenario) {
+    const fixture = v6Fixture(v6Scenario);
+    state.events = fixture.events;
+    state.toolStreams = fixture.toolStreams;
+    state.activity = fixture.activity;
+    state.conversations = state.conversations.map((conversation) =>
+        conversation.id === "c1" ? { ...conversation, session_state: fixture.sessionState, summary: "" } : conversation,
+    );
+}
+
 // The client keeps its state private; mirror the test harness's internal override.
 (client as unknown as { state: ClientState }).state = state;
 

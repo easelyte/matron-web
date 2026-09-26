@@ -36,9 +36,11 @@ Please see LICENSE files in the repository root for full details.
     --cpd-color-icon-accent-primary: #0d9488;
     --cpd-color-icon-secondary: #6b655c;
     --cpd-color-icon-tertiary: #9a938a;
-    --cpd-color-text-action-accent: #0d9488;
+    /* v6 decision §7.1: accent TEXT in light uses the deeper #0f766e (≈5.4:1; #0d9488 was
+       ≈3.6:1). Accent icons and fills keep #0d9488. */
+    --cpd-color-text-action-accent: #0f766e;
     --cpd-color-text-critical-primary: #bd2020;
-    --cpd-color-text-link-external: #0d9488;
+    --cpd-color-text-link-external: #0f766e;
     --cpd-color-text-on-accent: #fff;
     --cpd-color-text-on-badge: #fff;
     --cpd-color-text-placeholder: #9a938a;
@@ -76,11 +78,34 @@ Please see LICENSE files in the repository root for full details.
     --mj-critical-tint-strong: rgb(189 32 32 / 16%);
     --mj-critical-border: rgb(189 32 32 / 45%);
 
+    /* --- v6 (docs/design/redesign-v6): amber "went wrong along the way", accent hairline,
+       two named type roles, live-line timing, chat-pane breakpoints, layering. --- */
+    /* Amber TEXT that clears 4.5:1 on canvas + raised; --cpd-color-usage-medium is a fill (2.2:1 as text). */
+    --mj-warn-ink: #9a5700;
+    --mj-warn-dot: var(--cpd-color-usage-medium);
+    --mj-warn-tint: rgb(255 149 0 / 10%);
+    --mj-accent-border: rgb(13 148 136 / 25%);
+    --mj-font-label-sm: 500 12px/16px Inter, sans-serif;
+    --mj-font-mono: 400 12px/18px "Fira Code", monospace;
+    --mj-live-xfade: 240ms; /* @kind other */
+    --mj-live-min-interval: 1200ms; /* @kind other */
+    --mj-live-elapsed-after: 10s; /* @kind other */
+    --mj-slow-after: 300s; /* @kind other */
+    --mj-card-expand: var(--cpd-dur-fast);
+    --mj-group-expand: var(--cpd-dur-fast);
+    --mj-deep-open: var(--cpd-dur-med);
+    --mj-resolve: var(--cpd-dur-med);
+    --mj-bp-pane-narrow: 480px;
+    --mj-bp-pane-medium: 760px;
+    --mj-bp-sidebar-min: 224px;
+    --mj-z-menu: 30;
+    --mj-z-modal: 50;
+
     /* --- v2 motion + focus --- */
     --cpd-focus-ring: 0 0 0 2px var(--cpd-color-bg-canvas-default), 0 0 0 4px var(--cpd-color-text-action-accent);
-    --cpd-dur-fast: 120ms;
-    --cpd-dur-med: 180ms;
-    --cpd-ease: cubic-bezier(0.2, 0, 0, 1);
+    --cpd-dur-fast: 120ms; /* @kind other */
+    --cpd-dur-med: 180ms; /* @kind other */
+    --cpd-ease: cubic-bezier(0.2, 0, 0, 1); /* @kind other */
 
     /* --- v2 radii --- */
     --cpd-radius-xs: 4px;
@@ -196,6 +221,11 @@ Please see LICENSE files in the repository root for full details.
     --mj-critical-tint: rgb(255 106 106 / 14%);
     --mj-critical-tint-strong: rgb(255 106 106 / 22%);
     --mj-critical-border: rgb(255 106 106 / 45%);
+
+    /* v6 (dark): amber ink + tint and the accent hairline, built from the dark accent. */
+    --mj-warn-ink: #ffb454;
+    --mj-warn-tint: rgb(255 180 84 / 12%);
+    --mj-accent-border: rgb(45 212 191 / 28%);
 
     /* In dark, shadows are near-invisible — surface lightness carries elevation; shadows keep shape only. */
     --cpd-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);

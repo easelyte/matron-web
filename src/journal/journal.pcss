@@ -958,14 +958,16 @@ textarea {
 }
 
 .mj_SubagentPill:not(.mj_SubagentPill_finished) .mj_Spinner {
-    border-top-color: var(--cpd-color-text-action-accent);
+    /* The moving arc is an icon, not text: icon accent, so it stays distinct from the
+       bg-accent ring now that light accent TEXT shares #0f766e with it (v6 decision §7.1). */
+    border-top-color: var(--cpd-color-icon-accent-primary);
     border-right-color: var(--cpd-color-bg-accent);
     border-bottom-color: var(--cpd-color-bg-accent);
     border-left-color: var(--cpd-color-bg-accent);
 }
 
 [data-theme="dark"] .mj_SubagentPill:not(.mj_SubagentPill_finished) .mj_Spinner {
-    border-top-color: var(--cpd-color-text-action-accent);
+    border-top-color: var(--cpd-color-icon-accent-primary);
     border-right-color: var(--cpd-color-bg-accent-emphasis);
     border-bottom-color: var(--cpd-color-bg-accent-emphasis);
     border-left-color: var(--cpd-color-bg-accent-emphasis);
@@ -5305,5 +5307,609 @@ button.mj_File {
         flex: 0 0 45%;
         border-right: 0;
         border-bottom: 1px solid var(--cpd-color-border-subtle);
+    }
+}
+
+/* ===========================================================================================
+   Redesign v6 — "Under the hood" (docs/design/redesign-v6). Show the work OFF renders one
+   agent tile per operator turn: the card, then break-throughs, then a turn-ending error, then
+   the answer prose. No height animation anywhere; the collapsed card is one row in every state.
+   =========================================================================================== */
+
+.mj_V6Icon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+/* The agent tile's blocks share one constant gap (v5 §10). */
+.mj_AgentTurn_blocks {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-2x);
+    min-width: 0;
+}
+
+.mj_TurnBlock {
+    min-width: 0;
+}
+
+.mj_TurnCard {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-raised);
+}
+
+.mj_TurnCard_row {
+    position: relative;
+}
+
+.mj_TurnCard_toggle {
+    display: grid;
+    grid-template-columns: 16px auto minmax(0, 1fr) auto 13px;
+    align-items: center;
+    column-gap: var(--cpd-space-2x);
+    width: 100%;
+    min-height: 36px;
+    padding: 9px 12px;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    text-align: left;
+    transition: background var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_TurnCard_toggle:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_TurnCard_toggle:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: -2px;
+    border-radius: var(--cpd-radius-lg);
+}
+
+.mj_TurnCard.is-open .mj_TurnCard_row {
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+}
+
+.mj_TurnCard_glyph {
+    display: grid;
+    width: 16px;
+    height: 16px;
+    place-items: center;
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_TurnCard_glyph > * {
+    grid-area: 1 / 1;
+}
+
+.mj_TurnCard_glyph .mj_V6Icon {
+    width: 14px;
+    height: 14px;
+}
+
+.mj_TurnCard.is-resolved .mj_TurnCard_glyph > *,
+.mj_TurnCard.is-resolved .mj_TurnCard_meta {
+    animation: mj-v6-fade-in var(--mj-resolve) var(--cpd-ease);
+}
+
+.mj_TurnCard_dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+}
+
+.mj_TurnCard_dot_warn {
+    background: var(--mj-warn-dot);
+}
+
+.mj_TurnCard_dot_wait {
+    background: var(--cpd-color-icon-accent-primary);
+}
+
+.mj_TurnCard_title {
+    font: var(--cpd-font-label);
+    white-space: nowrap;
+}
+
+.mj_TurnCard_meta,
+.mj_TurnCard_statusRegion,
+.mj_TurnCard_metaVisible,
+.mj_TurnCard_elapsedWrap {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+}
+
+.mj_TurnCard_meta {
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_TurnCard_sep,
+.mj_TurnCard_elapsedWrap,
+.mj_TurnCard_count_meta,
+.mj_TurnCard_elapsedTotal,
+.mj_TurnCard_stoppedLabel {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+/* Outgoing and incoming live lines share one grid cell: opacity only, the row never grows. */
+.mj_TurnCard_live {
+    display: grid;
+    min-width: 0;
+    flex: 0 1 auto;
+}
+
+.mj_TurnCard_liveText {
+    grid-area: 1 / 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_TurnCard_liveText_entering {
+    animation: mj-v6-fade-in var(--mj-live-xfade) var(--cpd-ease);
+}
+
+.mj_TurnCard_liveText_leaving {
+    animation: mj-v6-fade-out var(--mj-live-xfade) var(--cpd-ease) forwards;
+}
+
+.mj_TurnCard_elapsed {
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_TurnCard_waiting .mj_TurnCard_meta {
+    color: var(--cpd-color-text-action-accent);
+}
+
+.mj_TurnCard_slow .mj_TurnCard_meta {
+    color: var(--mj-warn-ink);
+}
+
+.mj_TurnCard_stopSpace {
+    visibility: hidden;
+    font: var(--cpd-font-label);
+}
+
+.mj_TurnCard_stopSpace:not(:empty) {
+    padding: 0 var(--cpd-space-2x);
+}
+
+.mj_TurnCard_stop {
+    position: absolute;
+    top: 50%;
+    right: 29px;
+    z-index: 1;
+    transform: translateY(-50%);
+    padding: 4px 8px;
+    border: 0;
+    border-radius: var(--cpd-radius-sm);
+    background: transparent;
+    color: var(--mj-warn-ink);
+    font: var(--cpd-font-label);
+}
+
+.mj_TurnCard_stop:hover {
+    background: var(--mj-warn-tint);
+}
+
+.mj_TurnCard_chevron {
+    width: 13px;
+    height: 13px;
+    color: var(--cpd-color-text-tertiary);
+    transform: rotate(-90deg);
+    transition: transform var(--mj-card-expand) var(--cpd-ease);
+}
+
+.mj_TurnCard.is-open .mj_TurnCard_row .mj_TurnCard_chevron,
+.mj_TurnCard_group.is-open > .mj_TurnCard_groupRow .mj_TurnCard_chevron {
+    transform: rotate(0deg);
+}
+
+.mj_TurnCard_body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 6px 8px;
+    background: var(--cpd-color-bg-canvas-default);
+    animation: mj-v6-fade-in var(--mj-card-expand) var(--cpd-ease);
+}
+
+.mj_TurnCard_label {
+    padding: 6px 6px 4px;
+    font: var(--mj-font-label-sm);
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_TurnCard_changed {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 6px;
+    padding: 2px 0 4px;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+}
+
+.mj_TurnCard_file,
+.mj_TurnCard_groupRow,
+.mj_TurnCard_step {
+    display: grid;
+    width: 100%;
+    align-items: center;
+    column-gap: var(--cpd-space-2x);
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    text-align: left;
+    transition: background var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_TurnCard_file {
+    grid-template-columns: 16px minmax(0, 1fr) auto 12px;
+    padding: 6px;
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_TurnCard_file:hover,
+.mj_TurnCard_groupRow:hover,
+.mj_TurnCard_step:hover:not(:disabled) {
+    background: var(--cpd-state-hover);
+}
+
+.mj_TurnCard_file:focus-visible,
+.mj_TurnCard_groupRow:focus-visible,
+.mj_TurnCard_step:focus-visible,
+.mj_TurnCard_back:focus-visible,
+.mj_TurnCard_more:focus-visible,
+.mj_TurnCard_stop:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: -2px;
+}
+
+.mj_TurnCard_name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_TurnCard_counts {
+    display: flex;
+    gap: 6px;
+    font: var(--mj-font-label-sm);
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_TurnCard_add {
+    color: var(--cpd-color-icon-accent-primary);
+}
+
+.mj_TurnCard_del {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_TurnCard_icon {
+    display: grid;
+    width: 16px;
+    height: 16px;
+    place-items: center;
+    color: var(--cpd-color-icon-secondary);
+}
+
+.mj_TurnCard_go {
+    width: 12px;
+    height: 12px;
+    color: var(--cpd-color-icon-tertiary);
+}
+
+.mj_TurnCard_narration {
+    margin: 0;
+    padding: 8px 6px 4px 30px;
+    font: var(--cpd-font-body);
+    color: var(--cpd-color-text-secondary);
+    overflow-wrap: anywhere;
+}
+
+.markdown-body .mj_TurnCard_narration,
+.mj_TurnCard_narration p {
+    margin: 0;
+}
+
+.mj_TurnCard_group {
+    display: flex;
+    flex-direction: column;
+}
+
+.mj_TurnCard_groupRow {
+    grid-template-columns: 16px minmax(0, 1fr) auto auto 13px;
+    padding: 6px;
+    font: var(--cpd-font-body);
+}
+
+.mj_TurnCard_groupRow .mj_TurnCard_chevron {
+    transition-duration: var(--mj-group-expand);
+}
+
+/* Group sentences are prose: they wrap, never ellipsize. */
+.mj_TurnCard_sentence {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.mj_TurnCard_outcome {
+    color: var(--cpd-color-text-secondary);
+}
+
+/* Recovered outcome text is amber and never red; red is only for a group whose last step failed. */
+.mj_TurnCard_group_recovered .mj_TurnCard_outcome,
+.mj_TurnCard_group_stopped .mj_TurnCard_outcome {
+    color: var(--mj-warn-ink);
+}
+
+.mj_TurnCard_group_failed .mj_TurnCard_outcome {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_TurnCard_group_running .mj_TurnCard_sentence {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_TurnCard_status {
+    display: grid;
+    width: 16px;
+    height: 16px;
+    place-items: center;
+}
+
+.mj_TurnCard_status .mj_V6Icon {
+    width: 14px;
+    height: 14px;
+}
+
+.mj_TurnCard_status_ok {
+    color: var(--cpd-color-usage-low);
+}
+
+.mj_TurnCard_status_failed {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_TurnCard_count {
+    min-width: 48px;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-secondary);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.mj_TurnCard_steps {
+    display: flex;
+    flex-direction: column;
+    margin: 0 0 4px;
+    padding: 0 0 0 24px;
+    list-style: none;
+}
+
+.markdown-body .mj_TurnCard_steps {
+    margin: 0 0 4px;
+    padding-left: 24px;
+}
+
+.mj_TurnCard_steps > li {
+    margin: 0;
+}
+
+.mj_TurnCard_virtualList {
+    margin: 0 0 4px 24px;
+}
+
+.mj_TurnCard_step {
+    grid-template-columns: minmax(0, 1fr) auto 12px;
+    padding: 4px 6px;
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_TurnCard_step:disabled {
+    cursor: default;
+}
+
+.mj_TurnCard_step:hover:not(:disabled),
+.mj_TurnCard_step[aria-expanded="true"] {
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_TurnCard_step[aria-expanded="true"] .mj_TurnCard_go,
+.mj_TurnCard_file[aria-expanded="true"] .mj_TurnCard_go {
+    transform: rotate(90deg);
+}
+
+.mj_TurnCard_stepNote {
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-secondary);
+    white-space: nowrap;
+}
+
+.mj_TurnCard_stepNote_failed {
+    color: var(--mj-warn-ink);
+}
+
+.mj_TurnCard_more {
+    align-self: flex-start;
+    margin: 2px 0;
+    padding: 4px 6px;
+    border: 0;
+    border-radius: var(--cpd-radius-sm);
+    background: transparent;
+    color: var(--cpd-color-text-action-accent);
+    font: var(--cpd-font-label);
+}
+
+.mj_TurnCard_more:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_TurnCard_now {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    align-items: center;
+    column-gap: var(--cpd-space-2x);
+    padding: 6px;
+    font: var(--cpd-font-body);
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_TurnCard_now .mj_TurnCard_glyph {
+    height: 21px;
+}
+
+/* Deep detail — the only level with monospace and exit codes. Opens in place, fades in. */
+.mj_TurnCard_deep {
+    overflow: hidden;
+    margin: 4px 0 8px;
+    border: 1px solid var(--cpd-color-border-subtle);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-default);
+    animation: mj-v6-fade-in var(--mj-deep-open) var(--cpd-ease);
+}
+
+.mj_TurnCard_changed .mj_TurnCard_deep {
+    margin: 4px 0 6px 24px;
+}
+
+.mj_TurnCard_deepHead {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    padding: 4px 6px 4px 4px;
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-canvas-raised);
+}
+
+.mj_TurnCard_back {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--cpd-space-1x);
+    padding: 4px 8px 4px 4px;
+    border: 0;
+    border-radius: var(--cpd-radius-sm);
+    background: transparent;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-label);
+}
+
+.mj_TurnCard_back:hover {
+    background: var(--cpd-state-hover);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_TurnCard_back .mj_V6Icon {
+    width: 14px;
+    height: 14px;
+}
+
+.mj_TurnCard_deepMeta {
+    margin-left: auto;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-secondary);
+    white-space: nowrap;
+}
+
+/* The panel owns the chrome; the reused cards drop their own border + radius (v5 §10.10). */
+.mj_TurnCard_deep .mj_DiffCard,
+.mj_TurnCard_deep .mj_ToolCard {
+    border: 0;
+    border-radius: 0;
+}
+
+/* The summary row already names the command; the deep panel shows its output directly. */
+.mj_TurnCard_deep .mj_ToolCommand {
+    display: none;
+}
+
+.mj_TurnCard_deep .mj_ToolCard + .mj_ToolCard {
+    border-top: 1px solid var(--cpd-color-border-subtle);
+}
+
+.mj_TurnCard_detailText {
+    padding: var(--cpd-space-3x);
+}
+
+/* Turn-ending error — breaks out of the card. */
+.mj_TurnError {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    align-items: start;
+    column-gap: var(--cpd-space-2x);
+    padding: 8px 12px;
+    border: 1px solid var(--mj-critical-border);
+    border-radius: var(--cpd-radius-md);
+    background: linear-gradient(var(--mj-critical-tint), var(--mj-critical-tint)), var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-critical-primary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_TurnError .mj_V6Icon {
+    margin-top: 2px;
+}
+
+/* Bridge system notice: one tertiary meta line, no avatar (tertiary is the brief's call). */
+.mj_SystemNotice {
+    margin: 12px 20px 0;
+    padding: 0 2px;
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-tertiary);
+    list-style: none;
+    overflow-wrap: anywhere;
+}
+
+@keyframes mj-v6-fade-in {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes mj-v6-fade-out {
+    from {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mj_TurnCard_body,
+    .mj_TurnCard_deep,
+    .mj_TurnCard_liveText_entering,
+    .mj_TurnCard_liveText_leaving,
+    .mj_TurnCard.is-resolved .mj_TurnCard_glyph > *,
+    .mj_TurnCard.is-resolved .mj_TurnCard_meta {
+        animation: none;
+    }
+
+    .mj_TurnCard_chevron {
+        transition: none;
     }
 }
