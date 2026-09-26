@@ -232,14 +232,16 @@ export function SubagentCard({
     const liveText =
         (view.running ? liveLine(view.running) : "") || view.liveNarration || (events ? "Thinking…" : "Starting…");
     let meta: string;
+    // Running: the elapsed counter ticks every second, so it stays out of the live region.
+    const elapsed =
+        status === "running" && view.durationMs >= 10_000 ? ` · ${formatElapsed(view.durationMs / 1000)}` : "";
     if (status === "running") {
-        meta = view.durationMs >= 10_000 ? `${liveText} · ${formatElapsed(view.durationMs / 1000)}` : liveText;
+        meta = `${liveText}${elapsed}`;
     } else {
         const parts = [stepCount(n), formatDuration(view.durationMs)];
         if (status !== "done") parts.unshift(STATUS_WORD[status]);
         meta = parts.join(" · ");
     }
-    const srStatus = status === "running" ? `Working: ${liveText}` : meta;
 
     const resultText = view.result.trim();
     const body = (
@@ -322,9 +324,18 @@ export function SubagentCard({
                     </span>
                     <span className="mj_SubagentCard_text">
                         <span className="mj_SubagentCard_name">{name}</span>
+                        {/* One copy of the text: the screen-reader prefix and the visible line are
+                            disjoint, so the row never reads "Working: X X". */}
                         <span className="mj_SubagentCard_meta" role="status" aria-live="polite" aria-atomic="true">
-                            <span className="mj_SrOnly">{srStatus}</span>
-                            <span aria-hidden="true">{meta}</span>
+                            {status === "running" ? (
+                                <>
+                                    <span className="mj_SrOnly">Working: </span>
+                                    {liveText}
+                                    <span aria-hidden="true">{elapsed}</span>
+                                </>
+                            ) : (
+                                meta
+                            )}
                         </span>
                     </span>
                     {kind ? <span className="mj_SubagentCard_kind">{KIND_LABEL[kind]}</span> : <span />}

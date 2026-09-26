@@ -80,6 +80,28 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("keeps the recorded last step across a snapshot of the same state, and only then", async () => {
+        const database = await JournalDatabase.open("https://last-step-snapshot.example", 12, "dan");
+        const row = (last_seq: number, snippet: string, last_ts: number) => ({
+            id: "c1",
+            title: "Agent",
+            session_state: "running",
+            last_seq,
+            unread_count: 0,
+            snippet,
+            created_at: 1,
+            last_ts,
+        });
+        await database.replaceWithSnapshot({ seq: 0, conversations: [row(0, "", 1)] });
+        await database.applyJournal(event(1, "agent:dev", "text", { body: "📖 /repo/a.ts" }));
+        await database.replaceWithSnapshot({ seq: 1, conversations: [row(1, "📖 /repo/a.ts", 1_000)] });
+        expect((await database.conversations())[0].last_step).toEqual({ tool: "Read", input: { path: "/repo/a.ts" } });
+        // A newer message with the same snippet and time: the step is not carried over.
+        await database.replaceWithSnapshot({ seq: 2, conversations: [row(2, "📖 /repo/a.ts", 1_000)] });
+        expect((await database.conversations())[0].last_step).toBeUndefined();
+        database.close();
+    });
+
     it("hydrates peer message payloads intact and counts them unread in an inactive conversation", async () => {
         const serverUrl = "https://peer-hydration.example";
         const database = await JournalDatabase.open(serverUrl, 11, "dan");

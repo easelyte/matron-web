@@ -77,6 +77,9 @@ describe("tool-indicator lines → steps", () => {
         expect(indicatorStep("🌐 https://example.com/a")).toMatchObject({ tool: "WebFetch" });
         // A web search's query is free text: only the structured payload.step can mark it.
         expect(indicatorStep("🌐 matron release notes")).toBeNull();
+        expect(indicatorStep("📋 Todos:\n✅ one\n⬚ two")).toMatchObject({ tool: "TodoWrite" });
+        // A heredoc script spans lines inside the one pair of backticks.
+        expect(indicatorStep("🔧 `python3 - <<'EOF'\nimport sqlite3\nprint(1)\nEOF`")).toMatchObject({ tool: "Bash" });
         expect(indicatorStep("🔀 Subtask: Premise-check loop #791")).toMatchObject({
             tool: "Task",
             input: { description: "Premise-check loop #791" },
@@ -84,14 +87,15 @@ describe("tool-indicator lines → steps", () => {
         expect(indicatorStep("🔀 Nested subtask: dig deeper")).toMatchObject({ tool: "Task" });
     });
 
-    it("never swallows prose, a to-do list, or a command cut short (unless reading a snippet)", () => {
+    it("never swallows prose or a command cut short (unless reading a snippet)", () => {
         expect(indicatorStep("I'll start with the paths module.")).toBeNull();
         expect(indicatorStep("🔧 fixed the build, then ran the tests")).toBeNull();
         expect(indicatorStep("🔍 Found the root cause in the migration")).toBeNull();
         expect(indicatorStep("📖 Read the whole spec twice")).toBeNull();
-        expect(indicatorStep("🌐 the docs say otherwise")).toBeNull();
+        expect(indicatorStep("🌐 The docs say otherwise.")).toBeNull();
+        expect(indicatorStep("🌐 The docs say otherwise")).toBeNull();
+        expect(indicatorStep("🔧 `x` is broken, fixing `y` next")).toBeNull();
         expect(indicatorStep("🔍 hardcoded workspace|WORKSPACE_ROOT")).toMatchObject({ tool: "Grep" });
-        expect(indicatorStep("📋 Todos:\n✅ one\n⬚ two")).toBeNull();
         expect(indicatorStep("🔧 `sed -n 1,60p anton/core/paths.py | grep -n…")).toBeNull();
         expect(indicatorStep("🔧 `sed -n 1,60p anton/core/paths.py | grep -n…", "s", true)).toMatchObject({
             tool: "Bash",
@@ -140,7 +144,7 @@ describe("sidebar preview (Developer view off)", () => {
     it("reads a tool call as its activity: progressive while running, past once done", () => {
         expect(previewLine(row("🔧 `sed -n 1,60p anton/core/paths.py | grep -n PATHS`"))).toBe("Reading paths.py…");
         expect(previewLine(row("🔧 `cat docs/filesystem-layout.md /root/.claud", "running"))).toBe("Reading .claud…");
-        expect(previewLine(row("🔍 WORKSPACE_ROOT", "done"))).toBe("Searched for WORKSPACE_ROOT");
+        expect(previewLine(row("🔍 WORKSPACE_ROOT", "done"))).toBe("Searched the code for “WORKSPACE_ROOT”");
         expect(previewLine(row("$ pnpm vitest run", "running"))).toBe("Running the tests…");
     });
 

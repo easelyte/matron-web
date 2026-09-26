@@ -35,6 +35,7 @@ import type {
     Mission,
     MissionDetail,
     Session,
+    SessionStatus,
     TrackerComment,
     TrackerItem,
 } from "../src/journal/types";
@@ -43,7 +44,7 @@ import { v6Fixture, type V6Scenario } from "./v6-thread";
 import { workFixture, type WorkFixtureMode } from "./work";
 import { opsDevices, opsMetrics, opsReply, type OpsFixtureMode } from "./ops";
 import { parseBoxStatus, parseMetrics, sectionStateFromReply, type OpsSection } from "../src/journal/ops/model";
-import { subagentFixture, type SubagentScenario } from "./subagents";
+import { REAL_STATUS, subagentFixture, type SubagentScenario } from "./subagents";
 import "../src/journal/shell.pcss";
 import "../src/journal/controls.pcss";
 import "../src/journal/journal.pcss";
@@ -446,6 +447,21 @@ if (subScenario) {
 
 // The client keeps its state private; mirror the test harness's internal override.
 (client as unknown as { state: ClientState }).state = state;
+
+// A real helper thread (`?sub=real-*`): the header's context gauge goes through the client's own
+// helper correction (statusFor), from the statuses a pre-#81 bridge publishes.
+if (subScenario === "real-claude" || subScenario === "real-tests") {
+    const internals = client as unknown as {
+        statuses: Map<string, SessionStatus>;
+        statusFor: (id: string) => SessionStatus | undefined;
+    };
+    internals.statuses.set("p1", REAL_STATUS.parent);
+    internals.statuses.set(state.selectedConversationId!, REAL_STATUS.child);
+    state.sessionStatus =
+        typeof internals.statusFor !== "function" || new URLSearchParams(location.search).has("rawctx")
+            ? REAL_STATUS.child
+            : internals.statusFor.call(client, state.selectedConversationId!);
+}
 
 // Stub the new-session data path so a driver click on "New session" reaches the folders
 // form (agent → recent folders) where the themed inputs / checkbox / Start live.

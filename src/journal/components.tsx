@@ -132,6 +132,7 @@ import {
 } from "./browser-tools";
 import { type Step, stepSentence, stepsOf } from "./turn-grouping";
 import { helperForStep, helpersByTurn, SubagentCard } from "./subagent-card";
+import { HeadlineList } from "./headline-list";
 import { previewLine } from "./activity-text";
 import {
     compactTokens,
@@ -5108,7 +5109,13 @@ function DevHelperRow({ client, child }: { client: MatronJournalClient; child: C
  * card, the one place monospace appears — the command, path or pattern it ran on.
  */
 function StepSentenceDetail({ step }: { step: Step }): React.ReactElement {
-    const target = step.input.command ?? step.input.path ?? step.input.pattern ?? step.input.url;
+    const target =
+        step.input.command ||
+        step.input.path ||
+        step.input.pattern ||
+        step.input.url ||
+        // A narration line that read as machine text (headlines.ts): its text, one click deep.
+        (step.id.startsWith("raw-") ? step.input.description : undefined);
     return (
         <div className="mj_TurnCard_detailText mj_StepDetail">
             <p>{stepSentence(step)}</p>
@@ -5137,10 +5144,16 @@ function AgentTurnRow({
     highlightedSeq,
     rowHandlers,
     helpers = NO_HELPERS,
+    helperThread = null,
 }: {
     client: MatronJournalClient;
     turn: Turn;
     live: TurnLive;
+    /**
+     * Set inside a helper's own thread (a Claude subagent or a Codex run): the steps read as a
+     * list of headlines instead of one collapsed turn card. The value is the helper's worker.
+     */
+    helperThread?: { worker: "claude" | "codex" | null } | null;
     /** Child conversations (subagents, Codex runs) this turn started — one card each. */
     helpers?: readonly Conversation[];
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
@@ -5165,7 +5178,8 @@ function AgentTurnRow({
     const renderStepDetail = useCallback(
         (step: Step): React.ReactNode => {
             const source = step.source as JournalEvent | undefined;
-            if (!source) return null;
+            // A narration line the headlines took for a command (headlines.ts): its own text.
+            if (!source) return step.id.startsWith("raw-") ? <StepSentenceDetail step={step} /> : null;
             if (source.type === "tool_output") return <ToolOutput client={client} event={source} defaultOpen />;
             if (source.type === "diff") return <DiffCard data={parseDiffPayload(source.payload)} />;
             return <StepSentenceDetail step={step} />;
@@ -5214,9 +5228,25 @@ function AgentTurnRow({
             />
         </TurnBlock>
     );
+    // A helper's own thread: a Claude helper publishes each call when it starts, so while it runs
+    // a trailing step (no answer after it) is the one running now. Codex publishes on completion.
+    const headlineRunning = useMemo((): Step | null => {
+        if (!helperThread || live.mode !== "running") return null;
+        if (live.running) return live.running;
+        const last = turn.items.at(-1);
+        if (helperThread.worker === "codex" || turn.answer.length || last?.kind !== "step") return null;
+        return { ...last, status: "running" };
+    }, [helperThread, live.mode, live.running, turn.items, turn.answer.length]);
+    const headlineItems = useMemo(
+        () =>
+            headlineRunning && !live.running && turn.items.at(-1)?.kind === "step"
+                ? turn.items.slice(0, -1)
+                : turn.items,
+        [headlineRunning, live.running, turn.items],
+    );
     return (
         <li
-            className={`mx_EventTile mx_EventTile_lastInSection mj_AgentTurn${
+            className={`mx_EventTile mx_EventTile_lastInSection mj_AgentTurn${helperThread ? " mj_AgentTurn_helper" : ""}${
                 highlightedSeq !== undefined &&
                 turn.events.some((event) => event.seq === highlightedSeq) &&
                 ![...turn.breaks, ...turn.answer, ...turn.errors].some((event) => event.seq === highlightedSeq)
@@ -5242,24 +5272,35 @@ function AgentTurnRow({
             <div className="mx_EventTile_line">
                 <div className="mx_MTextBody mx_EventTile_content">
                     <div className="markdown-body mj_AgentTurn_blocks">
-                        {hasCard && (
-                            <TurnCard
-                                turnKey={turn.key}
-                                items={turn.items}
-                                mode={live.mode}
-                                running={live.running}
+                        {helperThread && (hasCard || live.mode === "running") ? (
+                            <HeadlineList
+                                items={headlineItems}
+                                running={headlineRunning}
+                                active={live.mode === "running"}
                                 liveText={live.liveText}
                                 runningSince={live.runningSince}
-                                durationMs={turn.endTs - turn.startTs}
                                 renderDetail={renderDetail}
-                                renderNarration={(text) => (
-                                    <MarkdownBody
-                                        text={text}
-                                        label={`narration-${turn.key}`}
-                                        onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
-                                    />
-                                )}
                             />
+                        ) : (
+                            hasCard && (
+                                <TurnCard
+                                    turnKey={turn.key}
+                                    items={turn.items}
+                                    mode={live.mode}
+                                    running={live.running}
+                                    liveText={live.liveText}
+                                    runningSince={live.runningSince}
+                                    durationMs={turn.endTs - turn.startTs}
+                                    renderDetail={renderDetail}
+                                    renderNarration={(text) => (
+                                        <MarkdownBody
+                                            text={text}
+                                            label={`narration-${turn.key}`}
+                                            onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                                        />
+                                    )}
+                                />
+                            )
                         )}
                         {helpers.map((helper) => (
                             <SubagentCard
@@ -5816,6 +5857,11 @@ function Timeline({
     // and the activity indicator while the session is actually running; the model reconcile
     // (refreshConversations) prunes lingering tool streams (not activity — see there).
     const sessionRunning = client.selectedConversation()?.session_state === "running";
+    // Inside a helper's own thread the turn's steps read as headlines (AgentTurnRow).
+    const selectedForHeadlines = client.selectedConversation();
+    const helperWorker =
+        selectedForHeadlines && isSubChat(selectedForHeadlines) ? workerKind(selectedForHeadlines) : undefined;
+    const helperThread = useMemo(() => (helperWorker === undefined ? null : { worker: helperWorker }), [helperWorker]);
     const sessionState = client.selectedConversation()?.session_state;
 
     // ---- v6: "Show the work" OFF — one agent tile per operator turn with an Under-the-hood card.
@@ -5987,6 +6033,7 @@ function Timeline({
                         highlightedSeq={highlightedSeq}
                         rowHandlers={menu.rowHandlers}
                         helpers={turnHelpers.get(row.turn.key)}
+                        helperThread={helperThread}
                     />
                 </React.Fragment>
             );
