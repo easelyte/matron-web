@@ -167,6 +167,9 @@ describe("sidebar preview (Developer view off)", () => {
         };
         expect(previewLine(doneCodex)).toBe("Ran a command");
         expect(
+            previewLine({ ...row("error TS2322: Type 'string' is not assignable", "done"), worker: "codex" as const }),
+        ).toBe("Ran a command");
+        expect(
             previewLine({ ...row("scripts/lib/retention.py:12:    cutoff = now()", "idle"), worker: "codex" as const }),
         ).toBe("Ran a command");
         expect(previewLine(row('{"type":"item.started","item":{"type":"web_search"}}', "idle"))).toBe("Ran a command");
