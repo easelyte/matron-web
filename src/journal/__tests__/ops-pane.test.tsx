@@ -345,3 +345,31 @@ it("a host-only poll that succeeds does not restore 'All quiet' after an offline
     jest.useRealTimers();
     await unmount();
 });
+
+it("drops 'All quiet' the moment the roster says offline, before the re-check answers", async () => {
+    jest.useFakeTimers({ doNotFake: ["setTimeout", "queueMicrotask", "nextTick", "setImmediate"] });
+    const good = (section: OpsSection): Reply => ({
+        ok: true,
+        result: {
+            data:
+                section === "alerts"
+                    ? { active: [], resolved_24h: [] }
+                    : section === "timers"
+                      ? { timers: [], cron: [] }
+                      : { processes: [], windows: {}, security: null },
+        },
+    });
+    const client = fakeClient(good, [bridge]);
+    const { container, unmount } = await mount(client);
+    client.opsSnapshot.mockImplementation(() => new Promise(() => undefined) as never);
+    client.listAgents.mockResolvedValue([{ ...bridge, connected: false }]);
+    await act(async () => {
+        jest.advanceTimersByTime(60_000);
+    });
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(container.querySelector('[data-spec="ops.summary"]')?.textContent ?? "").not.toContain("All quiet");
+    jest.useRealTimers();
+    await unmount();
+});

@@ -174,6 +174,8 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
     const targetOnline = target?.connected ?? true;
     useEffect(() => {
         if (targetId === null || targetOnline) return;
+        // Drop the old readings first: until the box answers again there is no current reading.
+        setSections((prev) => ({ ...prev, alerts: { phase: "loading" }, timers: { phase: "loading" } }));
         void loadSections(targetId, ["alerts", "timers"], false);
     }, [devices, targetId, targetOnline, loadSections]);
 
