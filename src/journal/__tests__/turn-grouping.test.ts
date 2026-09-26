@@ -176,6 +176,20 @@ describe("groupTurn — segments, outcomes and the running step", () => {
         expect(liveLine(running)).toBe("Running the tests…");
     });
 
+    it("never reports a command with no exit as passed", () => {
+        const [group] = groupsOf(
+            groupTurn([S("a", "Bash", { command: "pnpm vitest run" }, { status: "stopped", exit: null })]),
+        );
+        expect(group.status).toBe("stopped");
+        expect(groupRowText(group)).toBe("Ran the tests: stopped");
+        expect(turnIssues([S("a", "Bash", { command: "sleep 9" }, { status: "stopped" })])).toBe(true);
+    });
+
+    it("keeps a git command a git step whatever its message says", () => {
+        expect(classify(S("a", "Bash", { command: "git commit -m 'fix lint and tests'" })).key).toBe("git");
+        expect(classify(S("a", "Bash", { command: "git log --grep=vitest" })).key).toBe("history");
+    });
+
     it("uses 'the code style' for lint-only check groups", () => {
         const [group] = groupsOf(groupTurn([S("a", "Bash", { command: "pnpm lint" })]));
         expect(groupRowText(group)).toBe("Checked the code style: passed");

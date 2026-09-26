@@ -94,6 +94,24 @@ describe("assembleTurns", () => {
         expect(threadRows([turn]).map((row) => row.kind)).toEqual(["operator", "turn", "notice", "peer"]);
     });
 
+    it("keeps an answer to the agent's question inside the same turn", () => {
+        const events = [
+            user("push it when green"),
+            cmd("pnpm vitest run"),
+            ev("prompt", { question: "Open a PR as well?", options: ["Open PR", "Not yet"] }),
+            ev("prompt_reply", { target_seq: 3, choice: "Open PR" }, { sender: "user:op" }),
+            cmd("gh pr create --fill"),
+            say("Opened the PR."),
+        ];
+        const turns = assembleTurns(events);
+        expect(turns).toHaveLength(1);
+        const [turn] = turns;
+        expect(stepsOf(turn.items)).toHaveLength(2);
+        expect(turn.replies.map((event) => event.type)).toEqual(["prompt_reply"]);
+        expect(turn.breaks.map((event) => event.type)).toEqual(["prompt"]);
+        expect(turn.answer.map((event) => event.payload.body)).toEqual(["Opened the PR."]);
+    });
+
     it("treats agent events before the first operator message as their own turn", () => {
         const [turn] = assembleTurns([say("Session started."), cmd("ls")]);
         expect(turn.operator).toBeUndefined();
@@ -114,7 +132,7 @@ describe("eventToStep", () => {
             status: "failed",
             exit: 2,
         });
-        expect(eventToStep(cmd("sleep 999", null))).toMatchObject({ status: "ok", exit: null });
+        expect(eventToStep(cmd("sleep 999", null))).toMatchObject({ status: "stopped", exit: null });
         expect(eventToStep(ev("tool_output", { command: "rm -rf x", denied: true }))).toMatchObject({
             status: "failed",
         });
@@ -144,6 +162,91 @@ describe("eventToStep", () => {
     it("approximates duration from the previous event", () => {
         const step = eventToStep({ ...cmd("pnpm build"), ts: T0 + 5000 }, T0 + 2000);
         expect(step?.ms).toBe(3000);
+    });
+});
+
+// Payload shapes copied from the bridge producers (matron-bridge): Claude's
+// finalizeToolStreamEntry, the Codex exec formatter (command_execution / file_change), the Codex
+// app-server finalize, and buildEditDiffPayload / publishChanges for diffs.
+describe("bridge producer payloads", () => {
+    it("reads a Claude Bash finalize", () => {
+        const step = eventToStep(
+            ev("tool_output", {
+                message_ref: "toolu_1",
+                command: "pnpm tsc --noEmit",
+                exit_code: 2,
+                denied: false,
+                truncated: false,
+                snippet: "error TS2322",
+                blob_ref: "m1",
+                live_log: true,
+            }),
+        );
+        expect(step).toMatchObject({
+            tool: "Bash",
+            status: "failed",
+            exit: 2,
+            input: { command: "pnpm tsc --noEmit" },
+        });
+    });
+
+    it("reads a Codex exec command_execution and file_change", () => {
+        expect(
+            eventToStep(
+                ev("tool_output", {
+                    tool_use_id: "item_1",
+                    command: "bash -lc 'pnpm vitest run'",
+                    output: "ok",
+                    exit_code: 0,
+                    status: "completed",
+                }),
+            ),
+        ).toMatchObject({ tool: "Bash", status: "ok", exit: 0 });
+        expect(
+            eventToStep(
+                ev("tool_output", {
+                    tool_use_id: "item_2",
+                    command: "file_change",
+                    output: "update src/a.ts",
+                    status: "completed",
+                }),
+            ),
+        ).toMatchObject({ tool: "file_change", status: "ok", exit: undefined });
+    });
+
+    it("reads a Claude Edit diff and a Codex apply_patch diff", () => {
+        const claude = eventToStep(
+            ev("diff", {
+                file_path: "/repo/src/a.ts",
+                display_path: "src/a.ts",
+                viewer_url: null,
+                tool: "Write",
+                label: null,
+                diff: "+x",
+                added: 1,
+                removed: 0,
+                truncated: false,
+                new_file: true,
+                from: "assistant",
+            }),
+        );
+        expect(claude).toMatchObject({ tool: "Write", input: { path: "src/a.ts" }, newFile: true, added: 1 });
+        const codex = eventToStep(
+            ev("diff", {
+                file_path: "/repo/src/b.ts",
+                display_path: "src/b.ts",
+                viewer_url: null,
+                tool: "apply_patch",
+                label: null,
+                diff: "-a\n+b",
+                from: "assistant",
+                added: 1,
+                removed: 1,
+                truncated: false,
+                new_file: false,
+            }),
+        );
+        expect(codex).toMatchObject({ tool: "apply_patch", newFile: false, removed: 1 });
     });
 });
 

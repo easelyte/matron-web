@@ -17,7 +17,8 @@ Please see LICENSE files in the repository root for full details.
  * them, the agent supplies only its narration.
  */
 
-export type StepStatus = "ok" | "failed" | "running";
+/** "stopped": the command never reported an exit (killed, or the session died under it). */
+export type StepStatus = "ok" | "failed" | "running" | "stopped";
 
 export interface StepInput {
     /** File path (Read / Edit / Write / diff events). Full path; sentences use the basename. */
@@ -67,7 +68,7 @@ export type ActivityClass =
 export type GroupIcon =
     "file" | "search" | "pencil" | "flask" | "shield" | "history" | "branch" | "helper" | "globe" | "terminal" | "dot";
 
-export type GroupStatus = "ok" | "recovered" | "failed" | "running";
+export type GroupStatus = "ok" | "recovered" | "failed" | "running" | "stopped";
 
 export interface Group {
     type: "group";
@@ -151,6 +152,9 @@ interface ClassRule {
     test: (step: Step) => boolean;
 }
 
+/** A git invocation: its arguments (a commit message saying "lint") never make it a test or check. */
+const isGitCommand = (step: Step): boolean => /^git\s/.test(commandOf(step));
+
 const CHANGE_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "apply_patch", "file_change"]);
 
 /** Activity classes, first match wins (GENERATIVE-SYSTEM §1 table). */
@@ -171,12 +175,13 @@ export const CLASSES: readonly ClassRule[] = [
         key: "test",
         icon: "flask",
         test: (s) =>
+            !isGitCommand(s) &&
             /\b(vitest|jest|pytest|playwright|go test|cargo test|(pnpm|npm|yarn) (run )?test)\b/.test(commandOf(s)),
     },
     {
         key: "check",
         icon: "shield",
-        test: (s) => /\b(tsc|typecheck|eslint|oxlint|mypy|ruff|lint)\b/.test(commandOf(s)),
+        test: (s) => !isGitCommand(s) && /\b(tsc|typecheck|eslint|oxlint|mypy|ruff|lint)\b/.test(commandOf(s)),
     },
     { key: "history", icon: "history", test: (s) => /^git (log|show|blame|diff|status)\b/.test(commandOf(s)) },
     {
@@ -264,6 +269,8 @@ function outcome(steps: Step[]): Outcome {
     const failed = steps.filter((step) => step.status === "failed").length;
     const last = steps[steps.length - 1];
     if (last.status === "running") return { status: "running", text: "" };
+    // A command that never reported an exit is not a pass: it was stopped under the agent.
+    if (last.status === "stopped") return { status: "stopped", text: "stopped" };
     if (!failed) return { status: "ok", text: "passed" };
     if (last.status === "ok") {
         return {
@@ -364,8 +371,8 @@ export function groupTurn(items: readonly TurnItem[], running?: Step | null): Se
                 ? o.text
                 : o.status === "recovered"
                   ? "one step failed, then worked"
-                  : o.status === "failed"
-                    ? "failed"
+                  : o.status === "failed" || o.status === "stopped"
+                    ? o.text
                     : "";
         if (o.status === "running") entry.sentence = liveLine(entry.steps[entry.steps.length - 1]).replace(/…$/, "");
     }
@@ -409,7 +416,7 @@ export function changedFiles(items: readonly TurnItem[]): ChangedFile[] {
 
 /** Any step failed along the way — the done glyph turns amber (§ decisions: card glyph). */
 export function turnIssues(items: readonly TurnItem[]): boolean {
-    return stepsOf(items).some((step) => step.status === "failed");
+    return stepsOf(items).some((step) => step.status === "failed" || step.status === "stopped");
 }
 
 /**

@@ -67,6 +67,15 @@ export function isOperatorEvent(event: JournalEvent): boolean {
     return event.sender.startsWith("user:");
 }
 
+/**
+ * An operator event that opens a new turn. An answer to the agent's own question
+ * (`prompt_reply`) does not: the agent carries on with the same turn after it, so its steps stay
+ * in the same card.
+ */
+export function isTurnBoundary(event: JournalEvent): boolean {
+    return isOperatorEvent(event) && event.type !== "prompt_reply";
+}
+
 /** A Codex generic completed item the bridge publishes as a one-token code span (loop #772). */
 const CODEX_ITEM_TEXT = /^`([A-Z][A-Za-z0-9 ]{0,79})`$/;
 
@@ -101,7 +110,9 @@ export function eventToStep(event: JournalEvent, previousTs?: number): Step | nu
             // Codex's legacy exec transport reports file edits as a `file_change` tool_output.
             tool: command === "file_change" ? "file_change" : "Bash",
             input: { command },
-            status: failed ? "failed" : "ok",
+            // exit_code null = the bridge never observed an exit (killed, or the session died
+            // under the command): never report that as a pass.
+            status: failed ? "failed" : exit === null ? "stopped" : "ok",
             exit,
             ms,
             source: event,
@@ -148,6 +159,8 @@ export interface Turn {
     /** Card content: steps and narration, in order. */
     items: TurnItem[];
     breaks: JournalEvent[];
+    /** The operator's answers to the agent's questions during the turn (`prompt_reply`). */
+    replies: JournalEvent[];
     answer: JournalEvent[];
     errors: JournalEvent[];
     notices: JournalEvent[];
@@ -189,6 +202,7 @@ function emptyTurn(first: JournalEvent, operator?: JournalEvent): Turn {
         events: [],
         items: [],
         breaks: [],
+        replies: [],
         answer: [],
         errors: [],
         notices: [],
@@ -228,7 +242,7 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
     };
 
     for (const event of events) {
-        if (isOperatorEvent(event)) {
+        if (isTurnBoundary(event)) {
             finish();
             current = emptyTurn(event, event);
             lastTs = event.ts;
@@ -238,6 +252,11 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
         const turn = current;
         turn.events.push(event);
         turn.endTs = Math.max(turn.endTs, event.ts);
+        if (isOperatorEvent(event)) {
+            turn.replies.push(event);
+            lastTs = event.ts;
+            continue;
+        }
         const classified = classifyAgentEvent(event, lastTs);
         lastTs = event.ts;
         switch (classified.bucket) {
@@ -274,7 +293,13 @@ export function threadRows(turns: readonly Turn[]): ThreadRow[] {
     const rows: ThreadRow[] = [];
     for (const turn of turns) {
         if (turn.operator) rows.push({ kind: "operator", event: turn.operator });
-        if (turn.items.length || turn.breaks.length || turn.answer.length || turn.errors.length) {
+        if (
+            turn.items.length ||
+            turn.breaks.length ||
+            turn.replies.length ||
+            turn.answer.length ||
+            turn.errors.length
+        ) {
             rows.push({ kind: "turn", turn });
         }
         const trailing = [...turn.notices, ...turn.peers].sort((left, right) => left.seq - right.seq);
