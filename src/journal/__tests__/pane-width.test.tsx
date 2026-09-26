@@ -16,7 +16,7 @@ describe("chat-pane breakpoints", () => {
         expect(paneBand(761)).toBe("wide");
     });
 
-    it("sets data-pane on the chat pane only when the band changes", () => {
+    it("sets data-pane on the chat pane for its band", () => {
         const pane = document.createElement("div");
         applyPaneBand(pane, 420);
         expect(pane.dataset.pane).toBe("narrow");

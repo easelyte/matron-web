@@ -37,9 +37,14 @@ function serve(dir) {
     const root = path.resolve(dir);
     return new Promise((resolve) => {
         const server = http.createServer((req, res) => {
-            const rel = decodeURIComponent(req.url.split("?")[0].split("#")[0]).replace(/^\/+/, "") || "index.html";
+            let rel;
+            try {
+                rel = decodeURIComponent(req.url.split("?")[0].split("#")[0]).replace(/^\/+/, "") || "index.html";
+            } catch {
+                return res.writeHead(400).end();
+            }
             const file = path.resolve(root, rel);
-            if (!file.startsWith(root)) return res.writeHead(403).end();
+            if (file !== root && !file.startsWith(root + path.sep)) return res.writeHead(403).end();
             fs.readFile(file, (err, data) => {
                 if (err) return res.writeHead(404).end();
                 res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" });
@@ -111,36 +116,46 @@ const live = await serve(DIST);
 const browser = await chromium.launch();
 const designOut = {};
 const liveOut = {};
-for (const theme of ["light", "dark"]) {
-    for (const [preset, query, setup] of PAIRS) {
-        const key = `${preset}__${theme}`;
-        const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-        try {
-            await page.goto(
-                `http://127.0.0.1:${design.port}/Matron%20Redesign%20v6.html#state=${preset}&theme=${theme}`,
-            );
-            await page.waitForTimeout(500);
-            designOut[key] = await runProbe(page, false);
-        } catch (error) {
-            designOut[key] = { error: error.message.split("\n")[0] };
+const errors = [];
+try {
+    for (const theme of ["light", "dark"]) {
+        for (const [preset, query, setup] of PAIRS) {
+            const key = `${preset}__${theme}`;
+            const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+            page.setDefaultTimeout(10_000);
+            try {
+                await page.goto(
+                    `http://127.0.0.1:${design.port}/Matron%20Redesign%20v6.html#state=${preset}&theme=${theme}`,
+                );
+                await page.waitForTimeout(500);
+                designOut[key] = await runProbe(page, false);
+            } catch (error) {
+                designOut[key] = { error: error.message.split("\n")[0] };
+                errors.push(`design ${key}: ${designOut[key].error}`);
+            }
+            await page.close();
+            const livePage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+            livePage.setDefaultTimeout(10_000);
+            try {
+                await livePage.goto(`http://127.0.0.1:${live.port}/?theme=${theme}&${query}`, {
+                    waitUntil: "networkidle",
+                });
+                await livePage.evaluate(() => document.fonts.ready);
+                if (setup) await setup(livePage);
+                await livePage.waitForTimeout(400);
+                liveOut[key] = await runProbe(livePage, true);
+            } catch (error) {
+                liveOut[key] = { error: error.message.split("\n")[0] };
+                errors.push(`live ${key}: ${liveOut[key].error}`);
+            }
+            await livePage.close();
         }
-        await page.close();
-        const livePage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-        try {
-            await livePage.goto(`http://127.0.0.1:${live.port}/?theme=${theme}&${query}`, { waitUntil: "networkidle" });
-            await livePage.evaluate(() => document.fonts.ready);
-            if (setup) await setup(livePage);
-            await livePage.waitForTimeout(400);
-            liveOut[key] = await runProbe(livePage, true);
-        } catch (error) {
-            liveOut[key] = { error: error.message.split("\n")[0] };
-        }
-        await livePage.close();
     }
+} finally {
+    await browser.close();
+    design.server.close();
+    live.server.close();
 }
-await browser.close();
-design.server.close();
-live.server.close();
 
 // ---- diff: per spec, first design specimen vs the live map selector, on the compare props ----
 const PX = (value) => (typeof value === "string" && /^-?[\d.]+px$/.test(value) ? parseFloat(value) : null);
@@ -183,3 +198,6 @@ fs.writeFileSync(path.join(OUT, "probe-design.json"), JSON.stringify(designOut, 
 fs.writeFileSync(path.join(OUT, "probe-live.json"), JSON.stringify(liveOut, null, 2));
 fs.writeFileSync(path.join(OUT, "diff.json"), JSON.stringify({ compared, matched, deltas: diff }, null, 2));
 console.log(`compared ${compared} props, ${matched} within tolerance → ${OUT}`);
+// Fail loud: a broken build or probe must not pass as "nothing to compare".
+for (const error of errors) console.error(`ERR ${error}`);
+if (errors.length || compared === 0) process.exit(1);
