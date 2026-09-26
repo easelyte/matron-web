@@ -201,12 +201,13 @@ Please see LICENSE files in the repository root for full details.
 
 /* ---- sidebar child rows ---- */
 
-/* The child row hangs off its parent on a hairline rail under the parent's status dot (x=14),
-   with a short elbow into its own status glyph; the glyph sits where the parent's title starts,
-   so the title steps one column in. The last child's rail stops at the elbow. */
+/* The child row hangs off its parent on a hairline rail under the parent's status dot (its
+   centre sits at 17px: 10px padding + the dot's 3px inset + half its 8px), with a short elbow
+   into its own status glyph. The glyph sits where the parent's title starts (34px), so the
+   hierarchy reads as one column step. The last child's rail stops at its elbow. */
 .mj_RoomListItem_sub {
     gap: var(--cpd-space-2x);
-    padding-left: 28px;
+    padding-left: 34px;
 }
 
 .mj_RoomListItem_sub::after {
@@ -214,7 +215,7 @@ Please see LICENSE files in the repository root for full details.
     position: absolute;
     top: -1px;
     bottom: -1px;
-    left: 14px;
+    left: 17px;
     width: 1px;
     background: var(--cpd-color-border-strong);
     pointer-events: none;
@@ -237,8 +238,8 @@ Please see LICENSE files in the repository root for full details.
     content: "";
     position: absolute;
     top: 50%;
-    left: 14px;
-    width: 10px;
+    left: 17px;
+    width: 14px;
     height: 1px;
     background: var(--cpd-color-border-strong);
     pointer-events: none;
