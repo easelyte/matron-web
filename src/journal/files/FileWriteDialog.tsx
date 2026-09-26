@@ -79,7 +79,7 @@ function NameField({
             <span className="mj_FileWrite_label">{label}</span>
             <input
                 ref={input}
-                className="mj_FileWrite_input"
+                className="mj_Input mj_FileWrite_input"
                 type="text"
                 value={value}
                 disabled={disabled}
@@ -175,7 +175,7 @@ function EditBody({
         <label className="mj_FileWrite_field">
             <span className="mj_FileWrite_label">Contents</span>
             <textarea
-                className="mj_FileWrite_textarea"
+                className="mj_Input mj_Input_multiline mj_FileWrite_textarea"
                 value={value}
                 disabled={disabled}
                 spellCheck={false}

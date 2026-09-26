@@ -16,6 +16,7 @@ import "@fontsource/inter/latin-600.css";
 import { MatronJournalClient } from "./client";
 import { MatronApp } from "./components";
 import "./shell.pcss";
+import "./controls.pcss";
 import "./journal.pcss";
 import "./tracker.pcss";
 import "./work.pcss";

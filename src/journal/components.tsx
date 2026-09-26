@@ -526,7 +526,11 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
                                     {error}
                                 </div>
                             )}
-                            <button className="mx_Login_submit" type="submit" disabled={busy}>
+                            <button
+                                className="mj_Btn mj_Btn_primary mj_Btn_lg mx_Login_submit"
+                                type="submit"
+                                disabled={busy}
+                            >
                                 {busy ? "Signing in…" : "Sign in"}
                             </button>
                         </form>
@@ -1838,7 +1842,11 @@ function ConversationList({
                                         document.querySelector<HTMLElement>(".mj_RoomList .mj_RoomListItem")?.focus()
                                     }
                                 />
-                                <div className="mj_RoomListTabs" role="group" aria-label="Filter conversations">
+                                <div
+                                    className="mj_Seg mj_Seg_fill mj_RoomListTabs"
+                                    role="group"
+                                    aria-label="Filter conversations"
+                                >
                                     {(
                                         [
                                             ["active", "Active"],
@@ -1850,7 +1858,7 @@ function ConversationList({
                                             key={key}
                                             type="button"
                                             data-tab={key}
-                                            className={`mj_RoomListTab${tab === key ? " mj_RoomListTab_active" : ""}`}
+                                            className={`mj_Seg_item mj_RoomListTab${tab === key ? " mj_Seg_item_on mj_RoomListTab_active" : ""}`}
                                             aria-pressed={tab === key}
                                             aria-label={key === "favorites" ? "Favorites" : undefined}
                                             onClick={(event) => {
@@ -4013,7 +4021,11 @@ function AgentSpawnCard({
                     <span className="mj_PromptGlyph" aria-hidden="true" />
                     <span className="mj_Answered">{spawnOutcomeCardLabel(outcome)}</span>
                     {kind === "started" && roomId && (
-                        <button type="button" className="mj_SpawnOpenButton" onClick={() => onOpen(roomId)}>
+                        <button
+                            type="button"
+                            className="mj_Btn mj_Btn_primary mj_SpawnOpenButton"
+                            onClick={() => onOpen(roomId)}
+                        >
                             Open
                         </button>
                     )}
@@ -4053,7 +4065,7 @@ function SpawnOutcomeRow({ client, event }: { client: MatronJournalClient; event
             {kind === "started" && roomId && (
                 <button
                     type="button"
-                    className="mj_SpawnOpenButton"
+                    className="mj_Btn mj_Btn_primary mj_SpawnOpenButton"
                     onClick={() => void client.selectConversation(roomId, { suppressNotFound: true })}
                 >
                     Open
@@ -6998,12 +7010,12 @@ function EventSourceSheet({
                 </div>
                 <div className="mj_EventSource_footer">
                     <span className="mj_EventSource_note">Read-only · {byteSize} bytes</span>
-                    <button type="button" className="mj_EventSource_secondary" onClick={onClose}>
+                    <button type="button" className="mj_Btn mj_EventSource_secondary" onClick={onClose}>
                         Close
                     </button>
                     <button
                         type="button"
-                        className="mj_EventSource_copy"
+                        className="mj_Btn mj_Btn_primary mj_EventSource_copy"
                         ref={doneRef}
                         onClick={() => void copyText(json)}
                     >

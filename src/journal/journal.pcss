@@ -296,7 +296,7 @@ textarea {
     align-items: center;
     justify-content: center;
     gap: 6px;
-    height: 28px;
+    height: var(--mj-control-h-sm);
     padding: 0 10px;
     border: 1px solid var(--cpd-color-border-strong);
     border-radius: var(--cpd-radius-pill);
@@ -732,13 +732,13 @@ textarea {
 
 .mj_BackButton {
     display: none;
-    width: 28px;
-    height: 28px;
+    width: var(--mj-control-h);
+    height: var(--mj-control-h);
     align-items: center;
     justify-content: center;
     padding: 4px;
     border: 0;
-    border-radius: 8px;
+    border-radius: var(--cpd-radius-md);
     background: transparent;
     color: var(--cpd-color-icon-secondary);
 }
@@ -775,7 +775,7 @@ textarea {
 }
 
 .mj_HeaderMenu button {
-    min-height: 32px;
+    min-height: var(--mj-control-h);
     border: 0;
     border-radius: 8px;
     background: var(--cpd-color-bg-subtle-secondary);
@@ -816,7 +816,7 @@ textarea {
 .mj_SubagentBack {
     display: inline-flex;
     max-width: 220px;
-    height: 26px;
+    height: var(--mj-control-h-sm);
     flex: 0 0 auto;
     align-items: center;
     gap: 6px;
@@ -881,7 +881,7 @@ textarea {
 
 .mj_SubagentPill {
     display: inline-flex;
-    min-height: 28px;
+    min-height: var(--mj-control-h-sm);
     max-width: min(240px, 70vw);
     flex: 0 0 auto;
     align-items: center;
@@ -1167,7 +1167,7 @@ textarea {
     right: var(--cpd-space-3x);
     display: inline-flex;
     width: 28px;
-    height: 28px;
+    height: var(--mj-control-h-sm);
     align-items: center;
     justify-content: center;
     padding: 0;
@@ -1194,56 +1194,9 @@ textarea {
 }
 
 .mj_RoomListTabs {
-    display: flex;
-    gap: var(--cpd-space-1x);
     /* No top margin (the New session row provides the gap); 12px below = uniform gap. */
     margin: 0 var(--cpd-space-3x) 12px;
     /* v4: segmented control on a subtle track; the active tab is a raised chip. */
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-subtle-secondary);
-    padding: 2px;
-}
-
-.mj_RoomListTab {
-    display: inline-flex;
-    flex: 1 1 0;
-    min-width: 0;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    border: 0;
-    border-radius: var(--cpd-radius-pill);
-    background: transparent;
-    color: var(--cpd-color-text-secondary);
-    cursor: pointer;
-    overflow: hidden;
-    /* v5 mock: 5px/8px so the pill row reads at the mock's height. */
-    padding: 5px var(--cpd-space-2x);
-    /* v4 label.xs (tabs): 12px / 500 / 16px. */
-    font-size: 12px;
-    font-weight: 500;
-    line-height: 16px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    transition:
-        background var(--cpd-dur-fast) var(--cpd-ease),
-        color var(--cpd-dur-fast) var(--cpd-ease);
-}
-
-.mj_RoomListTab:hover {
-    color: var(--cpd-color-text-primary);
-}
-
-/* v4 selected tab: raised panel chip with a subtle shadow + primary ink. */
-.mj_RoomListTab_active,
-.mj_RoomListTab_active:hover {
-    background: var(--cpd-color-bg-canvas-default);
-    box-shadow: 0 1px 2px rgb(28 24 20 / 0.06);
-    color: var(--cpd-color-text-primary);
-}
-
-.mj_RoomListTab:focus-visible {
-    outline: 2px solid var(--cpd-color-border-interactive-primary);
 }
 
 .mj_UnreadDot {
@@ -1378,7 +1331,7 @@ textarea {
     bottom: var(--cpd-space-4x);
     display: inline-flex;
     width: 32px;
-    height: 32px;
+    height: var(--mj-control-h);
     align-items: center;
     justify-content: center;
     padding: 0;
@@ -1843,7 +1796,7 @@ textarea {
 .mj_EventSource_close {
     display: inline-flex;
     width: 28px;
-    height: 28px;
+    height: var(--mj-control-h-sm);
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
@@ -1948,50 +1901,6 @@ textarea {
         sans-serif;
 }
 
-.mj_EventSource_secondary {
-    height: 32px;
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: 8px;
-    background: transparent;
-    color: var(--cpd-color-text-primary);
-    padding: 0 14px;
-    font:
-        500 12.5px/16px Inter,
-        sans-serif;
-    cursor: pointer;
-}
-
-.mj_EventSource_secondary:hover {
-    background: var(--cpd-state-hover);
-}
-
-.mj_EventSource_copy {
-    display: inline-flex;
-    height: 32px;
-    align-items: center;
-    gap: 7px;
-    border: 0;
-    border-radius: 8px;
-    background: var(--cpd-color-bg-accent);
-    color: var(--cpd-color-text-on-accent);
-    padding: 0 15px;
-    font:
-        600 12.5px/16px Inter,
-        sans-serif;
-    cursor: pointer;
-}
-
-.mj_EventSource_copy svg {
-    width: 13px;
-    height: 13px;
-}
-
-.mj_EventSource_copy:hover {
-    filter: brightness(1.08);
-}
-
-.mj_EventSource_secondary:focus-visible,
-.mj_EventSource_copy:focus-visible,
 .mj_EventSource_close:focus-visible {
     outline: 2px solid var(--cpd-color-text-action-accent);
     outline-offset: 2px;
@@ -2071,7 +1980,7 @@ textarea {
 .mj_UploadConfirm_close {
     display: inline-flex;
     width: 28px;
-    height: 28px;
+    height: var(--mj-control-h-sm);
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
@@ -2295,71 +2204,13 @@ textarea {
     outline: none;
 }
 
+/* Footer buttons keep the control height and never shrink below their label, so a footer whose
+   actions outgrow a phone-width sheet wraps onto a second line instead of clipping. */
 .mj_UploadConfirm_actions {
     display: flex;
     justify-content: flex-end;
     gap: var(--cpd-space-2x);
-}
-
-.mj_UploadConfirm_actions button {
-    border: 1px solid transparent;
-    border-radius: var(--cpd-radius-md);
-    background: transparent;
-    /* v4 secondary/ghost button: 500 12.5/16. */
-    color: var(--cpd-color-text-secondary);
-    padding: var(--cpd-space-2x) var(--cpd-space-4x);
-    font:
-        500 12.5px/16px Inter,
-        sans-serif;
-}
-
-/* Skip = outlined secondary (design light-upload-first): a hairline border + primary ink,
-   distinct from the ghost "Cancel all". */
-.mj_UploadConfirm_actions button.mj_UploadConfirm_skip {
-    border-color: var(--cpd-color-border-interactive-secondary);
-    color: var(--cpd-color-text-primary);
-}
-
-/* Ghost hover applies only to the secondary buttons — the filled primary (Send) keeps
-   its accent background, or the generic rule (more specific than the primary's base
-   background) would flip it to near-white and leave white-on-white text on hover. */
-.mj_UploadConfirm_actions button:not(.mj_UploadConfirm_send):hover:not(:disabled) {
-    background: var(--cpd-color-bg-subtle-primary);
-    color: var(--cpd-color-text-primary);
-}
-
-.mj_UploadConfirm_actions button:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
-}
-
-.mj_UploadConfirm_actions button:disabled {
-    cursor: default;
-    opacity: 0.5;
-}
-
-/* v4 primary button: filled --m-accent-deep, weight 600, hover brightens (no colour swap).
-   Paper-plane glyph + label (design *-upload-* statics). */
-.mj_UploadConfirm_actions button.mj_UploadConfirm_send {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding-right: 15px;
-    padding-left: 15px;
-    background: var(--cpd-color-bg-accent);
-    color: var(--cpd-color-text-on-accent);
-    font-weight: 600;
-}
-
-.mj_UploadConfirm_actions button.mj_UploadConfirm_send svg {
-    width: 13px;
-    height: 13px;
-    flex: 0 0 auto;
-}
-
-.mj_UploadConfirm_actions button.mj_UploadConfirm_send:hover:not(:disabled) {
-    filter: brightness(1.08);
-    color: var(--cpd-color-text-on-accent);
+    flex-wrap: wrap;
 }
 
 .mj_UploadConfirm_error {
@@ -2448,7 +2299,7 @@ textarea {
 }
 
 .mj_AttachmentChip_actions button {
-    min-height: 28px;
+    min-height: var(--mj-control-h-sm);
     border: 1px solid var(--cpd-color-border-interactive-secondary);
     border-radius: 8px;
     background: var(--cpd-color-bg-canvas-default);
@@ -2599,25 +2450,6 @@ li.mj_AttachmentChip_error {
     flex: 0 0 24px;
 }
 
-.mj_SpawnOpenButton {
-    flex: 0 0 auto;
-    min-height: 30px;
-    box-sizing: border-box;
-    border: 0;
-    border-radius: 8px;
-    background: var(--cpd-color-bg-accent);
-    color: var(--cpd-color-text-on-accent);
-    cursor: pointer;
-    padding: 0 14px;
-    font:
-        600 12.5px/16px Inter,
-        sans-serif;
-}
-
-.mj_SpawnOpenButton:hover {
-    filter: brightness(1.08);
-}
-
 /* Standalone timeline row for the durable spawn_outcome event once the card has scrolled
    away — a single status line, no card chrome. */
 /* Surface C restyle (design 2026-08): the durable spawn-outcome row reads as a STRUCTURAL
@@ -2683,30 +2515,6 @@ li.mj_AttachmentChip_error {
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-}
-
-/* The "started" outcome keeps the jump-to-child button; failed has no child room. */
-.mj_SpawnOpenButton {
-    flex: 0 0 auto;
-    min-height: 30px;
-    border: 0;
-    border-radius: var(--cpd-radius-md);
-    background: var(--cpd-color-bg-accent);
-    color: var(--cpd-color-text-on-accent);
-    cursor: pointer;
-    padding: 0 14px;
-    font:
-        600 12.5px/16px Inter,
-        sans-serif;
-}
-
-.mj_SpawnOpenButton:hover {
-    filter: brightness(1.08);
-}
-
-.mj_SpawnOpenButton:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
 }
 
 /* ============================================================================
@@ -2918,7 +2726,7 @@ li.mj_AttachmentChip_error {
 .mj_PromptOptions button,
 .mj_PromptText button,
 .mj_PromptText input {
-    min-height: 30px;
+    min-height: var(--mj-control-h);
     box-sizing: border-box;
     border: 1px solid var(--cpd-color-border-interactive-secondary);
     border-radius: 8px;
@@ -3515,7 +3323,7 @@ button.mj_File {
 .mj_VoiceRecording_action {
     display: inline-flex;
     width: 32px;
-    height: 32px;
+    height: var(--mj-control-h);
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
@@ -3618,8 +3426,8 @@ button.mj_File {
     flex: none;
     align-items: center;
     justify-content: center;
-    min-width: 32px;
-    min-height: 32px;
+    min-width: var(--mj-control-h);
+    min-height: var(--mj-control-h);
     padding: 0;
     border: none;
     background: none;
@@ -3849,39 +3657,6 @@ button.mj_File {
     flex: 1 1 auto;
 }
 
-.mj_MediaViewer_download {
-    display: inline-flex;
-    flex: 0 0 auto;
-    align-items: center;
-    gap: var(--cpd-space-1x);
-    box-sizing: border-box;
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: var(--cpd-radius-md);
-    background: var(--cpd-color-bg-canvas-raised);
-    color: var(--cpd-color-text-primary);
-    font: var(--cpd-font-body-sm-regular);
-    padding: var(--cpd-space-1x) var(--cpd-space-3x);
-    text-decoration: none;
-    cursor: pointer;
-    transition:
-        background var(--cpd-dur-fast) var(--cpd-ease),
-        border-color var(--cpd-dur-fast) var(--cpd-ease);
-}
-
-.mj_MediaViewer_download svg {
-    width: 15px;
-    height: 15px;
-}
-
-.mj_MediaViewer_download:hover:not(:disabled) {
-    background: var(--cpd-color-bg-subtle-primary);
-}
-
-.mj_MediaViewer_download:disabled {
-    cursor: default;
-    opacity: 0.6;
-}
-
 .mj_MediaViewer_download:focus-visible,
 .mj_MediaViewer_close:focus-visible,
 .mj_MediaViewer_nav:focus-visible,
@@ -3896,8 +3671,8 @@ button.mj_File {
 
 .mj_MediaViewer_close {
     display: inline-flex;
-    width: 30px;
-    height: 30px;
+    width: var(--mj-control-h);
+    height: var(--mj-control-h);
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
@@ -3934,7 +3709,7 @@ button.mj_File {
     z-index: 2;
     display: inline-flex;
     width: 40px;
-    height: 40px;
+    height: var(--mj-control-h-lg);
     align-items: center;
     justify-content: center;
     transform: translateY(-50%);
@@ -4072,7 +3847,7 @@ button.mj_File {
 .mj_MediaViewer_zoomBtn {
     display: inline-flex;
     width: 28px;
-    height: 28px;
+    height: var(--mj-control-h-sm);
     align-items: center;
     justify-content: center;
     border: 0;
@@ -4340,7 +4115,7 @@ button.mj_File {
 
 .mj_FilesPane_title {
     margin: 0;
-    font: var(--cpd-font-body-lg-semibold, 600 16px/22px Inter, sans-serif);
+    font: var(--cpd-font-title);
     color: var(--cpd-color-text-primary);
 }
 
@@ -4681,7 +4456,7 @@ button.mj_File {
 .mj_FilesGeneric_name {
     margin: 0;
     color: var(--cpd-color-text-primary);
-    font: var(--cpd-font-body-md-semibold, 600 14px/20px Inter, sans-serif);
+    font: var(--cpd-font-body-sm-semibold);
     word-break: break-all;
 }
 
@@ -4706,7 +4481,7 @@ button.mj_File {
     background: var(--cpd-color-bg-accent);
     color: var(--cpd-color-text-on-accent);
     cursor: pointer;
-    font: var(--cpd-font-body-sm-semibold, 600 14px/20px Inter, sans-serif);
+    font: var(--cpd-font-body-sm-semibold);
 }
 
 .mj_FilesDownload:hover:not(:disabled) {
@@ -4738,7 +4513,7 @@ button.mj_File {
     background: transparent;
     color: var(--cpd-color-text-action-accent);
     cursor: pointer;
-    font: var(--cpd-font-body-sm-semibold, 600 14px/20px Inter, sans-serif);
+    font: var(--cpd-font-body-sm-semibold);
 }
 
 .mj_FilesRetry:hover {
@@ -4775,7 +4550,7 @@ button.mj_File {
 .mj_FilesRow_action {
     display: inline-flex;
     width: 28px;
-    height: 28px;
+    height: var(--mj-control-h-sm);
     align-items: center;
     justify-content: center;
     border: 0;
@@ -4815,32 +4590,8 @@ button.mj_File {
     border-bottom: 1px solid var(--cpd-color-border-subtle);
 }
 
-.mj_FilesToolbar_button {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--cpd-space-1x);
-    padding: var(--cpd-space-1x) var(--cpd-space-3x);
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: var(--cpd-radius-pill);
-    background: transparent;
-    color: var(--cpd-color-text-primary);
-    cursor: pointer;
-    font: var(--cpd-font-body-sm-regular);
-}
-
 .mj_FilesToolbar_button svg {
-    width: var(--cpd-icon-sm, 16px);
-    height: var(--cpd-icon-sm, 16px);
     color: var(--cpd-color-icon-secondary);
-}
-
-.mj_FilesToolbar_button:hover {
-    background: var(--cpd-state-hover);
-}
-
-.mj_FilesToolbar_button:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 1px;
 }
 
 /* The file picker is driven by the Upload button; it is never itself a visible control. */
@@ -4910,7 +4661,7 @@ button.mj_File {
 .mj_FilesPreview_name {
     overflow: hidden;
     color: var(--cpd-color-text-primary);
-    font: var(--cpd-font-body-md-semibold, 600 14px/20px Inter, sans-serif);
+    font: var(--cpd-font-body-sm-semibold);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -4935,8 +4686,8 @@ button.mj_File {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    width: var(--mj-control-h);
+    height: var(--mj-control-h);
     padding: 0;
     border: 1px solid var(--cpd-color-border-interactive-secondary);
     border-radius: var(--cpd-radius-md);
@@ -5025,18 +4776,6 @@ button.mj_File {
     font: var(--cpd-font-body-sm-regular);
 }
 
-.mj_FileWrite_input,
-.mj_FileWrite_textarea {
-    box-sizing: border-box;
-    width: 100%;
-    padding: var(--cpd-space-2x) var(--cpd-space-3x);
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: var(--cpd-radius-md, 8px);
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
-    font: var(--cpd-font-body-md-regular, 400 15px/21px Inter, sans-serif);
-}
-
 .mj_FileWrite_textarea {
     min-height: 220px;
     max-height: 46vh;
@@ -5045,18 +4784,6 @@ button.mj_File {
         400 12.5px/18px "Fira Code",
         ui-monospace,
         monospace;
-}
-
-.mj_FileWrite_input:focus-visible,
-.mj_FileWrite_textarea:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 1px;
-}
-
-.mj_FileWrite_input:disabled,
-.mj_FileWrite_textarea:disabled {
-    cursor: default;
-    opacity: 0.6;
 }
 
 /* Resolved absolute destination / character count — quiet, monospaced, never truncated silently. */
@@ -5083,7 +4810,7 @@ button.mj_File {
 
 .mj_FileWrite_targetName {
     color: var(--cpd-color-text-primary);
-    font: var(--cpd-font-body-md-semibold, 600 15px/21px Inter, sans-serif);
+    font: var(--cpd-font-title);
     overflow-wrap: anywhere;
 }
 
@@ -5119,20 +4846,6 @@ button.mj_File {
 
 .mj_FileWrite_actions {
     padding: 0 14px 14px;
-}
-
-/* Destructive primary: critical ink on a critical tint with a critical hairline — reads as
-   destructive in BOTH themes without needing an on-critical ink token for a solid fill. */
-.mj_UploadConfirm_actions button.mj_FileWrite_danger {
-    border-color: var(--mj-critical-border);
-    background: var(--mj-critical-tint);
-    color: var(--cpd-color-text-critical-primary);
-}
-
-.mj_UploadConfirm_actions button.mj_FileWrite_danger:hover:not(:disabled) {
-    background: var(--mj-critical-tint-strong);
-    color: var(--cpd-color-text-critical-primary);
-    filter: none;
 }
 
 /* Mobile: stack the two panes; the preview drops below the list. */
@@ -6001,7 +5714,7 @@ button.mj_File {
 /* ---- v6 surface C: one-tap New session — split button + options sheet ---- */
 .mj_NewSessionSplit {
     display: flex;
-    height: 34px;
+    height: var(--mj-control-h);
     box-sizing: border-box;
     border: 1px solid var(--mj-accent-border);
     border-radius: var(--cpd-radius-md);
@@ -6025,8 +5738,8 @@ button.mj_File {
 
 .mj_NewSessionSplit_more {
     display: flex;
-    width: 34px;
-    flex: 0 0 34px;
+    width: var(--mj-control-h);
+    flex: 0 0 var(--mj-control-h);
     align-items: center;
     justify-content: center;
     padding: 0;
@@ -6135,17 +5848,6 @@ button.mj_File {
     text-decoration: underline;
 }
 
-@media (max-width: 700px) {
-    .mj_NewSessionSplit {
-        height: 44px;
-    }
-
-    .mj_NewSessionSplit_more {
-        width: 44px;
-        flex-basis: 44px;
-    }
-}
-
 .mj_NewSessionSheet .mj_UploadConfirm_body {
     gap: var(--cpd-space-4x);
 }
@@ -6251,109 +5953,6 @@ button.mj_File {
     background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-secondary);
     font: var(--cpd-font-micro);
-}
-
-.mj_TextInput,
-.mj_Select,
-.mj_TextArea {
-    display: block;
-    width: 100%;
-    min-height: 34px;
-    box-sizing: border-box;
-    padding: 0 12px;
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: var(--cpd-radius-md);
-    background-color: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
-    font: var(--cpd-font-body-sm-regular);
-}
-
-.mj_TextInput::placeholder,
-.mj_TextArea::placeholder {
-    color: var(--cpd-color-text-placeholder);
-}
-
-.mj_TextInput:focus,
-.mj_Select:focus,
-.mj_TextArea:focus {
-    border-color: var(--cpd-color-border-interactive-primary);
-    outline: none;
-}
-
-.mj_TextInput:focus-visible,
-.mj_Select:focus-visible,
-.mj_TextArea:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 1px;
-}
-
-.mj_TextInput_error {
-    border-color: var(--mj-critical-border);
-}
-
-.mj_Select {
-    padding-right: 32px;
-    background-image:
-        linear-gradient(45deg, transparent 50%, var(--cpd-color-icon-secondary) 50%),
-        linear-gradient(135deg, var(--cpd-color-icon-secondary) 50%, transparent 50%);
-    background-position:
-        calc(100% - 17px) 50%,
-        calc(100% - 12px) 50%;
-    background-repeat: no-repeat;
-    background-size: 5px 5px;
-    appearance: none;
-}
-
-.mj_Select:disabled,
-.mj_TextInput:disabled {
-    background-color: var(--cpd-color-bg-subtle-secondary);
-    color: var(--cpd-color-text-secondary);
-    cursor: default;
-}
-
-.mj_Select option {
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
-}
-
-.mj_TextArea {
-    min-height: 64px;
-    padding: 8px 12px;
-    resize: vertical;
-}
-
-.mj_Segmented {
-    display: flex;
-    gap: 4px;
-    padding: 2px;
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-subtle-secondary);
-}
-
-.mj_Segmented button {
-    display: inline-flex;
-    flex: 1;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 5px 8px;
-    border: 0;
-    border-radius: var(--cpd-radius-pill);
-    background: transparent;
-    color: var(--cpd-color-text-secondary);
-    cursor: pointer;
-    font: var(--mj-font-label-sm);
-}
-
-.mj_Segmented button[aria-checked="true"] {
-    background: var(--cpd-color-bg-canvas-default);
-    box-shadow: var(--cpd-shadow-sm);
-    color: var(--cpd-color-text-primary);
-}
-
-.mj_Segmented button:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 1px;
 }
 
 .mj_SwitchRow {

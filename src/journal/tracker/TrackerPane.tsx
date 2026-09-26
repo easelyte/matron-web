@@ -141,12 +141,12 @@ export function TrackerPane({
                     <CloseIcon />
                 </button>
                 <h1 className="mj_TrackerPane_title">Tracker</h1>
-                <div className="mj_TrackerViewSwitch" role="tablist" aria-label="Tracker view">
+                <div className="mj_Seg mj_TrackerViewSwitch" role="tablist" aria-label="Tracker view">
                     <button
                         type="button"
                         role="tab"
                         aria-selected={view === "missions"}
-                        className={`mj_TrackerViewSwitch_tab${view === "missions" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
+                        className={`mj_Seg_item mj_TrackerViewSwitch_tab${view === "missions" ? " mj_Seg_item_on mj_TrackerViewSwitch_tab_active" : ""}`}
                         onClick={() => switchView("missions")}
                     >
                         Missions
@@ -155,7 +155,7 @@ export function TrackerPane({
                         type="button"
                         role="tab"
                         aria-selected={view === "inbox"}
-                        className={`mj_TrackerViewSwitch_tab${view === "inbox" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
+                        className={`mj_Seg_item mj_TrackerViewSwitch_tab${view === "inbox" ? " mj_Seg_item_on mj_TrackerViewSwitch_tab_active" : ""}`}
                         onClick={() => switchView("inbox")}
                     >
                         Inbox
@@ -164,7 +164,7 @@ export function TrackerPane({
                         type="button"
                         role="tab"
                         aria-selected={view === "work"}
-                        className={`mj_TrackerViewSwitch_tab${view === "work" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
+                        className={`mj_Seg_item mj_TrackerViewSwitch_tab${view === "work" ? " mj_Seg_item_on mj_TrackerViewSwitch_tab_active" : ""}`}
                         onClick={() => switchView("work")}
                     >
                         Work

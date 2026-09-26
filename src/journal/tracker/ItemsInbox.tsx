@@ -47,12 +47,12 @@ export function ItemsInbox({
 
     return (
         <div className="mj_TrackerList">
-            <div className="mj_TrackerInboxToggle" role="tablist" aria-label="Inbox filter">
+            <div className="mj_Seg mj_TrackerInboxToggle" role="tablist" aria-label="Inbox filter">
                 <button
                     type="button"
                     role="tab"
                     aria-selected={filter === "needs-you"}
-                    className={`mj_TrackerToggleTab${filter === "needs-you" ? " mj_TrackerToggleTab_active" : ""}`}
+                    className={`mj_Seg_item mj_TrackerToggleTab${filter === "needs-you" ? " mj_Seg_item_on mj_TrackerToggleTab_active" : ""}`}
                     onClick={() => setFilter("needs-you")}
                 >
                     Needs you
@@ -61,7 +61,7 @@ export function ItemsInbox({
                     type="button"
                     role="tab"
                     aria-selected={filter === "all-open"}
-                    className={`mj_TrackerToggleTab${filter === "all-open" ? " mj_TrackerToggleTab_active" : ""}`}
+                    className={`mj_Seg_item mj_TrackerToggleTab${filter === "all-open" ? " mj_Seg_item_on mj_TrackerToggleTab_active" : ""}`}
                     onClick={() => setFilter("all-open")}
                 >
                     All open

@@ -385,7 +385,7 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
                         <div className="mj_FilesToolbar">
                             <button
                                 type="button"
-                                className="mj_FilesToolbar_button"
+                                className="mj_Btn mj_Btn_pill mj_FilesToolbar_button"
                                 onClick={() => writes.begin({ kind: "mkdir", dir: listingPath })}
                             >
                                 <FolderIcon />
@@ -393,7 +393,7 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
                             </button>
                             <button
                                 type="button"
-                                className="mj_FilesToolbar_button"
+                                className="mj_Btn mj_Btn_pill mj_FilesToolbar_button"
                                 onClick={() => fileInput.current?.click()}
                             >
                                 <UploadTrayIcon />

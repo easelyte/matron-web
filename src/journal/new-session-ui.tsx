@@ -522,7 +522,7 @@ export function NewSessionSheet({
                                 {folder === "other" && (
                                     <input
                                         ref={otherRef}
-                                        className={`mj_TextInput${folderError ? " mj_TextInput_error" : ""}`}
+                                        className={`mj_Input mj_TextInput${folderError ? " mj_Input_error mj_TextInput_error" : ""}`}
                                         type="text"
                                         aria-label="Other folder"
                                         placeholder="/path/on/the/box"
@@ -546,7 +546,11 @@ export function NewSessionSheet({
                                     <span className="mj_FieldLabel" id={`${ids}-agent`}>
                                         Agent
                                     </span>
-                                    <div className="mj_Segmented" role="radiogroup" aria-labelledby={`${ids}-agent`}>
+                                    <div
+                                        className="mj_Seg mj_Seg_fill mj_Segmented"
+                                        role="radiogroup"
+                                        aria-labelledby={`${ids}-agent`}
+                                    >
                                         {(["claude", "codex"] as const)
                                             .filter((kind) => form.options.agents.includes(kind))
                                             .map((kind) => (
@@ -554,6 +558,7 @@ export function NewSessionSheet({
                                                     key={kind}
                                                     type="button"
                                                     role="radio"
+                                                    className="mj_Seg_item"
                                                     aria-checked={agent === kind}
                                                     onClick={() => setAgent(kind)}
                                                 >
@@ -570,7 +575,7 @@ export function NewSessionSheet({
                                     </label>
                                     <select
                                         id={`${ids}-model`}
-                                        className="mj_Select"
+                                        className="mj_Input mj_Input_select mj_Select"
                                         value={codex ? "" : model}
                                         disabled={codex}
                                         onChange={(event) => setModel(event.target.value)}
@@ -611,7 +616,7 @@ export function NewSessionSheet({
                                 </label>
                                 <textarea
                                     id={`${ids}-task`}
-                                    className="mj_TextArea"
+                                    className="mj_Input mj_Input_multiline mj_TextArea"
                                     placeholder="What should it start on?"
                                     value={task}
                                     onChange={(event) => setTask(event.target.value)}
@@ -632,7 +637,7 @@ export function NewSessionSheet({
                                     </label>
                                     <select
                                         id={`${ids}-box`}
-                                        className="mj_Select"
+                                        className="mj_Input mj_Input_select mj_Select"
                                         value={form.box.device_id}
                                         onChange={(event) => {
                                             const next = boxes.find(
