@@ -40,11 +40,28 @@ describe("client.applyWorkDeepLink", () => {
 
     it("ignores hashes that are not a Work link, and malformed ids", () => {
         const subject = client();
-        for (const hash of ["#files=%2Ftmp%2Fa", "#work=abc", "#work=12x", "#workshop", "#work=-1"]) {
+        for (const hash of [
+            "#files=%2Ftmp%2Fa",
+            "#work=abc",
+            "#work=12x",
+            "#workshop",
+            "#work=-1",
+            "#work=0",
+            "#work=99999999999999999999",
+        ]) {
             window.location.hash = hash;
             subject.applyWorkDeepLink();
             expect(subject.getSnapshot().trackerView).toBeUndefined();
+            // A malformed Work link is left in place for inspection, not silently consumed.
+            if (hash.startsWith("#work=")) expect(window.location.hash).toBe(hash);
         }
+    });
+
+    it("accepts any positive safe-integer loop id", () => {
+        const subject = client();
+        window.location.hash = "#work=1000000000";
+        subject.applyWorkDeepLink();
+        expect(subject.getSnapshot().trackerView?.selectedLoopId).toBe(1_000_000_000);
     });
 
     it("no-ops before sign-in and keeps the hash for later", () => {

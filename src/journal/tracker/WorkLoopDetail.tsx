@@ -23,7 +23,7 @@ import { ChevronLeftIcon } from "../icons";
 import { MarkdownBody } from "../markdown";
 import type { WorkViewLoadState } from "../use-work-view";
 import type { WorkViewLoop } from "../work-view";
-import { claimCopy, compactAge, needsAttention, openedDate, openedMs, ownerLabel, statusLabel } from "./work-format";
+import { claimCopy, compactAge, needsAttention, openedDate, openedMs, ownerLabel } from "./work-format";
 import { WorkGlyph, WorkStatusChip } from "./work-parts";
 
 function MetaCell({ label, children }: { label: string; children: React.ReactNode }): React.ReactElement {

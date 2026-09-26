@@ -549,6 +549,24 @@ describe("WorkView loop detail", () => {
         await unmount(root);
     });
 
+    it("moves focus to the search field when leaving a detail that was reached by deep link", async () => {
+        const work = jest.fn().mockResolvedValue(ok("repo", [group("matron-web", [detailed])]));
+        const props = { api: loader(work), now: NOW, onOpenLoop: jest.fn(), onCloseLoop: jest.fn() };
+        const { container, root } = await mount(<WorkView {...props} selectedLoopId={42} />);
+        container.querySelector<HTMLButtonElement>('button[aria-label="Back to work"]')!.focus();
+
+        await act(async () => root.render(<WorkView {...props} />));
+        expect(document.activeElement).toBe(container.querySelector('input[aria-label="Search work"]'));
+        await unmount(root);
+    });
+
+    it("does not steal focus when the list first mounts", async () => {
+        const work = jest.fn().mockResolvedValue(ok("repo", [group("matron-web", [detailed])]));
+        const { container, root } = await mount(<WorkView api={loader(work)} now={NOW} />);
+        expect(container.contains(document.activeElement)).toBe(false);
+        await unmount(root);
+    });
+
     it("says a deep-linked loop is not open instead of rendering a blank pane", async () => {
         const work = jest.fn().mockResolvedValue(ok("repo", [group("matron-web", [loop({ id: 1 })])]));
         const { container, root } = await mount(

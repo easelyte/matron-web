@@ -91,6 +91,19 @@ describe("work-format", () => {
         expect([...loops].sort(compareLoops).map((item) => item.id)).toEqual([2, 3, 4, 5, 1]);
     });
 
+    it("is a total order when dated and undated loops are mixed, whatever the input order", () => {
+        const a = loop({ id: 1, opened: "2026-09-10T00:00:00Z" });
+        const b = loop({ id: 2 });
+        const c = loop({ id: 3, opened: "2026-09-01T00:00:00Z" });
+        const orders = [
+            [a, b, c],
+            [c, b, a],
+            [b, a, c],
+            [b, c, a],
+        ].map((input) => [...input].sort(compareLoops).map((item) => item.id));
+        for (const order of orders) expect(order).toEqual([3, 1, 2]);
+    });
+
     it("matches every search term, case-insensitively, across the loop's text", () => {
         const subject = loop({
             id: 42,

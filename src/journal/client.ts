@@ -1800,11 +1800,13 @@ export class MatronJournalClient {
     // cleared once applied so a refresh or back-button does not re-fire it.
     public applyWorkDeepLink(): void {
         if (typeof window === "undefined") return;
-        const match = /^#work(?:=(\d{1,9}))?$/.exec(window.location.hash || "");
+        const match = /^#work(?:=(\d+))?$/.exec(window.location.hash || "");
         if (!match) return;
+        const loopId = match[1] === undefined ? null : Number(match[1]);
+        // A malformed id is left in place for inspection, exactly like a malformed #files= link.
+        if (loopId !== null && (!Number.isSafeInteger(loopId) || loopId < 1)) return;
         if (this.state.phase !== "signed-in") return;
-        const loopId = match[1] ? Number(match[1]) : null;
-        this.openTrackerLoop(loopId !== null && loopId > 0 ? loopId : null);
+        this.openTrackerLoop(loopId);
         try {
             window.history.replaceState(null, "", window.location.pathname + window.location.search);
         } catch {

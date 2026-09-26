@@ -267,6 +267,9 @@ export function WorkView({
     const rootRef = useRef<HTMLDivElement>(null);
     const listScrollRef = useRef(0);
     const returnFocusRef = useRef<number | null>(null);
+    // True once a detail has been shown, so the list only claims focus on the way BACK from one,
+    // never on first mount.
+    const cameFromDetailRef = useRef(false);
 
     const scroller = (): HTMLElement | null => rootRef.current?.closest(".mj_TrackerPane_body") ?? null;
 
@@ -289,15 +292,23 @@ export function WorkView({
     // opened, so keyboard and screen-reader users land where they left rather than at the top.
     useLayoutEffect(() => {
         if (selected !== undefined) {
+            cameFromDetailRef.current = true;
             scroller()?.scrollTo?.({ top: 0 });
             return;
         }
         const id = returnFocusRef.current;
-        if (id === null) return;
         returnFocusRef.current = null;
-        const body = scroller();
-        if (body) body.scrollTop = listScrollRef.current;
-        rootRef.current?.querySelector<HTMLElement>(`[data-loop-id="${id}"]`)?.focus({ preventScroll: true });
+        if (id !== null) {
+            const body = scroller();
+            if (body) body.scrollTop = listScrollRef.current;
+        }
+        if (!cameFromDetailRef.current) return;
+        cameFromDetailRef.current = false;
+        // Land on the row that was opened; a detail reached by deep link has no originating row, so
+        // fall back to the search field rather than leaving focus on a control that just unmounted.
+        const row = id !== null ? rootRef.current?.querySelector<HTMLElement>(`[data-loop-id="${id}"]`) : null;
+        const target = row ?? rootRef.current?.querySelector<HTMLElement>('input[aria-label="Search work"]');
+        target?.focus({ preventScroll: true });
     }, [selected]);
 
     const loops = useMemo(() => (state.status === "ok" ? allLoops(state.groups) : []), [state]);
