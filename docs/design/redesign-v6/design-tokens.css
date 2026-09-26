@@ -1,0 +1,133 @@
+/* Parsed from src/app.css by tools/export.js — Matron redesign v6. NEW = not in shell.pcss today. */
+:root{
+  --cpd-color-bg-app: #f4f2ee;
+  --cpd-color-bg-canvas-default: #fff;
+  --cpd-color-bg-canvas-raised: #faf8f4;
+  --cpd-color-bg-room-canvas: #efece6;
+  --cpd-color-bg-subtle-primary: #f2efe9;
+  --cpd-color-bg-subtle-secondary: #eae5dd;
+  --cpd-color-bg-self-bubble: #e6f4ef;
+  --cpd-color-bg-accent: #0f766e;
+  --cpd-color-bg-diff-add: rgb(52 199 89 / 0.13);
+  --cpd-color-bg-diff-del: rgb(255 59 48 / 0.09);
+  --cpd-color-text-primary: #1b1815;
+  --cpd-color-text-secondary: #6b655c;
+  --cpd-color-text-tertiary: #9a938a;
+  --cpd-color-text-action-accent: #0d9488;
+  --cpd-color-text-critical-primary: #bd2020;
+  --cpd-color-text-on-accent: #fff;
+  --cpd-color-text-placeholder: #9a938a;
+  --cpd-color-icon-accent-primary: #0d9488;
+  --cpd-color-icon-secondary: #6b655c;
+  --cpd-color-icon-tertiary: #9a938a;
+  --cpd-color-border-subtle: #e7e2d9;
+  --cpd-color-border-strong: #d8d1c5;
+  --cpd-color-border-disabled: #ded8ce;
+  --cpd-color-border-interactive-primary: #b3aa9c;
+  --cpd-color-border-interactive-secondary: #d8d1c5;
+  --cpd-color-usage-low: #34c759;
+  --cpd-color-usage-medium: #ff9500;
+  --cpd-state-hover: rgb(28 24 20 / 0.05);
+  --cpd-state-active: rgb(28 24 20 / 0.09);
+  --cpd-state-selected: rgb(13 148 136 / 0.1);
+  --mj-selection: rgb(13 148 136 / 0.2);
+  --mj-scrollbar: rgb(28 24 20 / 0.22);
+  --mj-scrollbar-hover: rgb(28 24 20 / 0.34);
+  --mj-scrim-modal: rgb(18 16 14 / 55%);
+  --mj-critical-tint: rgb(189 32 32 / 10%);
+  --mj-critical-border: rgb(189 32 32 / 45%);
+  --mj-warn-ink: #9a5700; /* NEW @intent amber TEXT that clears 4.5:1 on canvas + raised; --cpd-color-usage-medium is a fill, 2.2:1 as text */
+  --mj-warn-dot: var(--cpd-color-usage-medium); /* NEW alias @intent the "something went wrong along the way" dot */
+  --mj-warn-tint: rgb(255 149 0 / 10%); /* NEW @intent hover fill behind the amber Stop */
+  --mj-accent-border: rgb(13 148 136 / 25%); /* NEW alias of the literal used by .mj_NewSessionButton / .mj_PromptCard_permission */
+  --cpd-shadow-sm: 0 1px 2px rgb(28 24 20 / 0.06);
+  --cpd-shadow-md: 0 4px 12px rgb(28 24 20 / 0.1);
+  --cpd-shadow-lg: 0 16px 48px rgb(28 24 20 / 0.16);
+  --cpd-radius-xs: 4px;
+  --cpd-radius-sm: 6px;
+  --cpd-radius-md: 8px;
+  --cpd-radius-lg: 12px;
+  --cpd-radius-xl: 16px;
+  --cpd-radius-pill: 999px;
+  --cpd-space-0-5x: 2px;
+  --cpd-space-1x: 4px;
+  --cpd-space-2x: 8px;
+  --cpd-space-3x: 12px;
+  --cpd-space-4x: 16px;
+  --cpd-space-5x: 20px;
+  --cpd-space-6x: 24px;
+  --cpd-space-8x: 32px;
+  --cpd-space-10x: 40px;
+  --cpd-space-12x: 48px;
+  --cpd-font-micro: 400 11px/14px Inter,sans-serif; /* @intent timestamps, hints under menu rows */
+  --cpd-font-meta: 400 12px/16px Inter,sans-serif; /* @intent card meta, live line, captions, system notice */
+  --cpd-font-label: 500 13px/16px Inter,sans-serif; /* @intent control labels, card title, menu rows, buttons */
+  --cpd-font-body-sm-regular: 400 14px/20px Inter,sans-serif; /* @intent step rows and dense secondary text */
+  --cpd-font-body: 400 14px/21px Inter,sans-serif; /* @intent prose: answers, bubbles, group sentences, narration */
+  --cpd-font-title: 600 15px/20px Inter,sans-serif; /* @intent header title, sidebar brand */
+  --mj-font-modal-title: 600 14px/19px Inter,sans-serif; /* live literal in .mj_UploadConfirm_title @intent modal title */
+  --mj-font-label-sm: 500 12px/16px Inter,sans-serif; /* live literal in .mj_NewSessionSheet label @intent field labels, section labels, +N −M counts */
+  --mj-font-mono: 400 12px/18px "Fira Code",monospace; /* @intent raw command, output, diff lines — deep detail only */
+  --mj-font-mono-strong: 500 12.5px/18px "Fira Code",monospace; /* live literal in .mj_ToolCard summary code @intent the $ command line */
+  --cpd-dur-fast: 120ms;
+  --cpd-dur-med: 180ms;
+  --cpd-ease: cubic-bezier(0.2,0,0,1);
+  --mj-live-xfade: 240ms; /* NEW @motion live line: outgoing and incoming text cross-fade (opacity only) */
+  --mj-live-min-interval: 1200ms; /* NEW @motion live line changes at most once per interval; newer text replaces a queued one */
+  --mj-live-elapsed-after: 10s; /* NEW @motion elapsed "· 42s" appears once the current step passes this */
+  --mj-slow-after: 300s; /* NEW @motion a step at or past this turns the line amber and shows Stop */
+  --mj-card-expand: var(--cpd-dur-fast); /* NEW @motion chevron rotates; body fades in, height is NOT animated */
+  --mj-group-expand: var(--cpd-dur-fast); /* NEW @motion group chevron rotates; step list appears, no height animation */
+  --mj-deep-open: var(--cpd-dur-med); /* NEW @motion deep panel fades in place; closing is instant */
+  --mj-resolve: var(--cpd-dur-med); /* NEW @motion running→done: glyph and meta cross-fade in the same box, no size change */
+  --mj-bp-pane-narrow: 480px; /* NEW @breakpoint chat pane (ResizeObserver) width ≤ this → data-pane="narrow" */
+  --mj-bp-pane-medium: 760px; /* NEW @breakpoint chat pane width ≤ this → data-pane="medium" */
+  --mj-bp-sidebar-min: 224px; /* NEW @breakpoint smallest sidebar the split button is designed for */
+  --mj-z-menu: 30;
+  --mj-z-modal: 50; /* @layer popovers / modal scrim + card (v4 layering) */
+  --mj-content-width: 100%;
+}
+[data-theme="dark"]{
+  --cpd-color-bg-app: #121316;
+  --cpd-color-bg-room-canvas: #151619;
+  --cpd-color-bg-canvas-default: #1a1c20;
+  --cpd-color-bg-canvas-raised: #212429;
+  --cpd-color-bg-subtle-primary: #212429;
+  --cpd-color-bg-subtle-secondary: #282c32;
+  --cpd-color-bg-self-bubble: #123530;
+  --cpd-color-bg-accent: #0f766e;
+  --cpd-color-bg-diff-add: rgb(52 199 89 / 0.12);
+  --cpd-color-bg-diff-del: rgb(255 107 107 / 0.1);
+  --cpd-color-text-primary: #e7e4df;
+  --cpd-color-text-secondary: #9a948b;
+  --cpd-color-text-tertiary: #6d675f;
+  --cpd-color-text-action-accent: #2dd4bf;
+  --cpd-color-text-critical-primary: #ff6a6a;
+  --cpd-color-text-on-accent: #fff;
+  --cpd-color-text-placeholder: #6d675f;
+  --cpd-color-icon-accent-primary: #2dd4bf;
+  --cpd-color-icon-secondary: #9a948b;
+  --cpd-color-icon-tertiary: #6d675f;
+  --cpd-color-border-subtle: #2a2d33;
+  --cpd-color-border-strong: #3a3f46;
+  --cpd-color-border-disabled: #2a2d33;
+  --cpd-color-border-interactive-primary: #5a5f67;
+  --cpd-color-border-interactive-secondary: #3a3f46;
+  --cpd-state-hover: rgb(255 255 255 / 0.06);
+  --cpd-state-active: rgb(255 255 255 / 0.1);
+  --cpd-state-selected: rgb(45 212 191 / 0.14);
+  --mj-selection: rgb(45 212 191 / 0.26);
+  --mj-scrollbar: rgb(255 255 255 / 0.2);
+  --mj-scrollbar-hover: rgb(255 255 255 / 0.32);
+  --mj-critical-tint: rgb(255 106 106 / 14%);
+  --mj-critical-border: rgb(255 106 106 / 45%);
+  --mj-warn-ink: #ffb454;
+  --mj-warn-tint: rgb(255 180 84 / 12%);
+  --mj-accent-border: rgb(45 212 191 / 28%);
+  --cpd-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --cpd-shadow-md: 0 4px 12px rgb(0 0 0 / 0.4);
+  --cpd-shadow-lg: 0 16px 48px rgb(0 0 0 / 0.5);
+}
+@keyframes mj-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+@keyframes mj-spin{to{transform:rotate(360deg)}}
+@keyframes mj-fade-in{from{opacity:0}to{opacity:1}}
