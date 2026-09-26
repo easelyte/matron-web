@@ -48,7 +48,6 @@ import {
     CodeBracketsIcon,
     FolderIcon,
     CompactIcon,
-    ComposeIcon,
     ArchiveFileIcon,
     AudioFileIcon,
     FileEditIcon,
@@ -119,6 +118,7 @@ import { useShowTheWork } from "./show-the-work";
 import { assembleTurns, type Turn, threadRows, type ThreadRow } from "./turn-assembly";
 import { noticeText, TurnCard, type TurnCardMode, TurnErrorRow } from "./turn-card";
 import { V6Icon } from "./v6-icons";
+import { NewSessionSheet, NewSessionSplit } from "./new-session-ui";
 import {
     BROWSER_RESTART_COMMAND,
     BROWSER_RESTART_NOW_COMMAND,
@@ -166,7 +166,6 @@ import {
     PEER_NAME_CAP,
     type JournalEvent,
     type PendingMessage,
-    type RecentFolder,
     rendersAsTopLevelRow,
     sanitizePeerText,
     isSubChat,
@@ -547,21 +546,6 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
     );
 }
 
-type SheetState =
-    | { step: "loading-agents" }
-    | { step: "agents-error" }
-    | { step: "agents"; agents: DeviceDTO[] }
-    | {
-          step: "folders";
-          agent: DeviceDTO;
-          foldersRequestId: number;
-          folders?: RecentFolder[];
-          foldersError?: string;
-      }
-    | { step: "starting"; agent: DeviceDTO }
-    | { step: "uncertain" }
-    | { step: "error"; agent: DeviceDTO; message: string };
-
 function agentName(agent: DeviceDTO): string {
     return agent.name?.trim() || `Agent ${agent.device_id}`;
 }
@@ -571,292 +555,6 @@ function agentStatus(agent: DeviceDTO): string {
     if (agent.last_seen_at === undefined) return "Offline · last seen unknown";
     const timestamp = agent.last_seen_at < 1_000_000_000_000 ? agent.last_seen_at * 1000 : agent.last_seen_at;
     return `Offline · last seen ${new Date(timestamp).toLocaleString()}`;
-}
-
-export function NewSessionSheet({
-    client,
-    onClose,
-}: {
-    client: MatronJournalClient;
-    onClose: () => void;
-}): React.ReactElement {
-    const [sheetState, setSheetState] = useState<SheetState>({ step: "loading-agents" });
-    const [workdir, setWorkdir] = useState("");
-    const [browserTools, setBrowserTools] = useState(false);
-    const [showBack, setShowBack] = useState(false);
-    const sheetStateRef = useRef(sheetState);
-    const agentsRef = useRef<DeviceDTO[]>([]);
-    const agentsRequestIdRef = useRef(0);
-    const foldersRequestIdRef = useRef(0);
-    const startingRef = useRef(false);
-    const mountedRef = useRef(false);
-    const dismissedRef = useRef(false);
-
-    const transition = useCallback((next: SheetState): void => {
-        sheetStateRef.current = next;
-        setSheetState(next);
-    }, []);
-
-    const loadFolders = useCallback(
-        (agent: DeviceDTO, backAvailable: boolean): void => {
-            const foldersRequestId = ++foldersRequestIdRef.current;
-            setShowBack(backAvailable);
-            transition({ step: "folders", agent, foldersRequestId });
-            void client.recentFolders(agent.device_id).then(
-                (folders) => {
-                    const current = sheetStateRef.current;
-                    if (
-                        !mountedRef.current ||
-                        dismissedRef.current ||
-                        current.step !== "folders" ||
-                        current.agent.device_id !== agent.device_id ||
-                        current.foldersRequestId !== foldersRequestId
-                    ) {
-                        return;
-                    }
-                    transition({ ...current, folders });
-                },
-                () => {
-                    const current = sheetStateRef.current;
-                    if (
-                        !mountedRef.current ||
-                        dismissedRef.current ||
-                        current.step !== "folders" ||
-                        current.agent.device_id !== agent.device_id ||
-                        current.foldersRequestId !== foldersRequestId
-                    ) {
-                        return;
-                    }
-                    transition({ ...current, folders: [], foldersError: "Couldn't load recent folders." });
-                },
-            );
-        },
-        [client, transition],
-    );
-
-    const loadAgents = useCallback((): void => {
-        const agentsRequestId = ++agentsRequestIdRef.current;
-        transition({ step: "loading-agents" });
-        void client.listAgents().then(
-            (agents) => {
-                if (!mountedRef.current || dismissedRef.current || agentsRequestId !== agentsRequestIdRef.current) {
-                    return;
-                }
-                agentsRef.current = agents;
-                const connectedAgents = agents.filter((agent) => agent.connected);
-                if (connectedAgents.length === 1) {
-                    loadFolders(connectedAgents[0], false);
-                } else {
-                    setShowBack(true);
-                    transition({ step: "agents", agents });
-                }
-            },
-            () => {
-                if (mountedRef.current && !dismissedRef.current && agentsRequestId === agentsRequestIdRef.current) {
-                    transition({ step: "agents-error" });
-                }
-            },
-        );
-    }, [client, loadFolders, transition]);
-
-    useEffect(() => {
-        mountedRef.current = true;
-        loadAgents();
-        return () => {
-            mountedRef.current = false;
-        };
-    }, [loadAgents]);
-
-    const dismiss = (): void => {
-        dismissedRef.current = true;
-        onClose();
-    };
-
-    const start = async (agent: DeviceDTO, path = workdir, browser = browserTools): Promise<void> => {
-        if (startingRef.current || dismissedRef.current) return;
-        startingRef.current = true;
-        transition({ step: "starting", agent });
-        const outcome = await client.startSessionRpc(agent.device_id, path, browser);
-        if (!mountedRef.current || dismissedRef.current) return;
-        if (outcome.kind === "created") {
-            dismissedRef.current = true;
-            onClose();
-            void client.selectConversation(outcome.convoId, { fromRpcCreate: true });
-            return;
-        }
-        if (outcome.kind === "uncertain") {
-            transition({ step: "uncertain" });
-            return;
-        }
-        startingRef.current = false;
-        transition({ step: "error", agent, message: outcome.message });
-    };
-
-    const folderState = sheetState.step === "folders" ? sheetState : undefined;
-
-    return (
-        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-new-session-title">
-            <div className="mj_UploadConfirm mj_NewSessionSheet">
-                <div className="mj_NewSessionSheet_head">
-                    <h2 className="mj_UploadConfirm_title" id="mj-new-session-title">
-                        New session
-                    </h2>
-                    <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={dismiss}>
-                        <svg
-                            viewBox="0 0 24 24"
-                            width="16"
-                            height="16"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            aria-hidden="true"
-                        >
-                            <path d="M18 6 6 18M6 6l12 12" />
-                        </svg>
-                    </button>
-                </div>
-
-                {sheetState.step === "loading-agents" && (
-                    <div role="status">
-                        <span className="mj_Spinner" aria-hidden="true" /> Loading agents…
-                    </div>
-                )}
-
-                {sheetState.step === "agents-error" && (
-                    <>
-                        <p className="mj_UploadConfirm_error">Couldn't load agents.</p>
-                        <div className="mj_UploadConfirm_actions">
-                            <button type="button" className="mj_UploadConfirm_send" onClick={loadAgents}>
-                                Retry
-                            </button>
-                        </div>
-                    </>
-                )}
-
-                {sheetState.step === "agents" && (
-                    <>
-                        {sheetState.agents.length === 0 ? (
-                            <p>No agents connected — start the bridge on your box.</p>
-                        ) : (
-                            <div role="list" aria-label="Agents">
-                                {sheetState.agents.map((agent) => (
-                                    <button
-                                        key={agent.device_id}
-                                        type="button"
-                                        role="listitem"
-                                        disabled={!agent.connected}
-                                        onClick={() => loadFolders(agent, true)}
-                                    >
-                                        <strong>{agentName(agent)}</strong>
-                                        <span>{agentStatus(agent)}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </>
-                )}
-
-                {folderState && (
-                    <>
-                        <p>Start on {agentName(folderState.agent)}</p>
-                        {folderState.folders === undefined ? (
-                            <div role="status">
-                                <span className="mj_Spinner" aria-hidden="true" /> Loading recent folders…
-                            </div>
-                        ) : (
-                            folderState.folders.length > 0 && (
-                                <div role="list" aria-label="Recent folders">
-                                    {folderState.folders.map((folder) => (
-                                        <button
-                                            key={folder.path}
-                                            type="button"
-                                            role="listitem"
-                                            onClick={() => {
-                                                setWorkdir(folder.path);
-                                                void start(folderState.agent, folder.path, browserTools);
-                                            }}
-                                        >
-                                            {folder.path}
-                                        </button>
-                                    ))}
-                                </div>
-                            )
-                        )}
-                        {folderState.foldersError && (
-                            <p className="mj_UploadConfirm_error">{folderState.foldersError}</p>
-                        )}
-                        <label htmlFor="mj-new-session-workdir">Folder path</label>
-                        <input
-                            id="mj-new-session-workdir"
-                            type="text"
-                            value={workdir}
-                            onChange={(event) => setWorkdir(event.target.value)}
-                            placeholder="Agent default"
-                        />
-                        <label>
-                            <input
-                                type="checkbox"
-                                checked={browserTools}
-                                onChange={(event) => setBrowserTools(event.target.checked)}
-                            />{" "}
-                            Browser tools
-                        </label>
-                        <div className="mj_UploadConfirm_actions">
-                            {showBack && (
-                                <button
-                                    type="button"
-                                    onClick={() => transition({ step: "agents", agents: agentsRef.current })}
-                                >
-                                    Back
-                                </button>
-                            )}
-                            <button
-                                type="button"
-                                className="mj_UploadConfirm_send"
-                                onClick={() => void start(folderState.agent)}
-                            >
-                                Start
-                            </button>
-                        </div>
-                    </>
-                )}
-
-                {sheetState.step === "starting" && (
-                    <div role="status">
-                        <span className="mj_Spinner" aria-hidden="true" /> Starting session…
-                    </div>
-                )}
-
-                {sheetState.step === "uncertain" && (
-                    <>
-                        <p>The session may have started. Check your conversations before trying again.</p>
-                        <div className="mj_UploadConfirm_actions">
-                            <button type="button" onClick={dismiss}>
-                                Close
-                            </button>
-                        </div>
-                    </>
-                )}
-
-                {sheetState.step === "error" && (
-                    <>
-                        <p className="mj_UploadConfirm_error">{sheetState.message}</p>
-                        <div className="mj_UploadConfirm_actions">
-                            <button
-                                type="button"
-                                className="mj_UploadConfirm_send"
-                                onClick={() => void start(sheetState.agent)}
-                            >
-                                Retry
-                            </button>
-                        </div>
-                    </>
-                )}
-            </div>
-        </div>
-    );
 }
 
 type EditSheetState =
@@ -1552,6 +1250,33 @@ function ConversationList({
     const [tab, setTab] = useState<"active" | "favorites" | "archived">("active");
     const [accountOpen, setAccountOpen] = useState(false);
     const [newSessionOpen, setNewSessionOpen] = useState(false);
+    const newSessionMoreRef = useRef<HTMLButtonElement>(null);
+    // The agent roster behind one-tap start: which box it runs on, and "No box connected".
+    const [newSessionBoxes, setNewSessionBoxes] = useState<DeviceDTO[]>();
+    useEffect(() => {
+        if (state.connection !== "online") return;
+        let live = true;
+        const refresh = (): void => {
+            client.listAgents().then(
+                (agents) => {
+                    if (live) setNewSessionBoxes(agents);
+                },
+                () => undefined,
+            );
+        };
+        refresh();
+        // A box can come up or drop while the tab sits open: re-check when the operator returns.
+        const onVisible = (): void => {
+            if (document.visibilityState === "visible") refresh();
+        };
+        window.addEventListener("focus", refresh);
+        document.addEventListener("visibilitychange", onVisible);
+        return () => {
+            live = false;
+            window.removeEventListener("focus", refresh);
+            document.removeEventListener("visibilitychange", onVisible);
+        };
+    }, [client, state.connection, newSessionOpen]);
     const settingsOpenerRef = useRef<HTMLButtonElement>(null);
     const settingsPanelRef = useRef<HTMLDivElement>(null);
     const closeSettings = useCallback(() => setAccountOpen(false), []);
@@ -2098,24 +1823,20 @@ function ConversationList({
                                         </button>
                                     </div>
                                 </header>
-                                {/* v5 sidebar.newSession: a full-width teal button in its own
-                                    row below the wordmark — not a bare icon in the header. */}
-                                <div className="mj_NewSessionRow">
-                                    <button
-                                        className="mj_NewSessionButton"
-                                        type="button"
-                                        aria-label="New conversation"
-                                        title="Start a new session — runs /start"
-                                        onClick={() => {
-                                            setAccountOpen(false);
-                                            closeRoomMenu();
-                                            setNewSessionOpen(true);
-                                        }}
-                                    >
-                                        <ComposeIcon />
-                                        <span>New session</span>
-                                    </button>
-                                </div>
+                                {/* v6 sidebar.newSession: one-tap split button (defaults) + ⋯ options. */}
+                                <NewSessionSplit
+                                    client={client}
+                                    boxes={newSessionBoxes}
+                                    moreRef={newSessionMoreRef}
+                                    onOpenSheet={() => {
+                                        setAccountOpen(false);
+                                        closeRoomMenu();
+                                        setNewSessionOpen(true);
+                                    }}
+                                    onCheckList={() =>
+                                        document.querySelector<HTMLElement>(".mj_RoomList .mj_RoomListItem")?.focus()
+                                    }
+                                />
                                 <div className="mj_RoomListTabs" role="group" aria-label="Filter conversations">
                                     {(
                                         [
@@ -2266,7 +1987,17 @@ function ConversationList({
                         }}
                     />
                 )}
-                {newSessionOpen && <NewSessionSheet client={client} onClose={() => setNewSessionOpen(false)} />}
+                {newSessionOpen && (
+                    <NewSessionSheet
+                        client={client}
+                        onClose={(started) => {
+                            setNewSessionOpen(false);
+                            // Focus returns to ⋯ when the sheet is dismissed (v6 §5); after a
+                            // start it stays with the new conversation.
+                            if (!started) requestAnimationFrame(() => newSessionMoreRef.current?.focus());
+                        }}
+                    />
+                )}
                 {roomMenu && menuConversation && (
                     <div
                         className="mj_HeaderMenu mj_RoomItemMenu"

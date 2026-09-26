@@ -197,6 +197,47 @@ STATES.push(
     { name: "browser-codex", query: "v6=t1&browser=codex", viewport: "desktop", setup: openSessionMenu },
 );
 
+const openOptions = async (page) => page.locator('button[aria-label="New session options"]').click();
+STATES.push(
+    { name: "split-idle", query: "v6=t1", viewport: "desktop" },
+    { name: "split-hint", query: "v6=t1&remember=1", viewport: "desktop" },
+    {
+        name: "split-starting",
+        query: "v6=t1",
+        viewport: "desktop",
+        setup: async (page) => page.locator(".mj_NewSessionSplit_main").click(),
+    },
+    {
+        name: "split-mobile",
+        query: "v6=t1&remember=1",
+        viewport: "phone",
+        stayOnList: true,
+        setup: async (page) => {
+            const back = page.locator('button[aria-label="Back to conversations"]');
+            if (await back.isVisible()) await back.click();
+        },
+    },
+    { name: "sheet-default", query: "v6=t1", viewport: "desktop", setup: openOptions },
+    {
+        name: "sheet-codex",
+        query: "v6=t1",
+        viewport: "desktop",
+        setup: async (page) => {
+            await openOptions(page);
+            await page.locator('.mj_Segmented [role="radio"]', { hasText: "Codex" }).click();
+        },
+    },
+    {
+        name: "sheet-other",
+        query: "v6=t1",
+        viewport: "desktop",
+        setup: async (page) => {
+            await openOptions(page);
+            await page.locator(".mj_FolderOption", { hasText: "Other folder" }).click();
+        },
+    },
+);
+
 const VIEWPORTS = {
     desktop: { width: 1280, height: 900 },
     tall: { width: 1280, height: 2600 },
