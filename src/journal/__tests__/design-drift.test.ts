@@ -139,6 +139,8 @@ describe("design drift ratchet", () => {
         const NONE_OK: Record<string, string> = {
             ".mx_BasicMessageComposer_input:focus, .mx_BasicMessageComposer_input:focus-visible":
                 ".mx_MessageComposer_row:focus-within draws the accent border around the whole composer",
+            ".mj_UploadConfirm_caption:focus, .mj_UploadConfirm_caption:focus-visible":
+                "design v5 neutral-focus exception: the caption is autofocused on open, so its focus is the darker border, not an accent ring",
         };
         const offenders: string[] = [];
         const composerRow = SHEETS.some(({ root }) => {

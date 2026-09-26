@@ -2204,13 +2204,10 @@ textarea {
    would make every upload read "active/teal" against the mock's calm neutral. Instead focus
    darkens the border (border-strong → interactive-primary): a visible, neutral focus
    indicator for both pointer and keyboard (the text caret backs it up), no accent. */
-.mj_UploadConfirm_caption:focus {
+.mj_UploadConfirm_caption:focus,
+.mj_UploadConfirm_caption:focus-visible {
     border-color: var(--cpd-color-border-interactive-primary);
     outline: none;
-}
-.mj_UploadConfirm_caption:focus-visible {
-    outline: var(--mj-focus-ring);
-    outline-offset: var(--mj-focus-offset-field);
 }
 
 /* Footer buttons keep the control height and never shrink below their label, so a footer whose
