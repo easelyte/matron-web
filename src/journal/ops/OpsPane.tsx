@@ -96,11 +96,6 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const [sections, setSections] = useState<SectionStates>(LOADING);
     const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
-    // When the roster was last read, and when the box last answered a section successfully. The
-    // roster's `connected` only outranks a reply that is older than it (a request can wake a box
-    // the roster still lists as offline).
-    const [devicesAt, setDevicesAt] = useState(0);
-    const [answeredAt, setAnsweredAt] = useState(0);
     const [refreshing, setRefreshing] = useState(false);
     const generation = useRef(0);
     // Newest request whose reply has landed, per section. A reply lands unless a NEWER one already
@@ -113,7 +108,6 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
         try {
             const agents = await client.listAgents();
             setDevices(agents);
-            setDevicesAt(Date.now());
             setDevicesError(null);
         } catch (e) {
             setDevicesError(e instanceof Error ? e.message : "Could not load boxes.");
@@ -127,7 +121,7 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
     const targetId = target?.device_id ?? null;
 
     const loadSections = useCallback(
-        async (deviceId: number, only?: OpsSection[]): Promise<void> => {
+        async (deviceId: number, only?: OpsSection[], keepGoodOnError = only !== undefined): Promise<void> => {
             const gen = generation.current;
             const wanted = only ?? (["host", "alerts", "timers", "usage", "posture"] as OpsSection[]);
             await Promise.all(
@@ -136,11 +130,10 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
                     const result = await client.opsSnapshot(deviceId, section);
                     if (generation.current !== gen || (applied.current[section] ?? 0) > ticket) return;
                     applied.current[section] = ticket;
-                    if (result.phase === "ok") setAnsweredAt(Date.now());
                     setSections((prev) => {
                         // Keep the last good data on a transient failure of a periodic refresh.
                         const before = prev[section];
-                        if (only && result.phase === "error" && before.phase === "ok") return prev;
+                        if (keepGoodOnError && result.phase !== "ok" && before.phase === "ok") return prev;
                         return { ...prev, [section]: result };
                     });
                 }),
@@ -174,6 +167,15 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
         }, HOST_REFRESH_MS);
         return () => window.clearInterval(timer);
     }, [targetId, loadSections]);
+
+    // The roster says the selected box is offline: re-ask alerts and timers right away, and let a
+    // failure REPLACE the last good reading, so the page never keeps claiming health from checks
+    // it can no longer repeat. A request can also wake the box, in which case the re-read is fresh.
+    const targetOnline = target?.connected ?? true;
+    useEffect(() => {
+        if (targetId === null || targetOnline) return;
+        void loadSections(targetId, ["alerts", "timers"], false);
+    }, [devices, targetId, targetOnline, loadSections]);
 
     const agents = devices ?? [];
     const noBridge = devices !== null && targets.length === 0;
@@ -221,13 +223,7 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
 
             <div className="mj_OpsPane_body">
                 <div className="mj_OpsPane_column">
-                    <OpsSummary
-                        agents={agents}
-                        live={state.boxStatusLive}
-                        sections={sections}
-                        target={target}
-                        rosterNewer={devicesAt > answeredAt}
-                    />
+                    <OpsSummary agents={agents} live={state.boxStatusLive} sections={sections} target={target} />
 
                     <OpsSectionFrame title="Boxes" meta={devices ? `${agents.length}` : undefined} spec="ops.boxes">
                         {devicesError ? (
@@ -416,13 +412,11 @@ function OpsSummary({
     live,
     sections,
     target,
-    rosterNewer,
 }: {
     agents: DeviceDTO[];
     live: Record<number, BoxStatus> | undefined;
     sections: SectionStates;
     target: DeviceDTO | null;
-    rosterNewer: boolean;
 }): React.ReactElement | null {
     const parts: { text: string; tone: "critical" | "warn" | "ok" }[] = [];
     if (sections.alerts.phase === "ok") {
@@ -454,9 +448,10 @@ function OpsSummary({
 
     // "All quiet" is a claim that the checks ran: it needs a real alerts AND timers reading. Without
     // them, say what is unknown rather than implying health.
-    // Readings from a box that has since gone offline are no longer current either.
-    const targetOffline = target !== null && !target.connected && rosterNewer;
-    const checked = sections.alerts.phase === "ok" && sections.timers.phase === "ok" && !targetOffline;
+    // Only words the message: an offline roster read already re-asked alerts and timers (see the
+    // effect in OpsPane), so an "ok" here is a reading the box gave after that read.
+    const targetOffline = target !== null && !target.connected;
+    const checked = sections.alerts.phase === "ok" && sections.timers.phase === "ok";
     const pending = sections.alerts.phase === "loading" || sections.timers.phase === "loading";
     if (!parts.length && !checked) {
         if (pending || agents.length === 0) return null;
