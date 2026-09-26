@@ -15,6 +15,8 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../client";
 import { MatronApp } from "../components";
+import { TurnCard, type TurnCardMode } from "../turn-card";
+import type { Step } from "../turn-grouping";
 import { resetShowTheWorkForTests, SHOW_THE_WORK_KEY, writeShowTheWork } from "../show-the-work";
 import type { ClientState, Conversation, JournalEvent, Session } from "../types";
 
@@ -321,5 +323,42 @@ describe("Show the work OFF (default)", () => {
             (item) => item.textContent,
         );
         expect(items).toContain("Copy");
+    });
+});
+
+describe("TurnCard resolve state", () => {
+    const done: Step = { kind: "step", id: "a", tool: "Bash", input: { command: "ls" }, status: "ok", exit: 0 };
+    const live: Step = {
+        kind: "step",
+        id: "b",
+        tool: "Bash",
+        input: { command: "pnpm vitest run" },
+        status: "running",
+    };
+    const renderCard = async (mode: TurnCardMode): Promise<void> => {
+        await act(async () =>
+            root.render(
+                <TurnCard
+                    turnKey="t"
+                    items={[done]}
+                    mode={mode}
+                    running={mode === "running" ? live : null}
+                    durationMs={1000}
+                    renderDetail={() => null}
+                />,
+            ),
+        );
+    };
+
+    it("drops the resolve fade when work resumes after waiting, so the spinner keeps turning", async () => {
+        await renderCard("running");
+        expect(card()?.classList.contains("is-resolved")).toBe(false);
+        await renderCard("waiting");
+        expect(card()?.classList.contains("is-resolved")).toBe(true);
+        await renderCard("running");
+        expect(card()?.classList.contains("is-resolved")).toBe(false);
+        expect(card()?.querySelector(".mj_TurnCard_glyph .mj_TurnCard_spinner")).not.toBeNull();
+        await renderCard("done");
+        expect(card()?.classList.contains("is-resolved")).toBe(true);
     });
 });

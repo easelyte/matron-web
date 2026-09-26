@@ -230,6 +230,9 @@ export function TurnCard({
     const [resolved, setResolved] = useState(false);
     useEffect(() => {
         if (wasRunningRef.current && mode !== "running") setResolved(true);
+        // Work resumed in the same card (e.g. after answering a permission request): the fade
+        // must not stay on, or its animation would replace the spinner's rotation.
+        else if (mode === "running") setResolved(false);
         wasRunningRef.current = mode === "running";
     }, [mode]);
 

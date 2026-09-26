@@ -5236,7 +5236,8 @@ button.mj_File {
     height: 14px;
 }
 
-.mj_TurnCard.is-resolved .mj_TurnCard_glyph > *,
+/* The spinner is excluded: this animation would otherwise replace its rotation. */
+.mj_TurnCard.is-resolved .mj_TurnCard_glyph > :not(.mj_TurnCard_spinner),
 .mj_TurnCard.is-resolved .mj_TurnCard_meta {
     animation: mj-v6-fade-in var(--mj-resolve) var(--cpd-ease);
 }
@@ -5756,7 +5757,7 @@ button.mj_File {
     .mj_TurnCard_deep,
     .mj_TurnCard_liveText_entering,
     .mj_TurnCard_liveText_leaving,
-    .mj_TurnCard.is-resolved .mj_TurnCard_glyph > *,
+    .mj_TurnCard.is-resolved .mj_TurnCard_glyph > :not(.mj_TurnCard_spinner),
     .mj_TurnCard.is-resolved .mj_TurnCard_meta {
         animation: none;
     }
