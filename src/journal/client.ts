@@ -427,7 +427,7 @@ export class MatronJournalClient {
         // arrives while the session is still restoring is honoured on the next hashchange.
         if (!this.deepLinkListenerBound && typeof window !== "undefined") {
             this.deepLinkListenerBound = true;
-            window.addEventListener("hashchange", () => this.applyFilesDeepLink());
+            window.addEventListener("hashchange", () => this.applyDeepLinks());
         }
 
         const session = storedSession();
@@ -440,7 +440,7 @@ export class MatronJournalClient {
             await this.startSession(session);
             // Signed in: honour a `#files=<abs>` fragment present at load (the common flow — the
             // operator followed a bridge link into a fresh tab with a stored session).
-            this.applyFilesDeepLink();
+            this.applyDeepLinks();
         } catch (error) {
             localStorage.removeItem(SESSION_KEY);
             this.patch({
@@ -472,7 +472,7 @@ export class MatronJournalClient {
         // A deep link followed WITHOUT a stored session lands here (interactive login), not in
         // initialise's stored-session branch, and no hashchange fires — apply it now so the linked
         // file opens instead of being stranded behind the conversation view.
-        this.applyFilesDeepLink();
+        this.applyDeepLinks();
     }
 
     public async logout(message?: string): Promise<void> {
@@ -1788,6 +1788,30 @@ export class MatronJournalClient {
         }
     }
 
+    /** Every hash deep link the app understands. Each applier ignores a hash that is not its own. */
+    public applyDeepLinks(): void {
+        this.applyFilesDeepLink();
+        this.applyWorkDeepLink();
+    }
+
+    // Hash-based deep link into the tracker's Work tab: `#work` opens the list, `#work=<loop id>`
+    // opens that loop's detail. Same lifecycle as `#files=`: applied after sign-in and on every
+    // hashchange, left in place while signed out so it is honoured once the session is up, and
+    // cleared once applied so a refresh or back-button does not re-fire it.
+    public applyWorkDeepLink(): void {
+        if (typeof window === "undefined") return;
+        const match = /^#work(?:=(\d{1,9}))?$/.exec(window.location.hash || "");
+        if (!match) return;
+        if (this.state.phase !== "signed-in") return;
+        const loopId = match[1] ? Number(match[1]) : null;
+        this.openTrackerLoop(loopId !== null && loopId > 0 ? loopId : null);
+        try {
+            window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        } catch {
+            window.location.hash = "";
+        }
+    }
+
     // ── Tracker pane (Missions / Milestones / Decisions-Inbox / Work) ───────────────
     // The tracker shares the main region with the Files pane and the conversation view —
     // one surface at a time — so opening it closes Files (mirrors how Files closes over the
@@ -1798,7 +1822,12 @@ export class MatronJournalClient {
     // (mutual exclusion — see openTrackerItem/openTrackerMission); `undefined` preserves the prev
     // selection. `null ?? prev` would resolve to prev, so the clear needs the explicit === null arm.
     public openTrackerView(
-        opts: { view?: "missions" | "inbox" | "work"; itemId?: number | null; missionId?: number | null } = {},
+        opts: {
+            view?: "missions" | "inbox" | "work";
+            itemId?: number | null;
+            missionId?: number | null;
+            loopId?: number | null;
+        } = {},
     ): void {
         this.closeFilesView();
         const prev = this.state.trackerView;
@@ -1807,8 +1836,17 @@ export class MatronJournalClient {
             view: opts.view ?? prev?.view ?? "inbox",
             selectedItemId: opts.itemId === null ? undefined : (opts.itemId ?? prev?.selectedItemId),
             selectedMissionId: opts.missionId === null ? undefined : (opts.missionId ?? prev?.selectedMissionId),
+            selectedLoopId: opts.loopId === null ? undefined : (opts.loopId ?? prev?.selectedLoopId),
         };
+        // Omit an absent selection rather than carrying `key: undefined`, so a plain view switch
+        // leaves the state shape exactly as it was before loop selection existed.
+        if (next.selectedLoopId === undefined) delete next.selectedLoopId;
         this.patch({ trackerView: next });
+    }
+
+    /** Open the Work tab, on a loop's detail when `loopId` is a number, else on the list. */
+    public openTrackerLoop(loopId: number | null): void {
+        this.openTrackerView({ view: "work", loopId, itemId: null, missionId: null });
     }
 
     public closeTrackerView(): void {

@@ -18,6 +18,7 @@ import { MatronApp } from "./components";
 import "./shell.pcss";
 import "./journal.pcss";
 import "./tracker.pcss";
+import "./work.pcss";
 import "./mobile.pcss";
 
 const container = document.getElementById("matron");

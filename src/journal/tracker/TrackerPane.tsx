@@ -108,7 +108,17 @@ export function TrackerPane({
             );
         }
         if (view === "work") {
-            return <WorkView api={client} />;
+            // One element at one position for both the list and a loop detail, so the Work view
+            // stays mounted across the switch and keeps its filters, grouping and loaded data.
+            return (
+                <WorkView
+                    api={client}
+                    selectedLoopId={state.trackerView?.selectedLoopId}
+                    onOpenLoop={(id) => client.openTrackerLoop(id)}
+                    onCloseLoop={() => client.openTrackerLoop(null)}
+                    onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                />
+            );
         }
         return (
             <ItemsInbox

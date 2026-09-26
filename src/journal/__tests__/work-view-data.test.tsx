@@ -24,6 +24,7 @@ import emptyFixture from "./fixtures/work-view-empty.json";
 import okDomainFixture from "./fixtures/work-view-ok-domain.json";
 import errorFixture from "./fixtures/work-view-error.json";
 import okFixture from "./fixtures/work-view-ok.json";
+import okDetailFixture from "./fixtures/work-view-ok-detail.json";
 
 const fetchMock = jest.fn();
 const typeGenerator = require("../../contracts/generate-work-view-types.cjs") as {
@@ -151,6 +152,39 @@ describe("Work-view wire contract", () => {
                 ],
             }),
         ).toThrow(/claimed_at is invalid/);
+    });
+
+    it("accepts the optional loop detail fields from a detail-capable producer", () => {
+        const detailed = parseWorkViewEnvelope(okDetailFixture);
+        if (detailed.status !== "ok") throw new Error("expected ok");
+        const first = detailed.groups[0].loops[0];
+        expect(first.opened).toBe("2026-09-01T09:00:00Z");
+        expect(first.next_action).toBe("Build the detail view, then run the contact sheet.");
+        expect(first.owner).toBe("operator");
+
+        // An older journal omits them entirely, and the parse keeps them absent rather than
+        // inventing empty values the UI would then have to second-guess.
+        const legacy = parseWorkViewEnvelope(okFixture);
+        if (legacy.status !== "ok") throw new Error("expected ok");
+        expect(Object.keys(legacy.groups[0].loops[0]).sort()).toEqual(
+            ["claim", "description", "domain", "id", "priority", "repo", "status", "title"].sort(),
+        );
+    });
+
+    it("validates the optional loop fields as strictly as the required ones when present", () => {
+        const withLoop = (patch: Record<string, unknown>): unknown => ({
+            ...okDetailFixture,
+            groups: [{ ...okDetailFixture.groups[0], loops: [{ ...okDetailFixture.groups[0].loops[0], ...patch }] }],
+        });
+        expect(() => parseWorkViewEnvelope(withLoop({ opened: "last week" }))).toThrow(/loop opened is invalid/);
+        expect(() => parseWorkViewEnvelope(withLoop({ owner: "" }))).toThrow(/loop owner is invalid/);
+        expect(() => parseWorkViewEnvelope(withLoop({ next_action: 7 }))).toThrow(/loop next_action is invalid/);
+        expect(() => parseWorkViewEnvelope(withLoop({ tags: ["x"] }))).toThrow(/unexpected fields/);
+        const missingRequired = { ...okDetailFixture.groups[0].loops[0] } as Record<string, unknown>;
+        delete missingRequired.description;
+        expect(() =>
+            parseWorkViewEnvelope({ ...okDetailFixture, groups: [{ key: "matron-web", loops: [missingRequired] }] }),
+        ).toThrow(/unexpected fields/);
     });
 
     it("GETs the Bearer-authenticated Work endpoint with grouping and cancellation", async () => {

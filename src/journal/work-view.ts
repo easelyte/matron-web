@@ -41,10 +41,15 @@ function record(value: unknown, name: string): Record<string, unknown> {
     return value as Record<string, unknown>;
 }
 
-function exactKeys(value: Record<string, unknown>, keys: readonly string[], name: string): void {
-    const actual = Object.keys(value).sort();
-    const expected = [...keys].sort();
-    if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+function exactKeys(
+    value: Record<string, unknown>,
+    keys: readonly string[],
+    name: string,
+    optionalKeys: readonly string[] = [],
+): void {
+    const actual = Object.keys(value);
+    const allowed = new Set([...keys, ...optionalKeys]);
+    if (actual.some((key) => !allowed.has(key)) || keys.some((key) => !Object.hasOwn(value, key))) {
         fail(`${name} has unexpected fields`);
     }
 }
@@ -79,14 +84,25 @@ function parseClaim(value: unknown): WorkViewClaim | null {
     };
 }
 
+/**
+ * Loop fields a server MAY send. Journals that predate them omit them, so every consumer treats
+ * them as absent-able; when present they are validated as strictly as the required fields.
+ */
+const OPTIONAL_LOOP_KEYS = ["opened", "next_action", "owner"] as const;
+
 function parseLoop(value: unknown): WorkViewLoop {
     const loop = record(value, "loop");
-    exactKeys(loop, ["id", "title", "repo", "domain", "priority", "description", "status", "claim"], "loop");
+    exactKeys(
+        loop,
+        ["id", "title", "repo", "domain", "priority", "description", "status", "claim"],
+        "loop",
+        OPTIONAL_LOOP_KEYS,
+    );
     if (!Number.isInteger(loop.id) || (loop.id as number) < 1) fail("loop id is invalid");
     if (!Number.isInteger(loop.priority) || (loop.priority as number) < 1 || (loop.priority as number) > 5) {
         fail("loop priority is invalid");
     }
-    return {
+    const parsed: WorkViewLoop = {
         id: loop.id as number,
         title: stringValue(loop.title, "loop title", false),
         repo: stringValue(loop.repo, "loop repo", false),
@@ -96,6 +112,11 @@ function parseLoop(value: unknown): WorkViewLoop {
         status: enumValue(loop.status, WORK_VIEW_LOOP_STATUS_VALUES, "loop status"),
         claim: parseClaim(loop.claim),
     };
+    if (Object.hasOwn(loop, "opened")) parsed.opened = dateTimeValue(loop.opened, "loop opened");
+    if (Object.hasOwn(loop, "next_action"))
+        parsed.next_action = stringValue(loop.next_action, "loop next_action", false);
+    if (Object.hasOwn(loop, "owner")) parsed.owner = stringValue(loop.owner, "loop owner", false);
+    return parsed;
 }
 
 function parseGroup(value: unknown): WorkViewGroup {

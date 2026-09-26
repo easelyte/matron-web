@@ -439,6 +439,8 @@ export interface TrackerViewState {
     view?: "missions" | "inbox" | "work";
     selectedItemId?: number;
     selectedMissionId?: number;
+    /** Work tab: the loop whose detail is open. The Work data itself is WorkView-local. */
+    selectedLoopId?: number;
 }
 
 export type TrackerItemKind = "task" | "question" | "decision";
