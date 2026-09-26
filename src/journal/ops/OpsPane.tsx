@@ -214,7 +214,7 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
 
             <div className="mj_OpsPane_body">
                 <div className="mj_OpsPane_column">
-                    <OpsSummary agents={agents} live={state.boxStatusLive} sections={sections} />
+                    <OpsSummary agents={agents} live={state.boxStatusLive} sections={sections} target={target} />
 
                     <OpsSectionFrame title="Boxes" meta={devices ? `${agents.length}` : undefined} spec="ops.boxes">
                         {devicesError ? (
@@ -402,10 +402,12 @@ function OpsSummary({
     agents,
     live,
     sections,
+    target,
 }: {
     agents: DeviceDTO[];
     live: Record<number, BoxStatus> | undefined;
     sections: SectionStates;
+    target: DeviceDTO | null;
 }): React.ReactElement | null {
     const parts: { text: string; tone: "critical" | "warn" | "ok" }[] = [];
     if (sections.alerts.phase === "ok") {
@@ -437,7 +439,9 @@ function OpsSummary({
 
     // "All quiet" is a claim that the checks ran: it needs a real alerts AND timers reading. Without
     // them, say what is unknown rather than implying health.
-    const checked = sections.alerts.phase === "ok" && sections.timers.phase === "ok";
+    // Readings from a box that has since gone offline are no longer current either.
+    const targetOffline = target !== null && !target.connected;
+    const checked = sections.alerts.phase === "ok" && sections.timers.phase === "ok" && !targetOffline;
     const pending = sections.alerts.phase === "loading" || sections.timers.phase === "loading";
     if (!parts.length && !checked) {
         if (pending || agents.length === 0) return null;
@@ -448,9 +452,11 @@ function OpsSummary({
                     <span className="mj_OpsDot" />
                 </span>
                 <span className="mj_OpsSummary_text">
-                    {outdated
-                        ? "Alerts and timers can't be checked until this box's bridge is updated."
-                        : "Alerts and timers couldn't be checked just now."}
+                    {targetOffline
+                        ? `${target?.name || "This box"} is offline, so alerts and timers aren't current.`
+                        : outdated
+                          ? "Alerts and timers can't be checked until this box's bridge is updated."
+                          : "Alerts and timers couldn't be checked just now."}
                 </span>
             </div>
         );

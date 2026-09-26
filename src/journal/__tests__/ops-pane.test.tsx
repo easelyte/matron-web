@@ -255,3 +255,23 @@ it("still settles when every host reply is slower than the poll interval", async
     jest.useRealTimers();
     await unmount();
 });
+
+it("does not call a box that went offline 'All quiet'", async () => {
+    const ok = (section: OpsSection): Reply => ({
+        ok: true,
+        result: {
+            data:
+                section === "alerts"
+                    ? { active: [], resolved_24h: [] }
+                    : section === "timers"
+                      ? { timers: [], cron: [] }
+                      : { processes: [], windows: {}, security: null },
+        },
+    });
+    const client = fakeClient(ok, [{ ...bridge, connected: false }]);
+    const { container, unmount } = await mount(client);
+    const summary = container.querySelector('[data-spec="ops.summary"]')!;
+    expect(summary.textContent).not.toContain("All quiet");
+    expect(summary.textContent).toContain("is offline");
+    await unmount();
+});
