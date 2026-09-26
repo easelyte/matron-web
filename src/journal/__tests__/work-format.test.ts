@@ -80,7 +80,7 @@ describe("work-format", () => {
         expect(plainText("keep snake_case_names intact")).toBe("keep snake_case_names intact");
     });
 
-    it("orders by priority, then oldest first, then id", () => {
+    it("orders by priority (P1 = most urgent first), then oldest first, then id", () => {
         const loops = [
             loop({ id: 5, priority: 3 }),
             loop({ id: 4, priority: 3, opened: "2026-09-10T00:00:00Z" }),
@@ -88,7 +88,7 @@ describe("work-format", () => {
             loop({ id: 2, priority: 5 }),
             loop({ id: 1, priority: 1 }),
         ];
-        expect([...loops].sort(compareLoops).map((item) => item.id)).toEqual([2, 3, 4, 5, 1]);
+        expect([...loops].sort(compareLoops).map((item) => item.id)).toEqual([1, 3, 4, 5, 2]);
     });
 
     it("is a total order when dated and undated loops are mixed, whatever the input order", () => {
@@ -132,7 +132,7 @@ describe("work-format", () => {
         ];
         const shown = applyFilters(groups, DEFAULT_WORK_FILTERS);
         expect(shown.map((group) => group.key)).toEqual(["a"]);
-        expect(shown[0].loops.map((item) => item.id)).toEqual([1, 2]);
+        expect(shown[0].loops.map((item) => item.id)).toEqual([2, 1]);
         expect(groups[0].loops.map((item) => item.id)).toEqual([2, 1]);
         expect(applyFilters(groups, { ...DEFAULT_WORK_FILTERS, status: "all" })).toHaveLength(2);
     });

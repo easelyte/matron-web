@@ -150,13 +150,13 @@ export function openedDate(ms: number | null): string {
 }
 
 /**
- * Within a group: priority first (higher number first, the producer's ordering), then age (oldest
+ * Within a group: priority first (P1 = most urgent, so lower number first -- the producer's ordering), then age (oldest
  * first, so long-standing work does not sink), then id. A loop without `opened` -- an older server,
  * or a store value that was not a timestamp -- sorts after every dated loop of its priority, so the
  * comparison stays a total order when dated and undated loops are mixed.
  */
 export function compareLoops(a: WorkViewLoop, b: WorkViewLoop): number {
-    if (a.priority !== b.priority) return b.priority - a.priority;
+    if (a.priority !== b.priority) return a.priority - b.priority;
     const aOpened = openedMs(a) ?? Number.POSITIVE_INFINITY;
     const bOpened = openedMs(b) ?? Number.POSITIVE_INFINITY;
     if (aOpened !== bOpened) return aOpened < bOpened ? -1 : 1;

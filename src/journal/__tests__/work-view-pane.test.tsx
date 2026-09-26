@@ -142,20 +142,20 @@ describe("WorkView list", () => {
         await unmount(root);
     });
 
-    it("orders by priority, then oldest first, then id, and flags blocked with the needs-you treatment", async () => {
+    it("orders by priority (P1 first), then oldest first, then id, and flags blocked with the needs-you treatment", async () => {
         const work = jest.fn().mockResolvedValue(
             ok("repo", [
                 group("matron-web", [
-                    loop({ id: 1, title: "Low", priority: 2, opened: "2026-01-01T00:00:00Z" }),
-                    loop({ id: 2, title: "High newer", priority: 5, opened: "2026-09-20T00:00:00Z" }),
+                    loop({ id: 1, title: "Low", priority: 4, opened: "2026-01-01T00:00:00Z" }),
+                    loop({ id: 2, title: "High newer", priority: 1, opened: "2026-09-20T00:00:00Z" }),
                     loop({
                         id: 3,
                         title: "High older",
-                        priority: 5,
+                        priority: 1,
                         opened: "2026-08-01T00:00:00Z",
                         status: "blocked",
                     }),
-                    loop({ id: 4, title: "High no date", priority: 5 }),
+                    loop({ id: 4, title: "High no date", priority: 1 }),
                 ]),
             ]),
         );
