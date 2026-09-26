@@ -400,6 +400,17 @@ const PARSERS: { [S in OpsSection]: (d: Obj) => OpsSectionData[S] } = {
     posture: parsePosture,
 };
 
+// The fields a section must carry to count as a reading at all. Optional detail may be missing,
+// but a success without these is not evidence of "nothing wrong": an alerts reply with no
+// `active` list must not render as "No open alerts".
+const REQUIRED: { [S in OpsSection]: (d: Obj) => boolean } = {
+    host: (d) => Array.isArray(d.processes),
+    timers: (d) => Array.isArray(d.timers),
+    alerts: (d) => Array.isArray(d.active),
+    usage: (d) => obj(d.windows) !== null,
+    posture: (d) => "security" in d || "api_usage" in d,
+};
+
 /** Map an RPC reply (see client RpcReply) onto a section state. */
 export function sectionStateFromReply<S extends OpsSection>(
     section: S,
@@ -429,7 +440,8 @@ export function sectionStateFromReply<S extends OpsSection>(
     }
     const result = obj(reply.result);
     const data = result ? obj(result.data) : null;
-    if (!result || !data) return { phase: "error", message: "The box sent a reply this page can't read." };
+    if (!result || !data || !REQUIRED[section](data))
+        return { phase: "error", message: "The box sent a reply this page can't read." };
     return {
         phase: "ok",
         data: PARSERS[section](data) as OpsSectionData[S],

@@ -175,3 +175,54 @@ it("decodes the live box_status frame (it used to be dropped as an unknown kind)
     });
     expect(decodeServerFrame({ kind: "box_status" }).ok).toBe(false);
 });
+
+it("never claims 'All quiet' when alerts and timers could not be read", async () => {
+    const client = fakeClient(() => ({ ok: false, code: "unknown_method" }));
+    const { container, unmount } = await mount(client);
+    const summary = container.querySelector('[data-spec="ops.summary"]')!;
+    expect(summary.textContent).not.toContain("All quiet");
+    expect(summary.textContent).toContain("until this box's bridge is updated");
+    await unmount();
+});
+
+it("asks a box whose first report arrived live, after the roster fetch", async () => {
+    const unreported = { ...bridge, status: undefined };
+    const client = fakeClient(() => ({ ok: false, code: "unknown_method" }), [unreported]);
+    const { unmount } = await mount(client, { boxStatusLive: { 1: bridge.status! } });
+    expect(client.opsSnapshot).toHaveBeenCalled();
+    await unmount();
+});
+
+it("treats a success without the section's required list as unreadable, not empty", () => {
+    expect(sectionStateFromReply("alerts", { ok: true, result: { data: {} } }).phase).toBe("error");
+    expect(sectionStateFromReply("timers", { ok: true, result: { data: { cron: [] } } }).phase).toBe("error");
+    expect(sectionStateFromReply("alerts", { ok: true, result: { data: { active: [] } } }).phase).toBe("ok");
+});
+
+it("drops a slow host reply that a newer one already superseded", async () => {
+    jest.useFakeTimers({ doNotFake: ["setTimeout", "queueMicrotask", "nextTick", "setImmediate"] });
+    const resolvers: ((v: unknown) => void)[] = [];
+    const client = fakeClient(() => ({ ok: false, code: "unknown_method" }));
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) => {
+        if (section !== "host") return sectionStateFromReply(section, { ok: false, code: "unknown_method" });
+        return new Promise((resolve) => resolvers.push(resolve)) as never;
+    });
+    const hostReply = (cpu: number) =>
+        sectionStateFromReply("host", { ok: true, result: { data: { cpu_pct: cpu, processes: [] } } });
+    const { container, unmount } = await mount(client);
+    // First (initial) host request is in flight; fire the 15 s poll for a second one.
+    await act(async () => {
+        jest.advanceTimersByTime(15_000);
+    });
+    expect(resolvers).toHaveLength(2);
+    await act(async () => {
+        resolvers[1](hostReply(80));
+    });
+    await act(async () => {
+        resolvers[0](hostReply(5));
+    });
+    const cpuTile = container.querySelector('[data-spec="ops.host"] [data-spec="ops.tile"]')!;
+    expect(cpuTile.textContent).toContain("80%");
+    jest.useRealTimers();
+    await unmount();
+});

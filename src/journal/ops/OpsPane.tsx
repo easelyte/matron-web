@@ -82,9 +82,10 @@ export function effectiveStatus(device: DeviceDTO, live: Record<number, BoxStatu
     return (pushed.reported_at ?? 0) >= (device.status.reported_at ?? 0) ? pushed : device.status;
 }
 
-/** Boxes that can answer ops_snapshot: agent devices with a box report (only bridges send one). */
-export function snapshotTargets(devices: DeviceDTO[]): DeviceDTO[] {
-    return devices.filter((d) => d.kind === "agent" && d.status !== undefined);
+/** Boxes that can answer ops_snapshot: agent devices with a box report (only bridges send one),
+ *  fetched or live, so a box whose first report lands after the roster fetch is still asked. */
+export function snapshotTargets(devices: DeviceDTO[], live?: Record<number, BoxStatus>): DeviceDTO[] {
+    return devices.filter((d) => d.kind === "agent" && effectiveStatus(d, live) !== undefined);
 }
 
 export function OpsPane({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
@@ -97,6 +98,10 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
     const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
     const [refreshing, setRefreshing] = useState(false);
     const generation = useRef(0);
+    // Latest request issued per section: a reply only lands if no newer request for that section
+    // went out after it, so a slow host poll can never overwrite a fresher one.
+    const latest = useRef<Record<string, number>>({});
+    const seq = useRef(0);
 
     const loadDevices = useCallback(async (): Promise<void> => {
         try {
@@ -109,7 +114,7 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
         setMetrics(await client.journalMetrics());
     }, [client]);
 
-    const targets = useMemo(() => snapshotTargets(devices ?? []), [devices]);
+    const targets = useMemo(() => snapshotTargets(devices ?? [], state.boxStatusLive), [devices, state.boxStatusLive]);
     const target =
         targets.find((d) => d.device_id === selectedId) ?? targets.find((d) => d.connected) ?? targets[0] ?? null;
     const targetId = target?.device_id ?? null;
@@ -120,8 +125,10 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
             const wanted = only ?? (["host", "alerts", "timers", "usage", "posture"] as OpsSection[]);
             await Promise.all(
                 wanted.map(async (section) => {
+                    const ticket = ++seq.current;
+                    latest.current[section] = ticket;
                     const result = await client.opsSnapshot(deviceId, section);
-                    if (generation.current !== gen) return;
+                    if (generation.current !== gen || latest.current[section] !== ticket) return;
                     setSections((prev) => {
                         // Keep the last good data on a transient failure of a periodic refresh.
                         const before = prev[section];
@@ -421,8 +428,26 @@ function OpsSummary({
     const offline = agents.filter((d) => !d.connected && d.status).length;
     if (offline) parts.push({ text: `${offline} box${offline === 1 ? "" : "es"} asleep`, tone: "warn" });
 
-    const known = sections.alerts.phase === "ok" || sections.timers.phase === "ok" || agents.length > 0;
-    if (!known) return null;
+    // "All quiet" is a claim that the checks ran: it needs a real alerts AND timers reading. Without
+    // them, say what is unknown rather than implying health.
+    const checked = sections.alerts.phase === "ok" && sections.timers.phase === "ok";
+    const pending = sections.alerts.phase === "loading" || sections.timers.phase === "loading";
+    if (!parts.length && !checked) {
+        if (pending || agents.length === 0) return null;
+        const outdated = sections.alerts.phase === "unsupported" || sections.timers.phase === "unsupported";
+        return (
+            <div className="mj_OpsSummary mj_OpsSummary_unknown" role="status" data-spec="ops.summary">
+                <span className="mj_OpsSummary_glyph" aria-hidden="true">
+                    <span className="mj_OpsDot" />
+                </span>
+                <span className="mj_OpsSummary_text">
+                    {outdated
+                        ? "Alerts and timers can't be checked until this box's bridge is updated."
+                        : "Alerts and timers couldn't be checked just now."}
+                </span>
+            </div>
+        );
+    }
     const tone = parts.some((p) => p.tone === "critical") ? "critical" : parts.length ? "warn" : "ok";
     return (
         <div className={`mj_OpsSummary mj_OpsSummary_${tone}`} role="status" data-spec="ops.summary">
