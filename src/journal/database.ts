@@ -18,6 +18,8 @@ import {
 import { eventToStep } from "./turn-assembly";
 
 const DATABASE_VERSION = 1;
+// Rows per expireToolLogs transaction (see there).
+const EXPIRE_CHUNK_ROWS = 500;
 const CURSOR_KEY = "cursor";
 const BACKFILL_KEY = "subchat_backfill_v1";
 const OUTCOME_BACKFILL_KEY = "session_outcome_backfill_v1";
@@ -569,25 +571,40 @@ export class JournalDatabase {
         return removed;
     }
 
-    public async expireToolLogs(now = Date.now()): Promise<void> {
-        // Walks the store with a cursor and rewrites only the rows that actually expire, instead of
-        // materialising every cached event at once (the store holds every row this device has seen).
-        const transaction = this.database.transaction("events", "readwrite");
-        const request = transaction.objectStore("events").openCursor();
-        await new Promise<void>((resolve, reject) => {
-            request.onsuccess = () => {
-                const cursor = request.result;
-                if (!cursor) {
-                    resolve();
-                    return;
-                }
-                const event = cursor.value as JournalEvent;
-                const expired = enforceToolLogTtl(event, now);
-                if (expired !== event) cursor.update(expired);
-                cursor.continue();
-            };
-            request.onerror = () => reject(request.error ?? new Error("IndexedDB cursor failed"));
-        });
-        await transactionDone(transaction);
+    public async expireToolLogs(now = Date.now(), chunkSize = EXPIRE_CHUNK_ROWS): Promise<void> {
+        // Walks the store in bounded chunks, each its own short transaction, and rewrites only the
+        // rows that actually expire. The store holds every row this device has received, so one
+        // transaction over all of it would hold the events lock for seconds and stall every read
+        // and write queued behind it (opening a conversation, applying live frames, sign-out).
+        // Between chunks it yields a macrotask so those transactions run first.
+        let after: IDBValidKey | undefined;
+        for (;;) {
+            const transaction = this.database.transaction("events", "readwrite");
+            const store = transaction.objectStore("events");
+            const request = store.openCursor(after === undefined ? undefined : IDBKeyRange.lowerBound(after, true));
+            let seen = 0;
+            let last: IDBValidKey | undefined;
+            await new Promise<void>((resolve, reject) => {
+                request.onsuccess = () => {
+                    const cursor = request.result;
+                    if (!cursor) {
+                        resolve();
+                        return;
+                    }
+                    const event = cursor.value as JournalEvent;
+                    const expired = enforceToolLogTtl(event, now);
+                    if (expired !== event) cursor.update(expired);
+                    last = cursor.primaryKey;
+                    seen += 1;
+                    if (seen >= chunkSize) resolve();
+                    else cursor.continue();
+                };
+                request.onerror = () => reject(request.error ?? new Error("IndexedDB cursor failed"));
+            });
+            await transactionDone(transaction);
+            if (seen < chunkSize || last === undefined) return;
+            after = last;
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
     }
 }

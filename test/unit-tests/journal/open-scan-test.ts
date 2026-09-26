@@ -117,4 +117,39 @@ describe("startup scans stay off the whole events store", () => {
         expect(bySeq.get(3)).toEqual(plain);
         database.close();
     });
+
+    it("expireToolLogs works in bounded transactions and lets other work run between them", async () => {
+        const database = await open("chunks");
+        const written = Date.now();
+        const now = written + TOOL_LOG_TTL_MS + 60_000;
+        const rows: JournalEvent[] = [];
+        for (let seq = 1; seq <= 25; seq++) {
+            rows.push(
+                ev(seq, seq % 2 ? "c1" : "c2", {
+                    type: "tool_output",
+                    ts: written,
+                    payload: { live_log: true, snippet: `s${seq}` },
+                }),
+            );
+        }
+        await database.putHistory(rows);
+        const transaction = jest.spyOn(IDBDatabase.prototype, "transaction");
+
+        const order: string[] = [];
+        const expiring = database.expireToolLogs(now, 10).then(() => order.push("purge"));
+        // A read issued while the purge is running completes before the purge does.
+        const read = database.events("c1").then(() => order.push("read"));
+        await Promise.all([expiring, read]);
+
+        const purgeTransactions = transaction.mock.calls.filter(
+            ([scope, mode]) => scope === "events" && mode === "readwrite",
+        );
+        expect(purgeTransactions).toHaveLength(3); // 10 + 10 + 5 rows
+        expect(order).toEqual(["read", "purge"]);
+        const expiredCount = (await database.events("c1"))
+            .concat(await database.events("c2"))
+            .filter((event) => event.payload.expired === true).length;
+        expect(expiredCount).toBe(25);
+        database.close();
+    });
 });
