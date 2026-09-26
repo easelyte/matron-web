@@ -95,9 +95,12 @@ Please see LICENSE files in the repository root for full details.
     }
 }
 
-/* Pill shape: fields that sit in one row with a pill segmented track (the Work filter row). */
-.mj_Input_pill {
-    border-radius: var(--cpd-radius-pill);
+/* Field shape (operator call T1, 2026-09-26): every input, select and search field is this
+   rounded rectangle. Pills are for tags and chips only, so there is no pill field modifier. */
+
+/* The larger field: the sign-in form, where the fields share the 40px Sign in button's height. */
+.mj_Input_lg {
+    height: var(--mj-control-h-lg);
 }
 
 /* Leading icon slot: wrap the input in .mj_InputIcon with the svg before it. */
@@ -197,12 +200,20 @@ Please see LICENSE files in the repository root for full details.
 .mj_Seg_fill > .mj_Seg_item {
     flex: 1 1 0;
 }
+/* A track that shares a row with fields takes the field shape, so the row keeps one radius
+   (the Work filter row). Segments stay concentric: track md, segment sm. */
+.mj_Seg_rect {
+    border-radius: var(--cpd-radius-md);
+}
+.mj_Seg_rect > .mj_Seg_item {
+    border-radius: var(--cpd-radius-sm);
+}
 .mj_Seg_item:hover {
     color: var(--cpd-color-text-primary);
 }
 .mj_Seg_item_on,
 .mj_Seg_item[aria-checked="true"] {
-    background: var(--cpd-color-bg-canvas-default);
+    background: var(--mj-seg-on);
     box-shadow: var(--cpd-shadow-sm);
     color: var(--cpd-color-text-primary);
 }
@@ -312,8 +323,4 @@ Please see LICENSE files in the repository root for full details.
 .mj_Btn_lg {
     height: var(--mj-control-h-lg);
     padding: 0 var(--cpd-space-4x);
-}
-/* A pill button (header chips) keeps the same heights; only the shape changes. */
-.mj_Btn_pill {
-    border-radius: var(--cpd-radius-pill);
 }

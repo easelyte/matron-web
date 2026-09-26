@@ -51,7 +51,6 @@ const HEIGHT_EXEMPT: Record<string, string> = {
     ".mj_HeaderChip": "a non-interactive status chip (role=status)",
     ".mj_ConnectionBanner": "a banner container, not a control",
     ".mx_EventTile_line": "a timeline row",
-    ".mx_Field input": "the sign-in floating-label field (label rides inside the box)",
     ".mj_TrackerDetail_head": "a pane sub-header row",
 };
 

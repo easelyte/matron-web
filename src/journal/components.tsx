@@ -489,9 +489,11 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
                     <div className="mx_AuthBody">
                         <h1>Sign in</h1>
                         <form onSubmit={(event) => void submit(event)}>
-                            <div className="mx_Field mx_Field_labelAlwaysTopLeft">
+                            <div className="mx_Field">
+                                <label htmlFor="mj_LoginForm_server">Journal server</label>
                                 <input
                                     id="mj_LoginForm_server"
+                                    className="mj_Input mj_Input_lg"
                                     type="text"
                                     inputMode="url"
                                     value={server}
@@ -501,32 +503,31 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
                                     required
                                     autoFocus={!server}
                                 />
-                                <label htmlFor="mj_LoginForm_server">Journal server</label>
                             </div>
                             <div className="mx_Field">
+                                <label htmlFor="mj_LoginForm_username">Username</label>
                                 <input
                                     id="mj_LoginForm_username"
+                                    className="mj_Input mj_Input_lg"
                                     type="text"
                                     value={username}
                                     onChange={(event) => setUsername(event.target.value)}
-                                    placeholder=" "
                                     autoComplete="username"
                                     required
                                     autoFocus={Boolean(server)}
                                 />
-                                <label htmlFor="mj_LoginForm_username">Username</label>
                             </div>
                             <div className="mx_Field">
+                                <label htmlFor="mj_LoginForm_password">Password</label>
                                 <input
                                     id="mj_LoginForm_password"
+                                    className="mj_Input mj_Input_lg"
                                     type="password"
                                     value={password}
                                     onChange={(event) => setPassword(event.target.value)}
-                                    placeholder=" "
                                     autoComplete="current-password"
                                     required
                                 />
-                                <label htmlFor="mj_LoginForm_password">Password</label>
                             </div>
                             {error && (
                                 <div className="mx_ErrorMessage mj_Error" role="alert">
