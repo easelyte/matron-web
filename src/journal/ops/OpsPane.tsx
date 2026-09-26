@@ -121,7 +121,7 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
     const targetId = target?.device_id ?? null;
 
     const loadSections = useCallback(
-        async (deviceId: number, only?: OpsSection[], keepGoodOnError = only !== undefined): Promise<void> => {
+        async (deviceId: number, only?: OpsSection[]): Promise<void> => {
             const gen = generation.current;
             const wanted = only ?? (["host", "alerts", "timers", "usage", "posture"] as OpsSection[]);
             await Promise.all(
@@ -131,9 +131,11 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
                     if (generation.current !== gen || (applied.current[section] ?? 0) > ticket) return;
                     applied.current[section] = ticket;
                     setSections((prev) => {
-                        // Keep the last good data on a transient failure of a periodic refresh.
                         const before = prev[section];
-                        if (keepGoodOnError && result.phase !== "ok" && before.phase === "ok") return prev;
+                        // A failed re-read (poll, Refresh, offline re-check) never erases a good
+                        // reading: it stays on screen, marked stale, until the box answers again.
+                        if (result.phase !== "ok" && before.phase === "ok")
+                            return before.stale ? prev : { ...prev, [section]: { ...before, stale: true } };
                         return { ...prev, [section]: result };
                     });
                 }),

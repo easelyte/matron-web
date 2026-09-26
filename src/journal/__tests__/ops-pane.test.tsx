@@ -403,3 +403,31 @@ it("keeps a known failure visible, marked stale, when the box goes offline", asy
     jest.useRealTimers();
     await unmount();
 });
+
+it("a failed Refresh keeps a known alert, marked stale", async () => {
+    const withAlert = (section: OpsSection): Reply => ({
+        ok: true,
+        result: {
+            data:
+                section === "alerts"
+                    ? { active: [{ key: "X", severity: "P1", message: "Audit net down" }], resolved_24h: [] }
+                    : section === "timers"
+                      ? { timers: [], cron: [] }
+                      : { processes: [], windows: {}, security: null },
+        },
+    });
+    const client = fakeClient(withAlert, [bridge]);
+    const { container, unmount } = await mount(client);
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) =>
+        sectionStateFromReply(section, { ok: false, code: "agent_unreachable" }),
+    );
+    await act(async () => {
+        container.querySelector<HTMLButtonElement>(".mj_OpsPane_refresh")!.click();
+    });
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(container.querySelector('[data-spec="ops.alert"]')!.textContent).toContain("Audit net down");
+    expect(container.querySelector(".mj_OpsFootnote_stale")).not.toBeNull();
+    await unmount();
+});
