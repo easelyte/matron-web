@@ -12,7 +12,7 @@ Please see LICENSE files in the repository root for full details.
  * mutations go through the client; the store refetch keeps the thread live.
  */
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { MatronJournalClient } from "../client";
 import { humanizeSize } from "../files/format";
@@ -94,6 +94,15 @@ export function ItemDetail({
     onBack: () => void;
 }): React.ReactElement {
     const [reply, setReply] = useState("");
+    // Operator call T3: the reply box behaves like the chat composer. One line tall at rest, grows
+    // with its content up to 160px (then scrolls), Send sits inside the box, no drag handle.
+    const replyRef = useRef<HTMLTextAreaElement>(null);
+    useLayoutEffect(() => {
+        const node = replyRef.current;
+        if (!node) return;
+        node.style.height = "auto";
+        if (reply) node.style.height = `${Math.min(node.scrollHeight, 160)}px`;
+    }, [reply]);
     const [busy, setBusy] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
     // Stable idempotency key bound to the current draft TEXT. A failed send keeps the draft, so a
@@ -325,28 +334,33 @@ export function ItemDetail({
             </div>
 
             <div className="mj_TrackerComposer">
-                <textarea
-                    className="mj_TrackerComposer_input"
-                    placeholder="Reply…"
-                    value={reply}
-                    disabled={busy}
-                    onChange={(event) => setReply(event.target.value)}
-                    onKeyDown={(event) => {
-                        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                            event.preventDefault();
-                            void send();
-                        }
-                    }}
-                />
-                <button
-                    type="button"
-                    className="mj_TrackerComposer_send"
-                    aria-label="Send reply"
-                    disabled={!reply.trim() || busy}
-                    onClick={() => void send()}
-                >
-                    <SendIcon />
-                </button>
+                <div className="mj_TrackerComposer_row">
+                    <textarea
+                        ref={replyRef}
+                        className="mj_TrackerComposer_input"
+                        rows={1}
+                        aria-label="Reply"
+                        placeholder="Reply…"
+                        value={reply}
+                        disabled={busy}
+                        onChange={(event) => setReply(event.target.value)}
+                        onKeyDown={(event) => {
+                            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                                event.preventDefault();
+                                void send();
+                            }
+                        }}
+                    />
+                    <button
+                        type="button"
+                        className="mj_TrackerComposer_send"
+                        aria-label="Send reply"
+                        disabled={!reply.trim() || busy}
+                        onClick={() => void send()}
+                    >
+                        <SendIcon />
+                    </button>
+                </div>
             </div>
         </div>
     );

@@ -1522,3 +1522,25 @@ describe("a failed re-read is not an answer (Codex round 7)", () => {
         expect(writes?.state?.pending.kind).toBe("upload");
     });
 });
+
+describe("phone pushed preview (operator call T4)", () => {
+    it("opens a file as its own screen and Back returns to the list with focus on that row", async () => {
+        const pane = await mountPane(mockApi());
+        const body = pane.querySelector(".mj_FilesPane_body")!;
+        expect(body.classList.contains("mj_FilesPane_body_previewing")).toBe(false);
+        expect(pane.querySelector('[aria-label="Back to folder"]')).toBeNull();
+
+        const row = [...pane.querySelectorAll<HTMLButtonElement>(".mj_FilesRow")].find((r) =>
+            r.textContent?.startsWith("notes.md"),
+        )!;
+        await click(row);
+        await flush();
+        expect(body.classList.contains("mj_FilesPane_body_previewing")).toBe(true);
+
+        await click(pane.querySelector('[aria-label="Back to folder"]'));
+        await flush();
+        expect(body.classList.contains("mj_FilesPane_body_previewing")).toBe(false);
+        expect(pane.querySelector('[aria-label="Back to folder"]')).toBeNull();
+        expect(document.activeElement?.textContent?.startsWith("notes.md")).toBe(true);
+    });
+});

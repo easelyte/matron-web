@@ -24,7 +24,16 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { List, type RowComponentProps } from "react-window";
 
 import type { MatronJournalClient } from "../client";
-import { ChevronRightIcon, CloseIcon, FileEditIcon, FileIcon, FolderIcon, TrashIcon, UploadTrayIcon } from "../icons";
+import {
+    ChevronLeftIcon,
+    ChevronRightIcon,
+    CloseIcon,
+    FileEditIcon,
+    FileIcon,
+    FolderIcon,
+    TrashIcon,
+    UploadTrayIcon,
+} from "../icons";
 import type { ClientState } from "../types";
 import { FileWriteDialog } from "./FileWriteDialog";
 import type { FileEntry, FileListing, FilesApiLike } from "./filesApi";
@@ -312,6 +321,25 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
     );
     const canEditSelected = writable && selectedEntry !== undefined && isEditableText(selectedEntry, INLINE_EDIT_MAX);
 
+    // Phone (<=760px): the list is full height and a file's preview is its own screen, reached by
+    // tapping the file and left by the back button in the pane header (CSS shows one or the other;
+    // desktop keeps both side by side and never shows the back button). Going back puts focus on
+    // the row the preview came from, so a keyboard or screen-reader user keeps their place.
+    const bodyRef = useRef<HTMLDivElement>(null);
+    const returnFocusTo = useRef<string | undefined>(undefined);
+    const backToList = useCallback(() => {
+        returnFocusTo.current = selected?.name;
+        setSelected(undefined);
+    }, [selected?.name]);
+    useEffect(() => {
+        const name = returnFocusTo.current;
+        if (selected || name === undefined) return;
+        returnFocusTo.current = undefined;
+        const rows = bodyRef.current?.querySelectorAll<HTMLButtonElement>(".mj_FilesRow");
+        const row = rows ? [...rows].find((candidate) => candidate.textContent?.startsWith(name)) : undefined;
+        (row ?? bodyRef.current?.querySelector<HTMLElement>(".mj_FilesBreadcrumb_seg:last-child"))?.focus();
+    }, [selected]);
+
     // Breadcrumb spans root → path ONLY (never above the read-root jail, F4). Falls back to the
     // path as its own root before the first listing loads (single crumb, nothing above).
     const crumbs = useMemo(
@@ -346,6 +374,16 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
                 >
                     <CloseIcon />
                 </button>
+                {selected ? (
+                    <button
+                        type="button"
+                        className="mj_IconButton mj_FilesPane_back"
+                        aria-label="Back to folder"
+                        onClick={backToList}
+                    >
+                        <ChevronLeftIcon />
+                    </button>
+                ) : null}
                 <h1 className="mj_FilesPane_title">Files</h1>
                 <label className="mj_FilesPane_hidden">
                     <input
@@ -357,7 +395,11 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
                 </label>
             </div>
 
-            <div className="mj_FilesPane_body" inert={writes.state ? true : undefined}>
+            <div
+                ref={bodyRef}
+                className={`mj_FilesPane_body${selected ? " mj_FilesPane_body_previewing" : ""}`}
+                inert={writes.state ? true : undefined}
+            >
                 <div className="mj_FilesPane_nav">
                     <nav className="mj_FilesBreadcrumb" aria-label="Path">
                         {crumbs.map((crumb, index) => (

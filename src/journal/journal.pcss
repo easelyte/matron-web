@@ -4866,7 +4866,14 @@ button.mj_File {
     }
 }
 
-/* Mobile: stack the two panes; the preview drops below the list. */
+/* The back button only exists for the phone's pushed preview. */
+.mj_FilesPane_back {
+    display: none;
+}
+
+/* Phone (operator call T4): one screen at a time. The list is full height; tapping a file pushes
+   its preview as its own screen, and the header's back button returns to the list. No empty
+   "Select a file" half. */
 @media (max-width: 760px) {
     .mj_FilesPane_body {
         flex-direction: column;
@@ -4874,9 +4881,22 @@ button.mj_File {
 
     .mj_FilesPane_nav {
         width: 100%;
-        flex: 0 0 45%;
+        flex: 1 1 0;
         border-right: 0;
-        border-bottom: 1px solid var(--cpd-color-border-subtle);
+    }
+
+    .mj_FilesPane_body:not(.mj_FilesPane_body_previewing) > .mj_FilesPane_preview,
+    .mj_FilesPane_body_previewing > .mj_FilesPane_nav {
+        display: none;
+    }
+
+    .mj_FilesPane_back {
+        display: inline-flex;
+    }
+
+    /* While previewing, back takes the leading slot; close stays reachable after the title. */
+    .mj_FilesPane_top:has(.mj_FilesPane_back) .mj_FilesPane_close {
+        order: 1;
     }
 }
 

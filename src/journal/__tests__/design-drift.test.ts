@@ -138,6 +138,8 @@ describe("design drift ratchet", () => {
         const NONE_OK: Record<string, string> = {
             ".mx_BasicMessageComposer_input:focus, .mx_BasicMessageComposer_input:focus-visible":
                 ".mx_MessageComposer_row:focus-within draws the accent border around the whole composer",
+            ".mj_TrackerComposer_input:focus, .mj_TrackerComposer_input:focus-visible":
+                ".mj_TrackerComposer_row:focus-within draws the accent border around the whole reply box",
             ".mj_UploadConfirm_caption:focus, .mj_UploadConfirm_caption:focus-visible":
                 "design v5 neutral-focus exception: the caption is autofocused on open, so its focus is the darker border, not an accent ring",
         };
@@ -150,6 +152,14 @@ describe("design drift ratchet", () => {
             return ok;
         });
         if (!composerRow) offenders.push("the composer's focus-within border (NONE_OK replacement) is gone");
+        const trackerRow = SHEETS.some(({ root }) => {
+            let ok = false;
+            root.walkRules(/^\.mj_TrackerComposer_row:focus-within$/, (r) =>
+                r.walkDecls("border-color", () => void (ok = true)),
+            );
+            return ok;
+        });
+        if (!trackerRow) offenders.push("the tracker reply box's focus-within border (NONE_OK replacement) is gone");
         for (const { root } of SHEETS)
             root.walkRules(/:focus-visible/, (rule) => {
                 rule.walkDecls("outline", (d) => {
