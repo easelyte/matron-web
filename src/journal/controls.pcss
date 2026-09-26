@@ -77,9 +77,20 @@ Please see LICENSE files in the repository root for full details.
     background-color: var(--cpd-color-text-primary);
 }
 
-/* Phones: 16px stops iOS Safari zooming the page when a field takes focus. */
-@media (max-width: 700px) {
-    .mj_Input {
+/* Phones and touch screens: iOS Safari zooms the page into any text field whose computed
+   font-size is under 16px, and stays zoomed. Every text-entry field gets 16px here, the
+   primitive and the hand-built ones alike (sidebar search 13px, the composer 14px). The fix is the
+   type size, never the viewport: maximum-scale=1 / user-scalable=no would also stop pinch-zoom,
+   which is an accessibility failure. `:root` lifts this over single-class component rules that set
+   the `font` shorthand. Heights come from the control scale, so the 44px touch rows hold. */
+@media (max-width: 700px), (pointer: coarse) {
+    :root
+        :is(
+            input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"]),
+            textarea,
+            select,
+            [contenteditable="true"]
+        ) {
         font-size: 16px;
     }
 }
