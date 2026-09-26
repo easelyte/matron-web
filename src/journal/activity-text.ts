@@ -22,7 +22,7 @@ Please see LICENSE files in the repository root for full details.
  */
 
 import { snippetText } from "./plain-text";
-import { looksRaw, stepHeadline, stepLiveHeadline } from "./step-phrases";
+import { legacyWebQuery, looksRaw, stepHeadline, stepLiveHeadline } from "./step-phrases";
 import { type Step } from "./turn-grouping";
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
@@ -174,7 +174,7 @@ export function previewLine(conversation: PreviewSource): string {
     const step = indicatorStep(snippet, "snippet", true) ?? dollarStep(snippet);
     if (step) return activitySentence(step, running);
     // A legacy bridge's web-search line (`🌐 query`, no payload.step): the preview names it.
-    if (/^🌐 \S/u.test(snippet.trim())) return running ? "Searching the web…" : "Searched the web";
+    if (legacyWebQuery(snippet)) return running ? "Searching the web…" : "Searched the web";
     // The server's placeholder for a message it has no text for.
     if (snippet.trim() === "[diff]") return running ? "Changing a file…" : "Changed a file";
     if (snippet.trim() === "[tool_output]") return running ? "Running a command…" : "Ran a command";

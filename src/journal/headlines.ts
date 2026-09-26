@@ -25,6 +25,7 @@ import {
     describeStep,
     fileLabel,
     folderLabel,
+    legacyWebQuery,
     looksRaw,
     PHRASE_ICON,
     type Phrase,
@@ -310,9 +311,9 @@ export function buildHeadlines(items: readonly TurnItem[], running?: Step | null
         // pasted command) is never printed: it joins the steps as the command it most likely is.
         // A legacy bridge's web-search line (`🌐 query`, no payload.step) between steps is the
         // search it announces. (The thread's answer is not an item, so it is never taken.)
-        const webQuery = raw.kind === "narration" ? /^🌐 (\S[^\n]{2,299})$/u.exec(raw.text.trim()) : null;
+        const webQuery = raw.kind === "narration" ? legacyWebQuery(raw.text) : null;
         const item: TurnItem = webQuery
-            ? { kind: "step", id: `raw-${index}`, tool: "WebSearch", input: { pattern: webQuery[1] }, status: "ok" }
+            ? { kind: "step", id: `raw-${index}`, tool: "WebSearch", input: { pattern: webQuery }, status: "ok" }
             : raw.kind === "narration" && looksRaw(raw.text)
               ? (indicatorStep(raw.text, `raw-${index}`, true) ?? {
                     kind: "step",
