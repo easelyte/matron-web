@@ -440,6 +440,8 @@ if (subScenario) {
     (client as unknown as { conversationEvents: (id: string) => Promise<JournalEvent[]> }).conversationEvents = async (
         id: string,
     ) => fixture.childEvents[id] ?? [];
+    (client as unknown as { refreshConversationTail: () => Promise<boolean> }).refreshConversationTail = async () =>
+        false;
 }
 
 // The client keeps its state private; mirror the test harness's internal override.

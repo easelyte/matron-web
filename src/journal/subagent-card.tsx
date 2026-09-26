@@ -125,28 +125,42 @@ function useNow(active: boolean): number {
     return now;
 }
 
-/** The child's events, re-read whenever the child advances; one server top-up per session. */
-function useChildEvents(
-    loadEvents: (id: string, opts: { fetch?: boolean }) => Promise<JournalEvent[]>,
-    childId: string,
-    lastSeq: number,
-): JournalEvent[] | null {
+/**
+ * The child's events: the local store at once (re-read whenever the child advances), then again
+ * after the one shared server top-up lands, if it stored anything.
+ */
+function useChildEvents(source: HelperEventSource, childId: string, lastSeq: number): JournalEvent[] | null {
     const [events, setEvents] = useState<JournalEvent[] | null>(null);
     useEffect(() => {
         let live = true;
-        loadEvents(childId, { fetch: true }).then(
-            (loaded) => {
-                if (live) setEvents(loaded);
+        const read = (): void => {
+            source.conversationEvents(childId).then(
+                (loaded) => {
+                    if (live) setEvents(loaded);
+                },
+                () => {
+                    if (live) setEvents((current) => current ?? []);
+                },
+            );
+        };
+        read();
+        source.refreshConversationTail(childId).then(
+            (stored) => {
+                if (stored && live) read();
             },
-            () => {
-                if (live) setEvents((current) => current ?? []);
-            },
+            () => undefined,
         );
         return () => {
             live = false;
         };
-    }, [loadEvents, childId, lastSeq]);
+    }, [source, childId, lastSeq]);
     return events;
+}
+
+/** The two client reads a card needs (MatronJournalClient implements both). */
+export interface HelperEventSource {
+    conversationEvents: (id: string) => Promise<JournalEvent[]>;
+    refreshConversationTail: (id: string) => Promise<boolean>;
 }
 
 const KIND_LABEL: Record<NonNullable<SubagentKind>, string> = { claude: "Claude", codex: "Codex" };
@@ -182,8 +196,8 @@ function rawStepLine(step: Step): string {
 export interface SubagentCardProps {
     child: Conversation;
     kind: SubagentKind;
-    /** client.conversationEvents */
-    loadEvents: (id: string, opts: { fetch?: boolean }) => Promise<JournalEvent[]>;
+    /** Where the helper's events come from (the client). */
+    source: HelperEventSource;
     /** Open the helper's own conversation. */
     onOpen: (id: string) => void;
     /** Deep detail of one step (the turn card's renderer: tool output / diff card). */
@@ -198,7 +212,7 @@ export interface SubagentCardProps {
 export function SubagentCard({
     child,
     kind,
-    loadEvents,
+    source,
     onOpen,
     renderDetail,
     renderMarkdown,
@@ -208,7 +222,7 @@ export function SubagentCard({
     const baseId = useId();
     const bodyId = `${baseId}-body`;
     const [open, setOpen] = useState(bodyOnly);
-    const events = useChildEvents(loadEvents, child.id, child.last_seq);
+    const events = useChildEvents(source, child.id, child.last_seq);
     const status = subagentStatus(child);
     const now = useNow(status === "running");
     const view = useMemo(() => subagentView(child, events ?? [], kind, now), [child, events, kind, now]);
@@ -331,13 +345,16 @@ export function helperForStep(step: Step, helpers: readonly Conversation[]): Con
     if (!description) return undefined;
     const norm = (value: string): string => value.replace(/…$/u, "").trim().toLowerCase();
     const wanted = norm(description);
-    return (
-        helpers.find((child) => norm(child.title) === wanted) ??
-        helpers.find((child) => {
-            const title = norm(child.title);
-            return title.length >= 12 && (wanted.startsWith(title) || title.startsWith(wanted));
-        })
-    );
+    const exact = helpers.filter((child) => norm(child.title) === wanted);
+    const matches = exact.length
+        ? exact
+        : helpers.filter((child) => {
+              const title = norm(child.title);
+              return title.length >= 12 && (wanted.startsWith(title) || title.startsWith(wanted));
+          });
+    // Only a unique match links: the parent's Task line carries no child id, so two helpers
+    // with the same description are told apart only by their own cards (below the turn card).
+    return matches.length === 1 ? matches[0] : undefined;
 }
 
 /**

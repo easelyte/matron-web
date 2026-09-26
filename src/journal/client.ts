@@ -48,8 +48,9 @@ const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
 const HISTORY_PAGE_SIZE = 80;
-// A subagent card's one-off tail fetch: the server's page cap.
+// A subagent card's one-off tail fetch: the server's page cap, and how long a card waits for it.
 const CONVERSATION_TAIL_SIZE = 200;
+const CONVERSATION_TAIL_TIMEOUT_MS = 15_000;
 // Message-content search hits per query (server caps at 50; 20 keeps the Messages section tight).
 const MESSAGE_SEARCH_LIMIT = 20;
 // Max query length the server accepts (over this it returns 400); guard client-side so an
@@ -318,8 +319,8 @@ export class MatronJournalClient {
     private database?: JournalDatabase;
     private connection?: JournalConnection;
     private readonly history = new Map<string, ConversationHistoryState>();
-    // Conversations whose newest page conversationEvents() already fetched this session.
-    private readonly fetchedConversationTails = new Set<string>();
+    // refreshConversationTail(): one request per conversation per session (settled or in flight).
+    private readonly conversationTailFetches = new Map<string, Promise<boolean>>();
     private readonly activities = new Map<string, JournalEphemeralFrame["activity"]>();
     private readonly statuses = new Map<string, NonNullable<JournalEphemeralFrame["status"]>>();
     // Host-global vitals (#529): ONE value for the whole app, keyed to no conversation. Set from
@@ -728,26 +729,53 @@ export class MatronJournalClient {
 
     /**
      * The stored events of a conversation that is NOT (necessarily) selected — a subagent card
-     * reads its child's steps here. Every live frame already lands in IndexedDB whatever is
-     * selected; `fetch` additionally pulls the newest page from the server once per session, for
-     * a child whose history predates this tab. Best-effort: a failed fetch returns what is stored.
+     * reads its child's steps here. Every live frame lands in IndexedDB whatever is selected, so
+     * this is local and immediate; refreshConversationTail() tops it up from the server.
      */
-    public async conversationEvents(conversationId: string, opts: { fetch?: boolean } = {}): Promise<JournalEvent[]> {
+    public async conversationEvents(conversationId: string): Promise<JournalEvent[]> {
         const database = this.database;
         if (!database) return [];
-        const api = this.api;
-        if (opts.fetch && api && !this.fetchedConversationTails.has(conversationId)) {
-            this.fetchedConversationTails.add(conversationId);
-            try {
-                const response = await api.messages(conversationId, undefined, CONVERSATION_TAIL_SIZE);
-                if (this.database === database) await database.putHistory(response.events);
-            } catch {
-                // Allow a later card mount to retry; the stored events still render.
-                this.fetchedConversationTails.delete(conversationId);
-            }
-        }
-        if (this.database !== database) return [];
         return database.events(conversationId);
+    }
+
+    /**
+     * Pull a conversation's newest page from the server into the local store, once per session,
+     * for a child whose history predates this tab. Concurrent callers share one request; it is
+     * bounded by CONVERSATION_TAIL_TIMEOUT_MS so a stalled request never holds a card. Resolves
+     * true when new history was stored (callers then re-read conversationEvents), false when
+     * nothing changed or the request failed (a later call retries a failure).
+     */
+    public refreshConversationTail(conversationId: string): Promise<boolean> {
+        const inflight = this.conversationTailFetches.get(conversationId);
+        if (inflight) return inflight;
+        const database = this.database;
+        const api = this.api;
+        if (!database || !api) return Promise.resolve(false);
+        const request = (async (): Promise<boolean> => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try {
+                const response = await Promise.race([
+                    api.messages(conversationId, undefined, CONVERSATION_TAIL_SIZE),
+                    new Promise<never>((_resolve, reject) => {
+                        timer = setTimeout(
+                            () => reject(new Error("conversation tail timed out")),
+                            CONVERSATION_TAIL_TIMEOUT_MS,
+                        );
+                    }),
+                ]);
+                if (this.database !== database) return false;
+                await database.putHistory(response.events);
+                return response.events.length > 0;
+            } catch {
+                // Let a later mount retry; the stored events still render meanwhile.
+                this.conversationTailFetches.delete(conversationId);
+                return false;
+            } finally {
+                if (timer !== undefined) clearTimeout(timer);
+            }
+        })();
+        this.conversationTailFetches.set(conversationId, request);
+        return request;
     }
 
     public async selectConversation(
@@ -3322,7 +3350,7 @@ export class MatronJournalClient {
         // budget entries on its own.
         this.historyError = undefined;
         this.history.clear();
-        this.fetchedConversationTails.clear();
+        this.conversationTailFetches.clear();
         this.activities.clear();
         this.statuses.clear();
         this.hostVitals = null;

@@ -28,27 +28,37 @@ const asString = (value: unknown): string => (typeof value === "string" ? value 
 /** Tool names the bridge's `🔧 Name` fallback line carries (an identifier, not a command). */
 const TOOL_NAME = /^[A-Za-z_][\w.:-]{0,79}$/;
 
+/** A path the bridge prints for a Read: absolute (or home-relative), with no whitespace. */
+const PATH = /^(?:\/|~\/|[A-Za-z]:\\)\S*$/;
+/**
+ * A search pattern: one token, or one carrying regex syntax prose does not use (an escape, an
+ * alternation, `.*`, a character class, an anchor).
+ */
+const PATTERN = (value: string): boolean => !/\s/.test(value) || /\\|\||\.\*|\[[^\]]*\]|^\^|\$$/.test(value);
+
 /**
  * The step a bridge tool-indicator line names, or null for prose.
  *
- * Deliberately strict: the whole body must be one indicator line (the to-do list is the only
- * multi-line form and is left as prose), so agent narration that happens to open with an emoji
- * is never swallowed. `partial` accepts a line the server cut at 120 characters (a snippet can
- * lose the closing backtick of a long command).
+ * Deliberately strict, because the text form is only the fallback for a bridge that does not
+ * attach `payload.step`: the whole body must be one indicator line whose argument has the shape
+ * the bridge prints (a backticked command, a bare tool name, an absolute path, a pattern, a URL,
+ * `Subtask:`). Agent prose that happens to open with the same emoji ("🔍 Found the root cause")
+ * stays prose. The to-do list and a web search's free-text query are left as prose too: neither
+ * can be told apart from a sentence. `partial` accepts a line the server cut at 120 characters (a
+ * snippet can lose the closing backtick of a long command).
  */
 export function indicatorStep(body: string, id = "indicator", partial = false): Step | null {
     const text = body.trim();
     if (!text || text.includes("\n")) return null;
     const make = (tool: string, input: Step["input"]): Step => ({ kind: "step", id, tool, input, status: "ok" });
     let match: RegExpExecArray | null;
-    if ((match = /^🔧\s*`([^`]+)`$/u.exec(text))) return make("Bash", { command: match[1] });
-    if (partial && (match = /^🔧\s*`([^`]+)$/u.exec(text))) return make("Bash", { command: match[1] });
-    if ((match = /^🔧\s*(\S+)$/u.exec(text)) && TOOL_NAME.test(match[1])) return make(match[1], {});
-    if ((match = /^📖\s*(\S.*)$/u.exec(text))) return make("Read", { path: match[1] });
-    if ((match = /^🔍\s*(\S.*)$/u.exec(text))) return make("Grep", { pattern: match[1] });
-    if ((match = /^🌐\s*(https?:\/\/\S+)$/u.exec(text))) return make("WebFetch", { url: match[1] });
-    if ((match = /^🌐\s*(\S.*)$/u.exec(text))) return make("WebSearch", { pattern: match[1] });
-    if ((match = /^🔀\s*(?:Nested s|S)ubtask:\s*(\S.*)$/u.exec(text)))
+    if ((match = /^🔧 `([^`]+)`$/u.exec(text))) return make("Bash", { command: match[1] });
+    if (partial && (match = /^🔧 `([^`]+)$/u.exec(text))) return make("Bash", { command: match[1] });
+    if ((match = /^🔧 (\S+)$/u.exec(text)) && TOOL_NAME.test(match[1])) return make(match[1], {});
+    if ((match = /^📖 (\S.*)$/u.exec(text)) && PATH.test(match[1])) return make("Read", { path: match[1] });
+    if ((match = /^🔍 (\S.*)$/u.exec(text)) && PATTERN(match[1])) return make("Grep", { pattern: match[1] });
+    if ((match = /^🌐 (https?:\/\/\S+)$/u.exec(text))) return make("WebFetch", { url: match[1] });
+    if ((match = /^🔀 (?:Nested s|S)ubtask: (\S.*)$/u.exec(text)))
         return make("Task", { description: match[1].replace(/…$/u, "") });
     return null;
 }
@@ -102,6 +112,8 @@ export interface PreviewSource {
     session_state: string;
     /** Client-side: the last message event's step, when it was one (database.ts). */
     last_step?: { tool: string; input: Step["input"] } | null;
+    /** Which backend runs it (client.workerKind), when known. */
+    worker?: "claude" | "codex" | null;
 }
 
 /**
@@ -120,5 +132,12 @@ export function previewLine(conversation: PreviewSource): string {
     const snippet = conversation.snippet ?? "";
     const step = indicatorStep(snippet, "snippet", true) ?? dollarStep(snippet);
     if (step) return activitySentence(step, running);
+    // The server's placeholder for a message it has no text for.
+    if (snippet.trim() === "[diff]") return running ? "Changing a file…" : "Changed a file";
+    if (snippet.trim() === "[tool_output]") return running ? "Running a command…" : "Ran a command";
+    // A Codex session's snippet is often a command's OUTPUT (tool_output carries its output as
+    // the snippet). Without the recorded step (after a snapshot) it cannot be told from prose,
+    // so while it runs the row says what is knowable rather than risk printing a diagnostic.
+    if (running && conversation.worker === "codex") return "Working…";
     return snippetText(snippet);
 }

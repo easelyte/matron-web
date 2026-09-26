@@ -123,7 +123,7 @@ function premiseEvents(): JournalEvent[] {
             body: "📖 /root/.openclaw/workspace/anton/core/paths.py",
             from: "assistant",
         }),
-        at(S_PREMISE, 12, "agent:claude", "text", { body: "🔍 hardcoded workspace", from: "assistant" }),
+        at(S_PREMISE, 12, "agent:claude", "text", { body: "🔍 /root/.openclaw/workspace", from: "assistant" }),
         at(S_PREMISE, 20, "agent:claude", "text", {
             body: "🔧 `rg -n '/root/.openclaw/workspace' anton scripts | wc -l`",
             from: "assistant",

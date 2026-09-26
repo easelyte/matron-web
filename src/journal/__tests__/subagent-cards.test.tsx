@@ -75,7 +75,8 @@ describe("tool-indicator lines → steps", () => {
             input: { pattern: "WORKSPACE_ROOT" },
         });
         expect(indicatorStep("🌐 https://example.com/a")).toMatchObject({ tool: "WebFetch" });
-        expect(indicatorStep("🌐 matron release notes")).toMatchObject({ tool: "WebSearch" });
+        // A web search's query is free text: only the structured payload.step can mark it.
+        expect(indicatorStep("🌐 matron release notes")).toBeNull();
         expect(indicatorStep("🔀 Subtask: Premise-check loop #791")).toMatchObject({
             tool: "Task",
             input: { description: "Premise-check loop #791" },
@@ -86,6 +87,10 @@ describe("tool-indicator lines → steps", () => {
     it("never swallows prose, a to-do list, or a command cut short (unless reading a snippet)", () => {
         expect(indicatorStep("I'll start with the paths module.")).toBeNull();
         expect(indicatorStep("🔧 fixed the build, then ran the tests")).toBeNull();
+        expect(indicatorStep("🔍 Found the root cause in the migration")).toBeNull();
+        expect(indicatorStep("📖 Read the whole spec twice")).toBeNull();
+        expect(indicatorStep("🌐 the docs say otherwise")).toBeNull();
+        expect(indicatorStep("🔍 hardcoded workspace|WORKSPACE_ROOT")).toMatchObject({ tool: "Grep" });
         expect(indicatorStep("📋 Todos:\n✅ one\n⬚ two")).toBeNull();
         expect(indicatorStep("🔧 `sed -n 1,60p anton/core/paths.py | grep -n…")).toBeNull();
         expect(indicatorStep("🔧 `sed -n 1,60p anton/core/paths.py | grep -n…", "s", true)).toMatchObject({
@@ -119,7 +124,7 @@ describe("tool-indicator lines → steps", () => {
     it("reads a piped read by its first stage, and web searches as searches", () => {
         const step = indicatorStep("🔧 `sed -n 1,60p anton/core/paths.py | grep -n PATHS`")!;
         expect(liveLine(step)).toBe("Reading paths.py…");
-        expect(stepSentence(indicatorStep("🌐 matron release notes")!)).toBe(
+        expect(stepSentence(payloadStep({ tool: "WebSearch", pattern: "matron release notes" })!)).toBe(
             "Searched the web for matron release notes",
         );
     });
@@ -148,6 +153,13 @@ describe("sidebar preview (Developer view off)", () => {
                 }),
             ),
         ).toBe("Checking the types…");
+    });
+
+    it("never prints a running Codex run's output snippet when its step is unknown", () => {
+        const codex = { ...row("src/x.ts(40,7): error TS2322", "running"), worker: "codex" as const };
+        expect(previewLine(codex)).toBe("Working…");
+        expect(previewLine(row("[diff]", "running"))).toBe("Changing a file…");
+        expect(previewLine(row("[tool_output]", "done"))).toBe("Ran a command");
     });
 
     it("drops markdown from prose instead of showing its source", () => {
@@ -215,6 +227,9 @@ describe("subagent card model", () => {
         expect(helperForStep(step("Premise-check loop #791"), [a, b])).toBe(a);
         expect(helperForStep(step("Review the RPC migration diff for missed callers"), [a, b])).toBe(b);
         expect(helperForStep(step("Something else"), [a, b])).toBeUndefined();
+        // Two helpers with one description: ambiguous, so the step links neither.
+        const twin = convo("p:sub:3", { title: "Premise-check loop #791" });
+        expect(helperForStep(step("Premise-check loop #791"), [a, twin])).toBeUndefined();
     });
 
     it("anchors each child to the turn it started in", () => {
@@ -230,6 +245,47 @@ describe("subagent card model", () => {
         expect(map.get("9")?.map((c) => c.id)).toEqual(["s"]);
         // With older history unloaded, a child from before the first loaded turn waits for it.
         expect(helpersByTurn(turns, [early], true).size).toBe(0);
+    });
+});
+
+describe("client helper reads", () => {
+    function withStore(messages: jest.Mock): { client: MatronJournalClient; putHistory: jest.Mock } {
+        const client = new MatronJournalClient();
+        const putHistory = jest.fn(async () => undefined);
+        const store = { putHistory, events: jest.fn(async () => []) };
+        Object.assign(client as unknown as Record<string, unknown>, { api: { messages }, database: store });
+        return { client, putHistory };
+    }
+
+    it("shares one tail request between concurrent cards and stores it once", async () => {
+        let resolve!: (value: { events: JournalEvent[] }) => void;
+        const messages = jest.fn(() => new Promise<{ events: JournalEvent[] }>((r) => (resolve = r)));
+        const { client, putHistory } = withStore(messages);
+        const first = client.refreshConversationTail("p:sub:a");
+        const second = client.refreshConversationTail("p:sub:a");
+        expect(messages).toHaveBeenCalledTimes(1);
+        resolve({ events: [text("p:sub:a", "hi", 1)] });
+        await expect(first).resolves.toBe(true);
+        await expect(second).resolves.toBe(true);
+        expect(putHistory).toHaveBeenCalledTimes(1);
+        // Settled: later cards do not refetch this session.
+        await client.refreshConversationTail("p:sub:a");
+        expect(messages).toHaveBeenCalledTimes(1);
+    });
+
+    it("gives up on a stalled request and lets a later card retry", async () => {
+        jest.useFakeTimers();
+        try {
+            const messages = jest.fn(() => new Promise<never>(() => undefined));
+            const { client } = withStore(messages);
+            const pending = client.refreshConversationTail("p:sub:a");
+            jest.advanceTimersByTime(15_000);
+            await expect(pending).resolves.toBe(false);
+            void client.refreshConversationTail("p:sub:a");
+            expect(messages).toHaveBeenCalledTimes(2);
+        } finally {
+            jest.useRealTimers();
+        }
     });
 });
 
@@ -283,6 +339,8 @@ describe("subagent card + sidebar child row (rendered)", () => {
         };
         (instance as unknown as { conversationEvents: () => Promise<JournalEvent[]> }).conversationEvents = async () =>
             childEvents;
+        (instance as unknown as { refreshConversationTail: () => Promise<boolean> }).refreshConversationTail =
+            async () => false;
         return instance;
     }
 

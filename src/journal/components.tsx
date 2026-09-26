@@ -1618,7 +1618,9 @@ function ConversationList({
         // Developer view off: the preview never shows a command line or markdown source — a tool
         // call reads as its activity ("Reading paths.py…"), anything else as one line of prose.
         // Developer view on keeps the snippet's words, with only the markdown dropped (#111).
-        const preview = developerView ? snippetText(conversation.snippet) : previewLine(conversation);
+        const preview = developerView
+            ? snippetText(conversation.snippet)
+            : previewLine({ ...conversation, worker: workerKind(conversation) });
         // #541: when this parent's subagent rows are collapsed, surface a subtle count of the
         // hidden child rows so the collapse is discoverable on the row itself. Gate on the
         // CANONICAL index (hasSubagentChildRows = parentsWithChildRows) — NOT an independent
@@ -5047,10 +5049,6 @@ const NO_HELPERS: readonly Conversation[] = [];
 
 /** Developer view: a helper's card in the flat timeline, after the event it started at. */
 function DevHelperRow({ client, child }: { client: MatronJournalClient; child: Conversation }): React.ReactElement {
-    const loadEvents = useCallback(
-        (id: string, opts: { fetch?: boolean }) => client.conversationEvents(id, opts),
-        [client],
-    );
     return (
         <li className="mx_EventTile mx_EventTile_lastInSection mj_HelperTile" data-layout="bubble" data-self="false">
             <div className="mx_EventTile_line">
@@ -5058,7 +5056,7 @@ function DevHelperRow({ client, child }: { client: MatronJournalClient; child: C
                     <SubagentCard
                         child={child}
                         kind={workerKind(child)}
-                        loadEvents={loadEvents}
+                        source={client}
                         onOpen={(id) => void client.selectConversation(id, { suppressNotFound: true })}
                         renderDetail={() => null}
                         renderMarkdown={(text, key) => (
@@ -5125,10 +5123,6 @@ function AgentTurnRow({
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
     const first = turn.events[0];
-    const loadEvents = useCallback(
-        (id: string, opts: { fetch?: boolean }) => client.conversationEvents(id, opts),
-        [client],
-    );
     const openHelper = useCallback(
         (id: string) => void client.selectConversation(id, { suppressNotFound: true }),
         [client],
@@ -5167,7 +5161,7 @@ function AgentTurnRow({
                             bodyOnly
                             child={helper}
                             kind={workerKind(helper)}
-                            loadEvents={loadEvents}
+                            source={client}
                             onOpen={openHelper}
                             renderDetail={renderStepDetail}
                             renderMarkdown={renderMarkdown}
@@ -5178,7 +5172,7 @@ function AgentTurnRow({
             }
             return renderStepDetail(step);
         },
-        [helpers, loadEvents, openHelper, renderStepDetail, renderMarkdown],
+        [client, helpers, openHelper, renderStepDetail, renderMarkdown],
     );
     const block = (event: JournalEvent): React.ReactElement => (
         <TurnBlock key={event.seq} event={event} rowHandlers={rowHandlers} highlighted={highlightedSeq === event.seq}>
@@ -5244,7 +5238,7 @@ function AgentTurnRow({
                                 key={helper.id}
                                 child={helper}
                                 kind={workerKind(helper)}
-                                loadEvents={loadEvents}
+                                source={client}
                                 onOpen={openHelper}
                                 renderDetail={renderStepDetail}
                                 renderMarkdown={renderMarkdown}
