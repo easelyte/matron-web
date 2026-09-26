@@ -218,13 +218,12 @@ export const SCENES = [
     },
     {
         name: "files-delete",
-        // Row delete lives in the hover/row actions, which phones do not render.
-        widths: [1280, 1024, 768],
         query: "",
         setup: seq(
             ev(() => window.__matron.openFiles()),
             (p) => p.waitForSelector(".mj_FilesToolbar"),
-            click('[aria-label="Delete archive.zip"]'),
+            // The first visible row's delete: phones show only the first rows of the stacked list.
+            click(".mj_FilesRow_action_danger"),
         ),
     },
     { name: "media-viewer", query: "v6=full", setup: seq(click(".mj_Image img"), (p) => p.waitForTimeout(300)) },
@@ -520,7 +519,6 @@ try {
         if (ONLY && !ONLY.has(scene.name)) continue;
         const shots = [];
         for (const w of WIDTHS) {
-            if (scene.widths && !scene.widths.includes(w)) continue;
             const phone = w < 480;
             for (const theme of THEMES) {
                 const context = await browser.newContext({
@@ -570,6 +568,12 @@ try {
     server.close();
 }
 fs.writeFileSync(path.join(OUT, "audit.json"), JSON.stringify(report, null, 1));
+const measured = new Set(report.map((e) => e.scene));
+for (const scene of SCENES)
+    if ((!ONLY || ONLY.has(scene.name)) && !measured.has(scene.name)) {
+        console.error(`NO MEASUREMENTS for requested scene ${scene.name}`);
+        process.exitCode = 1;
+    }
 const failedSetups = report.filter((e) => e.setupError);
 if (failedSetups.length) {
     for (const e of failedSetups) console.error(`SETUP FAILED ${e.scene} ${e.w} ${e.theme}: ${e.setupError}`);
