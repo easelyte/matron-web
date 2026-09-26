@@ -170,6 +170,33 @@ STATES.push(
     },
 );
 
+const openSessionMenu = async (page) => page.locator('button[aria-label="Conversation actions"]').click();
+STATES.push(
+    { name: "browser-idle", query: "v6=t1", viewport: "desktop", setup: openSessionMenu },
+    {
+        name: "browser-confirm-idle",
+        query: "v6=t1",
+        viewport: "desktop",
+        setup: async (page) => {
+            await openSessionMenu(page);
+            await page.locator(".mj_RoomItemMenu_item", { hasText: "Enable browser tools" }).click();
+        },
+    },
+    {
+        name: "browser-confirm-busy",
+        query: "v6=run",
+        viewport: "desktop",
+        setup: async (page) => {
+            await openSessionMenu(page);
+            await page.locator(".mj_RoomItemMenu_item", { hasText: "Enable browser tools" }).click();
+        },
+    },
+    { name: "browser-queued", query: "v6=run&browser=queued", viewport: "desktop", setup: openSessionMenu },
+    { name: "browser-restarting", query: "v6=t1&browser=restarting", viewport: "desktop" },
+    { name: "browser-on", query: "v6=t1&browser=on", viewport: "desktop", setup: openSessionMenu },
+    { name: "browser-codex", query: "v6=t1&browser=codex", viewport: "desktop", setup: openSessionMenu },
+);
+
 const VIEWPORTS = {
     desktop: { width: 1280, height: 900 },
     tall: { width: 1280, height: 2600 },

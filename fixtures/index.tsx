@@ -382,6 +382,41 @@ if (v6Scenario) {
     state.conversations = state.conversations.map((conversation) =>
         conversation.id === "c1" ? { ...conversation, session_state: fixture.sessionState, summary: "" } : conversation,
     );
+    // `&browser=queued|restarting|on|codex` layers a browser-tools restart onto the scenario.
+    const browser = v6Params.get("browser");
+    if (browser) {
+        const last = state.events.at(-1)!;
+        const text = (offset: number, sender: string, body: string): JournalEvent => ({
+            seq: last.seq + offset,
+            convo_id: "c1",
+            ts: last.ts + offset * 1000,
+            sender,
+            type: "text",
+            payload: { body },
+        });
+        if (browser !== "codex") state.events = [...state.events, text(1, "user:operator", "/restart --browser")];
+        if (browser === "restarting")
+            state.events = [...state.events, text(2, "agent:claude", "🔄 Restarting Claude session...")];
+        if (browser === "on")
+            state.events = [
+                ...state.events,
+                text(2, "agent:claude", "🔄 Restarting Claude session..."),
+                text(
+                    3,
+                    "agent:claude",
+                    "Claude session restarted.\nSession: 1a2b3c4d...\nWorkdir: /repo\nExtras: browser",
+                ),
+            ];
+        state.conversations = state.conversations.map((conversation) =>
+            conversation.id === "c1"
+                ? {
+                      ...conversation,
+                      session_state: browser === "queued" ? "running" : conversation.session_state,
+                      agent_kind: browser === "codex" ? "codex" : conversation.agent_kind,
+                  }
+                : conversation,
+        );
+    }
 }
 
 // The client keeps its state private; mirror the test harness's internal override.

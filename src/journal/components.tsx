@@ -119,6 +119,13 @@ import { useShowTheWork } from "./show-the-work";
 import { assembleTurns, type Turn, threadRows, type ThreadRow } from "./turn-assembly";
 import { noticeText, TurnCard, type TurnCardMode, TurnErrorRow } from "./turn-card";
 import { V6Icon } from "./v6-icons";
+import {
+    BROWSER_RESTART_COMMAND,
+    BROWSER_RESTART_NOW_COMMAND,
+    browserRestartNoticeSeqs,
+    browserToolsState,
+    type BrowserToolsState,
+} from "./browser-tools";
 import { type Step, stepsOf } from "./turn-grouping";
 import {
     compactTokens,
@@ -2997,6 +3004,176 @@ export function HeaderShell({
     );
 }
 
+/**
+ * "Enable browser tools" confirm (redesign v6 surface B) on the upload-confirm shell. One
+ * primary ("Restart with browser tools"); "Restart now" appears only while the agent is
+ * mid-task and stops the current step instead of waiting. Focus lands on the primary; Escape
+ * and Cancel return focus to the header ⋯.
+ */
+function BrowserToolsConfirm({
+    busy,
+    onConfirm,
+    onClose,
+}: {
+    busy: boolean;
+    /** Resolves false when the command couldn't be queued; the dialog stays open and says so. */
+    onConfirm: (now: boolean) => Promise<boolean>;
+    onClose: () => void;
+}): React.ReactElement {
+    const primaryRef = useRef<HTMLButtonElement>(null);
+    const dialogRef = useRef<HTMLDivElement>(null);
+    const [error, setError] = useState<string>();
+    const [sending, setSending] = useState(false);
+    // Focus lands on the primary, and returns there if "Restart now" disappears under it.
+    useLayoutEffect(() => {
+        if (!dialogRef.current?.contains(document.activeElement)) primaryRef.current?.focus();
+    }, [busy]);
+    const confirm = (now: boolean): void => {
+        if (sending) return;
+        setSending(true);
+        setError(undefined);
+        void onConfirm(now).then(
+            (sent) => {
+                setSending(false);
+                if (!sent) setError("Couldn’t send the restart. Try again.");
+            },
+            () => {
+                setSending(false);
+                setError("Couldn’t send the restart. Try again.");
+            },
+        );
+    };
+    return (
+        <div
+            className="mj_UploadConfirm_scrim"
+            onClick={(event) => {
+                if (event.target === event.currentTarget) onClose();
+            }}
+            onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                event.stopPropagation();
+                onClose();
+            }}
+        >
+            <div
+                ref={dialogRef}
+                className="mj_UploadConfirm mj_UploadConfirm_queue mj_BrowserToolsConfirm"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="mj-browser-tools-title"
+            >
+                <header className="mj_UploadConfirm_header">
+                    <V6Icon name="globe" className="mj_UploadConfirm_uploadIcon" />
+                    <h2 className="mj_UploadConfirm_title" id="mj-browser-tools-title">
+                        Enable browser tools
+                    </h2>
+                    <span className="mj_UploadConfirm_headerSpacer" />
+                    <button type="button" className="mj_UploadConfirm_close" aria-label="Close" onClick={onClose}>
+                        <CloseIcon />
+                    </button>
+                </header>
+                <div className="mj_UploadConfirm_body">
+                    <p>
+                        Matron restarts this session with browser tools, so the agent can take screenshots and use web
+                        pages.
+                    </p>
+                    <ul className="mj_ConfirmList">
+                        <li>
+                            <V6Icon name="chat" />
+                            <span>The conversation is kept.</span>
+                        </li>
+                        <li>
+                            <V6Icon name="memory" />
+                            <span>Browser tools use about 400 MB of memory while on.</span>
+                        </li>
+                    </ul>
+                    {busy && (
+                        <div className="mj_ConfirmBusy">
+                            <span className="mj_LiveDot" aria-hidden="true" />
+                            <span>
+                                The agent is in the middle of a task. The restart waits until it finishes.{" "}
+                                <b>Restart now</b> stops the current step instead.
+                            </span>
+                        </div>
+                    )}
+                    {error && (
+                        <p className="mj_UploadConfirm_error" role="alert">
+                            {error}
+                        </p>
+                    )}
+                </div>
+                <footer className="mj_UploadConfirm_footer">
+                    <div className="mj_UploadConfirm_actions">
+                        <button type="button" onClick={onClose}>
+                            Cancel
+                        </button>
+                        {busy && (
+                            <button
+                                type="button"
+                                className="mj_UploadConfirm_skip"
+                                disabled={sending}
+                                onClick={() => confirm(true)}
+                            >
+                                Restart now
+                            </button>
+                        )}
+                        <button
+                            ref={primaryRef}
+                            type="button"
+                            className="mj_UploadConfirm_send"
+                            disabled={sending}
+                            onClick={() => confirm(false)}
+                        >
+                            Restart with browser tools
+                        </button>
+                    </div>
+                </footer>
+            </div>
+        </div>
+    );
+}
+
+/** The session-menu row for browser tools, in its five states (v6 component-map). */
+function BrowserToolsItem({
+    state,
+    codex,
+    onEnable,
+}: {
+    state: BrowserToolsState;
+    codex: boolean;
+    onEnable: () => void;
+}): React.ReactElement {
+    const on = !codex && state === "on";
+    // Round 2: no descriptive hint; a hint only when it gives the reason an item is disabled.
+    const hint = codex
+        ? "Not available for Codex sessions"
+        : state === "queued"
+          ? "Restarting after this step"
+          : state === "restarting"
+            ? "Restarting…"
+            : undefined;
+    const disabled = codex || state !== "idle";
+    return (
+        <button
+            className="mj_RoomItemMenu_item mj_RoomItemMenu_item_hinted"
+            type="button"
+            role={on ? "menuitemcheckbox" : "menuitem"}
+            aria-checked={on ? true : undefined}
+            aria-disabled={disabled || undefined}
+            onClick={() => {
+                if (!disabled) onEnable();
+            }}
+        >
+            <V6Icon name={on ? "check" : "globe"} />
+            <span className="mj_MenuText">
+                <span className="mj_MenuLabel">{on ? "Browser tools on" : "Enable browser tools"}</span>
+                {hint && <span className="mj_MenuHint">{hint}</span>}
+            </span>
+        </button>
+    );
+}
+
 // Header "⋯" overflow: the selected conversation's actions (same set as the sidebar
 // row menu), opened by click only (never hover — these mutate state).
 function HeaderOverflowMenu({
@@ -3009,13 +3186,17 @@ function HeaderOverflowMenu({
     state: ClientState;
 }): React.ReactElement {
     const [open, setOpen] = useState(false);
+    const [confirmBrowser, setConfirmBrowser] = useState(false);
     const openerRef = useRef<HTMLButtonElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
     const restoreFrameRef = useRef<number | undefined>(undefined);
+    const busy = conversation.session_state === "running";
+    const codex = conversation.agent_kind === "codex";
+    const browserState = useMemo(() => browserToolsState(state.events, busy), [state.events, busy]);
     const close = useCallback(() => setOpen(false), []);
     useDismissablePopover(open, close, { openerRef, panelRef });
     useLayoutEffect(() => {
-        if (open) panelRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+        if (open) panelRef.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus();
     }, [open]);
     // Cancel any pending focus-restore frame on unmount so a leaked callback
     // can't fire after this menu is gone and steal focus (upstream's guard,
@@ -3075,7 +3256,7 @@ function HeaderOverflowMenu({
                     ref={panelRef}
                     onKeyDown={(event) => {
                         const items = Array.from(
-                            event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+                            event.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
                         );
                         const currentIndex = items.findIndex((item) => item === document.activeElement);
                         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -3135,6 +3316,14 @@ function HeaderOverflowMenu({
                             {isUnread ? "Mark as read" : "Mark as unread"}
                         </button>
                     )}
+                    <BrowserToolsItem
+                        state={browserState}
+                        codex={codex}
+                        onEnable={() => {
+                            close();
+                            setConfirmBrowser(true);
+                        }}
+                    />
                     <button
                         className="mj_RoomItemMenu_item"
                         type="button"
@@ -3147,6 +3336,26 @@ function HeaderOverflowMenu({
                         {isArchived ? "Unarchive" : "Archive"}
                     </button>
                 </div>
+            )}
+            {confirmBrowser && (
+                <BrowserToolsConfirm
+                    busy={busy}
+                    onClose={() => {
+                        setConfirmBrowser(false);
+                        openerRef.current?.focus();
+                    }}
+                    onConfirm={async (now) => {
+                        const sent = await client.sendMessage(
+                            now ? BROWSER_RESTART_NOW_COMMAND : BROWSER_RESTART_COMMAND,
+                            id,
+                        );
+                        if (sent) {
+                            setConfirmBrowser(false);
+                            openerRef.current?.focus();
+                        }
+                        return sent;
+                    }}
+                />
             )}
         </div>
     );
@@ -3306,6 +3515,12 @@ function ChatHeader({
     const meters = buildUsageMeters(status, limits, state.hostVitals);
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
     const hasSubtitle = Boolean(status?.model || runState);
+    const browserQueued = useMemo(
+        () =>
+            conversation?.agent_kind !== "codex" &&
+            browserToolsState(state.events, runState === "running") === "queued",
+        [conversation?.agent_kind, state.events, runState],
+    );
     return (
         <HeaderShell
             mode="parent"
@@ -3336,12 +3551,20 @@ function ChatHeader({
                 // Keyed by conversation id so a selection change while the menu is open
                 // remounts (and closes) it, instead of silently retargeting the actions.
                 conversation && (
-                    <HeaderOverflowMenu
-                        key={conversation.id}
-                        client={client}
-                        conversation={conversation}
-                        state={state}
-                    />
+                    <>
+                        {browserQueued && (
+                            <span className="mj_HeaderChip" role="status">
+                                <span className="mj_Spinner" aria-hidden="true" />
+                                Restarting after this step
+                            </span>
+                        )}
+                        <HeaderOverflowMenu
+                            key={conversation.id}
+                            client={client}
+                            conversation={conversation}
+                            state={state}
+                        />
+                    </>
                 )
             }
             hideControlsWhenCompact
@@ -5098,7 +5321,16 @@ function AgentTurnRow({
 }
 
 /** A bridge system notice (`.mj_SystemNotice`): one tertiary meta line, no avatar. */
-function SystemNoticeRow({ event, highlighted }: { event: JournalEvent; highlighted: boolean }): React.ReactElement {
+function SystemNoticeRow({
+    event,
+    highlighted,
+    text,
+}: {
+    event: JournalEvent;
+    highlighted: boolean;
+    /** Display copy override (e.g. "Restarting with browser tools…"). */
+    text?: string;
+}): React.ReactElement {
     const body = asString(event.payload.body);
     return (
         <li
@@ -5107,7 +5339,7 @@ function SystemNoticeRow({ event, highlighted }: { event: JournalEvent; highligh
             aria-live="polite"
             title={body}
         >
-            {noticeText(body)}
+            {text ?? noticeText(body)}
         </li>
     );
 }
@@ -5611,6 +5843,10 @@ function Timeline({
     // ---- v6: "Show the work" OFF — one agent tile per operator turn with an Under-the-hood card.
     const turns = useMemo(() => (showTheWork ? [] : assembleTurns(visibleEvents)), [showTheWork, visibleEvents]);
     turnsRef.current = turns;
+    const browserNoticeSeqs = useMemo(
+        () => (showTheWork ? new Set<number>() : browserRestartNoticeSeqs(visibleEvents)),
+        [showTheWork, visibleEvents],
+    );
     const lastTurn = turns[turns.length - 1];
     // First-seen time of each live step, so the elapsed counter and slow state survive re-renders.
     const liveSeenRef = useRef(new Map<string, number>());
@@ -5753,7 +5989,11 @@ function Timeline({
             return (
                 <React.Fragment key={`n-${row.event.seq}`}>
                     {divider}
-                    <SystemNoticeRow event={row.event} highlighted={highlightedSeq === row.event.seq} />
+                    <SystemNoticeRow
+                        event={row.event}
+                        highlighted={highlightedSeq === row.event.seq}
+                        text={browserNoticeSeqs.has(row.event.seq) ? "Restarting with browser tools…" : undefined}
+                    />
                 </React.Fragment>
             );
         }
