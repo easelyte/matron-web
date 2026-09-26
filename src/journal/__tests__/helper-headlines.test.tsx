@@ -213,6 +213,27 @@ describe("helper thread headlines", () => {
         expect(testCounts("Tests  2 failed | 134 passed (136)")).toEqual({ passed: 134, failed: 2 });
     });
 
+    it("reports a retry's own outcome, never an earlier run's counts", () => {
+        const run = (id: string, output: string, status: Step["status"], exit: number): Step => ({
+            kind: "step",
+            id,
+            tool: "Bash",
+            input: { command: "npx jest" },
+            status,
+            exit,
+            source: { seq: 1, convo_id: "c", ts: 0, sender: "agent:x", type: "tool_output", payload: { output } },
+        });
+        const [entry] = buildHeadlines([run("a", "Tests: 134 passed", "ok", 0), run("b", "boom", "failed", 1)]);
+        expect(entry.type === "headline" && headlineRowText(entry)).toBe("Ran the test suite 2×: failed");
+    });
+
+    it("keeps a sentence that names a few files as prose", () => {
+        expect(looksRaw("Updated src/a.ts, src/b.ts, and src/c.ts.")).toBe(false);
+        expect(previewLine({ snippet: "Updated src/a.ts, src/b.ts, and src/c.ts.", session_state: "done" })).toBe(
+            "Updated src/a.ts, src/b.ts, and src/c.ts.",
+        );
+    });
+
     it("narration that reads as machine text joins the steps instead of printing", () => {
         const entries = buildHeadlines([
             { kind: "narration", text: "🔧 python3 - <<'EOF' import sqlite3,json c=sqlite3.connect('/tmp/j.db')" },

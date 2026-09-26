@@ -75,11 +75,8 @@ describe("tool-indicator lines → steps", () => {
             input: { pattern: "WORKSPACE_ROOT" },
         });
         expect(indicatorStep("🌐 https://example.com/a")).toMatchObject({ tool: "WebFetch" });
-        // A web search's free-text query: one line that does not read as a sentence.
-        expect(indicatorStep("🌐 matron release notes")).toMatchObject({
-            tool: "WebSearch",
-            input: { pattern: "matron release notes" },
-        });
+        // A web search's query is free text: only the structured payload.step can mark it.
+        expect(indicatorStep("🌐 matron release notes")).toBeNull();
         expect(indicatorStep("📋 Todos:\n✅ one\n⬚ two")).toMatchObject({ tool: "TodoWrite" });
         // A heredoc script spans lines inside the one pair of backticks.
         expect(indicatorStep("🔧 `python3 - <<'EOF'\nimport sqlite3\nprint(1)\nEOF`")).toMatchObject({ tool: "Bash" });
@@ -96,7 +93,7 @@ describe("tool-indicator lines → steps", () => {
         expect(indicatorStep("🔍 Found the root cause in the migration")).toBeNull();
         expect(indicatorStep("📖 Read the whole spec twice")).toBeNull();
         expect(indicatorStep("🌐 The docs say otherwise.")).toBeNull();
-        expect(indicatorStep("🌐 Found three sources that agree")).toBeNull();
+        expect(indicatorStep("🌐 The docs say otherwise")).toBeNull();
         expect(indicatorStep("🔧 `x` is broken, fixing `y` next")).toBeNull();
         expect(indicatorStep("🔍 hardcoded workspace|WORKSPACE_ROOT")).toMatchObject({ tool: "Grep" });
         expect(indicatorStep("🔧 `sed -n 1,60p anton/core/paths.py | grep -n…")).toBeNull();

@@ -1668,11 +1668,13 @@ export function looksRaw(text: string): boolean {
     if (/\);\s*($|[\w.$]+\s*[(=])|;\s*(return|const|let|var)\b|;\s*[})]|^[}\])]|\)\s*=>|=>\s*[{(]/.test(t)) return true;
     const words = t.split(/\s+/);
     const pathish = words.filter((w) => /[/\\]/.test(w) && !/^https?:/.test(w)).length;
-    if (words.length >= 2 && pathish / words.length > 0.5) return true;
+    // A run of paths (a listing), not a sentence that names a few files ("Updated a.ts, b.ts.").
+    const sentence = /[.!?:]$/.test(t) && /^[A-Z][a-z]+\b/.test(t);
+    if (!sentence && words.length >= 2 && pathish / words.length > 0.5) return true;
     // Mostly machine tokens: paths, flags, versions, identifiers (SNAKE_CASE, camelCase, a.b.c),
     // punctuation-bearing words. Prose keeps these to a word or two per sentence.
     // Inline code in backticks is markdown prose talking about code, not the code itself.
-    if (words.length >= 4 && !/`[^`]+`/.test(t)) {
+    if (words.length >= 4 && !sentence && !/`[^`]+`/.test(t)) {
         const machine = words.filter(
             (w) =>
                 (/[/\\_=<>{}[\]()|$:;]/.test(w) &&

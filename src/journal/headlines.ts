@@ -104,15 +104,15 @@ function stepOutput(step: Step): string {
 }
 
 function testOutcome(steps: Step[]): string {
-    for (let i = steps.length - 1; i >= 0; i -= 1) {
-        const counts = testCounts(stepOutput(steps[i]));
-        if (!counts) continue;
+    // The latest run is authoritative: an earlier run's counts never speak for a later retry.
+    const last = steps[steps.length - 1];
+    const counts = testCounts(stepOutput(last));
+    if (counts) {
         const parts: string[] = [];
         if (counts.failed) parts.push(`${counts.failed} failed`);
         if (counts.passed || !counts.failed) parts.push(`${counts.passed} passed`);
         return parts.join(", ");
     }
-    const last = steps[steps.length - 1];
     if (last.status === "failed") return "failed";
     if (last.status === "stopped") return "stopped";
     return last.status === "ok" && last.exit === 0 ? "passed" : "";
@@ -314,7 +314,8 @@ export function buildHeadlines(items: readonly TurnItem[], running?: Step | null
                       kind: "step",
                       id: `raw-${index}`,
                       tool: "Bash",
-                      input: { command: "" },
+                      // The text itself stays one click deeper (the step detail), never in a row.
+                      input: { command: "", description: raw.text },
                       status: "ok",
                   })
                 : raw;

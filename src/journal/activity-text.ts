@@ -44,7 +44,7 @@ const PATTERN = (value: string): boolean => !/\s/.test(value) || /\\|\||\.\*|\[[
  * Deliberately strict, because the text form is only the fallback for a bridge that does not
  * attach `payload.step`: the whole body must be one indicator line whose argument has the shape
  * the bridge prints (a backticked command, a bare tool name, an absolute path, a pattern, a URL,
- * `Subtask:`, the `📋 Todos:` list, a one-line web query). Agent prose that happens to open with
+ * `Subtask:`, the `📋 Todos:` list). Agent prose that happens to open with
  * the same emoji ("🔍 Found the root cause.") stays prose. A backticked command may span lines (a
  * heredoc script): the audit of real transcripts (2026-09-26) found those were the one tool call
  * that still printed raw. `partial` accepts a line the server cut at 120 characters (a snippet
@@ -68,10 +68,8 @@ export function indicatorStep(body: string, id = "indicator", partial = false): 
     if ((match = /^📖 (\S.*)$/u.exec(text)) && PATH.test(match[1])) return make("Read", { path: match[1] });
     if ((match = /^🔍 (\S.*)$/u.exec(text)) && PATTERN(match[1])) return make("Grep", { pattern: match[1] });
     if ((match = /^🌐 (https?:\/\/\S+)$/u.exec(text))) return make("WebFetch", { url: match[1] });
-    // A web search's free-text query: one line that does not read as a sentence (no closing
-    // punctuation, no first-person narration). A newer bridge sends payload.step instead.
-    if ((match = /^🌐 (\S.{2,299})$/u.exec(text)) && WEB_QUERY(match[1]))
-        return make("WebSearch", { pattern: match[1] });
+    // A web search's free-text query stays prose: it cannot be told apart from a sentence
+    // ("🌐 The docs say otherwise"); a newer bridge marks it with payload.step (#80).
     if ((match = /^🔀 (?:Nested s|S)ubtask: (\S.*)$/u.exec(text)))
         return make("Task", { description: match[1].replace(/…$/u, "") });
     return null;
@@ -84,10 +82,6 @@ export function indicatorStep(body: string, id = "indicator", partial = false): 
  */
 const COMMAND_BODY = (value: string): boolean =>
     !value.includes("`") || value.includes("\n") || /…$/u.test(value) || /[|;&$]|^\S+\s+-/.test(value);
-
-/** A web-search query as the bridge prints it: not a sentence. */
-const WEB_QUERY = (value: string): boolean =>
-    !/[.!:…]$/u.test(value.trim()) && !/^(I|I'm|I've|We|Let me|Now|Checking|Looking|Searching|Found)\b/.test(value);
 
 /** The structured `payload.step` a newer bridge attaches to an indicator line, as a Step. */
 export function payloadStep(value: unknown, id = "indicator"): Step | null {

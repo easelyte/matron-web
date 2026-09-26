@@ -5109,7 +5109,13 @@ function DevHelperRow({ client, child }: { client: MatronJournalClient; child: C
  * card, the one place monospace appears — the command, path or pattern it ran on.
  */
 function StepSentenceDetail({ step }: { step: Step }): React.ReactElement {
-    const target = step.input.command ?? step.input.path ?? step.input.pattern ?? step.input.url;
+    const target =
+        step.input.command ||
+        step.input.path ||
+        step.input.pattern ||
+        step.input.url ||
+        // A narration line that read as machine text (headlines.ts): its text, one click deep.
+        (step.id.startsWith("raw-") ? step.input.description : undefined);
     return (
         <div className="mj_TurnCard_detailText mj_StepDetail">
             <p>{stepSentence(step)}</p>

@@ -367,8 +367,9 @@ export class JournalDatabase {
                 return [conversation.id, parentId === conversation.id ? null : parentId] as const;
             }),
         );
-        // The recorded last step survives a snapshot that still ends on the same message (same
-        // snippet and last_seq): the sidebar keeps phrasing it instead of reading the snippet.
+        // The recorded last step survives a snapshot of the very state it was recorded in (same
+        // last_seq, snippet and last_ts). Anything newer drops it: the preview then reads the
+        // snippet, behind the raw-text guard.
         const existingSteps = new Map(
             existingRows
                 .filter((conversation) => conversation.last_step)
@@ -389,7 +390,10 @@ export class JournalDatabase {
             if (incomingParent === row.id) incomingParent = null;
             const previous = existingSteps.get(row.id);
             const keepStep =
-                previous && previous.snippet === row.snippet && previous.last_ts === (row.last_ts ?? row.created_at);
+                previous &&
+                previous.last_seq === row.last_seq &&
+                previous.snippet === row.snippet &&
+                previous.last_ts === (row.last_ts ?? row.created_at);
             conversations.put({
                 ...row,
                 ...(keepStep ? { last_step: previous.last_step } : {}),
