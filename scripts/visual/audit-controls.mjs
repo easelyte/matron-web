@@ -82,8 +82,8 @@ const ev = (fn, arg) => (p) => p.evaluate(fn, arg);
 const patch = (update) => (p) => p.evaluate((u) => window.__matron.client.patch(u), update);
 const click = (sel, opts) => async (p) => {
     const loc = opts?.hasText ? p.locator(sel, { hasText: opts.hasText }) : p.locator(sel);
-    const first = loc.first();
-    if (await first.isVisible().catch(() => false)) await first.click();
+    // Strict: a missing target fails the scene rather than measuring whatever is still open.
+    await loc.first().click({ timeout: 3000 });
 };
 const seq =
     (...steps) =>
@@ -105,6 +105,38 @@ const openNewSession = async (p) => {
     await click('button[aria-label="New session options"]')(p);
 };
 
+// What each scene must show after setup; a miss is a setup error and fails the run, so a drifted
+// selector can never report the previous screen as a clean scene.
+const EXPECT = {
+    chat: ".mx_MessageComposer",
+    "chat-v6": ".mj_AgentTurn",
+    "chat-child": ".mj_SubagentBack",
+    "composer-staged": ".mj_UploadConfirm",
+    "composer-slash": '[role="listbox"]',
+    "sidebar-list": ".mj_RoomListTabs",
+    "session-menu": '[role="menu"]',
+    "browser-confirm": '[role="dialog"]',
+    "browser-confirm-busy": '[role="dialog"]',
+    settings: '[role="menu"], [role="dialog"]',
+    "new-session": '[role="dialog"]',
+    "tracker-missions": ".mj_TrackerPane",
+    "tracker-mission": ".mj_TrackerDetail",
+    "tracker-inbox": ".mj_TrackerInboxToggle",
+    "tracker-item": ".mj_TrackerComposer",
+    "work-list": ".mj_WorkFilters",
+    "work-filtered": ".mj_WorkSelect_set",
+    "work-detail": ".mj_TrackerDetail",
+    "work-empty": ".mj_TrackerEmpty",
+    "files-list": ".mj_FilesList",
+    "files-preview": ".mj_FilesPreview_header",
+    "files-upload": ".mj_FileWrite_confirm",
+    "files-edit": ".mj_FileWrite_textarea",
+    "files-delete": ".mj_FileWrite_danger",
+    "media-viewer": ".mj_MediaViewer",
+    offline: ".mj_ConnectionError, .mj_ConnectionBanner",
+    signin: ".mx_Login_submit",
+};
+
 export const SCENES = [
     { name: "chat", query: "" },
     { name: "chat-v6", query: "v6=full" },
@@ -116,6 +148,15 @@ export const SCENES = [
     {
         name: "browser-confirm",
         query: "v6=t1",
+        setup: seq(
+            click('button[aria-label="Conversation actions"]'),
+            click(".mj_RoomItemMenu_item", { hasText: "Enable browser tools" }),
+        ),
+    },
+    {
+        // Running session: the confirm grows a third action ("Restart now"), the widest footer.
+        name: "browser-confirm-busy",
+        query: "v6=run",
         setup: seq(
             click('button[aria-label="Conversation actions"]'),
             click(".mj_RoomItemMenu_item", { hasText: "Enable browser tools" }),
@@ -177,6 +218,8 @@ export const SCENES = [
     },
     {
         name: "files-delete",
+        // Row delete lives in the hover/row actions, which phones do not render.
+        widths: [1280, 1024, 768],
         query: "",
         setup: seq(
             ev(() => window.__matron.openFiles()),
@@ -185,7 +228,14 @@ export const SCENES = [
         ),
     },
     { name: "media-viewer", query: "v6=full", setup: seq(click(".mj_Image img"), (p) => p.waitForTimeout(300)) },
-    { name: "offline", query: "", setup: patch({ connection: "offline" }) },
+    // The offline banner has a grace period before it shows (shoot-mobile waits the same 3s).
+    {
+        name: "offline",
+        query: "",
+        setup: seq(patch({ connection: "offline", controlError: "Couldn't reach the bridge. Retrying…" }), (p) =>
+            p.waitForTimeout(3200),
+        ),
+    },
     { name: "signin", query: "", setup: patch({ phase: "signed-out" }) },
 ];
 
@@ -340,6 +390,27 @@ function measureInPage() {
             });
         }
     }
+    // Clipping: a control pushed past the viewport edge (the audit's visibility filter would
+    // otherwise drop it silently). Controls inside a horizontal scroller are allowed.
+    for (const el of document.querySelectorAll(CONTROL)) {
+        const r = el.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1 || r.bottom <= 0 || r.top >= vh) continue;
+        const cs = getComputedStyle(el);
+        if (cs.visibility === "hidden" || cs.display === "none") continue;
+        if (el.closest('[aria-hidden="true"], [inert]')) continue;
+        if (r.left >= -0.5 && r.right <= vw + 0.5) continue;
+        let scroller = false;
+        for (let a = el.parentElement; a; a = a.parentElement)
+            if (/auto|scroll/.test(getComputedStyle(a).overflowX)) scroller = true;
+        if (scroller) continue;
+        findings.push({
+            row: "viewport",
+            issues: ["clipped"],
+            members: [
+                { ...name(el), h: Math.round(r.height), cy: Math.round(r.left), radius: 0, fontSize: 0, boxed: true },
+            ],
+        });
+    }
     return { controls, findings };
 }
 
@@ -449,6 +520,7 @@ try {
         if (ONLY && !ONLY.has(scene.name)) continue;
         const shots = [];
         for (const w of WIDTHS) {
+            if (scene.widths && !scene.widths.includes(w)) continue;
             const phone = w < 480;
             for (const theme of THEMES) {
                 const context = await browser.newContext({
@@ -466,6 +538,17 @@ try {
                 await page.waitForTimeout(300);
                 let setupError = "";
                 if (scene.setup) await scene.setup(page).catch((e) => (setupError = String(e).slice(0, 200)));
+                const expected = EXPECT[scene.name];
+                if (
+                    !setupError &&
+                    expected &&
+                    !(await page
+                        .locator(expected)
+                        .first()
+                        .isVisible()
+                        .catch(() => false))
+                )
+                    setupError = `expected ${expected} not visible after setup`;
                 await page.waitForTimeout(400);
                 const file = path.join(OUT, "shots", `${scene.name}-${w}-${theme}.png`);
                 await page.screenshot({ path: file });
@@ -487,4 +570,9 @@ try {
     server.close();
 }
 fs.writeFileSync(path.join(OUT, "audit.json"), JSON.stringify(report, null, 1));
+const failedSetups = report.filter((e) => e.setupError);
+if (failedSetups.length) {
+    for (const e of failedSetups) console.error(`SETUP FAILED ${e.scene} ${e.w} ${e.theme}: ${e.setupError}`);
+    process.exitCode = 1;
+}
 console.log(`wrote ${path.join(OUT, "audit.json")}`);

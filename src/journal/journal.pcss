@@ -2204,10 +2204,13 @@ textarea {
     outline: none;
 }
 
+/* Footer buttons keep the control height and never shrink below their label, so a footer whose
+   actions outgrow a phone-width sheet wraps onto a second line instead of clipping. */
 .mj_UploadConfirm_actions {
     display: flex;
     justify-content: flex-end;
     gap: var(--cpd-space-2x);
+    flex-wrap: wrap;
 }
 
 .mj_UploadConfirm_error {
