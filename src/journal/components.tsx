@@ -3016,11 +3016,33 @@ function BrowserToolsConfirm({
     onClose,
 }: {
     busy: boolean;
-    onConfirm: (now: boolean) => void;
+    /** Resolves false when the command couldn't be queued; the dialog stays open and says so. */
+    onConfirm: (now: boolean) => Promise<boolean>;
     onClose: () => void;
 }): React.ReactElement {
     const primaryRef = useRef<HTMLButtonElement>(null);
-    useLayoutEffect(() => primaryRef.current?.focus(), []);
+    const dialogRef = useRef<HTMLDivElement>(null);
+    const [error, setError] = useState<string>();
+    const [sending, setSending] = useState(false);
+    // Focus lands on the primary, and returns there if "Restart now" disappears under it.
+    useLayoutEffect(() => {
+        if (!dialogRef.current?.contains(document.activeElement)) primaryRef.current?.focus();
+    }, [busy]);
+    const confirm = (now: boolean): void => {
+        if (sending) return;
+        setSending(true);
+        setError(undefined);
+        void onConfirm(now).then(
+            (sent) => {
+                setSending(false);
+                if (!sent) setError("Couldn’t send the restart. Try again.");
+            },
+            () => {
+                setSending(false);
+                setError("Couldn’t send the restart. Try again.");
+            },
+        );
+    };
     return (
         <div
             className="mj_UploadConfirm_scrim"
@@ -3035,6 +3057,7 @@ function BrowserToolsConfirm({
             }}
         >
             <div
+                ref={dialogRef}
                 className="mj_UploadConfirm mj_UploadConfirm_queue mj_BrowserToolsConfirm"
                 role="dialog"
                 aria-modal="true"
@@ -3074,6 +3097,11 @@ function BrowserToolsConfirm({
                             </span>
                         </div>
                     )}
+                    {error && (
+                        <p className="mj_UploadConfirm_error" role="alert">
+                            {error}
+                        </p>
+                    )}
                 </div>
                 <footer className="mj_UploadConfirm_footer">
                     <div className="mj_UploadConfirm_actions">
@@ -3081,7 +3109,12 @@ function BrowserToolsConfirm({
                             Cancel
                         </button>
                         {busy && (
-                            <button type="button" className="mj_UploadConfirm_skip" onClick={() => onConfirm(true)}>
+                            <button
+                                type="button"
+                                className="mj_UploadConfirm_skip"
+                                disabled={sending}
+                                onClick={() => confirm(true)}
+                            >
                                 Restart now
                             </button>
                         )}
@@ -3089,7 +3122,8 @@ function BrowserToolsConfirm({
                             ref={primaryRef}
                             type="button"
                             className="mj_UploadConfirm_send"
-                            onClick={() => onConfirm(false)}
+                            disabled={sending}
+                            onClick={() => confirm(false)}
                         >
                             Restart with browser tools
                         </button>
@@ -3310,10 +3344,16 @@ function HeaderOverflowMenu({
                         setConfirmBrowser(false);
                         openerRef.current?.focus();
                     }}
-                    onConfirm={(now) => {
-                        setConfirmBrowser(false);
-                        openerRef.current?.focus();
-                        void client.sendMessage(now ? BROWSER_RESTART_NOW_COMMAND : BROWSER_RESTART_COMMAND, id);
+                    onConfirm={async (now) => {
+                        const sent = await client.sendMessage(
+                            now ? BROWSER_RESTART_NOW_COMMAND : BROWSER_RESTART_COMMAND,
+                            id,
+                        );
+                        if (sent) {
+                            setConfirmBrowser(false);
+                            openerRef.current?.focus();
+                        }
+                        return sent;
                     }}
                 />
             )}

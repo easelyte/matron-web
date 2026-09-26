@@ -76,6 +76,54 @@ describe("browserToolsState (read from the bridge's replies)", () => {
         ).toBe("idle");
     });
 
+    it("reads Restart now (--force) as restarting straight away, even mid-task", () => {
+        expect(browserToolsState([op("/restart --browser --force")], true)).toBe("restarting");
+    });
+
+    it("drops a pending request the bridge abandoned", () => {
+        expect(
+            browserToolsState([op("/restart --browser"), ev("No active session. Use !start to begin.")], false),
+        ).toBe("idle");
+        expect(
+            browserToolsState(
+                [op("/restart --browser"), ev("Waiting for turn to finish before restarting."), ev("Session stopped.")],
+                false,
+            ),
+        ).toBe("idle");
+        expect(
+            browserToolsState([op("/restart --browser"), ev("Waiting for turn to finish before restarting.")], false),
+        ).toBe("idle");
+        expect(
+            browserToolsState(
+                [op("/restart --browser"), ev("🔄 Restarting Claude session..."), ev("Couldn't restart: spawn failed")],
+                false,
+            ),
+        ).toBe("idle");
+        expect(
+            browserToolsState(
+                [
+                    op("/restart --browser"),
+                    ev("Waiting for turn to finish before restarting."),
+                    ev("Deferred /restart failed: boom"),
+                ],
+                true,
+            ),
+        ).toBe("idle");
+    });
+
+    it("keeps a queued request while the agent's own prose streams in", () => {
+        expect(
+            browserToolsState(
+                [
+                    op("/restart --browser"),
+                    ev("Waiting for turn to finish before restarting."),
+                    ev("Still reading files."),
+                ],
+                true,
+            ),
+        ).toBe("queued");
+    });
+
     it("ignores other restarts' queue replies", () => {
         expect(browserToolsState([op("/restart"), ev("Waiting for turn to finish before restarting.")], true)).toBe(
             "idle",
