@@ -40,9 +40,11 @@ import type {
 } from "../src/journal/types";
 import { SHOW_THE_WORK_KEY } from "../src/journal/show-the-work";
 import { v6Fixture, type V6Scenario } from "./v6-thread";
+import { workFixture, type WorkFixtureMode } from "./work";
 import "../src/journal/shell.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
+import "../src/journal/work.pcss";
 import "../src/journal/mobile.pcss";
 
 const SESSION: Session = {
@@ -874,6 +876,13 @@ const trackerMissionDetail: MissionDetail = {
 };
 
 // Expose hooks so the Playwright driver can drive states (stage files → upload modal, etc.).
+// Work tab: replace the fake client's `work()` so the REAL WorkView (list, filters, detail) renders
+// a canned loop store. `openWork(mode)` picks the payload; reload between modes, since a mounted
+// Work view only refetches on its own interval.
+let workMode: WorkFixtureMode = "ok";
+(client as unknown as { work: (groupBy: "repo" | "domain") => Promise<unknown> }).work = (groupBy) =>
+    workFixture(workMode, groupBy);
+
 (window as unknown as { __matron: unknown }).__matron = {
     client,
     openFiles: (path: string = FILES_ROOT) => {
@@ -925,6 +934,14 @@ const trackerMissionDetail: MissionDetail = {
             trackerItem: trackerItemDetail,
         }),
     closeTracker: () => patchState({ trackerView: undefined }),
+    openWork: (mode: WorkFixtureMode = "ok") => {
+        workMode = mode;
+        patchState({ filesView: undefined, trackerView: { open: true, view: "work" } });
+    },
+    openWorkLoop: (id: number, mode: WorkFixtureMode = "ok") => {
+        workMode = mode;
+        patchState({ filesView: undefined, trackerView: { open: true, view: "work", selectedLoopId: id } });
+    },
     stageImage: (name = "screenshot.png") => client.stageFiles([imageFile(name)]),
     // Single NON-image file → hatched "image preview" placeholder + the single-file case
     // (no thumbnail strip, no "n of N" pill).

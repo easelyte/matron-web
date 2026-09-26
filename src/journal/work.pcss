@@ -1,0 +1,381 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+/* Work tab (the loop store) styles. Imported right after tracker.pcss, whose primitives this
+   builds on rather than restyling: rows are .mj_TrackerItemRow, the detail is .mj_TrackerDetail,
+   empty states are .mj_TrackerEmpty, the group toggle is .mj_TrackerInboxToggle. Only what is
+   genuinely Work-specific lives here. Status follows the tracker rule: tint + dot, never a solid
+   fill, and orange only where something asks for attention (blocked). */
+
+/* — Filter row — */
+.mj_WorkFilters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    padding: var(--cpd-space-2x) var(--cpd-space-4x) var(--cpd-space-3x);
+}
+
+.mj_WorkSearch {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1 1 220px;
+    min-width: 0;
+}
+.mj_WorkSearch_icon {
+    position: absolute;
+    left: var(--cpd-space-3x);
+    width: 16px;
+    height: 16px;
+    color: var(--cpd-color-icon-tertiary);
+    pointer-events: none;
+}
+.mj_WorkSearch_input {
+    width: 100%;
+    box-sizing: border-box;
+    height: 36px;
+    padding: 0 var(--cpd-space-3x) 0 calc(var(--cpd-space-3x) + 16px + var(--cpd-space-2x));
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+}
+.mj_WorkSearch_input::placeholder {
+    color: var(--cpd-color-text-placeholder);
+}
+.mj_WorkSearch_input:focus-visible,
+.mj_WorkSelect:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 0;
+}
+
+.mj_WorkSelect {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 calc(var(--cpd-space-3x) + 14px) 0 var(--cpd-space-3x);
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-pill);
+    /* A drawn chevron keeps the control identical in both themes and across engines. */
+    appearance: none;
+    background-color: var(--cpd-color-bg-canvas-default);
+    background-image:
+        linear-gradient(45deg, transparent 50%, currentColor 50%),
+        linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position:
+        calc(100% - 15px) 50%,
+        calc(100% - 10px) 50%;
+    background-size:
+        5px 5px,
+        5px 5px;
+    background-repeat: no-repeat;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+/* A non-default filter reads as "on" in the same accent-tint language as a selected row. */
+.mj_WorkSelect_set {
+    border-color: var(--mj-accent-border);
+    background-color: var(--cpd-state-selected);
+    color: var(--cpd-color-text-action-accent);
+    font-weight: 600;
+}
+.mj_WorkSelect option {
+    color: var(--cpd-color-text-primary);
+    background: var(--cpd-color-bg-canvas-raised);
+    font-weight: 400;
+}
+
+.mj_WorkGroupToggle {
+    margin: 0;
+    flex: none;
+}
+
+.mj_WorkSummary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--cpd-space-2x);
+    padding: 0 var(--cpd-space-4x) var(--cpd-space-1x);
+    font: var(--cpd-font-meta);
+    color: var(--cpd-color-text-tertiary);
+    font-variant-numeric: tabular-nums;
+}
+.mj_WorkSummary .mj_TrackerTextButton {
+    padding-right: 0;
+}
+
+/* — Groups — */
+.mj_WorkGroups {
+    display: flex;
+    flex-direction: column;
+}
+.mj_WorkGroup {
+    display: flex;
+    flex-direction: column;
+    padding: var(--cpd-space-1x) 0 var(--cpd-space-2x);
+}
+.mj_WorkGroup_header {
+    display: flex;
+    align-items: baseline;
+    gap: var(--cpd-space-2x);
+    margin: 0;
+    padding: var(--cpd-space-2x) var(--cpd-space-4x);
+    font: var(--cpd-font-body-xs-semibold, 600 12px/16px Inter, sans-serif);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--cpd-color-text-tertiary);
+}
+.mj_WorkGroup_count {
+    color: var(--cpd-color-text-tertiary);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+}
+
+/* — Row (on top of .mj_TrackerItemRow) — */
+.mj_WorkRow .mj_TrackerItemRow_main {
+    gap: var(--cpd-space-1x);
+}
+
+/* The lead sentence gets two lines, not one: it is written to stand alone as the row's summary,
+   and one line of it at phone width is half a clause. */
+.mj_WorkRow_lead {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-secondary);
+    overflow-wrap: anywhere;
+}
+.mj_WorkRow_lead_empty {
+    font-style: italic;
+    color: var(--cpd-color-text-tertiary);
+}
+
+.mj_WorkRow_meta {
+    margin-top: 2px;
+}
+.mj_WorkRow_dimension,
+.mj_WorkRow_owner {
+    color: var(--cpd-color-text-secondary);
+}
+.mj_WorkRow_age {
+    font-variant-numeric: tabular-nums;
+}
+
+/* — Glyph colour by status (tracker glyph map; orange only when blocked) — */
+.mj_WorkGlyph {
+    display: inline-flex;
+}
+.mj_WorkGlyph_blocked .mj_TrackerGlyph {
+    color: var(--mj-needsyou);
+}
+.mj_WorkGlyph_parked .mj_TrackerGlyph,
+.mj_WorkGlyph_paused .mj_TrackerGlyph {
+    color: var(--cpd-color-text-tertiary);
+}
+
+/* — Status chip: tint + dot — */
+.mj_WorkStatusChip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: none;
+    padding: 1px var(--cpd-space-2x);
+    border-radius: var(--cpd-radius-pill);
+    font: var(--cpd-font-meta);
+    font-weight: 600;
+    white-space: nowrap;
+}
+.mj_WorkStatusChip_dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+.mj_WorkStatusChip_active {
+    color: var(--cpd-color-text-action-accent);
+    background: var(--cpd-state-selected);
+}
+.mj_WorkStatusChip_blocked {
+    color: var(--mj-warn-ink);
+    background: var(--mj-needsyou-bg);
+}
+.mj_WorkStatusChip_blocked .mj_WorkStatusChip_dot {
+    background: var(--mj-needsyou);
+}
+.mj_WorkStatusChip_parked,
+.mj_WorkStatusChip_paused {
+    color: var(--cpd-color-text-secondary);
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+.mj_WorkStatusChip_parked .mj_WorkStatusChip_dot,
+.mj_WorkStatusChip_paused .mj_WorkStatusChip_dot {
+    background: var(--cpd-color-text-tertiary);
+}
+
+/* Priority is the one number worth scanning down a column: tabular, a step above tertiary. */
+.mj_WorkPriority {
+    color: var(--cpd-color-text-secondary);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+}
+
+/* Claims are advisory; live reads as accent, stale as a quiet warning, unknown as plain meta. */
+.mj_WorkClaim_live {
+    color: var(--cpd-color-text-action-accent);
+}
+.mj_WorkClaim_stale {
+    color: var(--cpd-color-text-critical-primary);
+}
+.mj_WorkClaim_unknown {
+    color: var(--cpd-color-text-tertiary);
+}
+
+/* — Detail (on top of .mj_TrackerDetail) — */
+.mj_WorkView_detail {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+.mj_WorkDetail .mj_TrackerDetail_head .mj_WorkStatusChip {
+    margin-left: auto;
+}
+
+.mj_WorkMeta {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: var(--cpd-space-3x) var(--cpd-space-4x);
+    margin: 0 0 var(--cpd-space-4x);
+    padding: var(--cpd-space-3x) 0;
+    border-top: 1px solid var(--cpd-color-border-subtle);
+    border-bottom: 1px solid var(--cpd-color-border-subtle);
+}
+.mj_WorkMeta_cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.mj_WorkMeta_label {
+    font: var(--cpd-font-body-xs-semibold, 600 12px/16px Inter, sans-serif);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--cpd-color-text-tertiary);
+}
+.mj_WorkMeta_value {
+    margin: 0;
+    font: var(--cpd-font-body-sm-regular);
+    color: var(--cpd-color-text-primary);
+    overflow-wrap: anywhere;
+}
+.mj_WorkMeta_sub {
+    color: var(--cpd-color-text-tertiary);
+}
+
+/* The next step: the one thing to do, set apart from the prose it summarises. */
+.mj_WorkNext {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cpd-space-1x);
+    margin: 0 0 var(--cpd-space-5x);
+    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-state-selected);
+    box-shadow: inset 3px 0 0 var(--cpd-color-text-action-accent);
+}
+.mj_WorkNext_attention {
+    background: var(--mj-needsyou-bg);
+    box-shadow: inset 3px 0 0 var(--mj-needsyou);
+}
+.mj_WorkNext_text {
+    margin: 0;
+    font: var(--cpd-font-body);
+    color: var(--cpd-color-text-primary);
+    overflow-wrap: anywhere;
+}
+
+.mj_WorkDetail_body {
+    max-width: 72ch;
+}
+.mj_WorkDetail_empty {
+    margin: 0;
+    font: var(--cpd-font-body-sm-regular);
+    font-style: italic;
+    color: var(--cpd-color-text-tertiary);
+}
+
+/* — Loading / error — */
+.mj_WorkLoading,
+.mj_WorkError {
+    padding: var(--cpd-space-12x) var(--cpd-space-6x);
+    text-align: center;
+    font: var(--cpd-font-body-sm-regular);
+}
+.mj_WorkLoading {
+    color: var(--cpd-color-text-secondary);
+}
+.mj_WorkError {
+    color: var(--cpd-color-text-critical-primary);
+}
+.mj_WorkError_title {
+    margin: 0;
+    font: var(--cpd-font-title);
+}
+.mj_WorkError_message {
+    margin: var(--cpd-space-2x) 0 0;
+}
+.mj_WorkError_code {
+    display: block;
+    margin-bottom: var(--cpd-space-1x);
+    font-family: "Fira Code", monospace;
+    font-size: var(--cpd-font-size-xs);
+}
+
+/* — Phone — */
+@media (max-width: 700px) {
+    /* Line one: search + the grouping toggle. Line two: the two filters, half each. At 390px the
+       four controls on one line truncated both filters to "In pla…" / "All do…". */
+    .mj_WorkFilters {
+        padding-left: var(--cpd-space-3x);
+        padding-right: var(--cpd-space-3x);
+    }
+    .mj_WorkSearch {
+        /* Wide enough basis that a select can never join line one and squeeze the search. */
+        flex: 1 1 180px;
+    }
+    .mj_WorkGroupToggle {
+        order: 1;
+    }
+    .mj_WorkSelect {
+        order: 2;
+        flex: 1 1 calc(50% - var(--cpd-space-2x));
+    }
+    .mj_WorkSearch_input,
+    .mj_WorkSelect {
+        height: 44px;
+        font-size: 16px; /* 16px stops iOS Safari zooming the page on focus. */
+    }
+    .mj_WorkGroupToggle .mj_TrackerToggleTab {
+        min-height: 40px;
+    }
+    .mj_WorkView .mj_TrackerTextButton {
+        min-height: 44px;
+    }
+    .mj_WorkMeta {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}

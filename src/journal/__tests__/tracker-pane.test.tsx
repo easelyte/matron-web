@@ -22,6 +22,8 @@ interface FakeClient {
     openTrackerView: jest.Mock;
     openTrackerItem: jest.Mock;
     openTrackerMission: jest.Mock;
+    openTrackerLoop: jest.Mock;
+    openTrackerLink: jest.Mock;
     work: jest.Mock;
     getSnapshot: jest.Mock;
 }
@@ -36,6 +38,8 @@ function fakeClient(): FakeClient {
         openTrackerView: jest.fn(),
         openTrackerItem: jest.fn(),
         openTrackerMission: jest.fn(),
+        openTrackerLoop: jest.fn(),
+        openTrackerLink: jest.fn(),
         work: jest.fn().mockResolvedValue({
             schema_version: 1,
             status: "empty",
@@ -129,8 +133,66 @@ describe("TrackerPane", () => {
             (button) => button.textContent === "Work",
         );
         expect(workTab?.getAttribute("aria-selected")).toBe("true");
-        expect(container.querySelector(".mj_TrackerEmpty_title")?.textContent).toBe("No active work");
+        expect(container.querySelector(".mj_TrackerEmpty_title")?.textContent).toBe("No open work");
         expect(client.work).toHaveBeenCalledWith("repo", expect.any(AbortSignal));
+    });
+});
+
+describe("TrackerPane — Work loop selection", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    const payload = {
+        schema_version: 1,
+        status: "ok",
+        group_by: "repo",
+        groups: [
+            {
+                key: "matron-web",
+                loops: [
+                    {
+                        id: 31,
+                        title: "Loop detail",
+                        repo: "matron-web",
+                        domain: "infra",
+                        priority: 3,
+                        description: "Lead.",
+                        status: "active",
+                        claim: null,
+                    },
+                ],
+            },
+        ],
+    };
+
+    it("routes a row tap through the client and renders the selected loop's detail from the store", async () => {
+        const client = fakeClient();
+        client.work.mockResolvedValue(payload);
+        const { container, root } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "work" } })}
+            />,
+        );
+        await act(async () => container.querySelector<HTMLButtonElement>('[data-loop-id="31"]')!.click());
+        expect(client.openTrackerLoop).toHaveBeenCalledWith(31);
+
+        await act(async () =>
+            root.render(
+                <TrackerPane
+                    client={client as unknown as MatronJournalClient}
+                    state={paneState({ trackerView: { open: true, view: "work", selectedLoopId: 31 } })}
+                />,
+            ),
+        );
+        expect(container.querySelector("h1.mj_TrackerItemTitle")?.textContent).toBe("Loop detail");
+        // Same mounted Work view: the selection change did not refetch.
+        expect(client.work).toHaveBeenCalledTimes(1);
+
+        await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Back to work"]')!.click());
+        expect(client.openTrackerLoop).toHaveBeenCalledWith(null);
+        await act(async () => root.unmount());
     });
 });
 

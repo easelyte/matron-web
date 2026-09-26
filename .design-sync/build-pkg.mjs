@@ -59,7 +59,7 @@ const SURFACE = [
   ['ItemDetail', 'journal/tracker/ItemDetail.tsx', 'tracker', 'The full view of one tracker item: header with kind, #number, state and awaiting, markdown body, links, the comment thread with status-change entries, and the reply composer.'],
   ['MissionsList', 'journal/tracker/MissionsList.tsx', 'tracker', 'The missions list: open missions first with needs-you counts, open items, milestone count and the last milestone, then closed missions dimmed.'],
   ['MissionDetail', 'journal/tracker/MissionDetail.tsx', 'tracker', 'One mission: title, body, stats, the milestone trail (user_input milestones in orange), its open items, and the conversations working on it.'],
-  ['WorkView', 'journal/tracker/WorkView.tsx', 'tracker', 'The Work tab: the loop store grouped by repo or domain, each loop with its one-line summary, priority, claim and state, and an Active / All scope toggle. Loads through a `WorkViewLoader` (use `fixtureWorkViewLoader`).'],
+  ['WorkView', 'journal/tracker/WorkView.tsx', 'tracker', 'The Work tab: the loop store grouped by repo or domain as tracker rows (lead sentence, status chip, priority, owner, claim, age), one filter row (search, status, domain, grouping), and a loop detail with a next-step callout and the markdown description. Loads through a `WorkViewLoader` (use `fixtureWorkViewLoader`).'],
   ['ItemCard', 'journal/tracker/cards.tsx', 'tracker', 'The timeline card for a tracker item being created or closed: kind glyph, #number, title, status pill (orange border when it needs you). Click opens the item.'],
   ['ItemInlineNote', 'journal/tracker/cards.tsx', 'tracker', 'The compact one-line timeline note for a tracker item being commented on or reopened.'],
   ['MilestoneCard', 'journal/tracker/cards.tsx', 'tracker', 'The timeline card for a mission milestone (progress, or user_input in orange), linking to its mission.'],
@@ -236,11 +236,11 @@ try {
 writeFileSync(join(OUT, 'types/index.d.ts'),
   [...byModule].map(([mod, names]) => `export { ${names.join(', ')} } from "./${mod.replace(/\.tsx?$/, '')}";`).join('\n') + '\n');
 
-// -- styles.css: the app's four stylesheets through the same postcss pipeline as webpack
+// -- styles.css: the app's stylesheets, in the app's import order, through the same postcss pipeline as webpack
 const req = createRequire(join(ROOT, 'package.json'));
 const postcss = req('postcss');
 const presetEnv = req('postcss-preset-env');
-let css = ['shell', 'journal', 'tracker', 'mobile']
+let css = ['shell', 'journal', 'tracker', 'work', 'mobile']
   .map((n) => `/* ---- src/journal/${n}.pcss ---- */\n` + readFileSync(join(ROOT, J, `${n}.pcss`), 'utf8'))
   .join('\n');
 // The app pins html/body/#matron to the viewport with overflow:hidden (a full-screen shell).

@@ -11,5 +11,6 @@
 /src/contracts/work-view.schema.json
 /src/journal/__tests__/fixtures/work-view-ok.json
 /src/journal/__tests__/fixtures/work-view-ok-domain.json
+/src/journal/__tests__/fixtures/work-view-ok-detail.json
 /src/journal/__tests__/fixtures/work-view-empty.json
 /src/journal/__tests__/fixtures/work-view-error.json

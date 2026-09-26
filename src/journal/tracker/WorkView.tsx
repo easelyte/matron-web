@@ -6,175 +6,123 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * The read-only Work surface. The journal endpoint remains the source of grouping and loop data;
- * this component owns the repo/domain view choice, the active/all scope filter, and per-loop
- * expansion state. The claim language is deliberately advisory because Phase 1 claims are
- * collision hints, not locks.
+ * The read-only Work surface: the loop store as a tracker list, and a loop detail.
  *
- * Rows deliberately reuse the tracker's own row anatomy (mj_TrackerItemRow and its sub-elements,
- * shared with ItemRow and MissionsList) rather than a bespoke card: glyph, a title line leading
- * with the tabular-num id, a single-line body preview that the stylesheet ellipsises, and one meta
- * line carrying at most ONE status token. Loop descriptions are written for machines and run to a
- * ~1.1k-character median, so the CSS ellipsis is what makes them readable at a glance; the full
- * text is opt-in via expansion.
+ * The journal endpoint stays the source of the loop data and its grouping. This component owns the
+ * view choices (grouping, status/domain/search filters) and renders either the list or, when the
+ * tracker has a loop selected, that loop's detail. Both render from the SAME loaded payload, and the
+ * component stays mounted across the switch, so filters, grouping and scroll position survive a
+ * round trip into a detail and back.
  *
- * Unlike the other tracker rows, a Work row is not a navigation target -- Phase 1 has no loop
- * detail view -- so the button toggles expansion in place rather than opening anything.
+ * Rows reuse the tracker's row anatomy (mj_TrackerItemRow and its sub-elements, shared with ItemRow
+ * and MissionsList) so Work reads as the same surface as Inbox and Missions: glyph, a title line
+ * leading with the tabular #id, the description's lead sentence, and one meta line. Blocked is the
+ * one status that asks for attention and gets the tracker's needs-you treatment.
+ *
+ * Claims are advisory collision hints, never locks, and the copy says so.
  */
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { SearchIcon } from "../icons";
 import { useWorkView, type WorkViewLoader } from "../use-work-view";
-import type { WorkViewClaim, WorkViewGroup, WorkViewGroupBy, WorkViewLoop } from "../work-view";
-import { oneLine } from "./format";
-import { TaskGlyph } from "./glyphs";
+import type { WorkViewGroupBy, WorkViewLoop } from "../work-view";
+import { WorkLoopDetail } from "./WorkLoopDetail";
+import { WorkGlyph, WorkStatusChip } from "./work-parts";
+import {
+    allLoops,
+    applyFilters,
+    claimCopy,
+    compactAge,
+    countBy,
+    DEFAULT_WORK_FILTERS,
+    findLoop,
+    needsAttention,
+    openedMs,
+    otherDimension,
+    ownerLabel,
+    spokenAge,
+    statusFilterLabel,
+    statusLabel,
+    summaryLine,
+    WORK_STATUS_ORDER,
+    type WorkFilters,
+    type WorkStatusFilter,
+} from "./work-format";
 
-/** "active" hides parked/paused work; "all" shows everything the endpoint returned. */
-export type WorkScope = "active" | "all";
+export { summaryLine } from "./work-format";
 
-/** Statuses treated as set-aside rather than in play. */
-const SET_ASIDE_STATUSES: ReadonlySet<string> = new Set(["parked", "paused"]);
-
-/**
- * The collapsed row's one-line summary.
- *
- * Takes the FIRST PARAGRAPH rather than the whole description flattened. For a description written
- * as a lead sentence followed by detail, that is the summary the author intended -- and for the
- * older single-paragraph descriptions it is the entire text, i.e. exactly what this used to do, so
- * nothing regresses. Flattening everything instead jams headings and bullets into the preview,
- * which is what made structured descriptions read worse than unstructured ones.
- */
-export function summaryLine(description: string): string {
-    const [first = ""] = description.trim().split(/\n\s*\n/, 1);
-    return oneLine(first);
-}
-
-function claimHolder(claim: WorkViewClaim): string {
-    const label = claim.holder_label?.trim();
-    if (label) return label;
-    return `Session ${claim.convo_id.slice(0, 6) || "unknown"}`;
-}
-
-function claimCopy(claim: WorkViewClaim): string {
-    const holder = claimHolder(claim);
-    switch (claim.liveness) {
-        case "live":
-            return `${holder} appears to be on this`;
-        case "stale":
-            return `${holder} · looks abandoned`;
-        case "unknown":
-            return `${holder} · claimed — liveness unknown`;
-    }
-}
-
-function WorkLoop({ loop }: { loop: WorkViewLoop }): React.ReactElement {
-    const [expanded, setExpanded] = useState(false);
-    // Collapsed: one line, ellipsised by the stylesheet at whatever width the pane happens to be,
-    // rather than cut at a fixed character count mid-word. Expanded: the original text with its
-    // paragraph breaks intact, because a 5k-character description reflowed into one block is
-    // unreadable.
-    const preview = summaryLine(loop.description);
-    // Expandability is a property of the DESCRIPTION alone, never of the expanded flag. Deriving it
-    // from `expanded` made a description-less row silently expandable: it rendered no preview, no
-    // affordance and no aria-expanded, yet clicking it revealed a placeholder out of nowhere.
-    // Eight of thirty live loops have an empty description, so that is a quarter of the board.
-    const expandable = preview.length > 0;
-    const isOpen = expandable && expanded;
+function WorkRow({
+    loop,
+    groupBy,
+    now,
+    onOpen,
+}: {
+    loop: WorkViewLoop;
+    groupBy: WorkViewGroupBy;
+    now: number;
+    onOpen: (id: number) => void;
+}): React.ReactElement {
+    const lead = summaryLine(loop.description);
+    const attention = needsAttention(loop);
+    const opened = openedMs(loop);
+    const age = compactAge(opened, now);
+    const dimension = otherDimension(loop, groupBy);
+    const owner = ownerLabel(loop.owner);
 
     const label = [
-        `loop ${loop.id}`,
+        `Loop ${loop.id}`,
         loop.title,
+        statusLabel(loop.status),
         `priority ${loop.priority}`,
-        loop.status,
+        dimension,
+        owner ? `owner ${owner}` : "",
         loop.claim ? claimCopy(loop.claim) : "",
-        expandable ? (isOpen ? "collapse description" : "expand description") : "",
+        spokenAge(opened, now),
     ]
         .filter(Boolean)
         .join(", ");
 
-    // A row with nothing to reveal is not a control: render it as static content rather than a
-    // button that looks actionable and does nothing.
-    const RowTag = expandable ? "button" : "div";
-    const rowProps = expandable
-        ? ({
-              type: "button",
-              "aria-expanded": isOpen,
-              onClick: () => setExpanded((value) => !value),
-          } as const)
-        : ({} as const);
-
     return (
-        <div className="mj_TrackerWorkRow_wrap">
-            <RowTag
-                className={`mj_TrackerItemRow mj_TrackerWorkRow${expandable ? "" : " mj_TrackerWorkRow_static"}`}
-                aria-label={label}
-                {...rowProps}
-            >
-                <span className="mj_TrackerItemRow_glyph" aria-hidden="true">
-                    <TaskGlyph />
+        <button
+            type="button"
+            className={`mj_TrackerItemRow mj_WorkRow${attention ? " mj_TrackerItemRow_needsyou" : ""}`}
+            data-loop-id={loop.id}
+            aria-label={label}
+            onClick={() => onOpen(loop.id)}
+        >
+            <span className="mj_TrackerItemRow_glyph">
+                <WorkGlyph status={loop.status} />
+            </span>
+            <span className="mj_TrackerItemRow_main">
+                <span className="mj_TrackerItemRow_title">
+                    <span className="mj_TrackerItemRow_num">#{loop.id}</span>
+                    {loop.title}
                 </span>
-                <span className="mj_TrackerItemRow_main">
-                    <span className="mj_TrackerItemRow_title">
-                        <span className="mj_TrackerItemRow_num">#{loop.id}</span>
-                        {loop.title}
+                <span className={`mj_WorkRow_lead${lead ? "" : " mj_WorkRow_lead_empty"}`}>
+                    {lead || "No description yet."}
+                </span>
+                <span className="mj_TrackerItemRow_meta mj_WorkRow_meta">
+                    <WorkStatusChip status={loop.status} />
+                    <span className="mj_WorkPriority" title={`Priority ${loop.priority}`}>
+                        P{loop.priority}
                     </span>
-                    {/* The placeholder stays visible in the collapsed row, so a description-less
-                        loop reads as "nothing written here" rather than as a blank, contentless
-                        row whose emptiness might be a rendering bug. */}
-                    {!isOpen ? (
-                        <span className="mj_TrackerItemRow_body">{preview || "No description provided."}</span>
+                    <span className="mj_WorkRow_dimension">{dimension}</span>
+                    {owner ? <span className="mj_WorkRow_owner">{owner}</span> : null}
+                    {loop.claim ? (
+                        <span className={`mj_WorkClaim mj_WorkClaim_${loop.claim.liveness}`}>
+                            {claimCopy(loop.claim)}
+                        </span>
                     ) : null}
-                    <span className="mj_TrackerItemRow_meta">
-                        <span className="mj_TrackerWorkRow_priority">P{loop.priority}</span>
-                        {/* ONE status token, matching ItemRow's rule that the ordinary case shows
-                            none -- here "active" is ordinary, because being listed at all says it.
-                            Everything else is real signal and keeps its token: `blocked` gets the
-                            attention treatment (it is the one status you would act on), parked and
-                            paused are muted (set aside on purpose). */}
-                        {loop.status !== "active" ? (
-                            <span
-                                className={`mj_TrackerItemRow_status ${
-                                    SET_ASIDE_STATUSES.has(loop.status)
-                                        ? "mj_TrackerItemRow_status_muted"
-                                        : "mj_TrackerItemRow_status_needsyou"
-                                }`}
-                            >
-                                {loop.status}
-                            </span>
-                        ) : null}
-                        {loop.claim ? (
-                            <span className={`mj_WorkClaimBadge mj_WorkClaimBadge_${loop.claim.liveness}`}>
-                                {claimCopy(loop.claim)}
-                            </span>
-                        ) : null}
-                    </span>
+                    {age ? (
+                        <span className="mj_WorkRow_age" title={loop.opened}>
+                            {age === "today" ? "opened today" : `${age} old`}
+                        </span>
+                    ) : null}
                 </span>
-            </RowTag>
-            {isOpen ? <p className="mj_TrackerWorkRow_full">{loop.description}</p> : null}
-        </div>
+            </span>
+        </button>
     );
-}
-
-/*
- * A group as RENDERED. The wire type constrains `loops` to a non-empty tuple (the schema's
- * minItems: 1 -- the producer never emits an empty group), which is a guarantee about the
- * payload, not about a filtered view of it. Filtering is expressed over a plain array so the
- * wire contract keeps its stronger shape instead of being weakened to accommodate the UI.
- */
-export interface WorkDisplayGroup {
-    key: string;
-    loops: WorkViewLoop[];
-}
-
-/** Apply the scope filter and drop groups it empties, so no bare header is left behind. */
-export function applyScope(groups: readonly WorkViewGroup[], scope: WorkScope): WorkDisplayGroup[] {
-    return groups
-        .map((group) => ({
-            key: group.key,
-            loops:
-                scope === "all" ? [...group.loops] : group.loops.filter((loop) => !SET_ASIDE_STATUSES.has(loop.status)),
-        }))
-        .filter((group) => group.loops.length > 0);
 }
 
 function ToggleTab<T extends string>({
@@ -201,14 +149,188 @@ function ToggleTab<T extends string>({
     );
 }
 
-export function WorkView({ api }: { api: WorkViewLoader }): React.ReactElement {
-    const [groupBy, setGroupBy] = useState<WorkViewGroupBy>("repo");
-    // Defaults to the focused view, mirroring the Inbox defaulting to "Needs you": parked work is
-    // real but set aside, and it is 8 of 30 loops today.
-    const [scope, setScope] = useState<WorkScope>("active");
-    const { state } = useWorkView(api, groupBy);
+function FilterBar({
+    loops,
+    filters,
+    groupBy,
+    onFilters,
+    onGroupBy,
+}: {
+    loops: readonly WorkViewLoop[];
+    filters: WorkFilters;
+    groupBy: WorkViewGroupBy;
+    onFilters: (next: WorkFilters) => void;
+    onGroupBy: (next: WorkViewGroupBy) => void;
+}): React.ReactElement {
+    const statusCounts = countBy(loops, (loop) => loop.status);
+    const inPlay = loops.filter((loop) => loop.status === "active" || loop.status === "blocked").length;
+    const domainCounts = countBy(loops, (loop) => loop.domain);
+    const domains = [...domainCounts.keys()].sort((a, b) => a.localeCompare(b));
+    // A deep-linked or remembered domain that has since emptied still needs an option, or the
+    // <select> would silently show a different value from the one filtering the list.
+    if (filters.domain && !domainCounts.has(filters.domain)) domains.unshift(filters.domain);
+    const statusOptions: WorkStatusFilter[] = [
+        "open",
+        "all",
+        ...WORK_STATUS_ORDER.filter((status) => (statusCounts.get(status) ?? 0) > 0 || filters.status === status),
+    ];
+    const statusCount = (value: WorkStatusFilter): number =>
+        value === "open" ? inPlay : value === "all" ? loops.length : (statusCounts.get(value) ?? 0);
 
-    const scoped = useMemo(() => (state.status === "ok" ? applyScope(state.groups, scope) : []), [state, scope]);
+    return (
+        <div className="mj_WorkFilters" role="search" aria-label="Filter work">
+            <label className="mj_WorkSearch">
+                <SearchIcon className="mj_WorkSearch_icon" aria-hidden="true" />
+                <input
+                    type="search"
+                    className="mj_WorkSearch_input"
+                    placeholder="Search work"
+                    aria-label="Search work"
+                    value={filters.query}
+                    onChange={(event) => onFilters({ ...filters, query: event.target.value })}
+                />
+            </label>
+            <select
+                className={`mj_WorkSelect${filters.status !== "open" ? " mj_WorkSelect_set" : ""}`}
+                aria-label="Status"
+                value={filters.status}
+                onChange={(event) => onFilters({ ...filters, status: event.target.value as WorkStatusFilter })}
+            >
+                {statusOptions.map((value) => (
+                    <option key={value} value={value}>
+                        {statusFilterLabel(value)} ({statusCount(value)})
+                    </option>
+                ))}
+            </select>
+            <select
+                className={`mj_WorkSelect${filters.domain ? " mj_WorkSelect_set" : ""}`}
+                aria-label="Domain"
+                value={filters.domain}
+                onChange={(event) => onFilters({ ...filters, domain: event.target.value })}
+            >
+                <option value="">All domains</option>
+                {domains.map((domain) => (
+                    <option key={domain} value={domain}>
+                        {domain} ({domainCounts.get(domain) ?? 0})
+                    </option>
+                ))}
+            </select>
+            <div className="mj_TrackerInboxToggle mj_WorkGroupToggle" role="tablist" aria-label="Group by">
+                <ToggleTab value="repo" current={groupBy} onSelect={onGroupBy}>
+                    Repo
+                </ToggleTab>
+                <ToggleTab value="domain" current={groupBy} onSelect={onGroupBy}>
+                    Domain
+                </ToggleTab>
+            </div>
+        </div>
+    );
+}
+
+function filtersActive(filters: WorkFilters): boolean {
+    return (
+        filters.status !== DEFAULT_WORK_FILTERS.status ||
+        filters.domain !== DEFAULT_WORK_FILTERS.domain ||
+        filters.query.trim() !== ""
+    );
+}
+
+export function WorkView({
+    api,
+    selectedLoopId,
+    onOpenLoop,
+    onCloseLoop,
+    onTrackerLink,
+    now,
+}: {
+    api: WorkViewLoader;
+    /** The loop whose detail is open; undefined shows the list. */
+    selectedLoopId?: number;
+    onOpenLoop?: (id: number) => void;
+    onCloseLoop?: () => void;
+    /** matron://item and matron://mission links inside a description open in-app. */
+    onTrackerLink?: (kind: "item" | "mission", num: number) => void;
+    /** Clock injection for tests and fixtures; defaults to the wall clock at render time. */
+    now?: number;
+}): React.ReactElement {
+    const [groupBy, setGroupBy] = useState<WorkViewGroupBy>("repo");
+    // Defaults to work in play (active + blocked), mirroring the Inbox defaulting to "Needs you":
+    // parked work is real but set aside, and it is half the store on a typical day.
+    const [filters, setFilters] = useState<WorkFilters>(DEFAULT_WORK_FILTERS);
+    // Uncontrolled fallback so the component also works without a tracker-level selection owner.
+    const [localSelection, setLocalSelection] = useState<number | undefined>(undefined);
+    const controlled = onOpenLoop !== undefined;
+    const selected = controlled ? selectedLoopId : localSelection;
+    const { state } = useWorkView(api, groupBy);
+    const clock = now ?? Date.now();
+
+    const rootRef = useRef<HTMLDivElement>(null);
+    const listScrollRef = useRef(0);
+    const returnFocusRef = useRef<number | null>(null);
+    // True once a detail has been shown, so the list only claims focus on the way BACK from one,
+    // never on first mount.
+    const cameFromDetailRef = useRef(false);
+
+    const scroller = (): HTMLElement | null => rootRef.current?.closest(".mj_TrackerPane_body") ?? null;
+
+    const openLoop = useCallback(
+        (id: number) => {
+            listScrollRef.current = scroller()?.scrollTop ?? 0;
+            returnFocusRef.current = id;
+            if (controlled) onOpenLoop?.(id);
+            else setLocalSelection(id);
+        },
+        [controlled, onOpenLoop],
+    );
+
+    const closeLoop = useCallback(() => {
+        if (controlled) onCloseLoop?.();
+        else setLocalSelection(undefined);
+    }, [controlled, onCloseLoop]);
+
+    // Back from a detail: restore the list's scroll position and return focus to the row that was
+    // opened, so keyboard and screen-reader users land where they left rather than at the top.
+    useLayoutEffect(() => {
+        if (selected !== undefined) {
+            cameFromDetailRef.current = true;
+            scroller()?.scrollTo?.({ top: 0 });
+            return;
+        }
+        const id = returnFocusRef.current;
+        returnFocusRef.current = null;
+        if (id !== null) {
+            const body = scroller();
+            if (body) body.scrollTop = listScrollRef.current;
+        }
+        if (!cameFromDetailRef.current) return;
+        cameFromDetailRef.current = false;
+        // Land on the row that was opened; a detail reached by deep link has no originating row, so
+        // fall back to the search field rather than leaving focus on a control that just unmounted.
+        const row = id !== null ? rootRef.current?.querySelector<HTMLElement>(`[data-loop-id="${id}"]`) : null;
+        const target = row ?? rootRef.current?.querySelector<HTMLElement>('input[aria-label="Search work"]');
+        target?.focus({ preventScroll: true });
+    }, [selected]);
+
+    const loops = useMemo(() => (state.status === "ok" ? allLoops(state.groups) : []), [state]);
+    const groups = useMemo(() => (state.status === "ok" ? applyFilters(state.groups, filters) : []), [state, filters]);
+
+    if (selected !== undefined) {
+        const loop = state.status === "ok" ? findLoop(state.groups, selected) : undefined;
+        return (
+            <div ref={rootRef} className="mj_WorkView mj_WorkView_detail">
+                <WorkLoopDetail
+                    loopId={selected}
+                    loop={loop}
+                    state={state}
+                    now={clock}
+                    onBack={closeLoop}
+                    onTrackerLink={onTrackerLink}
+                />
+            </div>
+        );
+    }
+
+    const shown = groups.reduce((sum, group) => sum + group.loops.length, 0);
 
     const body = ((): React.ReactElement => {
         switch (state.status) {
@@ -237,35 +359,54 @@ export function WorkView({ api }: { api: WorkViewLoader }): React.ReactElement {
             case "empty":
                 return (
                     <div className="mj_TrackerEmpty">
-                        <p className="mj_TrackerEmpty_title">No active work</p>
+                        <p className="mj_TrackerEmpty_title">No open work</p>
+                        <p className="mj_TrackerEmpty_hint">Every loop is closed. New loops show up here.</p>
                     </div>
                 );
             case "ok":
-                // Everything can be filtered away while the store itself is non-empty; say so
-                // rather than rendering a blank pane that looks broken.
-                if (scoped.length === 0) {
+                // Everything can be filtered away while the store itself is non-empty; say so and
+                // offer the way back rather than rendering a blank pane that looks broken.
+                if (groups.length === 0) {
+                    const onlySetAside = !filtersActive({ ...filters, status: "open" }) && filters.status === "open";
                     return (
                         <div className="mj_TrackerEmpty">
-                            <p className="mj_TrackerEmpty_title">Nothing active</p>
-                            <p className="mj_TrackerEmpty_body">
-                                Every loop here is parked. Switch to All to see them.
+                            <p className="mj_TrackerEmpty_title">
+                                {onlySetAside ? "Nothing in play" : "No loops match"}
                             </p>
+                            <p className="mj_TrackerEmpty_hint">
+                                {onlySetAside
+                                    ? "Every loop here is parked or paused."
+                                    : "Try a different search, status or domain."}
+                            </p>
+                            <button
+                                type="button"
+                                className="mj_TrackerTextButton"
+                                onClick={() =>
+                                    setFilters(onlySetAside ? { ...filters, status: "all" } : DEFAULT_WORK_FILTERS)
+                                }
+                            >
+                                {onlySetAside ? "Show all statuses" : "Clear filters"}
+                            </button>
                         </div>
                     );
                 }
                 return (
                     <div className="mj_WorkGroups">
-                        {scoped.map((group) => (
-                            <section className="mj_WorkGroup" key={group.key}>
+                        {groups.map((group) => (
+                            <section className="mj_WorkGroup" key={group.key} aria-label={group.key}>
                                 <h2 className="mj_WorkGroup_header">
-                                    {group.key}
+                                    <span className="mj_WorkGroup_key">{group.key}</span>
                                     <span className="mj_WorkGroup_count">{group.loops.length}</span>
                                 </h2>
-                                {[...group.loops]
-                                    .sort((a, b) => b.priority - a.priority || a.id - b.id)
-                                    .map((loop) => (
-                                        <WorkLoop key={loop.id} loop={loop} />
-                                    ))}
+                                {group.loops.map((loop) => (
+                                    <WorkRow
+                                        key={loop.id}
+                                        loop={loop}
+                                        groupBy={groupBy}
+                                        now={clock}
+                                        onOpen={openLoop}
+                                    />
+                                ))}
                             </section>
                         ))}
                     </div>
@@ -274,23 +415,28 @@ export function WorkView({ api }: { api: WorkViewLoader }): React.ReactElement {
     })();
 
     return (
-        <div className="mj_TrackerList mj_WorkView">
-            <div className="mj_TrackerInboxToggle" role="tablist" aria-label="Work scope">
-                <ToggleTab value="active" current={scope} onSelect={setScope}>
-                    Active
-                </ToggleTab>
-                <ToggleTab value="all" current={scope} onSelect={setScope}>
-                    All
-                </ToggleTab>
-            </div>
-            <div className="mj_TrackerInboxToggle mj_WorkGroupToggle" role="tablist" aria-label="Work grouping">
-                <ToggleTab value="repo" current={groupBy} onSelect={setGroupBy}>
-                    Repository
-                </ToggleTab>
-                <ToggleTab value="domain" current={groupBy} onSelect={setGroupBy}>
-                    Domain
-                </ToggleTab>
-            </div>
+        <div ref={rootRef} className="mj_TrackerList mj_WorkView">
+            <FilterBar
+                loops={loops}
+                filters={filters}
+                groupBy={groupBy}
+                onFilters={setFilters}
+                onGroupBy={setGroupBy}
+            />
+            {state.status === "ok" && filtersActive(filters) && groups.length > 0 ? (
+                <div className="mj_WorkSummary" role="status">
+                    <span>
+                        {shown} of {loops.length} loops
+                    </span>
+                    <button
+                        type="button"
+                        className="mj_TrackerTextButton"
+                        onClick={() => setFilters(DEFAULT_WORK_FILTERS)}
+                    >
+                        Clear filters
+                    </button>
+                </div>
+            ) : null}
             {body}
         </div>
     );

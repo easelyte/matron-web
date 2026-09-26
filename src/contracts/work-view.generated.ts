@@ -6,7 +6,7 @@ Please see LICENSE files in the repository root for full details.
 
 GENERATED FILE — DO NOT EDIT.
 Source: src/contracts/work-view.schema.json
-Source SHA-256: 93cea3bdd45db32f4135be6d1a030a57248cf66fe46faa4b8710e1a1908d1d70
+Source SHA-256: 101fe9411e650e42890b0887a6da5c460cc31c3ce4d055713d0a1ccffce63e9e
 Regenerate: node src/contracts/generate-work-view-types.cjs
 */
 
@@ -24,6 +24,9 @@ export interface WorkViewLoop {
     description: string;
     status: "active" | "blocked" | "parked" | "paused";
     claim: null | WorkViewClaim;
+    opened?: string;
+    next_action?: string;
+    owner?: string;
 }
 
 export interface WorkViewClaim {
