@@ -542,33 +542,52 @@ export class JournalDatabase {
     }
 
     public async reconcilePersistedOwnMessages(): Promise<string[]> {
+        // Runs at startup and after every history page, so it must not scale with the size of the
+        // local journal: read the outbox first, and only the events of conversations that actually
+        // have a row awaiting its echo (matchesOwnPendingMessage requires the same convo_id).
         const transaction = this.database.transaction(["events", "outbox"], "readwrite");
         const outbox = transaction.objectStore("outbox");
-        const [events, pendingMessages] = await Promise.all([
-            requestResult(transaction.objectStore("events").getAll()) as Promise<JournalEvent[]>,
-            requestResult(outbox.getAll()) as Promise<PendingMessage[]>,
-        ]);
+        const pendingMessages = (await requestResult(outbox.getAll())) as PendingMessage[];
         const candidates = pendingMessages.filter(
             (message) => message.attachState === "sending" || message.errorKind === "send_failed",
         );
         const removed: string[] = [];
-        for (const pending of candidates) {
-            if (!events.some((event) => matchesOwnPendingMessage(event, pending, this.ownSender))) continue;
-            outbox.delete(pending.localId);
-            removed.push(pending.localId);
+        if (candidates.length > 0) {
+            const byConversation = transaction.objectStore("events").index("byConversation");
+            const eventsByConvo = new Map<string, JournalEvent[]>();
+            for (const convoId of new Set(candidates.map((message) => message.convoId))) {
+                eventsByConvo.set(convoId, (await requestResult(byConversation.getAll(convoId))) as JournalEvent[]);
+            }
+            for (const pending of candidates) {
+                const events = eventsByConvo.get(pending.convoId) ?? [];
+                if (!events.some((event) => matchesOwnPendingMessage(event, pending, this.ownSender))) continue;
+                outbox.delete(pending.localId);
+                removed.push(pending.localId);
+            }
         }
         await transactionDone(transaction);
         return removed;
     }
 
     public async expireToolLogs(now = Date.now()): Promise<void> {
+        // Walks the store with a cursor and rewrites only the rows that actually expire, instead of
+        // materialising every cached event at once (the store holds every row this device has seen).
         const transaction = this.database.transaction("events", "readwrite");
-        const store = transaction.objectStore("events");
-        const events = (await requestResult(store.getAll())) as JournalEvent[];
-        for (const event of events) {
-            const expired = enforceToolLogTtl(event, now);
-            if (expired !== event) store.put(expired);
-        }
+        const request = transaction.objectStore("events").openCursor();
+        await new Promise<void>((resolve, reject) => {
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) {
+                    resolve();
+                    return;
+                }
+                const event = cursor.value as JournalEvent;
+                const expired = enforceToolLogTtl(event, now);
+                if (expired !== event) cursor.update(expired);
+                cursor.continue();
+            };
+            request.onerror = () => reject(request.error ?? new Error("IndexedDB cursor failed"));
+        });
         await transactionDone(transaction);
     }
 }

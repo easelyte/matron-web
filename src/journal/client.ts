@@ -2392,7 +2392,6 @@ export class MatronJournalClient {
         this.database?.close();
         this.api = new JournalApi(session.serverUrl, session.token);
         this.database = await JournalDatabase.open(session.serverUrl, session.userId, session.username);
-        await this.database.expireToolLogs();
 
         let cursor = await this.database.cursor();
         const freshInstall = cursor === undefined;
@@ -2545,6 +2544,15 @@ export class MatronJournalClient {
         };
         window.addEventListener("storage", this.storageListener);
         this.emit();
+        // Physically purge expired live tool logs AFTER the first paint: it walks every cached row,
+        // and the store holds every row this device has ever received, so awaiting it here kept a
+        // long-lived device on a blank screen for seconds. Reads already apply the TTL
+        // (events() / putHistory / applyJournal run enforceToolLogTtl), so nothing expired is ever
+        // shown in the meantime; this pass only drops the stale payloads from disk.
+        const expiringDatabase = this.database;
+        void expiringDatabase.expireToolLogs().catch((error) => {
+            if (this.database === expiringDatabase) console.warn("matron: tool-log expiry deferred", error);
+        });
         if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
 
         // #779: bind every callback to the generation that created this connection. A stopped
