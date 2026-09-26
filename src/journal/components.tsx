@@ -31,6 +31,8 @@ import {
 } from "./client";
 import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
+import { type EditFileEdit, type EditFileOutcome, pathRejectMessage } from "./edit-file";
+import { type ReadFileOutcome } from "./read-file";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
 import {
@@ -748,6 +750,546 @@ export function NewSessionSheet({
     );
 }
 
+type EditSheetState =
+    | { step: "loading-agents" }
+    | { step: "agents-error" }
+    | { step: "agents"; agents: DeviceDTO[] }
+    | { step: "form"; agent: DeviceDTO }
+    | { step: "saving"; agent: DeviceDTO }
+    | { step: "saved"; agent: DeviceDTO; path: string; bytes: number };
+
+type EditMode = "replace" | "content";
+
+/** Copy for the non-path outcome kinds; path rejections use pathRejectMessage. */
+function editOutcomeMessage(outcome: EditFileOutcome): { message: string; stale: boolean } {
+    switch (outcome.kind) {
+        case "stale":
+            return {
+                message:
+                    "The file changed on the box since you loaded it, so nothing was written (its checksum no longer matches). Re-check the current contents and try again.",
+                stale: true,
+            };
+        case "not-found":
+            return {
+                message: "The text to replace wasn't found in the file. Copy an exact snippet and try again.",
+                stale: false,
+            };
+        case "ambiguous":
+            return {
+                message: "The text to replace appears more than once — add surrounding context so it's unique.",
+                stale: false,
+            };
+        case "too-large":
+            return { message: "The file (or the result) is too large to edit through the bridge.", stale: false };
+        case "no-scope":
+            return {
+                message: "The box hasn't pinned any editable folders, so file editing is unavailable there.",
+                stale: false,
+            };
+        case "invalid":
+            return {
+                message: outcome.detail
+                    ? `The bridge rejected the request: ${outcome.detail}`
+                    : "The bridge rejected the request.",
+                stale: false,
+            };
+        case "uncertain":
+            return {
+                message:
+                    "The box didn't confirm the edit before timing out — it MAY already have been applied. Check the file before trying again (a blind retry could apply it twice).",
+                stale: false,
+            };
+        case "unreachable":
+            return { message: outcome.message, stale: false };
+        case "path-rejected":
+            return { message: pathRejectMessage(outcome.reason), stale: false };
+        default:
+            return { message: outcome.kind === "error" ? outcome.message : "The edit failed.", stale: false };
+    }
+}
+
+/** Copy for a failed load; a successful load populates the form instead. */
+function readOutcomeMessage(outcome: ReadFileOutcome): string {
+    switch (outcome.kind) {
+        case "not-found":
+            return "Couldn't load that file — it may not exist yet, or isn't readable. You can type the contents below, but saving requires the file to already exist on the box.";
+        case "too-large":
+            return "That file is too large to load through the bridge.";
+        case "not-text":
+            return "That file isn't UTF-8 text (it looks binary), so the editor can't load it without risking corruption.";
+        case "no-scope":
+            return "The box hasn't pinned any editable folders, so file editing is unavailable there.";
+        case "invalid":
+            return outcome.detail
+                ? `The bridge rejected the request: ${outcome.detail}`
+                : "The bridge rejected the request.";
+        case "unreachable":
+            return outcome.message;
+        case "path-rejected":
+            return pathRejectMessage(outcome.reason);
+        default:
+            return outcome.kind === "error" ? outcome.message : "Couldn't load the file.";
+    }
+}
+
+/**
+ * Guarded file editor. Applies a small edit to an EXISTING file on
+ * an agent's box through the bridge `edit_file` RPC — for the user on the
+ * bridge with no SSH/VSCode (tweak a config value, flip a feature flag). The
+ * bridge refuses sensitive basenames (.env, secrets, keys, credentials, …), so
+ * those paths come back path-rejected rather than editable.
+ *
+ * Two modes match the RPC exactly: a targeted "replace this text" splice (safe
+ * without a read path — the bridge enforces the old text is present AND unique)
+ * and a full-content replace. An optional expected-checksum field threads the
+ * compare-and-swap: the edit is rejected (stale) if the file no longer hashes
+ * to it, guarding against clobbering a change made since the checksum was taken.
+ * It is NOT a full atomic guarantee — the bridge checks the hash then commits
+ * through a later rename, so a writer landing in that window is still lost (a
+ * documented bridge residual). Every RPC error code is rendered as clear,
+ * non-crashing copy, keeping the user's typed edit intact so they can retry.
+ *
+ * NOTE: the bridge exposes no read RPC yet, so this cannot pre-load the file's
+ * current contents or auto-compute the checksum — content is authored blind and
+ * the CAS is opt-in. A read_file RPC would let this offer load-then-edit.
+ */
+export function EditFileSheet({
+    client,
+    onClose,
+}: {
+    client: MatronJournalClient;
+    onClose: () => void;
+}): React.ReactElement {
+    const [sheetState, setSheetState] = useState<EditSheetState>({ step: "loading-agents" });
+    const [path, setPath] = useState("");
+    const [mode, setMode] = useState<EditMode>("replace");
+    const [oldString, setOldString] = useState("");
+    const [newString, setNewString] = useState("");
+    const [content, setContent] = useState("");
+    const [expectedSha256, setExpectedSha256] = useState("");
+    const [formError, setFormError] = useState<string | undefined>(undefined);
+    const [formErrorStale, setFormErrorStale] = useState(false);
+    // Non-null once the current contents were loaded from the box: the checksum
+    // is auto-filled, so the CAS is armed by default. The FULL target identity
+    // (agent device_id + the exact path read) travels with it, so a loaded sha
+    // is never applied to a different box or path — cloned files can share a
+    // checksum, so binding to the sha alone would let a CAS pass against the
+    // wrong target. Invalidated on any path/agent change.
+    const [loaded, setLoaded] = useState<{ bytes: number; agentDeviceId: number; path: string } | undefined>(undefined);
+    const [loading, setLoading] = useState(false);
+
+    const sheetStateRef = useRef(sheetState);
+    const agentsRef = useRef<DeviceDTO[]>([]);
+    const agentsRequestIdRef = useRef(0);
+    const savingRef = useRef(false);
+    const loadingRef = useRef(false);
+    // Monotonic load-request id: a reply whose id is no longer current (the path
+    // or agent changed, or a newer load superseded it while it was in flight) is
+    // discarded rather than applied to the current target.
+    const loadSeqRef = useRef(0);
+    const mountedRef = useRef(false);
+    const dismissedRef = useRef(false);
+
+    const transition = useCallback((next: EditSheetState): void => {
+        sheetStateRef.current = next;
+        setSheetState(next);
+    }, []);
+
+    const loadAgents = useCallback((): void => {
+        const agentsRequestId = ++agentsRequestIdRef.current;
+        transition({ step: "loading-agents" });
+        void client.listAgents().then(
+            (agents) => {
+                if (!mountedRef.current || dismissedRef.current || agentsRequestId !== agentsRequestIdRef.current)
+                    return;
+                agentsRef.current = agents;
+                const connected = agents.filter((agent) => agent.connected);
+                if (connected.length === 1) {
+                    transition({ step: "form", agent: connected[0] });
+                } else {
+                    transition({ step: "agents", agents });
+                }
+            },
+            () => {
+                if (mountedRef.current && !dismissedRef.current && agentsRequestId === agentsRequestIdRef.current) {
+                    transition({ step: "agents-error" });
+                }
+            },
+        );
+    }, [client, transition]);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        loadAgents();
+        return () => {
+            mountedRef.current = false;
+        };
+    }, [loadAgents]);
+
+    const dismiss = (): void => {
+        dismissedRef.current = true;
+        onClose();
+    };
+
+    // Drop the loaded checksum + its auto-filled sha AND the whole-file content
+    // seeded from that load (back to replace-text mode), and invalidate any load still in flight (so its
+    // reply is discarded rather than applied). Called whenever the target
+    // changes — path retarget or agent switch — because a load is bound to the
+    // exact {agent, path} it was read from: keeping the content would let a
+    // whole-file Save write file A's contents over file B with no checksum.
+    const clearLoaded = (): void => {
+        loadSeqRef.current += 1;
+        setLoaded(undefined);
+        setExpectedSha256("");
+        setContent("");
+        setMode("replace");
+    };
+
+    // Load the file's current contents from the box: seed the whole-file
+    // textarea and auto-fill the checksum, turning edit_file's opt-in CAS into
+    // an on-by-default compare-and-swap. A read has no side effects, so a failed
+    // load is always safe to retry.
+    const loadFromBox = async (agent: DeviceDTO): Promise<void> => {
+        if (loadingRef.current || savingRef.current || dismissedRef.current) return;
+        // Same trim-to-detect-blank rule as submit: a trailing space is a legal,
+        // distinct Linux filename, so send exactly what the user typed.
+        if (path.trim().length === 0) {
+            setFormError("Enter the absolute path of the file to load.");
+            setFormErrorStale(false);
+            return;
+        }
+        // Capture the target this reply must still match on arrival.
+        const seq = ++loadSeqRef.current;
+        const requestedPath = path;
+        const requestedAgentId = agent.device_id;
+        loadingRef.current = true;
+        setLoading(true);
+        setFormError(undefined);
+        setFormErrorStale(false);
+        const outcome = await client.readFile(requestedAgentId, { path: requestedPath });
+        loadingRef.current = false;
+        setLoading(false);
+        // Discard a reply for a target the user has since moved off of (path
+        // edited or agent switched while it was in flight, or a newer load
+        // superseded it) — applying it would arm a CAS for the wrong file/box.
+        if (!mountedRef.current || dismissedRef.current || seq !== loadSeqRef.current) return;
+        if (outcome.kind === "loaded") {
+            // Switch to whole-file mode with the live content + its checksum,
+            // so a subsequent Save sends content + the armed expected_sha256.
+            setMode("content");
+            setContent(outcome.content);
+            setExpectedSha256(outcome.sha256);
+            setLoaded({ bytes: outcome.bytes, agentDeviceId: requestedAgentId, path: requestedPath });
+            return;
+        }
+        setLoaded(undefined);
+        setFormError(readOutcomeMessage(outcome));
+        setFormErrorStale(false);
+    };
+
+    const submit = async (agent: DeviceDTO): Promise<void> => {
+        if (savingRef.current || loadingRef.current || dismissedRef.current) return;
+        // Trim ONLY to detect a blank field — a trailing space is a legal,
+        // distinct Linux filename, so silently trimming could retarget the
+        // edit to a different file. Send exactly what the user typed.
+        if (path.trim().length === 0) {
+            setFormError("Enter the absolute path of the file to edit.");
+            setFormErrorStale(false);
+            return;
+        }
+        let edit: EditFileEdit;
+        if (mode === "replace") {
+            if (oldString.length === 0) {
+                setFormError("Enter the exact text to replace.");
+                setFormErrorStale(false);
+                return;
+            }
+            edit = { mode: "replace", oldString, newString };
+        } else {
+            edit = { mode: "content", content };
+        }
+        const sha = expectedSha256.trim();
+        if (sha.length > 0 && !/^[0-9a-f]{64}$/i.test(sha)) {
+            setFormError("The expected checksum must be a 64-character hex sha256 (or leave it blank).");
+            setFormErrorStale(false);
+            return;
+        }
+        // Refuse to send an AUTO-LOADED checksum to a different target than it
+        // was read from. Cloned files across boxes can share a checksum,
+        // so a CAS could pass and clobber the wrong box/path. This backstops the
+        // on-change invalidation: if the loaded {agent, path} no longer matches
+        // the submit target, clear it and make the user reload.
+        if (loaded && (loaded.agentDeviceId !== agent.device_id || loaded.path !== path)) {
+            clearLoaded();
+            setFormError(
+                "This checksum was loaded from a different box or path — reload the current file before saving.",
+            );
+            setFormErrorStale(false);
+            return;
+        }
+
+        savingRef.current = true;
+        setFormError(undefined);
+        setFormErrorStale(false);
+        transition({ step: "saving", agent });
+        const outcome = await client.editFile(agent.device_id, {
+            path,
+            edit,
+            expectedSha256: sha.length > 0 ? sha : undefined,
+        });
+        savingRef.current = false;
+        if (!mountedRef.current || dismissedRef.current) return;
+        if (outcome.kind === "saved") {
+            transition({ step: "saved", agent, path: outcome.path, bytes: outcome.bytes });
+            return;
+        }
+        const { message, stale } = editOutcomeMessage(outcome);
+        setFormError(message);
+        setFormErrorStale(stale);
+        transition({ step: "form", agent });
+    };
+
+    const formAgent = sheetState.step === "form" ? sheetState.agent : undefined;
+
+    return (
+        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-edit-file-title">
+            <div className="mj_UploadConfirm mj_NewSessionSheet">
+                <div className="mj_NewSessionSheet_head">
+                    <h2 className="mj_UploadConfirm_title" id="mj-edit-file-title">
+                        Edit a file
+                    </h2>
+                    <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={dismiss}>
+                        <svg
+                            viewBox="0 0 24 24"
+                            width="16"
+                            height="16"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                        >
+                            <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+
+                {sheetState.step === "loading-agents" && (
+                    <div role="status">
+                        <span className="mj_Spinner" aria-hidden="true" /> Loading agents…
+                    </div>
+                )}
+
+                {sheetState.step === "agents-error" && (
+                    <>
+                        <p className="mj_UploadConfirm_error">Couldn't load agents.</p>
+                        <div className="mj_UploadConfirm_actions">
+                            <button type="button" className="mj_UploadConfirm_send" onClick={loadAgents}>
+                                Retry
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {sheetState.step === "agents" && (
+                    <>
+                        {sheetState.agents.length === 0 ? (
+                            <p>No agents connected — start the bridge on your box.</p>
+                        ) : (
+                            <div role="list" aria-label="Agents">
+                                {sheetState.agents.map((agent) => (
+                                    <button
+                                        key={agent.device_id}
+                                        type="button"
+                                        role="listitem"
+                                        disabled={!agent.connected}
+                                        onClick={() => {
+                                            // Switching boxes invalidates any loaded
+                                            // checksum — it was read from another box.
+                                            if (loaded) clearLoaded();
+                                            transition({ step: "form", agent });
+                                        }}
+                                    >
+                                        <strong>{agentName(agent)}</strong>
+                                        <span>{agentStatus(agent)}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </>
+                )}
+
+                {formAgent && (
+                    <>
+                        <p>Edit a file on {agentName(formAgent)}</p>
+                        <label htmlFor="mj-edit-file-path">File path</label>
+                        <input
+                            id="mj-edit-file-path"
+                            type="text"
+                            value={path}
+                            onChange={(event) => {
+                                setPath(event.target.value);
+                                // A load is bound to the file it was read from —
+                                // retargeting the path must not carry its sha or
+                                // its contents onto a different file, and any load
+                                // in flight for the old path must be discarded
+                                // when it returns.
+                                if (loaded) clearLoaded();
+                                else loadSeqRef.current += 1;
+                            }}
+                            placeholder="/absolute/path/on/the/box"
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            spellCheck={false}
+                        />
+                        <div className="mj_UploadConfirm_actions">
+                            <button type="button" onClick={() => void loadFromBox(formAgent)} disabled={loading}>
+                                {loading ? "Loading…" : "Load current contents"}
+                            </button>
+                        </div>
+                        {loaded && (
+                            <p role="status" className="mj_EditFile_loaded">
+                                Loaded {loaded.bytes} {loaded.bytes === 1 ? "byte" : "bytes"} — the checksum is filled,
+                                so your save is protected against clobbering a change made since.
+                            </p>
+                        )}
+
+                        <div role="radiogroup" aria-label="Edit mode" className="mj_EditFile_modes">
+                            <label>
+                                <input
+                                    type="radio"
+                                    name="mj-edit-file-mode"
+                                    checked={mode === "replace"}
+                                    onChange={() => setMode("replace")}
+                                />{" "}
+                                Replace text
+                            </label>
+                            <label>
+                                <input
+                                    type="radio"
+                                    name="mj-edit-file-mode"
+                                    checked={mode === "content"}
+                                    onChange={() => setMode("content")}
+                                />{" "}
+                                Replace whole file
+                            </label>
+                        </div>
+
+                        {mode === "replace" ? (
+                            <>
+                                <label htmlFor="mj-edit-file-old">Text to replace (must appear exactly once)</label>
+                                <textarea
+                                    id="mj-edit-file-old"
+                                    value={oldString}
+                                    onChange={(event) => setOldString(event.target.value)}
+                                    rows={3}
+                                    spellCheck={false}
+                                />
+                                <label htmlFor="mj-edit-file-new">Replacement text</label>
+                                <textarea
+                                    id="mj-edit-file-new"
+                                    value={newString}
+                                    onChange={(event) => setNewString(event.target.value)}
+                                    rows={3}
+                                    spellCheck={false}
+                                />
+                            </>
+                        ) : (
+                            <>
+                                <label htmlFor="mj-edit-file-content">New file contents</label>
+                                <textarea
+                                    id="mj-edit-file-content"
+                                    value={content}
+                                    onChange={(event) => setContent(event.target.value)}
+                                    rows={8}
+                                    spellCheck={false}
+                                />
+                            </>
+                        )}
+
+                        <label htmlFor="mj-edit-file-sha">Expected checksum (sha256 — auto-filled by Load)</label>
+                        <input
+                            id="mj-edit-file-sha"
+                            type="text"
+                            value={expectedSha256}
+                            onChange={(event) => setExpectedSha256(event.target.value)}
+                            placeholder="Leave blank to skip the safety check"
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            spellCheck={false}
+                        />
+
+                        {formError && (
+                            <p
+                                className={`mj_UploadConfirm_error${formErrorStale ? " mj_EditFile_stale" : ""}`}
+                                role="alert"
+                            >
+                                {formError}
+                            </p>
+                        )}
+
+                        <div className="mj_UploadConfirm_actions">
+                            {agentsRef.current.filter((agent) => agent.connected).length !== 1 && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        // Leaving the form to pick another box drops the
+                                        // loaded checksum (bound to this box + path).
+                                        if (loaded) clearLoaded();
+                                        transition({ step: "agents", agents: agentsRef.current });
+                                    }}
+                                >
+                                    Back
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                className="mj_UploadConfirm_send"
+                                onClick={() => void submit(formAgent)}
+                                disabled={loading}
+                            >
+                                Save edit
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {sheetState.step === "saving" && (
+                    <div role="status">
+                        <span className="mj_Spinner" aria-hidden="true" /> Saving edit…
+                    </div>
+                )}
+
+                {sheetState.step === "saved" && (
+                    <>
+                        <p>
+                            Saved {sheetState.bytes} {sheetState.bytes === 1 ? "byte" : "bytes"} to{" "}
+                            <code>{sheetState.path}</code>.
+                        </p>
+                        <div className="mj_UploadConfirm_actions">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    // Fresh edit: drop the just-saved file's stale
+                                    // loaded checksum so the next save re-loads.
+                                    if (loaded) clearLoaded();
+                                    transition({ step: "form", agent: sheetState.agent });
+                                }}
+                            >
+                                Edit another
+                            </button>
+                            <button type="button" className="mj_UploadConfirm_send" onClick={dismiss}>
+                                Done
+                            </button>
+                        </div>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+}
+
 function WorkerMark({
     conversation,
     className,
@@ -814,6 +1356,7 @@ function ConversationList({
     const [tab, setTab] = useState<"active" | "favorites" | "archived">("active");
     const [accountOpen, setAccountOpen] = useState(false);
     const [newSessionOpen, setNewSessionOpen] = useState(false);
+    const [editFileOpen, setEditFileOpen] = useState(false);
     const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
     const roomMenuRef = useRef(roomMenu);
     const roomMenuElementRef = useRef<HTMLDivElement>(null);
@@ -1469,10 +2012,19 @@ function ConversationList({
                     <div className="mj_HeaderMenu mj_AccountMenu">
                         <strong>{state.session?.username}</strong>
                         <span>{state.session?.serverUrl}</span>
+                        <button
+                            onClick={() => {
+                                setAccountOpen(false);
+                                setEditFileOpen(true);
+                            }}
+                        >
+                            Edit a file
+                        </button>
                         <button onClick={() => void client.logout()}>Sign out</button>
                     </div>
                 )}
                 {newSessionOpen && <NewSessionSheet client={client} onClose={() => setNewSessionOpen(false)} />}
+                {editFileOpen && <EditFileSheet client={client} onClose={() => setEditFileOpen(false)} />}
                 {roomMenu && menuConversation && (
                     <div
                         className="mj_HeaderMenu mj_RoomItemMenu"

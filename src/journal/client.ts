@@ -9,7 +9,9 @@ import { JournalApi, JournalApiError, loadMatronConfig } from "./api";
 import { JournalConnection } from "./connection";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { JournalDatabase } from "./database";
+import { buildEditFileParams, classifyEditFileReply, type EditFileInput, type EditFileOutcome } from "./edit-file";
 import { FilesApi } from "./files/filesApi";
+import { buildReadFileParams, classifyReadFileReply, type ReadFileInput, type ReadFileOutcome } from "./read-file";
 import { mergeSessionStatus } from "./status";
 import {
     buildSidebarIndex,
@@ -440,6 +442,29 @@ export class MatronJournalClient {
             }
             return [{ path: folder.path, last_used: folder.last_used }];
         });
+    }
+
+    /**
+     * Apply a guarded, atomic edit to an existing file on the agent's box via the bridge
+     * `edit_file` RPC. Thin wrapper: build the exact wire params -> agentRpc -> classify the
+     * reply into a UI-ready outcome. All the param-shape + error-code mapping (the CAS +
+     * path-safety surface) lives in the pure, unit-tested ./edit-file module.
+     */
+    public async editFile(agentDeviceId: number, input: EditFileInput): Promise<EditFileOutcome> {
+        const reply = await this.agentRpc(agentDeviceId, "edit_file", buildEditFileParams(input));
+        return classifyEditFileReply(reply);
+    }
+
+    /**
+     * Read an existing file on the agent's box via the bridge `read_file` RPC. Thin wrapper
+     * mirroring editFile: build the wire params -> agentRpc -> classify into a UI-ready outcome.
+     * Its whole point is to make edit_file's expected_sha256 CAS usable — the editor reads to get
+     * the current content + sha, then edits WITH that sha as the precondition. All the shape +
+     * error-code mapping lives in the pure ./read-file module.
+     */
+    public async readFile(agentDeviceId: number, input: ReadFileInput): Promise<ReadFileOutcome> {
+        const reply = await this.agentRpc(agentDeviceId, "read_file", buildReadFileParams(input));
+        return classifyReadFileReply(reply);
     }
 
     public startSessionRpc(agentDeviceId: number, workdir: string, browser: boolean): Promise<StartOutcome> {
