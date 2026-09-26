@@ -90,9 +90,10 @@ describe("browserToolsState (read from the bridge's replies)", () => {
                 false,
             ),
         ).toBe("idle");
+        // Waiting on a prompt reads 'waiting' too: a parked request stays queued until answered.
         expect(
             browserToolsState([op("/restart --browser"), ev("Waiting for turn to finish before restarting.")], false),
-        ).toBe("idle");
+        ).toBe("queued");
         expect(
             browserToolsState(
                 [op("/restart --browser"), ev("🔄 Restarting Claude session..."), ev("Couldn't restart: spawn failed")],
