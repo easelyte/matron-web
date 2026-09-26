@@ -1,0 +1,414 @@
+{
+  "compared": 490,
+  "matched": 406,
+  "deltas": {
+    "card-expanded-done__light": {
+      "turn.card.group": {
+        "padding": {
+          "design": null,
+          "live": "6px"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "8px"
+        }
+      },
+      "turn.card.changedFiles": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "14px / 20px Inter, sans-serif"
+        },
+        "padding": {
+          "design": "2px 0px 4px",
+          "live": "6px"
+        }
+      }
+    },
+    "card-group-open__light": {
+      "turn.card.group": {
+        "padding": {
+          "design": null,
+          "live": "6px"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "8px"
+        }
+      },
+      "turn.card.changedFiles": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "14px / 20px Inter, sans-serif"
+        },
+        "padding": {
+          "design": "2px 0px 4px",
+          "live": "6px"
+        }
+      }
+    },
+    "card-deep-command__light": {
+      "turn.card.group": {
+        "padding": {
+          "design": null,
+          "live": "6px"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "8px"
+        }
+      },
+      "turn.card.changedFiles": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "14px / 20px Inter, sans-serif"
+        },
+        "padding": {
+          "design": "2px 0px 4px",
+          "live": "6px"
+        }
+      },
+      "turn.card.deep.command": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "15px / 22.5px Inter, \"Helvetica Neue\", \"Segoe UI\", Roboto, Ubuntu, \"Fira Sans\", \"Noto Sans\", Arial, sans-serif"
+        }
+      }
+    },
+    "card-deep-diff__light": {
+      "turn.card.group": {
+        "padding": {
+          "design": null,
+          "live": "6px"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "8px"
+        }
+      },
+      "turn.card.changedFiles": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "14px / 20px Inter, sans-serif"
+        },
+        "padding": {
+          "design": "2px 0px 4px",
+          "live": "6px"
+        }
+      }
+    },
+    "sheet-default__light": {
+      "modal.newSessionOptions.agent": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "15px / 22.5px Inter, \"Helvetica Neue\", \"Segoe UI\", Roboto, Ubuntu, \"Fira Sans\", \"Noto Sans\", Arial, sans-serif"
+        },
+        "backgroundColor": {
+          "design": "rgba(0, 0, 0, 0)",
+          "live": "rgb(234, 229, 221)"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "999px"
+        },
+        "padding": {
+          "design": null,
+          "live": "2px"
+        },
+        "gap": {
+          "design": "6px",
+          "live": "4px"
+        },
+        "height": {
+          "design": "52px",
+          "live": "26px"
+        }
+      },
+      "modal.newSessionOptions.model": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "14px / 20px Inter, sans-serif"
+        },
+        "backgroundColor": {
+          "design": "rgba(0, 0, 0, 0)",
+          "live": "rgb(255, 255, 255)"
+        },
+        "borderTopColor": {
+          "design": "rgb(27, 24, 21)",
+          "live": "rgb(216, 209, 197)"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "8px"
+        },
+        "padding": {
+          "design": null,
+          "live": "0px 32px 0px 12px"
+        },
+        "gap": {
+          "design": "6px",
+          "live": null
+        },
+        "height": {
+          "design": "56px",
+          "live": "34px"
+        }
+      },
+      "modal.newSessionOptions.browser": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "15px / 22.5px Inter, \"Helvetica Neue\", \"Segoe UI\", Roboto, Ubuntu, \"Fira Sans\", \"Noto Sans\", Arial, sans-serif"
+        },
+        "backgroundColor": {
+          "design": "rgba(0, 0, 0, 0)",
+          "live": "rgb(216, 209, 197)"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "999px"
+        },
+        "gap": {
+          "design": "4px 12px",
+          "live": null
+        },
+        "height": {
+          "design": "38px",
+          "live": "18px"
+        }
+      },
+      "modal.newSessionOptions.firstTask": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "14px / 20px Inter, sans-serif"
+        },
+        "backgroundColor": {
+          "design": "rgba(0, 0, 0, 0)",
+          "live": "rgb(255, 255, 255)"
+        },
+        "borderTopColor": {
+          "design": "rgb(27, 24, 21)",
+          "live": "rgb(216, 209, 197)"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "8px"
+        },
+        "padding": {
+          "design": null,
+          "live": "8px 12px"
+        },
+        "gap": {
+          "design": "6px",
+          "live": null
+        },
+        "height": {
+          "design": "86px",
+          "live": "64px"
+        }
+      }
+    },
+    "card-expanded-done__dark": {
+      "turn.card.group": {
+        "padding": {
+          "design": null,
+          "live": "6px"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "8px"
+        }
+      },
+      "turn.card.changedFiles": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "14px / 20px Inter, sans-serif"
+        },
+        "padding": {
+          "design": "2px 0px 4px",
+          "live": "6px"
+        }
+      }
+    },
+    "card-group-open__dark": {
+      "turn.card.group": {
+        "padding": {
+          "design": null,
+          "live": "6px"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "8px"
+        }
+      },
+      "turn.card.changedFiles": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "14px / 20px Inter, sans-serif"
+        },
+        "padding": {
+          "design": "2px 0px 4px",
+          "live": "6px"
+        }
+      }
+    },
+    "card-deep-command__dark": {
+      "turn.card.group": {
+        "padding": {
+          "design": null,
+          "live": "6px"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "8px"
+        }
+      },
+      "turn.card.changedFiles": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "14px / 20px Inter, sans-serif"
+        },
+        "padding": {
+          "design": "2px 0px 4px",
+          "live": "6px"
+        }
+      },
+      "turn.card.deep.command": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "15px / 22.5px Inter, \"Helvetica Neue\", \"Segoe UI\", Roboto, Ubuntu, \"Fira Sans\", \"Noto Sans\", Arial, sans-serif"
+        }
+      }
+    },
+    "card-deep-diff__dark": {
+      "turn.card.group": {
+        "padding": {
+          "design": null,
+          "live": "6px"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "8px"
+        }
+      },
+      "turn.card.changedFiles": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "14px / 20px Inter, sans-serif"
+        },
+        "padding": {
+          "design": "2px 0px 4px",
+          "live": "6px"
+        }
+      }
+    },
+    "sheet-default__dark": {
+      "modal.newSessionOptions.agent": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "15px / 22.5px Inter, \"Helvetica Neue\", \"Segoe UI\", Roboto, Ubuntu, \"Fira Sans\", \"Noto Sans\", Arial, sans-serif"
+        },
+        "backgroundColor": {
+          "design": "rgba(0, 0, 0, 0)",
+          "live": "rgb(40, 44, 50)"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "999px"
+        },
+        "padding": {
+          "design": null,
+          "live": "2px"
+        },
+        "gap": {
+          "design": "6px",
+          "live": "4px"
+        },
+        "height": {
+          "design": "52px",
+          "live": "26px"
+        }
+      },
+      "modal.newSessionOptions.model": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "14px / 20px Inter, sans-serif"
+        },
+        "backgroundColor": {
+          "design": "rgba(0, 0, 0, 0)",
+          "live": "rgb(26, 28, 32)"
+        },
+        "borderTopColor": {
+          "design": "rgb(231, 228, 223)",
+          "live": "rgb(58, 63, 70)"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "8px"
+        },
+        "padding": {
+          "design": null,
+          "live": "0px 32px 0px 12px"
+        },
+        "gap": {
+          "design": "6px",
+          "live": null
+        },
+        "height": {
+          "design": "56px",
+          "live": "34px"
+        }
+      },
+      "modal.newSessionOptions.browser": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "15px / 22.5px Inter, \"Helvetica Neue\", \"Segoe UI\", Roboto, Ubuntu, \"Fira Sans\", \"Noto Sans\", Arial, sans-serif"
+        },
+        "backgroundColor": {
+          "design": "rgba(0, 0, 0, 0)",
+          "live": "rgb(58, 63, 70)"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "999px"
+        },
+        "gap": {
+          "design": "4px 12px",
+          "live": null
+        },
+        "height": {
+          "design": "38px",
+          "live": "18px"
+        }
+      },
+      "modal.newSessionOptions.firstTask": {
+        "font": {
+          "design": "14px / 21px Inter, sans-serif",
+          "live": "14px / 20px Inter, sans-serif"
+        },
+        "backgroundColor": {
+          "design": "rgba(0, 0, 0, 0)",
+          "live": "rgb(26, 28, 32)"
+        },
+        "borderTopColor": {
+          "design": "rgb(231, 228, 223)",
+          "live": "rgb(58, 63, 70)"
+        },
+        "borderRadius": {
+          "design": null,
+          "live": "8px"
+        },
+        "padding": {
+          "design": null,
+          "live": "8px 12px"
+        },
+        "gap": {
+          "design": "6px",
+          "live": null
+        },
+        "height": {
+          "design": "86px",
+          "live": "64px"
+        }
+      }
+    }
+  }
+}
