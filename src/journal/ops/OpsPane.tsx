@@ -168,15 +168,29 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
         return () => window.clearInterval(timer);
     }, [targetId, loadSections]);
 
-    // The roster says the selected box is offline: re-ask alerts and timers right away, and let a
-    // failure REPLACE the last good reading, so the page never keeps claiming health from checks
-    // it can no longer repeat. A request can also wake the box, in which case the re-read is fresh.
+    // The roster says the selected box is offline: its alerts and timers readings are no longer
+    // current. Keep them on screen (a known failure must not vanish when contact drops) but mark
+    // them stale, so they can never back "All quiet", and re-ask; a request can wake the box, and
+    // only a fresh answer clears the stale mark.
     const targetOnline = target?.connected ?? true;
+    const staleReadings =
+        (sections.alerts.phase === "ok" && sections.alerts.stale === true) ||
+        (sections.timers.phase === "ok" && sections.timers.stale === true);
     useEffect(() => {
-        if (targetId === null || targetOnline) return;
-        // Drop the old readings first: until the box answers again there is no current reading.
-        setSections((prev) => ({ ...prev, alerts: { phase: "loading" }, timers: { phase: "loading" } }));
-        void loadSections(targetId, ["alerts", "timers"], false);
+        if (targetId === null) return;
+        if (targetOnline) {
+            // Back online with stale readings: refresh them instead of waiting for Refresh.
+            if (staleReadings) void loadSections(targetId, ["alerts", "timers"]);
+            return;
+        }
+        setSections((prev) => ({
+            ...prev,
+            alerts: prev.alerts.phase === "ok" ? { ...prev.alerts, stale: true } : prev.alerts,
+            timers: prev.timers.phase === "ok" ? { ...prev.timers, stale: true } : prev.timers,
+        }));
+        void loadSections(targetId, ["alerts", "timers"]);
+        // staleReadings is read, not a trigger: marking stale must not re-fire this effect.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [devices, targetId, targetOnline, loadSections]);
 
     const agents = devices ?? [];
@@ -390,6 +404,13 @@ function SectionBody<S extends OpsSection>({
             return (
                 <>
                     {render(state.data)}
+                    {state.stale ? (
+                        <p className="mj_OpsFootnote mj_OpsFootnote_stale">
+                            Last reading
+                            {state.generatedAt ? ` from ${formatRelative(state.generatedAt, Date.now())}` : ""}. The box
+                            isn't answering right now.
+                        </p>
+                    ) : null}
                     {state.truncated ? <p className="mj_OpsFootnote">Trimmed to fit one reply.</p> : null}
                 </>
             );
@@ -453,7 +474,11 @@ function OpsSummary({
     // Only words the message: an offline roster read already re-asked alerts and timers (see the
     // effect in OpsPane), so an "ok" here is a reading the box gave after that read.
     const targetOffline = target !== null && !target.connected;
-    const checked = sections.alerts.phase === "ok" && sections.timers.phase === "ok";
+    const checked =
+        sections.alerts.phase === "ok" &&
+        !sections.alerts.stale &&
+        sections.timers.phase === "ok" &&
+        !sections.timers.stale;
     const pending = sections.alerts.phase === "loading" || sections.timers.phase === "loading";
     if (!parts.length && !checked) {
         if (pending || agents.length === 0) return null;

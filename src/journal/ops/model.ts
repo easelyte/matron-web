@@ -209,7 +209,9 @@ export interface OpsSectionData {
 /** One section's state on the page. */
 export type OpsSectionState<S extends OpsSection> =
     | { phase: "loading" }
-    | { phase: "ok"; data: OpsSectionData[S]; generatedAt: number | null; truncated: boolean }
+    // `stale`: the last good reading, kept visible after the box stopped answering (never counts
+    // as a current check).
+    | { phase: "ok"; data: OpsSectionData[S]; generatedAt: number | null; truncated: boolean; stale?: boolean }
     | { phase: "unsupported" } // bridge predates ops_snapshot
     | { phase: "not_configured" }
     | { phase: "asleep" }

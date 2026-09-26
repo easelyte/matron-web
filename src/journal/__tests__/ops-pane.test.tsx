@@ -373,3 +373,33 @@ it("drops 'All quiet' the moment the roster says offline, before the re-check an
     jest.useRealTimers();
     await unmount();
 });
+
+it("keeps a known failure visible, marked stale, when the box goes offline", async () => {
+    jest.useFakeTimers({ doNotFake: ["setTimeout", "queueMicrotask", "nextTick", "setImmediate"] });
+    const withAlert = (section: OpsSection): Reply => ({
+        ok: true,
+        result: {
+            data:
+                section === "alerts"
+                    ? { active: [{ key: "X", severity: "P1", message: "Audit net down" }], resolved_24h: [] }
+                    : section === "timers"
+                      ? { timers: [], cron: [] }
+                      : { processes: [], windows: {}, security: null },
+        },
+    });
+    const client = fakeClient(withAlert, [bridge]);
+    const { container, unmount } = await mount(client);
+    client.opsSnapshot.mockImplementation(() => new Promise(() => undefined) as never);
+    client.listAgents.mockResolvedValue([{ ...bridge, connected: false }]);
+    await act(async () => {
+        jest.advanceTimersByTime(60_000);
+    });
+    await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(container.querySelector('[data-spec="ops.alert"]')!.textContent).toContain("Audit net down");
+    expect(container.querySelector(".mj_OpsFootnote_stale")).not.toBeNull();
+    expect(container.querySelector('[data-spec="ops.summary"]')!.textContent).toContain("1 open alert");
+    jest.useRealTimers();
+    await unmount();
+});
