@@ -48,6 +48,7 @@ import {
     ArchiveFileIcon,
     AudioFileIcon,
     FileEditIcon,
+    FolderIcon,
     FailedIcon,
     FileIcon,
     ImageFileIcon,
@@ -77,6 +78,7 @@ import {
     UnarchiveIcon,
     UploadTrayIcon,
 } from "./icons";
+import { FilesPane } from "./files/FilesPane";
 import { createLongPressController, type LongPressController } from "./longPress";
 import { MarkdownBody, markdownToPlainText } from "./markdown";
 import {
@@ -127,6 +129,7 @@ import {
     type EventPayload,
     type FileKind,
     fileKindFromMime,
+    filesRootFromConfig,
     hasSubagentChildRows,
     IMAGE_FRAME_MAX_HEIGHT_PX,
     imageFrameStyle,
@@ -146,6 +149,15 @@ import {
     type StagedUploads,
     type ToolStreamState,
 } from "./types";
+
+// The Files pane is enabled per deploy (config `files_root`, see MatronConfig) and hidden for an
+// account the journal refuses the file routes to (state.filesUnavailable). It reads through
+// renderer fetch, which the packaged Electron desktop app (its preload injects window.electron)
+// can't use from the matron:// origin, so it is web / iOS-PWA only.
+function filesPaneAvailable(state: ClientState): boolean {
+    if (filesRootFromConfig(state.config) === undefined || state.filesUnavailable) return false;
+    return !(typeof window !== "undefined" && Boolean((window as Window & { electron?: unknown }).electron));
+}
 
 const LEFT_PANEL_SIZE_KEY = "mx_lhs_size";
 const LEFT_PANEL_DEFAULT_WIDTH = 350;
@@ -1235,7 +1247,7 @@ function ConversationList({
 
     return (
         <div
-            className={`mx_LeftPanel_outerWrapper ${state.selectedConversationId ? "mj_Sidebar_mobileHidden" : ""}`}
+            className={`mx_LeftPanel_outerWrapper ${state.selectedConversationId || (state.filesView?.open && filesPaneAvailable(state)) ? "mj_Sidebar_mobileHidden" : ""}`}
             style={{ "--mj-left-panel-width": `${width}px` } as React.CSSProperties}
         >
             <div className="mx_LeftPanel_wrapper mx_LeftPanel_newRoomList">
@@ -1264,6 +1276,25 @@ function ConversationList({
                                                 onClick={() => client.markAllRead()}
                                             >
                                                 <MarkAllReadIcon />
+                                            </button>
+                                        )}
+                                        {/* Shown only when the deploy enables Files (config files_root) and
+                                            not on the packaged Electron app, whose matron:// origin can't use
+                                            renderer fetch (desktop support needs binary bodies over IPC). */}
+                                        {filesPaneAvailable(state) && (
+                                            <button
+                                                className="mj_IconButton"
+                                                type="button"
+                                                aria-label="Files"
+                                                aria-pressed={state.filesView?.open ? true : undefined}
+                                                title="Browse files"
+                                                onClick={() =>
+                                                    state.filesView?.open
+                                                        ? client.closeFilesView()
+                                                        : client.openFilesView()
+                                                }
+                                            >
+                                                <FolderIcon />
                                             </button>
                                         )}
                                         <button
@@ -5607,6 +5638,8 @@ export function SubagentStrip({
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const leftPanel = useLeftPanelResize();
     const [dragActive, setDragActive] = useState(state.dragActive);
+    // Files is a main-region surface checked ahead of the conversation view (one surface at a time).
+    const filesOpen = Boolean(state.filesView?.open) && filesPaneAvailable(state);
     const [draftReloadTicks, setDraftReloadTicks] = useState<Record<string, number>>({});
     const [bodyEl, setBodyEl] = useState<HTMLElement | null>(null);
     // Meter count drives the usage collapse threshold: the synthetic ctx bar + each
@@ -5674,8 +5707,12 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                 >
                     <div />
                 </div>
-                <div className={`mx_RoomView_wrapper ${state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}>
-                    {state.selectedConversationId ? (
+                <div
+                    className={`mx_RoomView_wrapper ${filesOpen || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
+                >
+                    {filesOpen ? (
+                        <FilesPane client={client} state={state} />
+                    ) : state.selectedConversationId ? (
                         <div
                             className={`mx_RoomView${dragActive ? " mj_RoomView_dragActive" : ""}`}
                             onDragOver={(event) => {

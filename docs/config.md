@@ -9,6 +9,7 @@ The journal-native runtime uses these keys:
 | `journal_server_url` | matron-journal base URL. A relative path such as `/journal` is recommended for same-origin browser deployments. Empty or omitted asks at sign-in. |
 | `brand`              | Product name shown in the login screen and sidebar. Defaults to `Matron`.                                                                         |
 | `privacy_policy_url` | Optional link shown below the login form.                                                                                                         |
+| `files_root`         | Optional. Absolute start directory for the Files pane, inside the journal's `MATRON_FILE_READ_ROOTS`. Files is enabled only when set.             |
 
 Example:
 

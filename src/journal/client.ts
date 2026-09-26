@@ -9,6 +9,7 @@ import { JournalApi, JournalApiError, loadMatronConfig } from "./api";
 import { JournalConnection } from "./connection";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { JournalDatabase } from "./database";
+import { FilesApi } from "./files/filesApi";
 import { mergeSessionStatus } from "./status";
 import {
     buildSidebarIndex,
@@ -16,6 +17,7 @@ import {
     type ClientState,
     type Conversation,
     type DeviceDTO,
+    filesRootFromConfig,
     isSubChat,
     type JournalEphemeralFrame,
     type JournalEvent,
@@ -238,6 +240,9 @@ export class MatronJournalClient {
     private readonly retiredStreamRefs = new Set<string>();
     private readonly mediaUrls = new Map<string, string>();
     private readonly mediaUrlRequests = new Map<string, Promise<string>>();
+    // Files pane: one FilesApi bound to the current session, built lazily on first use and torn
+    // down (blob URLs revoked, in-flight requests aborted) on sign-out. Mirrors mediaUrls ownership.
+    private filesApiInstance?: FilesApi;
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
@@ -259,6 +264,8 @@ export class MatronJournalClient {
     private rpcCreateWatchdogConvo?: string;
     private rpcCreateWatchdogGen?: number;
     private storageListener?: (event: StorageEvent) => void;
+    /** Guards the one-time `hashchange` binding for the Files deep link (see initialise). */
+    private deepLinkListenerBound = false;
     private storeHydrated = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
     private storeWritable = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
 
@@ -307,6 +314,14 @@ export class MatronJournalClient {
         }
         this.patch({ config });
 
+        // Re-apply the Files deep link on every hash change so a link clicked into an
+        // already-open app deep-links with no reload. Bound once, before sign-in, so a link that
+        // arrives while the session is still restoring is honoured on the next hashchange.
+        if (!this.deepLinkListenerBound && typeof window !== "undefined") {
+            this.deepLinkListenerBound = true;
+            window.addEventListener("hashchange", () => this.applyFilesDeepLink());
+        }
+
         const session = storedSession();
         if (!session) {
             this.patch({ phase: "signed-out" });
@@ -315,6 +330,9 @@ export class MatronJournalClient {
 
         try {
             await this.startSession(session);
+            // Signed in: honour a `#files=<abs>` fragment present at load (the common flow — the
+            // user followed a link into a fresh tab with a stored session).
+            this.applyFilesDeepLink();
         } catch (error) {
             localStorage.removeItem(SESSION_KEY);
             this.patch({
@@ -343,6 +361,10 @@ export class MatronJournalClient {
         localStorage.setItem(SESSION_KEY, JSON.stringify(session));
         localStorage.setItem(LAST_SERVER_KEY, serverUrl);
         await this.startSession(session);
+        // A deep link followed WITHOUT a stored session lands here (interactive login), not in
+        // initialise's stored-session branch, and no hashchange fires — apply it now so the linked
+        // file opens instead of being stranded behind the conversation view.
+        this.applyFilesDeepLink();
     }
 
     public async logout(message?: string): Promise<void> {
@@ -370,6 +392,8 @@ export class MatronJournalClient {
         this.api = undefined;
         for (const url of this.mediaUrls.values()) URL.revokeObjectURL(url);
         this.mediaUrls.clear();
+        this.filesApiInstance?.dispose();
+        this.filesApiInstance = undefined;
         // The archived-conversations key is deliberately left in place: it is a per-device
         // preference that re-login should restore. Clearing it here would also go unnoticed
         // by this tab, since storage events only fire in other tabs.
@@ -482,6 +506,9 @@ export class MatronJournalClient {
         storeSelectedConversation(this.state.session, conversationId);
         this.patch({
             selectedConversationId: conversationId,
+            // Selecting a conversation closes the Files pane so the chosen room becomes visible
+            // (filesView is a main-region discriminant checked ahead of selectedConversationId).
+            filesView: undefined,
             events: [],
             pendingMessages: [],
             loadingHistory: false,
@@ -1227,6 +1254,91 @@ export class MatronJournalClient {
 
     public selectedConversation(): Conversation | undefined {
         return this.state.conversations.find((conversation) => conversation.id === this.state.selectedConversationId);
+    }
+
+    // ── Files pane ───────────────────────────────────────────────────────────────────────
+    // The session-scoped file API, built lazily. Returns undefined when signed out. Tests override
+    // this method with a mock.
+    public filesApi(): FilesApi | undefined {
+        const session = this.state.session;
+        if (!session) return undefined;
+        this.filesApiInstance ??= new FilesApi(session.serverUrl, session.token);
+        return this.filesApiInstance;
+    }
+
+    // Open the Files pane (main-region discriminant). Preserves the selected conversation so
+    // closing returns to it. `path` seeds the browsed directory; defaults to the remembered one.
+    // `targetFile` (absolute) asks FilesPane to auto-open a preview for that file once its
+    // directory listing lands — used by the `#files=<abs>` deep link; omit for a plain open (it
+    // then clears any stale target so a later plain open doesn't re-trigger a previous deep link).
+    public openFilesView(path?: string, targetFile?: string): void {
+        // Bump the invocation token whenever a target is supplied, so re-opening the SAME file (e.g.
+        // the user clicks the same deep link again after browsing elsewhere) is a distinct
+        // invocation FilesPane will act on, not a no-op deduped by the unchanged path string.
+        const targetToken = targetFile ? (this.state.filesView?.targetToken ?? 0) + 1 : undefined;
+        this.patch({ filesView: { open: true, path: path ?? this.state.filesView?.path, targetFile, targetToken } });
+    }
+
+    // The journal refused the file routes for this account (403 `forbidden`): close the pane and
+    // hide the Files surface for the rest of the session. Cleared by sign-out (state reset).
+    public markFilesUnavailable(): void {
+        if (this.state.filesUnavailable && !this.state.filesView) return;
+        this.patch({ filesUnavailable: true, filesView: undefined });
+    }
+
+    public closeFilesView(): void {
+        if (!this.state.filesView) return;
+        this.patch({ filesView: undefined });
+    }
+
+    // Persist the last-browsed directory so a reopen returns there. No-op when the pane is closed.
+    // Preserves the deep-link `targetFile` so persisting the server-normalized directory does not
+    // wipe a target that FilesPane has not yet had a chance to select.
+    public setFilesPath(path: string): void {
+        if (!this.state.filesView?.open) return;
+        if (this.state.filesView.path === path) return;
+        this.patch({
+            filesView: {
+                open: true,
+                path,
+                targetFile: this.state.filesView.targetFile,
+                targetToken: this.state.filesView.targetToken,
+            },
+        });
+    }
+
+    // Hash-based deep link into the Files pane: `#files=<url-encoded-absolute-path>`. Opens the
+    // pane at the file's directory and asks FilesPane to auto-preview it, then CLEARS the hash so a
+    // refresh or back-button does not re-trigger. No token — auth is the user's existing web
+    // session, exactly like every other Files read. Called at bootstrap (after sign-in) and on
+    // every `hashchange`, so clicking such a link into an already-open app just works with
+    // no reload. A malformed or non-absolute payload is ignored (hash left as-is for inspection).
+    public applyFilesDeepLink(): void {
+        if (typeof window === "undefined") return;
+        const hash = window.location.hash || "";
+        const match = /^#files=(.*)$/.exec(hash);
+        if (!match) return;
+        let abs: string;
+        try {
+            abs = decodeURIComponent(match[1]);
+        } catch {
+            return; // malformed percent-encoding — leave the hash for the user to see
+        }
+        if (!abs || !abs.startsWith("/")) return;
+        // Only meaningful once signed in (the pane renders only then); leave the hash otherwise so
+        // it can be re-applied on the next hashchange once the session is up.
+        if (this.state.phase !== "signed-in") return;
+        // Files is enabled per deploy (config `files_root`); without it there is no pane to open.
+        if (filesRootFromConfig(this.state.config) === undefined || this.state.filesUnavailable) return;
+        const slash = abs.lastIndexOf("/");
+        const dir = abs.slice(0, Math.max(1, slash));
+        this.openFilesView(dir, abs);
+        // Clear the fragment without a history entry so refresh/back does not re-fire the deep link.
+        try {
+            window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        } catch {
+            window.location.hash = "";
+        }
     }
 
     private async startSession(session: Session): Promise<void> {

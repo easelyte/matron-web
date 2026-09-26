@@ -20,6 +20,19 @@ export interface MatronConfig {
     brand?: string;
     journal_server_url?: string;
     privacy_policy_url?: string;
+    /**
+     * Absolute directory the Files pane opens at (normally one of the journal server's configured
+     * file read-roots). The Files pane is enabled only when this is set: the journal's `/files/*`
+     * routes are opt-in per deploy and expose no root-discovery call, so a deploy that turns them
+     * on also tells the client where to start browsing.
+     */
+    files_root?: string;
+}
+
+/** The configured Files start directory when the Files pane is enabled, else undefined. */
+export function filesRootFromConfig(config: MatronConfig | undefined): string | undefined {
+    const root = config?.files_root;
+    return typeof root === "string" && root.startsWith("/") ? root : undefined;
 }
 
 export interface Session {
@@ -298,6 +311,33 @@ export interface ClientState {
     dragActive: boolean;
     stagedUploads?: StagedUploads;
     sendTick: number;
+    // Files pane. Undefined = pane closed (main region shows the conversation view / HomePage).
+    // Present = pane open; `path` is the last-browsed dir so reopening returns there. This is the
+    // SOLE app-global Files state — directory listing, selection, and preview are FilesPane-local
+    // (like the conversation timeline is RoomView-local).
+    filesView?: FilesViewState;
+    // Set when the journal answered a Files request with 403 `forbidden`: this account can't use
+    // the file routes, so the Files entry point and deep links stay hidden until sign-out.
+    filesUnavailable?: boolean;
+}
+
+export interface FilesViewState {
+    open: boolean;
+    /** Last-browsed absolute directory path; seeds FilesPane on (re)open. */
+    path?: string;
+    /**
+     * Deep-link target: an ABSOLUTE file path the pane should auto-open a preview for once its
+     * containing directory listing lands (see FilesPane's auto-select effect). Set only by a
+     * `#files=<abs>` deep link (client.applyFilesDeepLink); `path` is then that file's directory.
+     */
+    targetFile?: string;
+    /**
+     * Monotonic per-invocation token bumped by openFilesView every time a `targetFile` is supplied.
+     * FilesPane keys its fire-once auto-select on THIS, not on `targetFile`, so re-clicking the SAME
+     * link after navigating away re-navigates and re-selects (a new token) rather than being
+     * permanently deduped by an unchanged path string.
+     */
+    targetToken?: number;
 }
 
 export function coerceParentId(x: unknown): string | null {
