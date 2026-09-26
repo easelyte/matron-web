@@ -118,15 +118,42 @@ describe("design drift ratchet", () => {
         expect(offenders).toEqual([]);
     });
 
+    it("defines every font token on the type scale", () => {
+        // Rules use var(--cpd-font-*); this checks the tokens themselves, so a token edit to an
+        // off-scale size cannot slip past the per-rule check.
+        const SCALE = new Set([10, 11, 12, 13, 14, 15, 16, 18, 20]);
+        const offenders: string[] = [];
+        for (const { root } of SHEETS)
+            root.walkDecls(/^--(cpd-font|mj-font)/, (d) => {
+                const size = /(\d+(?:\.\d+)?)px/.exec(d.value);
+                if (size && !SCALE.has(Number(size[1]))) offenders.push(`${where(d)} ${d.prop}: ${d.value}`);
+            });
+        expect(offenders).toEqual([]);
+    });
+
     it("draws one focus ring (var(--mj-focus-ring) with a token offset)", () => {
         const OFFSET_EXEMPT: Record<string, string> = {
             ".mj_MobileNav_tab:focus-visible": "the ring sits inside the 52px tab's touch padding",
         };
+        // `outline: none` on focus-visible only where another element carries the indicator.
+        const NONE_OK: Record<string, string> = {
+            ".mx_BasicMessageComposer_input:focus, .mx_BasicMessageComposer_input:focus-visible":
+                ".mx_MessageComposer_row:focus-within draws the accent border around the whole composer",
+        };
         const offenders: string[] = [];
+        const composerRow = SHEETS.some(({ root }) => {
+            let ok = false;
+            root.walkRules(/^\.mx_MessageComposer_row:focus-within$/, (r) =>
+                r.walkDecls("border-color", () => void (ok = true)),
+            );
+            return ok;
+        });
+        if (!composerRow) offenders.push("the composer's focus-within border (NONE_OK replacement) is gone");
         for (const { root } of SHEETS)
             root.walkRules(/:focus-visible/, (rule) => {
                 rule.walkDecls("outline", (d) => {
-                    if (!/^(var\(--mj-focus-ring\)|none)$/.test(d.value.trim()))
+                    if (d.value.trim() === "none" && NONE_OK[norm(rule.selector)]) return;
+                    if (!/^var\(--mj-focus-ring\)$/.test(d.value.trim()))
                         offenders.push(`${where(d)} ${norm(rule.selector)} { outline: ${d.value} }`);
                 });
                 rule.walkDecls("outline-offset", (d) => {
