@@ -628,6 +628,91 @@ describe("HeaderShell", () => {
         expect(document.activeElement).not.toBe(document.body);
     });
 
+    describe("usage popover toggle (tapping the bars)", () => {
+        const LIMITS = [
+            { label: "ctx", percent: 22 },
+            { label: "Session", percent: 36 },
+        ];
+        const collapsed = { usageCollapsed: true, titleCollapsed: false };
+        const popover = (m: MountedProbe): HTMLElement | null => m.container.querySelector(".mj_UsagePopover");
+        const triggerOf = (m: MountedProbe): HTMLButtonElement =>
+            m.container.querySelector<HTMLButtonElement>(".mj_UsageCluster_collapsed")!;
+        // React reads pointerType off the native event; jsdom has no PointerEvent, so tag a MouseEvent.
+        const pointer = (type: string, pointerType: string): MouseEvent => {
+            const event = new MouseEvent(type, { bubbles: true });
+            Object.defineProperty(event, "pointerType", { value: pointerType });
+            return event;
+        };
+
+        it("closes on a second click and returns focus to the trigger", async () => {
+            const m = await mountHeader({ limits: LIMITS, collapse: collapsed });
+            await act(async () => triggerOf(m).click());
+            expect(popover(m)).not.toBeNull();
+            expect(triggerOf(m).getAttribute("aria-expanded")).toBe("true");
+
+            await act(async () => triggerOf(m).click());
+            expect(popover(m)).toBeNull();
+            expect(triggerOf(m).getAttribute("aria-expanded")).toBe("false");
+            expect(document.activeElement).toBe(triggerOf(m));
+        });
+
+        it("closes on a second TAP: the tap blurs the panel before it clicks, and must not reopen", async () => {
+            const m = await mountHeader({ limits: LIMITS, collapse: collapsed });
+            const disclosure = m.container.querySelector<HTMLElement>(".mj_HeaderUsageDisclosure")!;
+            const tap = async (): Promise<void> => {
+                // iOS order: pointerenter/pointerdown (touch), compat mouseover, focus leaves the
+                // panel (the trigger does not take focus on iOS), then click.
+                await act(async () => {
+                    triggerOf(m).dispatchEvent(pointer("pointerover", "touch"));
+                    triggerOf(m).dispatchEvent(pointer("pointerdown", "touch"));
+                    disclosure.dispatchEvent(
+                        new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }),
+                    );
+                });
+                await act(async () => {
+                    (document.activeElement as HTMLElement | null)?.blur();
+                });
+                await act(async () => triggerOf(m).click());
+            };
+
+            await tap();
+            expect(popover(m)).not.toBeNull();
+            await tap();
+            expect(popover(m)).toBeNull();
+            // And a third tap opens it again: the toggle has no stuck state.
+            await tap();
+            expect(popover(m)).not.toBeNull();
+        });
+
+        it("a touch never hover-opens it", async () => {
+            const m = await mountHeader({ limits: LIMITS, collapse: collapsed });
+            const disclosure = m.container.querySelector<HTMLElement>(".mj_HeaderUsageDisclosure")!;
+            await act(async () => {
+                disclosure.dispatchEvent(pointer("pointerover", "touch"));
+                disclosure.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
+            });
+            expect(popover(m)).toBeNull();
+        });
+
+        it("closes on Escape and on an outside tap; Escape returns focus to the trigger", async () => {
+            const m = await mountHeader({ limits: LIMITS, collapse: collapsed });
+            await act(async () => triggerOf(m).click());
+            expect(document.activeElement).toBe(popover(m));
+            await act(async () => {
+                document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+            });
+            expect(popover(m)).toBeNull();
+            expect(document.activeElement).toBe(triggerOf(m));
+
+            await act(async () => triggerOf(m).click());
+            expect(popover(m)).not.toBeNull();
+            await act(async () => {
+                document.body.dispatchEvent(pointer("pointerdown", "touch"));
+            });
+            expect(popover(m)).toBeNull();
+        });
+    });
+
     it("hover-opens the collapsed usage disclosure without stealing focus, and closes on mouse-leave", async () => {
         const mounted = await mountHeader({
             limits: [{ label: "ctx", percent: 72 }],

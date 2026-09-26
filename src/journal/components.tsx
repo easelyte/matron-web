@@ -89,6 +89,7 @@ function isElectronRuntime(): boolean {
     return typeof window !== "undefined" && Boolean((window as Window & { electron?: unknown }).electron);
 }
 import { MarkdownBody, markdownToPlainText } from "./markdown";
+import { snippetText } from "./plain-text";
 import { ConnectionBanner, ConnectionStatus, mainSurfaceOpen, MobileNav, NavBadge, trackerLabel } from "./mobile-shell";
 import { isRenderableItemMarker, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
 import { TrackerPane } from "./tracker/TrackerPane";
@@ -279,6 +280,11 @@ export function ThemeToggle(): React.ReactElement {
     );
 }
 
+/** A group break inside a menu (before Archive, Sign out, View source): one full-bleed hairline. */
+export function MenuSeparator(): React.ReactElement {
+    return <div className="mj_MenuSeparator" role="separator" />;
+}
+
 /**
  * The Settings menu (redesign v6 + round 2): opened by the sliders icon, the last action in the
  * sidebar header; a bottom sheet on the phone. Contents: identity (username + server) ·
@@ -362,6 +368,7 @@ export function SettingsMenu({
                 <span className="mj_MenuLabel">Developer view</span>
                 <span className={`mj_Switch${developerView ? " is-on" : ""}`} aria-hidden="true" />
             </button>
+            <MenuSeparator />
             <button className="mj_RoomItemMenu_item" type="button" role="menuitem" onClick={() => void client.logout()}>
                 <V6Icon name="logout" />
                 <span className="mj_MenuLabel">Sign out</span>
@@ -1579,6 +1586,7 @@ function ConversationList({
         const name = conversationTitle(conversation);
         const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
         const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
+        const preview = snippetText(conversation.snippet);
         // #541: when this parent's subagent rows are collapsed, surface a subtle count of the
         // hidden child rows so the collapse is discoverable on the row itself. Gate on the
         // CANONICAL index (hasSubagentChildRows = parentsWithChildRows) — NOT an independent
@@ -1678,8 +1686,8 @@ function ConversationList({
                             )}
                             {name}
                         </span>
-                        <span className="mj_RoomListPreview" title={conversation.snippet}>
-                            {conversation.snippet}
+                        <span className="mj_RoomListPreview" title={preview}>
+                            {preview}
                         </span>
                     </span>
                     {state.favoriteIds.has(conversation.id) && (
@@ -2150,6 +2158,7 @@ function ConversationList({
                                     : "Collapse subagents"}
                             </button>
                         )}
+                        <MenuSeparator />
                         {state.archivedIds.has(menuConversation.id) ? (
                             <button
                                 className="mj_RoomItemMenu_item"
@@ -2184,6 +2193,37 @@ function ConversationList({
             </div>
         </div>
     );
+}
+
+/**
+ * Click-to-toggle for a popover trigger that also works for touch. On iOS a tap on the trigger of
+ * an open popover first moves focus out of the panel (the blur handler closes it) and only then
+ * clicks, so a plain `setOpen(!open)` read "closed" and reopened it. The open state is captured at
+ * press time instead and the click toggles from that. Keyboard activation has no press, so it
+ * toggles from the current state.
+ */
+export function usePressToggle(
+    open: boolean,
+    setOpen: (next: boolean) => void,
+): {
+    onPointerDown: () => void;
+    onKeyDown: () => void;
+    onClick: () => void;
+} {
+    const openAtPress = useRef<boolean | null>(null);
+    return {
+        onPointerDown: () => {
+            openAtPress.current = open;
+        },
+        onKeyDown: () => {
+            openAtPress.current = null;
+        },
+        onClick: () => {
+            const wasOpen = openAtPress.current ?? open;
+            openAtPress.current = null;
+            setOpen(!wasOpen);
+        },
+    };
 }
 
 export function useDismissablePopover(
@@ -2541,6 +2581,22 @@ function HeaderDisclosure({
         setPinned(false);
     }, []);
     useDismissablePopover(open, close, { openerRef, panelRef });
+    // Tapping the trigger again closes it (and focus returns to the trigger, not <body>).
+    const toggle = usePressToggle(pinned, (next) => {
+        if (next) {
+            setPinned(true);
+        } else {
+            close();
+            openerRef.current?.focus();
+        }
+    });
+    // Hover-open is for a mouse only. A touch tap also fires compatibility mouse events, which
+    // hover-opened the panel underneath the pinned one, so a second tap unpinned it and it stayed
+    // open. The pointer type is known (pointerenter / pointerdown) before those mouse events fire.
+    const lastPointerRef = useRef<string | null>(null);
+    const notePointer = (event: React.PointerEvent): void => {
+        lastPointerRef.current = event.pointerType;
+    };
     // Move focus into the panel ONLY for click/keyboard activation — never on hover.
     useLayoutEffect(() => {
         if (pinned) panelRef.current?.focus();
@@ -2558,7 +2614,11 @@ function HeaderDisclosure({
     return (
         <div
             className={className}
-            onMouseEnter={() => setHoverOpen(true)}
+            onPointerEnter={notePointer}
+            onPointerDown={notePointer}
+            onMouseEnter={() => {
+                if (lastPointerRef.current === null || lastPointerRef.current === "mouse") setHoverOpen(true);
+            }}
             onMouseLeave={() => setHoverOpen(false)}
             onBlur={(event) => {
                 // Focus left the whole disclosure (tabbed away) → unpin + close.
@@ -2573,7 +2633,9 @@ function HeaderDisclosure({
                 aria-label={label}
                 aria-expanded={open}
                 aria-controls={popoverId}
-                onClick={() => setPinned((value) => !value)}
+                onPointerDown={toggle.onPointerDown}
+                onKeyDown={toggle.onKeyDown}
+                onClick={toggle.onClick}
             >
                 {trigger}
             </button>
@@ -2898,7 +2960,7 @@ function BrowserToolsItem({
     const disabled = codex || state !== "idle";
     return (
         <button
-            className="mj_RoomItemMenu_item mj_RoomItemMenu_item_hinted"
+            className={`mj_RoomItemMenu_item${hint ? " mj_RoomItemMenu_item_hinted" : ""}`}
             type="button"
             role={on ? "menuitemcheckbox" : "menuitem"}
             aria-checked={on ? true : undefined}
@@ -2937,6 +2999,10 @@ function HeaderOverflowMenu({
     const browserState = useMemo(() => browserToolsState(state.events, busy), [state.events, busy]);
     const close = useCallback(() => setOpen(false), []);
     useDismissablePopover(open, close, { openerRef, panelRef });
+    const toggle = usePressToggle(open, (next) => {
+        setOpen(next);
+        if (!next) openerRef.current?.focus();
+    });
     useLayoutEffect(() => {
         if (open) panelRef.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus();
     }, [open]);
@@ -2987,7 +3053,9 @@ function HeaderOverflowMenu({
                 aria-label="Conversation actions"
                 aria-haspopup="menu"
                 aria-expanded={open}
-                onClick={() => setOpen((current) => !current)}
+                onPointerDown={toggle.onPointerDown}
+                onKeyDown={toggle.onKeyDown}
+                onClick={toggle.onClick}
             >
                 <KebabIcon aria-hidden />
             </button>
@@ -3066,6 +3134,7 @@ function HeaderOverflowMenu({
                             setConfirmBrowser(true);
                         }}
                     />
+                    <MenuSeparator />
                     <button
                         className="mj_RoomItemMenu_item"
                         type="button"
@@ -5963,6 +6032,7 @@ function Timeline({
                                 <MarkdownIcon aria-hidden />
                                 <span>Copy as Markdown</span>
                             </button>
+                            <MenuSeparator />
                         </>
                     )}
                     <button

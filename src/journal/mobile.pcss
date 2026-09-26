@@ -17,6 +17,16 @@ Please see LICENSE files in the repository root for full details.
         env(safe-area-inset-left, 0);
 }
 
+/* Phones: the bottom inset is NOT padded here. The surface that owns the bottom edge (the tab bar
+   on the list / Tracker / Files, the composer inside a chat) pads itself by it once, so its own
+   background runs under the home indicator instead of a bare band of frame colour, and the inset
+   is not stacked on top of that surface's own padding. A screen with neither keeps the frame pad. */
+@media (max-width: 700px) {
+    .mx_MatrixChat_wrapper:has(.mj_MobileNav, .mx_MessageComposer) {
+        padding-bottom: 0;
+    }
+}
+
 .mx_MatrixChat_wrapper > .mx_MatrixChat {
     flex: 1 1 0;
     height: auto;
@@ -130,11 +140,20 @@ Please see LICENSE files in the repository root for full details.
 }
 
 @media (max-width: 700px) {
+    /* The home indicator sits in the bottom ~13px of the 34px inset, so the bar keeps 12px of the
+       inset clear of it and lets the rest overlap its own bottom padding: env() is counted once,
+       never on top of a tall fixed pad. With no inset (no home indicator) the floor is 4px. */
     .mj_MobileNav {
         display: flex;
         flex: none;
+        padding-bottom: max(4px, calc(env(safe-area-inset-bottom, 0px) - 12px));
         border-top: 1px solid var(--cpd-color-border-subtle);
         background: var(--cpd-color-bg-canvas-default);
+    }
+
+    /* Same rule for the chat: the composer owns the bottom edge. */
+    .mx_MessageComposer_wrapper {
+        padding-bottom: max(12px, calc(env(safe-area-inset-bottom, 0px) - 12px));
     }
 
     /* The on-screen keyboard is up: give its space to the field being typed in. */
@@ -147,9 +166,12 @@ Please see LICENSE files in the repository root for full details.
         flex: 1 1 0;
         flex-direction: column;
         align-items: center;
-        justify-content: center;
+        justify-content: flex-start;
         gap: 2px;
-        min-height: 52px;
+        /* 8 above the icon, 4 under the label; the bar's own bottom padding adds the rest. */
+        min-height: 50px;
+        box-sizing: border-box;
+        padding: 8px 0 4px;
         border: 0;
         background: transparent;
         color: var(--cpd-color-text-secondary);

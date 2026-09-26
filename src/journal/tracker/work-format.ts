@@ -9,7 +9,11 @@ Please see LICENSE files in the repository root for full details.
 // and the detail share (preview text, labels, ordering, filtering) is unit-testable on its own.
 
 import type { WorkViewClaim, WorkViewGroup, WorkViewGroupBy, WorkViewLoop } from "../work-view";
+import { plainText } from "../plain-text";
 import { oneLine } from "./format";
+
+// Re-exported: the Work view's tests and callers import it from here.
+export { plainText };
 
 export type WorkLoopStatus = WorkViewLoop["status"];
 
@@ -53,20 +57,6 @@ export function statusFilterLabel(filter: WorkStatusFilter): string {
 /** The one status that asks for attention. Rendered with the tracker's needs-you treatment. */
 export function needsAttention(loop: Pick<WorkViewLoop, "status">): boolean {
     return loop.status === "blocked";
-}
-
-/**
- * Strip inline markdown so a preview line reads as prose: `**bold**` → bold, `` `code` `` → code,
- * `[text](url)` → text. Block syntax (bullets, headings, quotes) is dropped at the line start.
- * Deliberately small: previews are one ellipsised line, not a renderer.
- */
-export function plainText(markdown: string): string {
-    return markdown
-        .replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/gm, "")
-        .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-        .replace(/(\*\*|__)(.+?)\1/g, "$2")
-        .replace(/(^|[^\w*])[*_]([^*_\n]+)[*_](?=[^\w*]|$)/g, "$1$2")
-        .replace(/`([^`]*)`/g, "$1");
 }
 
 /**

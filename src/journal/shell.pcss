@@ -118,6 +118,10 @@ Please see LICENSE files in the repository root for full details.
     --mj-subbar-h: 52px;
     /* A segmented track insets its segments by this on every side (segment = control - 2×inset). */
     --mj-seg-inset: 2px;
+    /* Menu rows (session actions, Settings, message actions): every row is [icon · label] on one
+       grid, so the icon column and the icon-to-label gap are shared, never restated per menu. */
+    --mj-menu-icon: 16px;
+    --mj-menu-icon-gap: 10px;
     /* One focus treatment: a 2px accent outline. Standalone controls sit it 2px outside the box,
        bordered fields 1px outside their border, full-bleed rows/menu items 2px inside. */
     --mj-focus-ring: 2px solid var(--cpd-color-text-action-accent);
@@ -579,6 +583,9 @@ button {
     flex: none;
     width: 8px;
     height: 8px;
+    /* Centred in the 14px column the pin glyph uses, so pinned and unpinned titles start at the
+       same x (they were 6px apart). */
+    margin-inline: 3px;
     border-radius: 50%;
     background: var(--cpd-color-border-strong);
 }
@@ -1052,7 +1059,8 @@ button {
 
 .mx_SlashPalette_trigger {
     font:
-        500 12px/18px "Fira Code", monospace;
+        500 12px/18px "Fira Code",
+        monospace;
     white-space: nowrap;
 }
 

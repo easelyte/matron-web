@@ -585,6 +585,14 @@ textarea {
     grid-template-columns: 24px 72px 32px;
 }
 
+/* Phones: the collapsed ctx/5h tracks give 32px back to the conversation title, which was cut to
+   about a dozen characters. The popover still shows every meter at full width. */
+@media (max-width: 700px) {
+    .mj_UsageCluster_collapsed .mj_UsageRow {
+        grid-template-columns: 24px 40px 32px;
+    }
+}
+
 .mj_UsageCluster_collapsed:hover {
     background: var(--cpd-color-bg-subtle-secondary);
 }
@@ -1251,14 +1259,13 @@ textarea {
 .mj_RoomItemMenu_item {
     display: grid;
     width: 100%;
-    grid-template-columns: 16px 1fr;
+    grid-template-columns: var(--mj-menu-icon) 1fr;
     align-items: center;
-    gap: 10px;
+    gap: var(--mj-menu-icon-gap);
     border-radius: var(--cpd-radius-md);
     padding: 7px 8px;
     text-align: left;
-    font:
-        var(--cpd-font-label);
+    font: var(--cpd-font-label);
 }
 
 /* #527: item buttons ride the panel surface directly. The generic
@@ -1282,17 +1289,21 @@ textarea {
 }
 
 .mj_RoomItemMenu_item svg {
-    width: 16px;
-    height: 16px;
+    width: var(--mj-menu-icon);
+    height: var(--mj-menu-icon);
     flex: 0 0 auto;
     color: var(--cpd-color-icon-secondary);
 }
 
-/* Archive/Unarchive is the destructive group — a hairline above it, not a gap. */
-.mj_RoomItemMenu_item:last-child:not(:only-child) {
-    margin-top: 4px;
-    border-top: 1px solid var(--cpd-color-border-subtle);
-    padding-top: 8px;
+/* A group break (Archive, Sign out, View source): its own full-bleed 1px hairline with equal
+   space above and below. It used to be a border-top on the last row, which drew the row's rounded
+   corners as a curved edge and made that row taller than the rest. The negative inline margin
+   runs it through the menu's own padding, edge to edge. */
+.mj_MenuSeparator {
+    flex: none;
+    height: 1px;
+    margin: 4px -4px;
+    background: var(--cpd-color-border-subtle);
 }
 
 .mj_MarkAllReadButton {
@@ -2056,8 +2067,7 @@ textarea {
     min-width: 0;
     overflow: hidden;
     color: var(--cpd-color-text-primary);
-    font:
-        var(--cpd-font-label);
+    font: var(--cpd-font-label);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -2189,8 +2199,7 @@ textarea {
     background: var(--cpd-color-bg-canvas-default);
     padding: var(--cpd-space-3x);
     /* v4 modal caption input: body.sm 400 13.5/20. */
-    font:
-        var(--cpd-font-body-sm-regular);
+    font: var(--cpd-font-body-sm-regular);
     resize: vertical;
 }
 
@@ -2389,8 +2398,7 @@ li.mj_AttachmentChip_error {
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 1;
     overflow: hidden;
-    font:
-        var(--cpd-font-body-sm-semibold);
+    font: var(--cpd-font-body-sm-semibold);
 }
 
 .mj_SpawnDetails {
@@ -2716,8 +2724,7 @@ li.mj_AttachmentChip_error {
 }
 
 .mj_PromptQuestion {
-    font:
-        var(--cpd-font-body-sm-regular);
+    font: var(--cpd-font-body-sm-regular);
 }
 
 .mj_PromptOptions,
@@ -2737,8 +2744,7 @@ li.mj_AttachmentChip_error {
     background: transparent;
     color: var(--cpd-color-text-primary);
     padding: 0 14px;
-    font:
-        var(--cpd-font-label);
+    font: var(--cpd-font-label);
 }
 
 .mj_PromptText input {
@@ -2843,7 +2849,8 @@ li.mj_AttachmentChip_error {
     background: transparent;
     padding: 0;
     font:
-        500 12px/18px "Fira Code", monospace;
+        500 12px/18px "Fira Code",
+        monospace;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -2967,7 +2974,8 @@ li.mj_AttachmentChip_error {
     overflow-wrap: anywhere;
     /* v5 mock: mono.filename 600 12.5/18. */
     font:
-        600 12px/18px "Fira Code", monospace;
+        600 12px/18px "Fira Code",
+        monospace;
 }
 
 .mj_DiffCard_link {
@@ -3315,7 +3323,8 @@ button.mj_File {
     color: var(--cpd-color-text-secondary);
     /* v4: mono m:ss timer. */
     font:
-        500 12px/18px "Fira Code", monospace;
+        500 12px/18px "Fira Code",
+        monospace;
     font-variant-numeric: tabular-nums;
     text-align: center;
 }
@@ -4780,15 +4789,15 @@ button.mj_File {
     min-height: 220px;
     max-height: 46vh;
     resize: vertical;
-    font:
-        var(--mj-font-mono);
+    font: var(--mj-font-mono);
 }
 
 /* Resolved absolute destination / character count — quiet, monospaced, never truncated silently. */
 .mj_FileWrite_dest {
     color: var(--cpd-color-text-tertiary);
     font:
-        400 12px/16px "Fira Code", monospace;
+        400 12px/16px "Fira Code",
+        monospace;
     overflow-wrap: anywhere;
 }
 
@@ -4813,7 +4822,8 @@ button.mj_File {
 .mj_FileWrite_targetPath {
     color: var(--cpd-color-text-tertiary);
     font:
-        400 12px/16px "Fira Code", monospace;
+        400 12px/16px "Fira Code",
+        monospace;
     overflow-wrap: anywhere;
 }
 
@@ -5500,8 +5510,8 @@ button.mj_File {
 
 .mj_AccountMenu_who {
     display: grid;
-    grid-template-columns: 16px minmax(0, 1fr);
-    gap: 10px;
+    grid-template-columns: var(--mj-menu-icon) minmax(0, 1fr);
+    gap: var(--mj-menu-icon-gap);
     margin-bottom: 4px;
     padding: 8px 8px 10px;
     border-bottom: 1px solid var(--cpd-color-border-subtle);
@@ -5542,7 +5552,7 @@ button.mj_File {
 
 .mj_RoomItemMenu_item_switch,
 .mj_RoomItemMenu_item_value {
-    grid-template-columns: 16px minmax(0, 1fr) auto;
+    grid-template-columns: var(--mj-menu-icon) minmax(0, 1fr) auto;
 }
 
 .mj_HeaderMenu .mj_MenuValue {
@@ -5640,6 +5650,10 @@ button.mj_File {
         padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
         box-shadow: var(--cpd-shadow-lg);
     }
+
+    .mj_AccountMenu .mj_MenuSeparator {
+        margin-inline: -8px;
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5650,6 +5664,8 @@ button.mj_File {
 }
 
 /* ---- v6 surface B: browser tools (session menu row, confirm dialog, header chip) ---- */
+/* Only a row that actually shows a second (hint) line tops-aligns its icon to the first line; a
+   one-line row centres like every other row, so the menu keeps one rhythm. */
 .mj_RoomItemMenu_item_hinted {
     align-items: start;
 }
