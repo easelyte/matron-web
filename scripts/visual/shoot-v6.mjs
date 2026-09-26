@@ -238,6 +238,8 @@ STATES.push(
     },
 );
 
+STATES.push({ name: "narrow-thread-off", query: "v6=full", viewport: "narrow" });
+
 const VIEWPORTS = {
     desktop: { width: 1280, height: 900 },
     tall: { width: 1280, height: 2600 },
@@ -288,8 +290,7 @@ for (const theme of ["light", "dark"]) {
                 const result = await page.evaluate(
                     ([probe, map]) => {
                         window.MAP = JSON.parse(map);
-                        // eslint-disable-next-line no-new-func
-                        return new Function(`return ${probe.trim().replace(/;\s*$/, "")}`)();
+                        return (0, eval)(probe);
                     },
                     [PROBE, MAP],
                 );

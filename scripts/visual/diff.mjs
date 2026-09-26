@@ -26,7 +26,17 @@ const MAP = JSON.parse(fs.readFileSync(path.join(PKG, "component-map.json"), "ut
 
 // Load-bearing props to compare. Skip fontFamily (design pulls Inter/Fira from a CDN that
 // won't load headless → fallback metrics differ; weight/size/line-height still resolve).
-const CMP = ["fontWeight", "fontSize", "lineHeight", "color", "backgroundColor", "borderTopWidth", "borderTopStyle", "borderTopColor", "borderRadius"];
+const CMP = [
+    "fontWeight",
+    "fontSize",
+    "lineHeight",
+    "color",
+    "backgroundColor",
+    "borderTopWidth",
+    "borderTopStyle",
+    "borderTopColor",
+    "borderRadius",
+];
 
 const PROBE = (props) => `(() => {
   const P = ${JSON.stringify(props)};
@@ -44,16 +54,32 @@ const LIVEPROBE = (props, map) => `(() => {
   }) };
 })()`;
 
-const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2", ".json": "application/json" };
+const MIME = {
+    ".html": "text/html",
+    ".js": "text/javascript",
+    ".css": "text/css",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".woff2": "font/woff2",
+    ".json": "application/json",
+};
 function serve(dir) {
-  return new Promise((r) => {
-    const s = http.createServer((q, res) => {
-      const u = decodeURIComponent(q.url.split("?")[0]);
-      const f = path.join(dir, u === "/" ? "index.html" : u);
-      fs.readFile(f, (e, d) => { if (e) { res.writeHead(404); res.end(); return; } res.writeHead(200, { "content-type": MIME[path.extname(f)] || "application/octet-stream" }); res.end(d); });
+    return new Promise((r) => {
+        const s = http.createServer((q, res) => {
+            const u = decodeURIComponent(q.url.split("?")[0]);
+            const f = path.join(dir, u === "/" ? "index.html" : u);
+            fs.readFile(f, (e, d) => {
+                if (e) {
+                    res.writeHead(404);
+                    res.end();
+                    return;
+                }
+                res.writeHead(200, { "content-type": MIME[path.extname(f)] || "application/octet-stream" });
+                res.end(d);
+            });
+        });
+        s.listen(0, "127.0.0.1", () => r({ s, port: s.address().port }));
     });
-    s.listen(0, "127.0.0.1", () => r({ s, port: s.address().port }));
-  });
 }
 
 const b = await chromium.launch({ args: ["--no-sandbox"] });
@@ -61,11 +87,11 @@ const b = await chromium.launch({ args: ["--no-sandbox"] });
 // Design specimens (merge the chrome + states files; last wins on dup spec).
 const design = {};
 for (const f of ["light-default", "light-states"]) {
-  const p = await b.newPage();
-  await p.goto("file://" + path.join(PKG, "static", f + ".html"), { waitUntil: "load" });
-  const r = await p.evaluate(PROBE(CMP));
-  for (const s of r.specimens) design[s.spec] = s.computed;
-  await p.close();
+    const p = await b.newPage();
+    await p.goto("file://" + path.join(PKG, "static", f + ".html"), { waitUntil: "load" });
+    const r = await p.evaluate(PROBE(CMP));
+    for (const s of r.specimens) design[s.spec] = s.computed;
+    await p.close();
 }
 
 // Live specimens via the map selectors.
@@ -83,23 +109,30 @@ server.close();
 // Diff: for every spec present on BOTH sides, compare props.
 const rows = [];
 for (const spec of Object.keys(design)) {
-  const l = live[spec];
-  if (!l) continue; // spec has no live selector (new/devtool/prose) — not diffable here
-  if (!l.found) { rows.push({ spec, status: "NOT-FOUND-LIVE", selector: l.selector }); continue; }
-  const diffs = [];
-  for (const p of CMP) {
-    const dv = design[spec]?.[p], lv = l.computed?.[p];
-    if (dv && lv && dv !== lv) diffs.push(`${p}: design[${dv}] vs live[${lv}]`);
-  }
-  if (diffs.length) rows.push({ spec, visualClaim: l.visual, diffs });
+    const l = live[spec];
+    if (!l) continue; // spec has no live selector (new/devtool/prose) — not diffable here
+    if (!l.found) {
+        rows.push({ spec, status: "NOT-FOUND-LIVE", selector: l.selector });
+        continue;
+    }
+    const diffs = [];
+    for (const p of CMP) {
+        const dv = design[spec]?.[p],
+            lv = l.computed?.[p];
+        if (dv && lv && dv !== lv) diffs.push(`${p}: design[${dv}] vs live[${lv}]`);
+    }
+    if (diffs.length) rows.push({ spec, visualClaim: l.visual, diffs });
 }
 
 console.log("=== DESIGN ↔ LIVE auto-diff (light) — mismatches only ===\n");
 if (!rows.length) console.log("no mismatches on compared props.");
 for (const r of rows) {
-  if (r.status) { console.log(`⚠ ${r.spec} — ${r.status} (${r.selector})`); continue; }
-  console.log(`● ${r.spec}${r.visualClaim ? "  [map: " + r.visualClaim + "]" : ""}`);
-  for (const d of r.diffs) console.log(`    ${d}`);
+    if (r.status) {
+        console.log(`⚠ ${r.spec} — ${r.status} (${r.selector})`);
+        continue;
+    }
+    console.log(`● ${r.spec}${r.visualClaim ? "  [map: " + r.visualClaim + "]" : ""}`);
+    for (const d of r.diffs) console.log(`    ${d}`);
 }
 const diffable = Object.keys(design).filter((s) => live[s]?.found).length;
 console.log(`\ncompared ${diffable} specs present on both sides; ${rows.length} with mismatches.`);
