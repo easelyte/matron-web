@@ -183,7 +183,7 @@ function FilterBar({
                 <SearchIcon className="mj_WorkSearch_icon" aria-hidden="true" />
                 <input
                     type="search"
-                    className="mj_Input mj_Input_pill mj_WorkSearch_input"
+                    className="mj_Input mj_WorkSearch_input"
                     placeholder="Search work"
                     aria-label="Search work"
                     value={filters.query}
@@ -191,7 +191,7 @@ function FilterBar({
                 />
             </label>
             <select
-                className={`mj_Input mj_Input_pill mj_Input_select mj_WorkSelect${filters.status !== "open" ? " mj_WorkSelect_set" : ""}`}
+                className={`mj_Input mj_Input_select mj_WorkSelect${filters.status !== "open" ? " mj_WorkSelect_set" : ""}`}
                 aria-label="Status"
                 value={filters.status}
                 onChange={(event) => onFilters({ ...filters, status: event.target.value as WorkStatusFilter })}
@@ -203,7 +203,7 @@ function FilterBar({
                 ))}
             </select>
             <select
-                className={`mj_Input mj_Input_pill mj_Input_select mj_WorkSelect${filters.domain ? " mj_WorkSelect_set" : ""}`}
+                className={`mj_Input mj_Input_select mj_WorkSelect${filters.domain ? " mj_WorkSelect_set" : ""}`}
                 aria-label="Domain"
                 value={filters.domain}
                 onChange={(event) => onFilters({ ...filters, domain: event.target.value })}
@@ -215,7 +215,11 @@ function FilterBar({
                     </option>
                 ))}
             </select>
-            <div className="mj_Seg mj_TrackerInboxToggle mj_WorkGroupToggle" role="tablist" aria-label="Group by">
+            <div
+                className="mj_Seg mj_Seg_rect mj_TrackerInboxToggle mj_WorkGroupToggle"
+                role="tablist"
+                aria-label="Group by"
+            >
                 <ToggleTab value="repo" current={groupBy} onSelect={onGroupBy}>
                     Repo
                 </ToggleTab>
