@@ -1524,23 +1524,40 @@ describe("a failed re-read is not an answer (Codex round 7)", () => {
 });
 
 describe("phone pushed preview (operator call T4)", () => {
-    it("opens a file as its own screen and Back returns to the list with focus on that row", async () => {
-        const pane = await mountPane(mockApi());
-        const body = pane.querySelector(".mj_FilesPane_body")!;
-        expect(body.classList.contains("mj_FilesPane_body_previewing")).toBe(false);
-        expect(pane.querySelector('[aria-label="Back to folder"]')).toBeNull();
+    it("opens a file as its own screen with focus on Back, and Back returns focus to that row", async () => {
+        // jsdom has no layout, so offsetParent is always null; on a phone the Back button is laid
+        // out (display:inline-flex), which is what the pane checks before moving focus to it.
+        const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetParent")!;
+        Object.defineProperty(HTMLElement.prototype, "offsetParent", {
+            configurable: true,
+            get() {
+                return this.parentElement;
+            },
+        });
+        try {
+            const pane = await mountPane(mockApi());
+            const body = pane.querySelector(".mj_FilesPane_body")!;
+            expect(body.classList.contains("mj_FilesPane_body_previewing")).toBe(false);
+            expect(pane.querySelector('[aria-label="Back to folder"]')).toBeNull();
 
-        const row = [...pane.querySelectorAll<HTMLButtonElement>(".mj_FilesRow")].find((r) =>
-            r.textContent?.startsWith("notes.md"),
-        )!;
-        await click(row);
-        await flush();
-        expect(body.classList.contains("mj_FilesPane_body_previewing")).toBe(true);
+            const row = [...pane.querySelectorAll<HTMLButtonElement>(".mj_FilesRow")].find((r) =>
+                r.textContent?.startsWith("notes.md"),
+            )!;
+            await click(row);
+            await flush();
+            expect(body.classList.contains("mj_FilesPane_body_previewing")).toBe(true);
+            const back = pane.querySelector<HTMLButtonElement>('[aria-label="Back to folder"]')!;
+            expect(document.activeElement).toBe(back);
 
-        await click(pane.querySelector('[aria-label="Back to folder"]'));
-        await flush();
-        expect(body.classList.contains("mj_FilesPane_body_previewing")).toBe(false);
-        expect(pane.querySelector('[aria-label="Back to folder"]')).toBeNull();
-        expect(document.activeElement?.textContent?.startsWith("notes.md")).toBe(true);
+            await click(back);
+            await act(async () => {
+                await new Promise((resolve) => requestAnimationFrame(resolve));
+            });
+            expect(body.classList.contains("mj_FilesPane_body_previewing")).toBe(false);
+            expect(pane.querySelector('[aria-label="Back to folder"]')).toBeNull();
+            expect(document.activeElement?.textContent?.startsWith("notes.md")).toBe(true);
+        } finally {
+            Object.defineProperty(HTMLElement.prototype, "offsetParent", descriptor);
+        }
     });
 });
