@@ -128,17 +128,39 @@ describe("MatronJournalClient.handleJournalBatch", () => {
         expect(database.events).toHaveBeenCalledTimes(1);
     });
 
-    it("batches only the prefix before a malformed seq and hands the rest to the per-frame path", async () => {
+    it("batches only the prefix before a malformed seq and never applies the rows after it", async () => {
         const { internal, database } = setup();
         const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
         const bad = { ...text("c1", 13), seq: Number.NaN };
 
         await internal.handleJournalBatch([text("c1", 11), text("c1", 12), bad, text("c1", 14)]);
 
+        expect(database.applyJournalBatch).toHaveBeenCalledTimes(1);
         expect(database.applyJournalBatch).toHaveBeenCalledWith([text("c1", 11), text("c1", 12)]);
         expect(internal.connection!.forceResync).toHaveBeenCalledTimes(1);
-        // The frame after the malformed one takes the ordinary per-frame path, as before batching.
-        expect(database.applyJournal).toHaveBeenCalledWith(text("c1", 14));
+        // Committing 14 would move the durable cursor past the unrecovered row 13.
+        expect(database.applyJournal).not.toHaveBeenCalled();
         expect(warn).toHaveBeenCalled();
+    });
+
+    it("finishes every committed row's side effects when one row's outbox reconcile fails, then rethrows", async () => {
+        const { internal, database } = setup();
+        const failure = new Error("outbox transaction aborted");
+        database.reconcileOwnMessage.mockImplementation(async (event: JournalEvent) => {
+            if (event.seq === 12) throw failure;
+            return null;
+        });
+
+        await expect(
+            internal.handleJournalBatch([text("c1", 11), text("c1", 12), text("c1", 13), text("c1", 14)]),
+        ).rejects.toBe(failure);
+        await jest.runAllTimersAsync();
+
+        expect(database.reconcileOwnMessage).toHaveBeenCalledTimes(4);
+        expect(database.events).toHaveBeenCalledWith("c1");
+        const sent = internal.connection!.send.mock.calls.map(([operation]) => operation);
+        expect(sent).toContainEqual({ op: "ack", cursor: 14 });
+        expect(sent).toContainEqual({ op: "read_marker", convo_id: "c1", up_to_seq: 14 });
+        expect(internal.history.get("c1")?.newestSeq).toBe(14);
     });
 });

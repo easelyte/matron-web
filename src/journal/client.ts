@@ -2910,7 +2910,11 @@ export class MatronJournalClient {
         const prefix = firstBad === -1 ? events : events.slice(0, firstBad);
         if (prefix.length > 0) await this.applyJournalRun(prefix, database);
         if (firstBad === -1) return;
-        for (const event of events.slice(firstBad)) await this.handleJournal(event);
+        // The malformed frame takes the per-frame #766 path (halt, or re-snapshot). Rows after it
+        // are NOT applied: committing them would advance the durable cursor past the unrecovered
+        // row, so a failed re-snapshot would reconnect beyond it and lose it for good. The resync
+        // abandons this socket, and a clean cursor replays them after the malformed row.
+        await this.handleJournal(events[firstBad]);
     }
 
     private async applyJournalRun(events: JournalEvent[], database: JournalDatabase): Promise<void> {
@@ -2930,10 +2934,19 @@ export class MatronJournalClient {
         let refreshSelected = false;
         let maxAppliedSeq: number | undefined;
         const reads: Array<[string, number]> = [];
+        // Every row below is already durable (the run committed with its final cursor), so a
+        // failure on one row must not strand the side effects of the rows after it: they would never
+        // be replayed. Keep going, then surface the first failure once the run is fully handled.
+        let firstError: unknown;
         for (let index = 0; index < events.length; index++) {
             const event = events[index];
             this.clearRpcCreateWatchdog(event.convo_id);
-            const removed = await database.reconcileOwnMessage(event);
+            let removed: string | null = null;
+            try {
+                removed = await database.reconcileOwnMessage(event);
+            } catch (error) {
+                firstError ??= error;
+            }
             if (removed) {
                 this.pendingFiles.delete(removed);
                 this.transientAttachmentErrors.delete(removed);
@@ -2989,6 +3002,7 @@ export class MatronJournalClient {
             await this.refreshSelectedConversation(selectedId);
         }
         for (const [conversationId, seq] of reads) this.scheduleRead(conversationId, seq);
+        if (firstError !== undefined) throw firstError;
     }
 
     private async handleJournal(event: JournalEvent): Promise<void> {

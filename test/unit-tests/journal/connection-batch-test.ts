@@ -205,4 +205,50 @@ describe("JournalConnection client replay valve", () => {
         expect(made.length).toBeGreaterThanOrEqual(2);
         connection.stop();
     });
+
+    it("does not snapshot twice when the journal's own snapshot_required queues behind a valve-tripping hello_ok", async () => {
+        const { made, connection, callbacks } = setup({ cursor: 100 });
+        let release!: () => void;
+        callbacks.onSnapshotRequired.mockReturnValueOnce(new Promise<void>((resolve) => (release = resolve)));
+        connection.start();
+        await open(made[0]);
+        // A journal that honors max_replay still sends hello_ok (seq = head) first.
+        deliver(made[0], { kind: "control", op: "hello_ok", seq: 100 + MAX_CLIENT_REPLAY + 50 });
+        deliver(made[0], { kind: "control", op: "snapshot_required" });
+        await flush();
+        release();
+        await flush();
+        jest.advanceTimersByTime(0);
+        await flush();
+
+        expect(callbacks.onSnapshotRequired).toHaveBeenCalledTimes(1);
+        expect(made).toHaveLength(2);
+        connection.stop();
+    });
+
+    it("drops journal frames an abandoned socket already delivered after a client resync", async () => {
+        const { made, connection, callbacks, order } = setup({ cursor: 100 });
+        connection.start();
+        await open(made[0]);
+        deliver(made[0], { kind: "control", op: "hello_ok", seq: 110 });
+        await flush();
+        let release!: () => void;
+        callbacks.onJournalBatch.mockImplementationOnce(
+            async (frames: JournalEvent[]) =>
+                new Promise<void>((resolve) => {
+                    order.push(`batch:${frames.map((frame) => frame.seq).join(",")}`);
+                    release = resolve;
+                }),
+        );
+        deliver(made[0], journal(101));
+        await flush();
+        deliver(made[0], journal(102)); // queued behind the in-flight run
+        const resync = connection.forceResync();
+        release();
+        await resync;
+        await flush();
+
+        expect(order).toEqual(["batch:101"]);
+        connection.stop();
+    });
 });

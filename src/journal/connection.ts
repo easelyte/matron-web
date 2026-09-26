@@ -57,9 +57,12 @@ export class JournalConnection {
     private openJournalBatch?: { socket: WebSocket; frames: JournalEvent[] };
     // Cursor each socket said hello with, for the hello_ok gap check (old-journal fallback).
     private helloCursor = new WeakMap<WebSocket, number>();
-    // A socket abandoned by the replay valve: its already-received replay frames are stale (the
-    // snapshot that follows supersedes them) and are dropped instead of applied.
-    private abandonedSocket?: WebSocket;
+    // Sockets dropped for a re-snapshot (either valve, or a client resync). Frames they already
+    // delivered are stale — the snapshot supersedes them, and a failed snapshot reconnects from the
+    // last clean cursor so nothing is lost — so they are dropped instead of applied. That covers
+    // replay frames queued behind a valve-tripping hello_ok, the server's own snapshot_required
+    // queued behind the same hello_ok (a second snapshot), and rows queued behind a malformed one.
+    private abandonedSockets = new WeakSet<WebSocket>();
     private pendingRpc = new Map<
         string,
         {
@@ -143,6 +146,7 @@ export class JournalConnection {
         // before scheduleReconnect's open() runs; open() early-returns while this.socket is set. The
         // onclose `this.socket === socket` guard makes the later event a no-op. Await the re-snapshot
         // before reconnecting so hello carries the clean cursor, exactly as snapshot_required does.
+        if (this.socket) this.abandonedSockets.add(this.socket);
         this.socket?.close(1000, "client resync");
         this.socket = undefined;
         try {
@@ -384,6 +388,11 @@ export class JournalConnection {
             return;
         }
 
+        // RPC replies (and pending-RPC error replies) are correlated by request id and stay valid;
+        // anything else an abandoned socket delivered belongs to the sync state the snapshot is
+        // replacing.
+        if (this.abandonedSockets.has(socket) && !this.isRpcReply(frame)) return;
+
         if (frame.kind === "control") {
             if (frame.op === "hello_ok") {
                 // A welcome drained from the queue after its socket was replaced belongs to a dead
@@ -398,7 +407,6 @@ export class JournalConnection {
                     // A journal that ignored hello.max_replay is about to replay a gap too large to be
                     // worth it. Abandon this socket (its queued replay frames are dropped) and take the
                     // same path as the server's snapshot_required valve.
-                    this.abandonedSocket = socket;
                     await this.resyncFromSnapshot(socket);
                     return;
                 }
@@ -420,7 +428,6 @@ export class JournalConnection {
                 return;
             }
         }
-        if (frame.kind === "journal" && socket === this.abandonedSocket) return;
         await this.callbacks.onFrame(frame);
     }
 
@@ -432,6 +439,7 @@ export class JournalConnection {
      * instead of reconnecting at once, since the same gap would just trip the valve again.
      */
     private async resyncFromSnapshot(socket: WebSocket): Promise<void> {
+        this.abandonedSockets.add(socket);
         this.replacingSnapshot = true;
         socket.close(1000, "replacing snapshot");
         // Detach now rather than waiting for the close event (as forceResync does): the reconnect
@@ -458,7 +466,7 @@ export class JournalConnection {
     }
 
     private async handleJournalBatch(frames: JournalEvent[], socket: WebSocket): Promise<void> {
-        if (socket === this.abandonedSocket) return;
+        if (this.abandonedSockets.has(socket)) return;
         await this.callbacks.onJournalBatch!(frames);
     }
 
@@ -471,6 +479,10 @@ export class JournalConnection {
         if (pending.backoffTimer !== undefined) window.clearTimeout(pending.backoffTimer);
         this.pendingRpc.delete(requestId);
         pending.resolve(reply);
+    }
+
+    private isRpcReply(frame: unknown): boolean {
+        return this.isFastPathFrame(frame);
     }
 
     private isFastPathFrame(frame: unknown): frame is ServerFrame {
