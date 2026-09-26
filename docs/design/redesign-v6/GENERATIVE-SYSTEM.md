@@ -64,9 +64,9 @@ Measured element: **the chat pane** via ResizeObserver → `data-pane` = `narrow
 
 **Card title row**, first to go → never:
 1. total duration (`· 3m 12s`)
-2. the step count
+2. the step count in the stopped state (the done-state count is the label and stays)
 3. the live line truncates with an ellipsis (a 90-char live line clips on one line)
-4. **never**: glyph, the words "Under the hood", chevron, and `Stop` when it is shown
+4. **never**: glyph, the done-state step count, chevron, and `Stop` when it is shown (the "Under the hood" title was removed 2026-09-26, HANDOFF §7a)
 
 **Group rows:**
 1. the `{k} steps` count column (hidden at narrow)

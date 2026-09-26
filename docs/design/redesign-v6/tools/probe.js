@@ -42,7 +42,7 @@
       forced: [...el.querySelectorAll(".is-hover,.is-focus")].map((x) => x.className).slice(0, 4),
     }));
   } else {
-    result.specimens = MAP.components.filter((c) => c.status !== "devtool").map((c) => {
+    result.specimens = MAP.components.filter((c) => c.status !== "devtool" && c.status !== "removed").map((c) => {
       const sel = firstSel(c.status === "implemented" ? c.selector : c.suggested || c.selector);
       let el = null; try { el = document.querySelector(sel); } catch { /* prose selector */ }
       return { spec: c.spec, status: c.status, selector: sel, found: !!el, visualClaim: c.visual || null, compare: c.compare || MAP.defaults.compare, computed: el ? pick(el) : null };

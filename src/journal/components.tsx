@@ -4070,7 +4070,7 @@ function ToolOutput({
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
-    /** Deep detail inside the "Under the hood" card opens the card expanded. */
+    /** Deep detail inside the turn card opens the card expanded. */
     defaultOpen?: boolean;
 }): React.ReactElement {
     const payload = event.payload;
@@ -4923,7 +4923,7 @@ export interface TurnLive {
 }
 
 /**
- * One agent tile per operator turn (Show the work OFF): the "Under the hood" card when the turn
+ * One agent tile per operator turn (Show the work OFF): the turn card when the turn
  * has at least one step, then its break-throughs in the order they happened, then a
  * turn-ending error, then the answer prose.
  */

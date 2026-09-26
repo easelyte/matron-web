@@ -6,9 +6,10 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * The "Under the hood" card (redesign v6, `.mj_TurnCard`): one per operator turn that has at
- * least one step, collapsed by default. See docs/design/redesign-v6/HANDOFF.md §4 and
- * GENERATIVE-SYSTEM.md §1-§8.
+ * The turn card (redesign v6, `.mj_TurnCard`): one per operator turn that has at least one
+ * step, collapsed by default. See docs/design/redesign-v6/HANDOFF.md §4 and
+ * GENERATIVE-SYSTEM.md §1-§8. The row carries no visible title (operator decision 2026-09-26,
+ * HANDOFF §7a): running is a spinner + the live line, done is the step summary + chevron.
  *
  * The collapsed summary is ONE row in every state (done, running, slow, waiting, stopped), so
  * a turn finishing never moves the thread. Monospace and exit codes appear only in the deep
@@ -176,7 +177,7 @@ function StatusGlyph({ status }: { status: Group["status"] }): React.ReactElemen
     if (status === "running") {
         return (
             <span className="mj_TurnCard_status" role="img" aria-label={label}>
-                <span className="mj_LiveDot" />
+                <span className="mj_TurnCard_spinner" />
             </span>
         );
     }
@@ -201,6 +202,7 @@ export function TurnCard({
 }: TurnCardProps): React.ReactElement {
     const baseId = useId();
     const bodyId = `${baseId}-body`;
+    const statusId = `${baseId}-status`;
     const [open, setOpen] = useState(false);
     const [openGroups, setOpenGroups] = useState<ReadonlySet<string>>(() => new Set());
     const [showAll, setShowAll] = useState<ReadonlySet<string>>(() => new Set());
@@ -228,6 +230,9 @@ export function TurnCard({
     const [resolved, setResolved] = useState(false);
     useEffect(() => {
         if (wasRunningRef.current && mode !== "running") setResolved(true);
+        // Work resumed in the same card (e.g. after answering a permission request): the fade
+        // must not stay on, or its animation would replace the spinner's rotation.
+        else if (mode === "running") setResolved(false);
         wasRunningRef.current = mode === "running";
     }, [mode]);
 
@@ -299,10 +304,9 @@ export function TurnCard({
     let meta: React.ReactNode;
     let srStatus: string;
     if (visualMode === "running" || visualMode === "slow") {
-        glyph = <span className="mj_LiveDot" />;
+        glyph = <span className="mj_TurnCard_spinner" />;
         meta = (
             <>
-                <span className="mj_TurnCard_sep">·</span>
                 <span className="mj_TurnCard_live">
                     {live.leaving !== undefined && (
                         <span className="mj_TurnCard_liveText mj_TurnCard_liveText_leaving" aria-hidden="true">
@@ -323,7 +327,6 @@ export function TurnCard({
         glyph = <span className="mj_TurnCard_dot mj_TurnCard_dot_wait" />;
         meta = (
             <>
-                <span className="mj_TurnCard_sep">·</span>
                 <span className="mj_TurnCard_live">
                     <span className="mj_TurnCard_liveText">Waiting for you</span>
                 </span>
@@ -334,7 +337,6 @@ export function TurnCard({
         glyph = <span className="mj_TurnCard_dot mj_TurnCard_dot_warn" />;
         meta = (
             <>
-                <span className="mj_TurnCard_sep">·</span>
                 <span className="mj_TurnCard_stoppedLabel">Stopped</span>
                 <span className="mj_TurnCard_sep mj_TurnCard_count_meta">·</span>
                 <span className="mj_TurnCard_count_meta">{stepCount(n)}</span>
@@ -345,8 +347,7 @@ export function TurnCard({
         glyph = issues ? <span className="mj_TurnCard_dot mj_TurnCard_dot_warn" /> : <V6Icon name="check" />;
         meta = (
             <>
-                <span className="mj_TurnCard_sep mj_TurnCard_count_meta">·</span>
-                <span className="mj_TurnCard_count_meta">{stepCount(n)}</span>
+                <span className="mj_TurnCard_countLabel">{stepCount(n)}</span>
                 <span className="mj_TurnCard_sep mj_TurnCard_elapsedTotal">·</span>
                 <span className="mj_TurnCard_elapsedTotal">{formatDuration(durationMs)}</span>
             </>
@@ -362,6 +363,8 @@ export function TurnCard({
                 ref={toggleRef}
                 type="button"
                 className="mj_TurnCard_toggle"
+                aria-label={open ? "Hide steps" : "Show steps"}
+                aria-describedby={statusId}
                 aria-expanded={open}
                 aria-controls={bodyId}
                 onClick={() => setOpen((current) => !current)}
@@ -369,10 +372,11 @@ export function TurnCard({
                 <span className="mj_TurnCard_glyph" aria-hidden="true">
                     {glyph}
                 </span>
-                <span className="mj_TurnCard_title">Under the hood</span>
                 <span className="mj_TurnCard_meta">
                     <span className="mj_TurnCard_statusRegion" role="status" aria-live="polite" aria-atomic="true">
-                        <span className="mj_SrOnly">{srStatus}. </span>
+                        <span className="mj_SrOnly" id={statusId}>
+                            {srStatus}.{" "}
+                        </span>
                         <span className="mj_TurnCard_metaVisible" aria-hidden="true">
                             {meta}
                         </span>
@@ -403,7 +407,7 @@ export function TurnCard({
 
     if (!open) {
         return (
-            <section className={className} aria-label="Under the hood" data-turn={turnKey}>
+            <section className={className} aria-label="Agent steps" data-turn={turnKey}>
                 {row}
             </section>
         );
@@ -411,7 +415,7 @@ export function TurnCard({
 
     const fileCap = showAll.has("files") ? files.length : FILE_CAP;
     return (
-        <section className={className} aria-label="Under the hood" data-turn={turnKey}>
+        <section className={className} aria-label="Agent steps" data-turn={turnKey}>
             {row}
             <div className="mj_TurnCard_body" id={bodyId} onKeyDown={onBodyKeyDown}>
                 {files.length > 0 && (
@@ -494,7 +498,7 @@ export function TurnCard({
                 {(visualMode === "running" || visualMode === "slow") && (
                     <div className="mj_TurnCard_now" aria-hidden="true">
                         <span className="mj_TurnCard_glyph">
-                            <span className="mj_LiveDot" />
+                            <span className="mj_TurnCard_spinner" />
                         </span>
                         <span>{live.current}</span>
                     </div>

@@ -6,7 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * The "Under the hood" activity-grouping algorithm (redesign v6, GENERATIVE-SYSTEM §1).
+ * The turn-card activity-grouping algorithm (redesign v6, GENERATIVE-SYSTEM §1).
  *
  * A TypeScript port of docs/design/redesign-v6/src/model.js → CLASSES, groupTurn, stepSentence,
  * liveLine, changedFiles. Pure: no DOM, no React, no client. Input is the card's content for
