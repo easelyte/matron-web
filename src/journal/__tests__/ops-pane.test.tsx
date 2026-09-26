@@ -85,7 +85,8 @@ it("says 'needs bridge update' for an old bridge instead of an error", async () 
     const client = fakeClient(() => ({ ok: false, code: "unknown_method" }));
     const { container, unmount } = await mount(client);
     const notes = [...container.querySelectorAll(".mj_OpsNote_update")];
-    expect(notes).toHaveLength(5);
+    // Said once, not once per section.
+    expect(notes).toHaveLength(1);
     expect(notes[0].textContent).toContain("Needs bridge update");
     expect(container.querySelector(".mj_OpsNote_error")).toBeNull();
     // Only the reporting bridge is asked; the anton agent never is.

@@ -246,7 +246,13 @@ export function OpsPane({ client, state }: { client: MatronJournalClient; state:
                         )}
                     </OpsSectionFrame>
 
-                    {noBridge ? (
+                    {!noBridge &&
+                    (Object.values(sections) as { phase: string }[]).every((x) => x.phase === "unsupported") ? (
+                        // An old bridge answers every section the same way: say it once.
+                        <OpsSectionFrame title="Host, alerts, timers, usage" meta={target?.name} spec="ops.detail">
+                            <SectionBody state={sections.host} render={() => null} />
+                        </OpsSectionFrame>
+                    ) : noBridge ? (
                         <OpsNote>
                             No box has sent a report yet, so there is nothing to ask for processes, timers or usage.
                         </OpsNote>
@@ -357,8 +363,8 @@ function SectionBody<S extends OpsSection>({
         case "unsupported":
             return (
                 <OpsNote tone="update">
-                    <strong>Needs bridge update.</strong> This box's bridge predates the ops snapshot; it shows up after
-                    the next bridge restart.
+                    <strong>Needs bridge update.</strong> This box's bridge predates the ops snapshot. Host, alerts,
+                    timers, usage and security show up here after its next restart.
                 </OpsNote>
             );
         case "not_configured":
@@ -426,8 +432,8 @@ function OpsSummary({
     else if (worst && worst.percent >= 50)
         parts.push({ text: `${worst.label} quota at ${Math.round(worst.percent)}%`, tone: "warn" });
 
-    const offline = agents.filter((d) => !d.connected && d.status).length;
-    if (offline) parts.push({ text: `${offline} box${offline === 1 ? "" : "es"} asleep`, tone: "warn" });
+    // A sleeping box is normal (boxes idle-stop and wake on demand), so it is shown on its card,
+    // not raised here.
 
     // "All quiet" is a claim that the checks ran: it needs a real alerts AND timers reading. Without
     // them, say what is unknown rather than implying health.
