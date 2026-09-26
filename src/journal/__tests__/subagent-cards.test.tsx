@@ -177,6 +177,15 @@ describe("sidebar preview (Developer view off)", () => {
                 worker: "codex" as const,
             }),
         ).toBe("Two type errors in src/retention.ts, lines 40 and 58.");
+        expect(
+            previewLine({
+                ...row("Fixed src/journal/client.ts:775 and verified retry behavior", "done"),
+                worker: "codex" as const,
+            }),
+        ).toBe("Fixed src/journal/client.ts:775 and verified retry behavior");
+        expect(previewLine(row("Deployed; the probe returned exit code 0 on every host.", "idle"))).toBe(
+            "Deployed; the probe returned exit code 0 on every host.",
+        );
         expect(previewLine(row("The first wave is finished. #779 and #783 shipped.", "idle"))).toBe(
             "The first wave is finished. #779 and #783 shipped.",
         );

@@ -102,9 +102,11 @@ export function plainLine(markdown: string): string {
         .trim();
 }
 
+// Anchored at a line start: output opens with these, a sentence that merely mentions an error
+// code or a file:line ("Fixed src/a.ts:12 and …") does not.
 const DIAGNOSTIC =
-    /\(\d+,\d+\): (?:error|warning)|\berror TS\d+|Traceback \(most recent call|npm ERR!|^\s*at \S+ \(|\bexit(?:ed)? (?:code|status) \d+/m;
-const GREP_HIT = /(?:^|\s)[\w./-]+\.\w+:\d+(?::\d+)?(?:[:\s]|$)/;
+    /^\S+\(\d+,\d+\): (?:error|warning)\b|^Traceback \(most recent call|^npm ERR!|^\s*at \S+ \(\S+:\d+:\d+\)/m;
+const GREP_HIT = /^[\w./-]+\.\w+:\d+(?::\d+)?(?::|\s|$)/;
 
 /**
  * Does a snippet read as a command's output rather than a sentence? Conservative: a compiler or
