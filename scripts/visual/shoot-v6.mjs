@@ -144,6 +144,32 @@ const STATES = [
     },
 ];
 
+STATES.push(
+    {
+        name: "settings-off",
+        query: "v6=t1",
+        viewport: "desktop",
+        setup: async (page) => page.locator('button[aria-label="Settings"]').click(),
+    },
+    {
+        name: "settings-on",
+        query: "v6=t1&work=on",
+        viewport: "desktop",
+        setup: async (page) => page.locator('button[aria-label="Settings"]').click(),
+    },
+    {
+        name: "settings-sheet",
+        query: "v6=t1",
+        viewport: "phone",
+        stayOnList: true,
+        setup: async (page) => {
+            const back = page.locator('button[aria-label="Back to conversations"]');
+            if (await back.isVisible()) await back.click();
+            await page.locator('button[aria-label="Settings"]').click();
+        },
+    },
+);
+
 const VIEWPORTS = {
     desktop: { width: 1280, height: 900 },
     tall: { width: 1280, height: 2600 },
@@ -172,7 +198,7 @@ for (const theme of ["light", "dark"]) {
             if (spec.setup) await spec.setup(page);
             await page.mouse.move(0, 0);
             await page.waitForTimeout(400);
-            if (spec.viewport === "phone") {
+            if (spec.viewport === "phone" && !spec.stayOnList) {
                 // Phone layout opens on the conversation list; tap into the selected thread.
                 const row = page.locator(".mj_RoomListItem").first();
                 if (await row.count()) await row.click().catch(() => {});

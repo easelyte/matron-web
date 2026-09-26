@@ -174,12 +174,18 @@
 All seven open decisions above were confirmed as final, with the defaults as proposed. They are decided, not provisional.
 
 1. **Accent text in light** uses `#0f766e` (`--cpd-color-bg-accent`, about 5.4:1). Accent icons and fills keep `#0d9488`.
-2. **Settings anchor**: the Settings menu opens from the sidebar-footer gear.
+2. **Settings anchor**: ~~the sidebar-footer gear~~. **Superseded by design round 2:** there is no sidebar footer. Settings is the sliders icon, the last action in the sidebar header (Files · Tracker · Settings), and opens the menu under it; on the phone the same icon opens a bottom sheet.
 3. **Codex tool names**: `apply_patch` (and the legacy `file_change` output) is a change step; `shell` is classified by its command, after unwrapping `bash -lc '…'`, a leading `cd … &&` and leading `VAR=value` assignments.
 4. **Changed-file deep view** shows the last diff for the path.
 5. **Turn duration** runs from the operator message to the turn's last event.
 6. **Failed step deep view** shows the next passing rerun only.
 7. **400 MB** is fixed copy until the bridge reports a per-box figure.
+
+### Round 2 changes to v6 (operator-accepted)
+
+- **Rename:** "Show the work" is now **"Developer view"** (same behaviour, thread only). The storage key stays `matron.showTheWork`.
+- **Settings menu:** username + server · connection status (Reconnect when not online) · Theme · Developer view · hairline · Sign out. The theme toggle moved from the header into this menu.
+- **No hints:** neither Developer view nor "Enable browser tools" gets a descriptive hint line. Hints remain only for disabled-state reasons (e.g. "Not available for Codex sessions").
 
 ## 8. Known gaps / where the design guessed
 
