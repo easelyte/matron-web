@@ -2368,167 +2368,6 @@ textarea {
     font: var(--cpd-font-body-sm-regular);
 }
 
-/* v5 new-session sheet: the upload-dialog shell + a fully themed form. The load-bearing
-   fix is §10.4 — the native inputs were unstyled, so they inherited the UA white and
-   vanished on dark ("Agent default" white-on-dark). Every input/checkbox/label now sets
-   its own themed colours, and each label binds to the field BELOW it at the 6px field
-   rhythm (§10.3). */
-.mj_NewSessionSheet {
-    gap: 14px;
-}
-
-.mj_NewSessionSheet_head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.mj_NewSessionSheet_head .mj_UploadConfirm_title {
-    flex: 1;
-    min-width: 0;
-}
-
-.mj_NewSessionSheet_close {
-    display: inline-flex;
-    width: 28px;
-    height: 28px;
-    flex: 0 0 auto;
-    align-items: center;
-    justify-content: center;
-    border: 0;
-    border-radius: 8px;
-    background: transparent;
-    color: var(--cpd-color-icon-secondary);
-    cursor: pointer;
-}
-
-.mj_NewSessionSheet_close:hover {
-    background: var(--cpd-color-bg-subtle-primary);
-    color: var(--cpd-color-text-primary);
-}
-
-.mj_NewSessionSheet_close:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
-}
-
-.mj_NewSessionSheet > p,
-.mj_NewSessionSheet [role="status"] {
-    margin: 0;
-    color: var(--cpd-color-text-secondary);
-    font:
-        400 13px/18px Inter,
-        sans-serif;
-}
-
-/* A field label binds to the field BELOW it (§10.3 6px). */
-.mj_NewSessionSheet label {
-    display: block;
-    margin-bottom: 6px;
-    color: var(--cpd-color-text-secondary);
-    font:
-        500 12px/16px Inter,
-        sans-serif;
-}
-
-/* §10.4 native text input: explicit background/colour/border in BOTH themes. */
-.mj_NewSessionSheet input[type="text"] {
-    display: block;
-    width: 100%;
-    min-height: 34px;
-    box-sizing: border-box;
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: 8px;
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
-    padding: 0 12px;
-    font:
-        400 13.5px/20px Inter,
-        sans-serif;
-}
-
-.mj_NewSessionSheet input[type="text"]::placeholder {
-    color: var(--cpd-color-text-tertiary);
-}
-
-.mj_NewSessionSheet input[type="text"]:focus,
-.mj_NewSessionSheet input[type="text"]:focus-visible {
-    border-color: var(--cpd-color-border-interactive-primary);
-    outline: none;
-}
-
-.mj_NewSessionSheet input[type="text"]:disabled {
-    background: var(--cpd-color-bg-subtle-secondary);
-    color: var(--cpd-color-text-secondary);
-    cursor: default;
-}
-
-/* Checkbox row: the label wraps the checkbox, so reset the block-label rule to inline. */
-.mj_NewSessionSheet label:has(input[type="checkbox"]) {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 0;
-    color: var(--cpd-color-text-primary);
-    font:
-        400 13.5px/20px Inter,
-        sans-serif;
-    cursor: pointer;
-}
-
-.mj_NewSessionSheet input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    margin: 0;
-    accent-color: var(--cpd-color-bg-accent);
-    cursor: pointer;
-}
-
-.mj_NewSessionSheet input[type="checkbox"]:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
-}
-
-/* Agent / recent-folder pick lists. */
-.mj_NewSessionSheet [role="list"] {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.mj_NewSessionSheet [role="listitem"] {
-    display: flex;
-    width: 100%;
-    box-sizing: border-box;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: 8px;
-    background: transparent;
-    color: var(--cpd-color-text-primary);
-    padding: 8px 12px;
-    font:
-        400 13px/18px Inter,
-        sans-serif;
-    text-align: left;
-    cursor: pointer;
-}
-
-.mj_NewSessionSheet [role="listitem"]:hover:not(:disabled) {
-    background: var(--cpd-color-bg-subtle-primary);
-}
-
-.mj_NewSessionSheet [role="listitem"]:disabled {
-    cursor: default;
-    opacity: 0.5;
-}
-
-.mj_NewSessionSheet [role="listitem"]:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
-    outline-offset: 2px;
-}
-
 .mj_AttachmentChip {
     display: grid;
     width: fit-content;
@@ -6138,4 +5977,417 @@ button.mj_File {
 .mj_BrowserToolsConfirm .mj_UploadConfirm_body p {
     margin: 0;
     font: var(--cpd-font-body);
+}
+
+/* ---- v6 surface C: one-tap New session — split button + options sheet ---- */
+.mj_NewSessionSplit {
+    display: flex;
+    height: 34px;
+    border: 1px solid var(--mj-accent-border);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-state-selected);
+    color: var(--cpd-color-text-action-accent);
+    container-type: inline-size;
+}
+
+/* The v5 button becomes the main segment: the container owns border + fill. */
+.mj_NewSessionSplit .mj_NewSessionButton.mj_NewSessionSplit_main {
+    width: auto;
+    height: auto;
+    min-width: 0;
+    flex: 1 1 auto;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 7px 0 0 7px;
+    background: transparent;
+    color: inherit;
+}
+
+.mj_NewSessionSplit_more {
+    display: flex;
+    width: 34px;
+    flex: 0 0 34px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 0 7px 7px 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    transition: background var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mj_NewSessionSplit_main:hover:not(:disabled),
+.mj_NewSessionSplit_more:hover:not(:disabled) {
+    background: var(--cpd-state-active);
+}
+
+.mj_NewSessionSplit_main:focus-visible,
+.mj_NewSessionSplit_more:focus-visible {
+    position: relative;
+    z-index: 1;
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_NewSessionSplit button:disabled {
+    cursor: default;
+}
+
+.mj_NewSessionSplit_sep {
+    width: 1px;
+    flex: none;
+    margin: 7px 0;
+    background: var(--mj-accent-border);
+}
+
+.mj_NewSessionSplit .mj_V6Icon {
+    width: 15px;
+    height: 15px;
+}
+
+.mj_NewSessionSplit_label {
+    flex: none;
+    white-space: nowrap;
+}
+
+/* The defaults hint is hidden below a 240px split, never truncated to "Opus · wo…"; between
+   240 and 300px the pencil yields to it. */
+.mj_NewSessionSplit_hint {
+    display: none;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-meta);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@container (min-width: 240px) {
+    .mj_NewSessionSplit_hint {
+        display: block;
+    }
+
+    .mj_NewSessionSplit_main:has(.mj_NewSessionSplit_hint) > .mj_V6Icon {
+        display: none;
+    }
+}
+
+@container (min-width: 300px) {
+    .mj_NewSessionSplit_main:has(.mj_NewSessionSplit_hint) > .mj_V6Icon {
+        display: block;
+    }
+}
+
+.mj_NewSessionSplit_disabled {
+    border-color: var(--cpd-color-border-subtle);
+    background: var(--cpd-color-bg-subtle-primary);
+    color: var(--cpd-color-text-secondary);
+}
+
+.mj_NewSessionSplit_disabled .mj_NewSessionSplit_sep {
+    background: var(--cpd-color-border-subtle);
+}
+
+.mj_NewSessionSplit_note {
+    margin: 6px 2px 0;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-meta);
+    overflow-wrap: anywhere;
+}
+
+.mj_NewSessionSplit_note_error {
+    color: var(--cpd-color-text-critical-primary);
+}
+
+.mj_NewSessionSplit_note button {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-action-accent);
+    cursor: pointer;
+    font: inherit;
+    font-weight: 500;
+}
+
+.mj_NewSessionSplit_note button:hover {
+    text-decoration: underline;
+}
+
+@media (max-width: 700px) {
+    .mj_NewSessionSplit {
+        height: 44px;
+    }
+
+    .mj_NewSessionSplit_more {
+        width: 44px;
+        flex-basis: 44px;
+    }
+}
+
+.mj_NewSessionSheet .mj_UploadConfirm_body {
+    gap: var(--cpd-space-4x);
+}
+
+.mj_NewSessionSheet .mj_UploadConfirm_body > p {
+    margin: 0;
+}
+
+.mj_Field {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.mj_FieldLabel {
+    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-label-sm);
+}
+
+.mj_FieldHint {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-meta);
+}
+
+.mj_FieldError {
+    margin: 0;
+    color: var(--cpd-color-text-critical-primary);
+    font: var(--cpd-font-meta);
+}
+
+.mj_FolderList {
+    display: flex;
+    max-height: 196px;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 4px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+}
+
+.mj_FolderOption {
+    display: grid;
+    width: 100%;
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    padding: 6px 8px;
+    border: 0;
+    border-radius: var(--cpd-radius-sm);
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+    font: var(--cpd-font-body-sm-regular);
+    text-align: left;
+}
+
+.mj_FolderOption:hover {
+    background: var(--cpd-state-hover);
+}
+
+.mj_FolderOption:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: -2px;
+}
+
+.mj_FolderOption[aria-checked="true"] {
+    background: var(--cpd-state-selected);
+}
+
+.mj_FolderOption_path {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_Radio {
+    display: grid;
+    width: 14px;
+    height: 14px;
+    box-sizing: border-box;
+    place-items: center;
+    border: 1.5px solid var(--cpd-color-border-interactive-primary);
+    border-radius: 50%;
+}
+
+[aria-checked="true"] > .mj_Radio {
+    border-color: var(--cpd-color-bg-accent);
+}
+
+[aria-checked="true"] > .mj_Radio::after {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--cpd-color-bg-accent);
+}
+
+.mj_Tag {
+    padding: 1px 8px;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-micro);
+}
+
+.mj_TextInput,
+.mj_Select,
+.mj_TextArea {
+    display: block;
+    width: 100%;
+    min-height: 34px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background-color: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_TextInput::placeholder,
+.mj_TextArea::placeholder {
+    color: var(--cpd-color-text-placeholder);
+}
+
+.mj_TextInput:focus,
+.mj_Select:focus,
+.mj_TextArea:focus {
+    border-color: var(--cpd-color-border-interactive-primary);
+    outline: none;
+}
+
+.mj_TextInput:focus-visible,
+.mj_Select:focus-visible,
+.mj_TextArea:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 1px;
+}
+
+.mj_TextInput_error {
+    border-color: var(--mj-critical-border);
+}
+
+.mj_Select {
+    padding-right: 32px;
+    background-image:
+        linear-gradient(45deg, transparent 50%, var(--cpd-color-icon-secondary) 50%),
+        linear-gradient(135deg, var(--cpd-color-icon-secondary) 50%, transparent 50%);
+    background-position:
+        calc(100% - 17px) 50%,
+        calc(100% - 12px) 50%;
+    background-repeat: no-repeat;
+    background-size: 5px 5px;
+    appearance: none;
+}
+
+.mj_Select:disabled,
+.mj_TextInput:disabled {
+    background-color: var(--cpd-color-bg-subtle-secondary);
+    color: var(--cpd-color-text-secondary);
+    cursor: default;
+}
+
+.mj_Select option {
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_TextArea {
+    min-height: 64px;
+    padding: 8px 12px;
+    resize: vertical;
+}
+
+.mj_Segmented {
+    display: flex;
+    gap: 4px;
+    padding: 2px;
+    border-radius: var(--cpd-radius-pill);
+    background: var(--cpd-color-bg-subtle-secondary);
+}
+
+.mj_Segmented button {
+    display: inline-flex;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: var(--cpd-radius-pill);
+    background: transparent;
+    color: var(--cpd-color-text-secondary);
+    cursor: pointer;
+    font: var(--mj-font-label-sm);
+}
+
+.mj_Segmented button[aria-checked="true"] {
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-sm);
+    color: var(--cpd-color-text-primary);
+}
+
+.mj_Segmented button:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 1px;
+}
+
+.mj_SwitchRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px 12px;
+}
+
+.mj_SwitchRow .mj_FieldHint {
+    grid-column: 1 / -1;
+}
+
+.mj_SwitchLabel {
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-label);
+}
+
+button.mj_SwitchButton {
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--cpd-radius-pill);
+    background: transparent;
+    cursor: pointer;
+}
+
+button.mj_SwitchButton:disabled {
+    cursor: default;
+}
+
+button.mj_SwitchButton:focus-visible {
+    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_CheckRow {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+    color: var(--cpd-color-text-primary);
+    cursor: pointer;
+    font: var(--cpd-font-body-sm-regular);
+}
+
+.mj_CheckRow input {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--cpd-color-bg-accent);
+}
+
+.mj_BoxCaption {
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-meta);
 }

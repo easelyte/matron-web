@@ -432,6 +432,30 @@ if (v6Scenario) {
     { path: "/opt/matron/journal" },
 ];
 
+// v6 options sheet: the box's start options (bridge recent_folders reply, parsed).
+(client as unknown as { sessionOptions: () => Promise<unknown> }).sessionOptions = async () => ({
+    folders: [
+        { path: "/opt/matron/web-journal", last_used: 3 },
+        { path: "/home/user/workspace", last_used: 2 },
+        { path: "/opt/matron/journal", last_used: 1 },
+    ],
+    models: [
+        { value: "opus", label: "Opus 4.5" },
+        { value: "sonnet", label: "Sonnet 4.5" },
+        { value: "haiku", label: "Haiku 4.5" },
+    ],
+    defaultModel: "opus",
+    agents: ["claude", "codex"],
+    defaultAgent: "claude",
+});
+// One tap never resolves in the harness, so the split's "Starting…" state can be captured.
+(client as unknown as { startSessionRpc: () => Promise<unknown> }).startSessionRpc = () => new Promise(() => undefined);
+if (new URLSearchParams(window.location.search).get("remember") === "1")
+    localStorage.setItem(
+        "matron.newSessionDefaults.dev-local",
+        JSON.stringify({ folder: "/home/user/workspace", model: "opus", agent: "claude" }),
+    );
+
 const params = new URLSearchParams(window.location.search);
 document.documentElement.setAttribute("data-theme", params.get("theme") === "dark" ? "dark" : "light");
 

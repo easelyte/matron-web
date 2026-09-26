@@ -4096,22 +4096,22 @@ describe("session creation orchestration", () => {
         [
             "relay not_connected",
             { ok: false, origin: "relay", code: "not_connected" },
-            { kind: "error", message: "Still connecting — try again in a moment." },
+            { kind: "error", reach: true, message: "Still connecting — try again in a moment." },
         ],
         [
             "relay not_ready",
             { ok: false, origin: "relay", code: "not_ready" },
-            { kind: "error", message: "Still connecting — try again in a moment." },
+            { kind: "error", reach: true, message: "Still connecting — try again in a moment." },
         ],
         [
             "other relay error",
             { ok: false, origin: "relay", code: "rejected" },
-            { kind: "error", message: "Couldn't reach that box — try again." },
+            { kind: "error", reach: true, message: "Couldn't reach that box — try again." },
         ],
         [
             "bad workdir",
             { ok: false, origin: "agent", code: "bad_workdir" },
-            { kind: "error", message: "That folder doesn't exist on the box." },
+            { kind: "error", code: "bad_workdir", message: "That folder doesn’t exist on the box." },
         ],
         ["spawn failure", { ok: false, origin: "agent", code: "spawn_failed" }, { kind: "uncertain" }],
         ["unsupported mode", { ok: false, origin: "agent", code: "unsupported_mode" }, { kind: "uncertain" }],
@@ -4131,6 +4131,41 @@ describe("session creation orchestration", () => {
         expect(internals(client).connection?.agentRequest).toHaveBeenCalledWith(9, "start", {
             workdir: "/srv/project",
             browser: true,
+        });
+    });
+
+    it("sends the model and agent picks with a start (v6 options sheet)", async () => {
+        const client = withAgentReply({ ok: true, origin: "agent", result: { convo_id: "c" } });
+        await client.startSessionRpc(9, "/srv", false, { model: "sonnet", agent: "claude" });
+        expect(internals(client).connection?.agentRequest).toHaveBeenCalledWith(9, "start", {
+            workdir: "/srv",
+            model: "sonnet",
+            agent: "claude",
+        });
+    });
+
+    it("reads the box's session options from recent_folders", async () => {
+        const client = withAgentReply({
+            ok: true,
+            origin: "agent",
+            result: {
+                folders: [{ path: "/srv/a", last_used: 2 }],
+                model_options: [{ value: "opus", label: "Opus 4.5" }],
+                default_model: "opus",
+                agent_options: [
+                    { value: "claude", label: "Claude" },
+                    { value: "codex", label: "Codex" },
+                ],
+                default_agent: "claude",
+            },
+        });
+        await expect(client.sessionOptions(9)).resolves.toEqual({
+            folders: [{ path: "/srv/a", last_used: 2 }],
+            models: [{ value: "opus", label: "Opus 4.5" }],
+            defaultModel: "opus",
+            agents: ["claude", "codex"],
+            defaultAgent: "claude",
+            defaultFolder: undefined,
         });
     });
 
@@ -4166,6 +4201,7 @@ describe("session creation orchestration", () => {
         await expect(client.recentFolders(9)).resolves.toEqual([]);
         await expect(client.startSessionRpc(9, "", false)).resolves.toEqual({
             kind: "error",
+            reach: true,
             message: "Still connecting — try again in a moment.",
         });
     });

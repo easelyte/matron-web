@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import { parseSessionOptions, type SessionOptions } from "./new-session";
 import { JournalApi, JournalApiError, loadMatronConfig } from "./api";
 import { JournalConnection } from "./connection";
 import { FilesApi } from "./files/filesApi";
@@ -152,7 +153,11 @@ type PersistPendingAttachmentOutcome =
     { kind: "persisted-uploadable" } | { kind: "persisted-terminal" } | { kind: "persist-failed" };
 
 export type StartOutcome =
-    { kind: "created"; convoId: string } | { kind: "error"; message: string } | { kind: "uncertain" };
+    | { kind: "created"; convoId: string }
+    /** `code` is the agent's error code when it gave one (e.g. `bad_workdir`); `reach` = the box
+        couldn't be reached at all. */
+    | { kind: "error"; message: string; code?: string; reach?: boolean }
+    | { kind: "uncertain" };
 
 export type WorkerKind = "claude" | "codex";
 
@@ -575,12 +580,28 @@ export class MatronJournalClient {
         return classifyReadFileReply(reply);
     }
 
-    public startSessionRpc(agentDeviceId: number, workdir: string, browser: boolean): Promise<StartOutcome> {
+    /**
+     * What a box offers for a new session (v6 options sheet): recent folders plus the model and
+     * agent options and defaults the bridge's `recent_folders` reply carries. Throws when the box
+     * can't answer, so the caller can show its own error.
+     */
+    public async sessionOptions(agentDeviceId: number): Promise<SessionOptions> {
+        const reply = await this.agentRpc(agentDeviceId, "recent_folders", {});
+        if (!reply.ok) throw new Error(reply.code ?? "unavailable");
+        return parseSessionOptions(reply.result);
+    }
+
+    public startSessionRpc(
+        agentDeviceId: number,
+        workdir: string,
+        browser: boolean,
+        choice: { model?: string; agent?: "claude" | "codex" } = {},
+    ): Promise<StartOutcome> {
         if (this.startSessionRequest) {
             return Promise.resolve({ kind: "error", message: "A session is already starting — please wait." });
         }
 
-        const request = this.performStartSessionRpc(agentDeviceId, workdir, browser);
+        const request = this.performStartSessionRpc(agentDeviceId, workdir, browser, choice);
         this.startSessionRequest = request;
         const clear = (): void => {
             if (this.startSessionRequest === request) this.startSessionRequest = undefined;
@@ -593,11 +614,14 @@ export class MatronJournalClient {
         agentDeviceId: number,
         workdir: string,
         browser: boolean,
+        choice: { model?: string; agent?: "claude" | "codex" } = {},
     ): Promise<StartOutcome> {
-        const params: { workdir?: string; browser?: true } = {};
+        const params: { workdir?: string; browser?: true; model?: string; agent?: string } = {};
         const normalizedWorkdir = workdir.trim();
         if (normalizedWorkdir) params.workdir = normalizedWorkdir;
         if (browser) params.browser = true;
+        if (choice.model) params.model = choice.model;
+        if (choice.agent) params.agent = choice.agent;
 
         const reply = await this.agentRpc(agentDeviceId, "start", params);
         if (reply.ok) {
@@ -612,6 +636,7 @@ export class MatronJournalClient {
         if (reply.origin === "relay") {
             return {
                 kind: "error",
+                reach: true,
                 message:
                     reply.code === "not_connected" || reply.code === "not_ready"
                         ? "Still connecting — try again in a moment."
@@ -619,7 +644,15 @@ export class MatronJournalClient {
             };
         }
         if (reply.origin === "agent" && reply.code === "bad_workdir") {
-            return { kind: "error", message: "That folder doesn't exist on the box." };
+            return { kind: "error", code: "bad_workdir", message: "That folder doesn’t exist on the box." };
+        }
+        if (reply.origin === "agent" && (reply.code === "bad_model" || reply.code === "bad_agent")) {
+            return {
+                kind: "error",
+                code: reply.code,
+                message:
+                    reply.code === "bad_model" ? "The box can’t run that model." : "The box can’t start that agent.",
+            };
         }
         return { kind: "uncertain" };
     }
