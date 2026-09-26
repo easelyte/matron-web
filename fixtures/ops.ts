@@ -7,7 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 /*
  * Ops page fixtures (loop #542 phase B). Shapes follow the wire contract
- * (tmp/2026-09-26-ops-surface/phase-b-contract.md): the box report is the live VPS device_status
+ * (bridge docs/agent-rpc.md, journal docs/protocol.md): the box report is a live device_status
  * row of 2026-09-26 plus the phase-B additions (Codex lines, vitals); the snapshot sections are the
  * bridge's ops_snapshot result envelopes. Times are relative to page load so relative labels read
  * naturally in screenshots.
@@ -58,7 +58,7 @@ function boxStatus(mode: OpsFixtureMode, deviceId: number): Record<string, unkno
             activity: { live_sessions: 0, last_hour: [] },
             limits: { as_of: NOW - 9 * H, lines: claude.map((l) => ({ ...l, percent: Math.round(l.percent / 3) })) },
             disk: { free_bytes: 412 * GB, total_bytes: 931 * GB },
-            account: { email: "fantin@easelyte.ai" },
+            account: { email: "operator@example.com" },
             vitals: { cpu_pct: 4, ram_pct: 31, sampled_at_ms: NOW - 9 * H },
         };
     }
@@ -67,13 +67,13 @@ function boxStatus(mode: OpsFixtureMode, deviceId: number): Record<string, unkno
         activity: {
             live_sessions: 3,
             last_hour: [
-                { path: "/root/.openclaw/workspace", sessions: 2 },
+                { path: "/home/operator/workspace", sessions: 2 },
                 { path: "/opt/matron/web-journal", sessions: 1 },
             ],
         },
         limits: { as_of: NOW - 2 * M, lines: old ? claude : [...claude, ...codex] },
         disk: { free_bytes: 86 * GB, total_bytes: 144 * GB },
-        account: { email: "fantin@easelyte.ai" },
+        account: { email: "operator@example.com" },
         ...(old ? {} : { vitals: { cpu_pct: hot ? 78 : 23, ram_pct: hot ? 88 : 61, sampled_at_ms: NOW - 2 * M } }),
     };
 }
@@ -130,14 +130,14 @@ export const opsMetrics = {
 function host(mode: OpsFixtureMode): unknown {
     const hot = mode === "problems";
     return {
-        hostname: "vmi3096107",
+        hostname: "box-01",
         cpu_cores: 6,
         uptime_s: 11 * 86_400 + 4 * 3600,
         load: hot ? [5.41, 4.2, 3.1] : [0.52, 0.61, 0.58],
         cpu_pct: hot ? 78 : 23,
         memory: { total_bytes: Math.round(11.7 * GB), available_bytes: Math.round((hot ? 1.4 : 4.6) * GB) },
         swap: { total_bytes: 6 * GB, free_bytes: Math.round((hot ? 3.9 : 5.8) * GB) },
-        disk: { path: "/root/.openclaw/workspace", free_bytes: 86 * GB, total_bytes: 144 * GB },
+        disk: { path: "/home/operator/workspace", free_bytes: 86 * GB, total_bytes: 144 * GB },
         agents: { claude: 4, codex: 1 },
         live_sessions: 3,
         processes: [
@@ -307,7 +307,7 @@ function posture(mode: OpsFixtureMode): unknown {
         security: {
             status: mode === "problems" ? "yellow" : "green",
             generated_ms: NOW - 5 * H,
-            actions: mode === "problems" ? ["Rotate or restrict 1 high-risk provider credential: snafu_proxy"] : [],
+            actions: mode === "problems" ? ["Rotate or restrict 1 high-risk provider credential: proxy_key"] : [],
         },
         api_usage: [
             { name: "Tavily", used: 612, limit: 1000, unit: "credits", period: "month" },

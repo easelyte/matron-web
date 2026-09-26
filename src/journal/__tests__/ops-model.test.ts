@@ -24,10 +24,10 @@ import {
     splitLimitLines,
 } from "../ops/model";
 
-// The live device_status row on the VPS (2026-09-26), verbatim shape.
+// A real device_status row (2026-09-26), verbatim shape, identifiers replaced.
 const LIVE_STATUS = {
     reported_at: 1790440934560,
-    activity: { live_sessions: 1, last_hour: [{ path: "/root/.openclaw/workspace", sessions: 1 }] },
+    activity: { live_sessions: 1, last_hour: [{ path: "/home/operator/workspace", sessions: 1 }] },
     limits: {
         as_of: 1790440934387,
         lines: [
@@ -43,7 +43,7 @@ const LIVE_STATUS = {
         ],
     },
     disk: { free_bytes: 92635176960, total_bytes: 154894188544 },
-    account: { email: "fantin@easelyte.ai" },
+    account: { email: "operator@example.com" },
 };
 
 describe("parseBoxStatus", () => {
@@ -53,7 +53,7 @@ describe("parseBoxStatus", () => {
         expect(s.activity?.live_sessions).toBe(1);
         expect(s.limits?.lines).toHaveLength(3);
         expect(s.disk?.total_bytes).toBe(154894188544);
-        expect(s.account?.email).toBe("fantin@easelyte.ai");
+        expect(s.account?.email).toBe("operator@example.com");
         expect(s.vitals).toBeUndefined();
     });
 
@@ -71,7 +71,7 @@ describe("parseBoxStatus", () => {
         const s = parseBoxStatus({ ...LIVE_STATUS, disk: { free_bytes: "x" }, limits: "nope" })!;
         expect(s.disk).toBeUndefined();
         expect(s.limits).toBeUndefined();
-        expect(s.account?.email).toBe("fantin@easelyte.ai");
+        expect(s.account?.email).toBe("operator@example.com");
         expect(parseBoxStatus(null)).toBeUndefined();
         expect(parseBoxStatus([1])).toBeUndefined();
     });
@@ -86,7 +86,7 @@ describe("parseBoxStatusFrame", () => {
     it("reads the live fan-out frame", () => {
         const f = parseBoxStatusFrame({ kind: "box_status", device_id: 1, ...LIVE_STATUS });
         expect(f?.deviceId).toBe(1);
-        expect(f?.status.account?.email).toBe("fantin@easelyte.ai");
+        expect(f?.status.account?.email).toBe("operator@example.com");
     });
     it("rejects frames without a device id or of another kind", () => {
         expect(parseBoxStatusFrame({ kind: "box_status" })).toBeNull();
