@@ -386,6 +386,34 @@ describe("ItemDetail", () => {
             expect(container.querySelector(".mj_TrackerOrigin")?.textContent).toBe("Opened from Renamed chat");
         });
 
+        it("follows a rename of the origin conversation without remounting", async () => {
+            const client = fakeClient();
+            client.getSnapshot.mockReturnValue({
+                selectedConversationId: "c-here",
+                conversations: [{ id: "c-old", title: "Old name" }],
+            });
+            const item = trackerItem({ origin_convo_id: "c-old" });
+            const detail = (): React.ReactElement => (
+                <ItemDetail
+                    item={item}
+                    comments={[]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />
+            );
+            const { container, root } = await mount(detail());
+            expect(container.querySelector(".mj_TrackerOrigin")?.textContent).toBe("Opened from Old name");
+
+            client.getSnapshot.mockReturnValue({
+                selectedConversationId: "c-here",
+                conversations: [{ id: "c-old", title: "New name" }],
+            });
+            await act(async () => {
+                root.render(detail());
+            });
+            expect(container.querySelector(".mj_TrackerOrigin")?.textContent).toBe("Opened from New name");
+        });
+
         it("reads 'another chat' when neither source has a title (an older journal)", async () => {
             const client = fakeClient();
             client.getSnapshot.mockReturnValue({ selectedConversationId: "c-here", conversations: [] });

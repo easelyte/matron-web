@@ -34,11 +34,14 @@ export function ItemsInbox({
 }): React.ReactElement {
     const [filter, setFilter] = useState<InboxFilter>("needs-you");
 
+    // Keyed on the conversation list itself, not the client: the client replaces the list when a
+    // conversation is renamed or loaded, and the rows must pick that up without a remount.
+    const conversations = client.getSnapshot().conversations;
     const originTitles = useMemo(() => {
         const map = new Map<string, string>();
-        for (const convo of client.getSnapshot().conversations) map.set(convo.id, convo.title.trim() || convo.id);
+        for (const convo of conversations) map.set(convo.id, convo.title.trim() || convo.id);
         return map;
-    }, [client]);
+    }, [conversations]);
 
     const shown = useMemo(() => {
         if (filter === "needs-you") {

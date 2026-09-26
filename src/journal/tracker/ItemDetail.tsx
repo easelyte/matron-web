@@ -105,12 +105,14 @@ export function ItemDetail({
     const resolutions = item.state === "open" ? availableResolutions(item, hasUserReply) : [];
 
     const selectedConvoId = client.getSnapshot().selectedConversationId;
+    // Keyed on the conversation list (replaced on a rename or load), so the line follows it live.
+    const conversations = client.getSnapshot().conversations;
     const originTitle = useMemo(() => {
-        const convo = client.getSnapshot().conversations.find((candidate) => candidate.id === item.origin_convo_id);
+        const convo = conversations.find((candidate) => candidate.id === item.origin_convo_id);
         // The live conversation list first (it tracks renames), then the title the journal put on
         // the item: it resolves origins that are not in the loaded list (older or archived chats).
         return convo?.title.trim() || itemOriginTitle(item) || undefined;
-    }, [client, item]);
+    }, [conversations, item]);
     const showOrigin = item.origin_convo_id !== selectedConvoId;
 
     const send = async (): Promise<void> => {

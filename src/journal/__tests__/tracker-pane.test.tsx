@@ -133,4 +133,30 @@ describe("Decisions inbox origin notes", () => {
         );
         expect(origins).toEqual([null, "from Listed chat", "from Auth refactor", "from Another chat"]);
     });
+
+    it("follows a conversation rename without remounting", async () => {
+        const client = fakeClient();
+        client.getSnapshot.mockReturnValue({
+            selectedConversationId: "c-here",
+            conversations: [{ id: "c-listed", title: "Listed chat" }],
+        });
+        const state = paneState({
+            trackerView: { open: true, view: "inbox" },
+            inboxItems: [trackerItem({ id: "it_b", num: 2, origin_convo_id: "c-listed" })],
+        });
+        const { container, root } = await mount(
+            <TrackerPane client={client as unknown as MatronJournalClient} state={state} />,
+        );
+        expect(container.querySelector(".mj_TrackerItemRow_origin")?.textContent).toBe("from Listed chat");
+
+        // The client replaces its conversation list on a rename and re-renders the pane.
+        client.getSnapshot.mockReturnValue({
+            selectedConversationId: "c-here",
+            conversations: [{ id: "c-listed", title: "Renamed chat" }],
+        });
+        await act(async () => {
+            root.render(<TrackerPane client={client as unknown as MatronJournalClient} state={{ ...state }} />);
+        });
+        expect(container.querySelector(".mj_TrackerItemRow_origin")?.textContent).toBe("from Renamed chat");
+    });
 });
