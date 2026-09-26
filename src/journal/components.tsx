@@ -5178,7 +5178,8 @@ function AgentTurnRow({
     const renderStepDetail = useCallback(
         (step: Step): React.ReactNode => {
             const source = step.source as JournalEvent | undefined;
-            if (!source) return null;
+            // A narration line the headlines took for a command (headlines.ts): its own text.
+            if (!source) return step.id.startsWith("raw-") ? <StepSentenceDetail step={step} /> : null;
             if (source.type === "tool_output") return <ToolOutput client={client} event={source} defaultOpen />;
             if (source.type === "diff") return <DiffCard data={parseDiffPayload(source.payload)} />;
             return <StepSentenceDetail step={step} />;

@@ -234,6 +234,16 @@ describe("helper thread headlines", () => {
         );
     });
 
+    it("a path listing behind a heading still reads as raw", () => {
+        expect(looksRaw("Paths: src/a.ts src/b.ts src/c.ts.")).toBe(true);
+    });
+
+    it("a legacy web-search line reads as a search, in the headlines and the sidebar", () => {
+        const [entry] = buildHeadlines([{ kind: "narration", text: "🌐 matron release notes" }]);
+        expect(entry.type === "headline" && headlineRowText(entry)).toBe("Searched the web for “matron release notes”");
+        expect(previewLine({ snippet: "🌐 matron release notes", session_state: "done" })).toBe("Searched the web");
+    });
+
     it("narration that reads as machine text joins the steps instead of printing", () => {
         const entries = buildHeadlines([
             { kind: "narration", text: "🔧 python3 - <<'EOF' import sqlite3,json c=sqlite3.connect('/tmp/j.db')" },

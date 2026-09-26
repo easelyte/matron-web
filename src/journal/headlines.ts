@@ -308,17 +308,21 @@ export function buildHeadlines(items: readonly TurnItem[], running?: Step | null
     all.forEach((raw, index) => {
         // Narration that reads as machine text (an indicator line the grammar could not take, a
         // pasted command) is never printed: it joins the steps as the command it most likely is.
-        const item: TurnItem =
-            raw.kind === "narration" && looksRaw(raw.text)
-                ? (indicatorStep(raw.text, `raw-${index}`, true) ?? {
-                      kind: "step",
-                      id: `raw-${index}`,
-                      tool: "Bash",
-                      // The text itself stays one click deeper (the step detail), never in a row.
-                      input: { command: "", description: raw.text },
-                      status: "ok",
-                  })
-                : raw;
+        // A legacy bridge's web-search line (`🌐 query`, no payload.step) between steps is the
+        // search it announces. (The thread's answer is not an item, so it is never taken.)
+        const webQuery = raw.kind === "narration" ? /^🌐 (\S[^\n]{2,299})$/u.exec(raw.text.trim()) : null;
+        const item: TurnItem = webQuery
+            ? { kind: "step", id: `raw-${index}`, tool: "WebSearch", input: { pattern: webQuery[1] }, status: "ok" }
+            : raw.kind === "narration" && looksRaw(raw.text)
+              ? (indicatorStep(raw.text, `raw-${index}`, true) ?? {
+                    kind: "step",
+                    id: `raw-${index}`,
+                    tool: "Bash",
+                    // The text itself stays one click deeper (the step detail), never in a row.
+                    input: { command: "", description: raw.text },
+                    status: "ok",
+                })
+              : raw;
         if (item.kind === "narration") {
             close();
             out.push({ type: "note", id: `note-${index}`, text: item.text });

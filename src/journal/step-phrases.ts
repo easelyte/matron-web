@@ -1669,7 +1669,8 @@ export function looksRaw(text: string): boolean {
     const words = t.split(/\s+/);
     const pathish = words.filter((w) => /[/\\]/.test(w) && !/^https?:/.test(w)).length;
     // A run of paths (a listing), not a sentence that names a few files ("Updated a.ts, b.ts.").
-    const sentence = /[.!?:]$/.test(t) && /^[A-Z][a-z]+\b/.test(t);
+    const plainWords = words.filter((w) => /^[A-Za-z]+[,.;!?]?$/.test(w)).length;
+    const sentence = /[.!?]$/.test(t) && /^[A-Z][a-z]+\s/.test(t) && plainWords >= 2;
     if (!sentence && words.length >= 2 && pathish / words.length > 0.5) return true;
     // Mostly machine tokens: paths, flags, versions, identifiers (SNAKE_CASE, camelCase, a.b.c),
     // punctuation-bearing words. Prose keeps these to a word or two per sentence.
