@@ -131,7 +131,7 @@ const EXPECT = {
     "files-preview": ".mj_FilesPreview_header",
     "files-upload": ".mj_FileWrite_confirm",
     "files-edit": ".mj_FileWrite_textarea",
-    "files-delete": ".mj_FileWrite_danger",
+    "files-delete": '[role="dialog"]:has-text("Delete file")',
     "media-viewer": ".mj_MediaViewer",
     offline: ".mj_ConnectionError, .mj_ConnectionBanner",
     signin: ".mx_Login_submit",
@@ -222,8 +222,17 @@ export const SCENES = [
         setup: seq(
             ev(() => window.__matron.openFiles()),
             (p) => p.waitForSelector(".mj_FilesToolbar"),
-            // The first visible row's delete: phones show only the first rows of the stacked list.
-            click(".mj_FilesRow_action_danger"),
+            // A FILE's delete (the folder dialog differs). Phones show only the first rows of the
+            // stacked, virtualised list, so scroll archive.zip into the rendered window first.
+            async (p) => {
+                const row = p.locator('[aria-label="Delete archive.zip"]');
+                for (let i = 0; i < 20 && !(await row.count()); i++)
+                    await p.evaluate(() => {
+                        for (const el of document.querySelectorAll(".mj_FilesPane_list, .mj_FilesPane_list *"))
+                            if (el.scrollHeight > el.clientHeight + 1) el.scrollTop += 200;
+                    });
+                await row.first().click({ timeout: 3000 });
+            },
         ),
     },
     { name: "media-viewer", query: "v6=full", setup: seq(click(".mj_Image img"), (p) => p.waitForTimeout(300)) },
