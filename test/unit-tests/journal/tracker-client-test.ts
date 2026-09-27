@@ -376,6 +376,67 @@ describe("MatronJournalClient tracker loaders", () => {
         expect((client.getSnapshot().inboxItems ?? []).map((row) => row.id)).toEqual(["fresh"]);
     });
 
+    it("keeps the inbox error while a retry is still in flight, clearing it only when the retry lands", async () => {
+        const { client, state } = makeClient();
+        let resolveRetry!: (value: { items: TrackerItem[]; next_cursor: null }) => void;
+        state.api = {
+            items: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("offline"))
+                .mockReturnValueOnce(new Promise((resolve) => (resolveRetry = resolve))),
+        };
+
+        await client.loadInbox();
+        const retry = client.loadInbox();
+        await flush();
+        expect(client.getSnapshot().inboxError).toBe("offline");
+
+        resolveRetry({ items: [], next_cursor: null });
+        await retry;
+        expect(client.getSnapshot().inboxError).toBeUndefined();
+    });
+
+    it("keeps the missions error while a retry is still in flight", async () => {
+        const { client, state } = makeClient();
+        let resolveRetry!: (value: { missions: Mission[] }) => void;
+        state.api = {
+            missions: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("offline"))
+                .mockReturnValueOnce(new Promise((resolve) => (resolveRetry = resolve))),
+        };
+
+        await client.loadMissions();
+        const retry = client.loadMissions();
+        await flush();
+        expect(client.getSnapshot().missionsError).toBe("offline");
+
+        resolveRetry({ missions: [] });
+        await retry;
+        expect(client.getSnapshot().missionsError).toBeUndefined();
+    });
+
+    it("an inbox walk never overwrites the count of a badge refresh started after it", async () => {
+        const { client, state } = makeClient({ inboxItems: [] });
+        let resolveWalk!: (value: { items: TrackerItem[]; next_cursor: null }) => void;
+        state.api = {
+            items: jest.fn((query: { awaiting?: string }) =>
+                query.awaiting === "user"
+                    ? Promise.resolve({ items: [item({ id: "it_new", awaiting: "user" })], next_cursor: null })
+                    : new Promise((resolve) => (resolveWalk = resolve)),
+            ),
+        };
+
+        const walk = client.loadInbox(); // older snapshot in flight
+        await client.refreshTrackerBadge(); // newer badge lands first
+        expect(client.getSnapshot().trackerNeedsYou).toBe(1);
+
+        resolveWalk({ items: [], next_cursor: null });
+        await walk;
+        expect(client.getSnapshot().inboxItems).toEqual([]);
+        expect(client.getSnapshot().trackerNeedsYou).toBe(1);
+    });
+
     it("loadInbox records its own error, which only the next inbox load clears", async () => {
         const { client, state } = makeClient();
         state.api = {

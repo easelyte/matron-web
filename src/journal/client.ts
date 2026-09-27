@@ -2071,11 +2071,13 @@ export class MatronJournalClient {
         // open and mission markers independently restart it, so a slower earlier request must never
         // overwrite a newer one's result (else closed missions / obsolete counts reappear) (F2).
         const gen = ++this.trackerMissionsGen;
-        this.patch({ trackerLoading: true, trackerError: undefined, missionsError: undefined });
+        // Like itemLoadError, missionsError stays until a load succeeds: a retry that stalls must not
+        // take the "may be out of date" notice off a list it has not replaced yet.
+        this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             const { missions } = await api.missions();
             if (this.api !== api || this.trackerMissionsGen !== gen) return;
-            this.patch({ missions, trackerLoading: false });
+            this.patch({ missions, trackerLoading: false, missionsError: undefined });
         } catch (error) {
             if (this.api !== api || this.trackerMissionsGen !== gen) return;
             const message = errorMessage(error);
@@ -2091,7 +2093,12 @@ export class MatronJournalClient {
         // multi-page walk is mid-pagination; without this the older walk could finish last and
         // restore rows the newer load already dropped (e.g. items closed meanwhile) (F2).
         const gen = ++this.trackerInboxGen;
-        this.patch({ trackerLoading: true, trackerError: undefined, inboxError: undefined });
+        // A badge-only refresh started after this walk began saw newer data than this walk may have,
+        // so this walk's count must not overwrite it (see the badge write below).
+        const badgeGenAtStart = this.trackerBadgeGen;
+        // inboxError stays until a load succeeds (as missionsError / itemLoadError do), so a stalled
+        // retry keeps the "may be out of date" notice over the list it has not replaced yet.
+        this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             // App-wide open items; the inbox sorts "needs you" (open && awaiting==user) first
             // client-side, so a single open-state fetch feeds every section. The list is
@@ -2123,11 +2130,17 @@ export class MatronJournalClient {
                 }
                 cursor = next_cursor;
             }
-            this.trackerBadgeGen += 1;
+            // The full walk is the authoritative count: it supersedes a badge fetch already in flight
+            // when it started (bumping the generation drops that response), but never one started
+            // since, which may reflect a newer change than this walk saw.
+            const badgeCurrent = this.trackerBadgeGen === badgeGenAtStart;
+            if (badgeCurrent) this.trackerBadgeGen += 1;
             this.patch({
                 inboxItems: accumulated,
-                trackerNeedsYou: accumulated.filter(needsUser).length,
-                trackerNeedsYouPartial: truncated,
+                ...(badgeCurrent
+                    ? { trackerNeedsYou: accumulated.filter(needsUser).length, trackerNeedsYouPartial: truncated }
+                    : {}),
+                inboxError: undefined,
                 trackerLoading: false,
                 trackerError: truncated
                     ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
