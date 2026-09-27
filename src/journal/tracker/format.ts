@@ -24,6 +24,23 @@ export function needsUser(item: Pick<TrackerItem, "state" | "awaiting">): boolea
     return item.state === "open" && item.awaiting === "user";
 }
 
+/** The origin conversation's title as carried on the item, or null when the journal did not send
+ *  one (an older journal, a deleted or untitled conversation). Narrowed with typeof because the
+ *  field crosses a JSON boundary: a non-string must degrade to "no title", not throw in a render. */
+export function itemOriginTitle(item: Pick<TrackerItem, "origin_convo_title">): string | null {
+    const raw = item.origin_convo_title;
+    return typeof raw === "string" ? raw.trim() || null : null;
+}
+
+/** Whether the item was filed from the conversation being viewed. An unknown viewer is never
+ *  "this session", so provenance falls back to labelling the origin rather than hiding it. */
+export function isFromViewedConvo(
+    item: Pick<TrackerItem, "origin_convo_id">,
+    viewedConvoId: string | null | undefined,
+): boolean {
+    return !!viewedConvoId && item.origin_convo_id === viewedConvoId;
+}
+
 /** The reserved label that marks an item as "handle elsewhere" — the explicit, actionable routing
  *  state (spec #213). Set/cleared via the item's labels; distinct from the informational "this came
  *  from another session" state so an operator can say "route this to its home" without collapsing
@@ -48,13 +65,9 @@ export function itemProvenance(
     item: Pick<TrackerItem, "labels" | "origin_convo_id" | "origin_convo_title">,
     currentConvoId: string | null | undefined,
 ): ItemProvenance {
-    // Defensive: the field is typed string | null, but it crosses a JSON boundary from the journal
-    // producer — narrow before .trim() so a contract-drifted non-string degrades to "no title"
-    // rather than throwing during a render.
-    const raw = item.origin_convo_title;
-    const title = typeof raw === "string" ? raw.trim() || null : null;
+    const title = itemOriginTitle(item);
     if (isRouteElsewhere(item)) return { kind: "elsewhere", title };
-    if (currentConvoId && item.origin_convo_id === currentConvoId) return { kind: "here" };
+    if (isFromViewedConvo(item, currentConvoId)) return { kind: "here" };
     return { kind: "other", title };
 }
 

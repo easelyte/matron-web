@@ -22,10 +22,11 @@ import {
 interface FakeClient {
     openTrackerItem: jest.Mock;
     openTrackerMission: jest.Mock;
+    openTrackerLink: jest.Mock;
 }
 
 function fakeClient(): FakeClient {
-    return { openTrackerItem: jest.fn(), openTrackerMission: jest.fn() };
+    return { openTrackerItem: jest.fn(), openTrackerMission: jest.fn(), openTrackerLink: jest.fn() };
 }
 
 function event(type: string, payload: EventPayload): JournalEvent {
@@ -150,9 +151,36 @@ describe("ItemCard", () => {
         );
 
         await act(async () => {
-            container.querySelector<HTMLButtonElement>(".mj_TrackerCard")!.click();
+            container.querySelector<HTMLButtonElement>(".mj_TrackerCard_row")!.click();
         });
         expect(client.openTrackerItem).toHaveBeenCalledWith(9);
+    });
+
+    // The comment body renders markdown (links, code-block copy buttons). It must sit beside the
+    // card's open button, not inside it: a link click opens the link's target, not the card's item.
+    it("opens a tracker link in the closing comment without also opening the card's item", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemCard
+                client={client as unknown as MatronJournalClient}
+                event={event("item", {
+                    num: 3,
+                    kind: "task",
+                    title: "t",
+                    action: "closed",
+                    resolution: "done",
+                    comment: { body: "Superseded by [#7](matron://item/7)" },
+                })}
+            />,
+        );
+
+        const link = container.querySelector<HTMLAnchorElement>(".mj_TrackerCard_comment a")!;
+        expect(link.closest("button")).toBeNull();
+        await act(async () => {
+            link.click();
+        });
+        expect(client.openTrackerLink).toHaveBeenCalledWith("item", 7);
+        expect(client.openTrackerItem).not.toHaveBeenCalled();
     });
 });
 
@@ -200,6 +228,40 @@ describe("ItemInlineNote", () => {
 
         expect(container.querySelector(".mj_TrackerInlineNote_line")?.textContent).toContain("Agent reopened #4 · #4");
         expect(container.querySelector(".mj_TrackerInlineNote_body")).toBeNull();
+    });
+
+    it("opens the item from the lead line, and a link in the reply body opens only its own target", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemInlineNote
+                client={client as unknown as MatronJournalClient}
+                event={event("item", {
+                    num: 4,
+                    kind: "question",
+                    title: "Colour?",
+                    action: "commented",
+                    by: "agent",
+                    comment: { body: "See [#8](matron://item/8)\n\n```\ncode\n```" },
+                })}
+            />,
+        );
+
+        // No interactive markdown content is nested inside the note's button.
+        const lead = container.querySelector<HTMLButtonElement>("button.mj_TrackerInlineNote_line")!;
+        expect(lead.querySelector("a, button")).toBeNull();
+        const link = container.querySelector<HTMLAnchorElement>(".mj_TrackerInlineNote_body a")!;
+        expect(link.closest("button")).toBeNull();
+
+        await act(async () => {
+            link.click();
+        });
+        expect(client.openTrackerLink).toHaveBeenCalledWith("item", 8);
+        expect(client.openTrackerItem).not.toHaveBeenCalled();
+
+        await act(async () => {
+            lead.click();
+        });
+        expect(client.openTrackerItem).toHaveBeenCalledWith(4);
     });
 });
 

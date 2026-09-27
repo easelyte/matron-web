@@ -156,6 +156,36 @@ describe("MatronJournalClient tracker view state", () => {
         expect(client.getSnapshot().trackerView).toBeUndefined();
     });
 
+    // Markers are not followed while the pane is closed, so a cached detail kept across a close
+    // could reopen with a stale status and live actions.
+    it("closeTrackerView drops the cached mission detail and orphans its in-flight load", async () => {
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail({ num: 5 }),
+        });
+        state.api = { mission: jest.fn().mockResolvedValue(missionDetail({ num: 5 })) };
+
+        const inFlight = client.loadMission(5);
+        client.closeTrackerView();
+        await inFlight;
+
+        expect(client.getSnapshot().trackerMission).toBeNull();
+    });
+
+    it("closeTrackerView drops the cached item detail and orphans its in-flight load", async () => {
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "inbox", selectedItemId: 7 },
+            trackerItem: { item: item({ num: 7 }), comments: [] },
+        });
+        state.api = { item: jest.fn().mockResolvedValue({ item: item({ num: 7 }), comments: [] }) };
+
+        const inFlight = client.loadItem(7);
+        client.closeTrackerView();
+        await inFlight;
+
+        expect(client.getSnapshot().trackerItem).toBeNull();
+    });
+
     // F1: selecting a DIFFERENT row must invalidate the previously loaded detail up front, so its
     // action handlers (reply/close/reopen) can never fire against the new selection's num.
     it("openTrackerItem clears a cached detail when selecting a different item", () => {
@@ -346,6 +376,100 @@ describe("MatronJournalClient tracker loaders", () => {
         expect((client.getSnapshot().inboxItems ?? []).map((row) => row.id)).toEqual(["fresh"]);
     });
 
+    it("loadInbox records its own error, which only the next inbox load clears", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            items: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("offline"))
+                .mockResolvedValueOnce({ items: [], next_cursor: null }),
+            item: jest.fn().mockResolvedValue({ item: item(), comments: [] }),
+        };
+
+        await client.loadInbox();
+        expect(client.getSnapshot().inboxError).toBe("offline");
+
+        // Another tracker load clears the shared banner error but not the inbox's own.
+        await client.loadItem(1);
+        expect(client.getSnapshot().trackerError).toBeUndefined();
+        expect(client.getSnapshot().inboxError).toBe("offline");
+
+        await client.loadInbox();
+        expect(client.getSnapshot().inboxError).toBeUndefined();
+        expect(client.getSnapshot().inboxItems).toEqual([]);
+    });
+
+    it("loadItem records its own error keyed by item, which only a successful item load clears", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            items: jest.fn().mockResolvedValue({ items: [], next_cursor: null }),
+            item: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("gone away"))
+                .mockResolvedValueOnce({ item: item({ num: 7 }), comments: [] }),
+        };
+
+        await client.loadItem(7);
+        expect(client.getSnapshot().itemLoadError).toEqual({ id: "7", message: "gone away" });
+
+        // An inbox load clears the shared banner error but not the item's own.
+        await client.loadInbox();
+        expect(client.getSnapshot().trackerError).toBeUndefined();
+        expect(client.getSnapshot().itemLoadError).toEqual({ id: "7", message: "gone away" });
+
+        await client.loadItem(7);
+        expect(client.getSnapshot().itemLoadError).toBeUndefined();
+        expect(client.getSnapshot().trackerItem?.item.num).toBe(7);
+    });
+
+    // A stalled retry must not drop the stale note: the record on screen is still the old one.
+    it("keeps the item load error while a retry is in flight", async () => {
+        const { client, state } = makeClient();
+        let resolveRetry!: (value: unknown) => void;
+        state.api = {
+            item: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("gone away"))
+                .mockReturnValueOnce(new Promise((resolve) => (resolveRetry = resolve))),
+        };
+
+        await client.loadItem(7);
+        const retry = client.loadItem(7);
+        expect(client.getSnapshot().itemLoadError).toEqual({ id: "7", message: "gone away" });
+
+        resolveRetry({ item: item({ num: 7 }), comments: [] });
+        await retry;
+        expect(client.getSnapshot().itemLoadError).toBeUndefined();
+    });
+
+    it("keys the item load error without a leading #, so it matches a numeric selection", async () => {
+        const { client, state } = makeClient();
+        state.api = { item: jest.fn().mockRejectedValue(new Error("gone away")) };
+
+        await client.loadItem("#7");
+        expect(client.getSnapshot().itemLoadError).toEqual({ id: "7", message: "gone away" });
+    });
+
+    it("loadMissions records its own error, which only the next missions load clears", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            missions: jest.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ missions: [] }),
+            items: jest.fn().mockResolvedValue({ items: [], next_cursor: null }),
+        };
+
+        await client.loadMissions();
+        expect(client.getSnapshot().missionsError).toBe("offline");
+
+        // A concurrent inbox success clears the shared banner error, not the missions list's own.
+        await client.loadInbox();
+        expect(client.getSnapshot().trackerError).toBeUndefined();
+        expect(client.getSnapshot().missionsError).toBe("offline");
+
+        await client.loadMissions();
+        expect(client.getSnapshot().missionsError).toBeUndefined();
+        expect(client.getSnapshot().missions).toEqual([]);
+    });
+
     it("loadItem populates the open item detail", async () => {
         const { client, state } = makeClient();
         const detail = { item: item({ num: 7 }), comments: [] };
@@ -389,6 +513,57 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().trackerMission).toEqual(detail);
     });
 
+    it("loadMission records its own error keyed by mission, which only a successful mission load clears", async () => {
+        const { client, state } = makeClient();
+        state.api = {
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+            mission: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("gone away"))
+                .mockResolvedValueOnce(missionDetail({ num: 5 })),
+        };
+
+        await client.loadMission(5);
+        expect(client.getSnapshot().missionLoadError).toEqual({ id: "5", message: "gone away" });
+        expect(client.getSnapshot().trackerMission).toBeUndefined();
+
+        // A missions-list load clears the shared banner error but not the mission's own.
+        await client.loadMissions();
+        expect(client.getSnapshot().trackerError).toBeUndefined();
+        expect(client.getSnapshot().missionLoadError).toEqual({ id: "5", message: "gone away" });
+
+        await client.loadMission(5);
+        expect(client.getSnapshot().missionLoadError).toBeUndefined();
+        expect(client.getSnapshot().trackerMission?.mission.num).toBe(5);
+    });
+
+    it("keeps the mission load error while a retry is in flight", async () => {
+        const { client, state } = makeClient();
+        let resolveRetry!: (value: unknown) => void;
+        state.api = {
+            mission: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("gone away"))
+                .mockReturnValueOnce(new Promise((resolve) => (resolveRetry = resolve))),
+        };
+
+        await client.loadMission(5);
+        const retry = client.loadMission(5);
+        expect(client.getSnapshot().missionLoadError).toEqual({ id: "5", message: "gone away" });
+
+        resolveRetry(missionDetail({ num: 5 }));
+        await retry;
+        expect(client.getSnapshot().missionLoadError).toBeUndefined();
+    });
+
+    it("keys the mission load error without a leading #, so it matches a numeric selection", async () => {
+        const { client, state } = makeClient();
+        state.api = { mission: jest.fn().mockRejectedValue(new Error("gone away")) };
+
+        await client.loadMission("#5");
+        expect(client.getSnapshot().missionLoadError).toEqual({ id: "5", message: "gone away" });
+    });
+
     it("surfaces a tracker error and stops loading when a fetch rejects", async () => {
         const { client, state } = makeClient();
         state.api = { missions: jest.fn().mockRejectedValue(new Error("offline")) };
@@ -402,7 +577,10 @@ describe("MatronJournalClient tracker loaders", () => {
 
 describe("MatronJournalClient tracker mutations", () => {
     it("closeTrackerItem calls the api then refetches the item and the loaded inbox", async () => {
-        const { client, state } = makeClient({ inboxItems: [item({ num: 1 })] });
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "inbox", selectedItemId: 1 },
+            inboxItems: [item({ num: 1 })],
+        });
         state.api = {
             closeItem: jest.fn().mockResolvedValue({}),
             item: jest.fn().mockResolvedValue({ item: item({ state: "closed" }), comments: [] }),
@@ -421,7 +599,7 @@ describe("MatronJournalClient tracker mutations", () => {
     });
 
     it("commentItem posts with a fresh idempotency key and refetches the item", async () => {
-        const { client, state } = makeClient();
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 1 } });
         state.api = {
             postItemComment: jest.fn().mockResolvedValue({}),
             item: jest.fn().mockResolvedValue({ item: item(), comments: [] }),
@@ -451,8 +629,29 @@ describe("MatronJournalClient tracker mutations", () => {
         expect(state.api.postItemComment).toHaveBeenCalledWith(1, { body: "retry me" }, "stable-key-123");
     });
 
+    // Mission rows show item-derived counts, so an item write refreshes a loaded missions list too.
+    it("closeTrackerItem refreshes a loaded missions list", async () => {
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "inbox", selectedItemId: 1 },
+            missions: [mission()],
+        });
+        state.api = {
+            closeItem: jest.fn().mockResolvedValue({}),
+            item: jest.fn().mockResolvedValue({ item: item({ state: "closed" }), comments: [] }),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+        };
+
+        await client.closeTrackerItem(1, "done");
+
+        expect(state.api.missions).toHaveBeenCalledTimes(1);
+    });
+
     it("closeTrackerMission calls the api then refetches the mission and the loaded list", async () => {
-        const { client, state } = makeClient({ missions: [mission()] });
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail(),
+            missions: [mission()],
+        });
         state.api = {
             closeMission: jest.fn().mockResolvedValue({}),
             mission: jest.fn().mockResolvedValue(missionDetail({ state: "closed" })),
@@ -464,6 +663,38 @@ describe("MatronJournalClient tracker mutations", () => {
         expect(state.api.closeMission).toHaveBeenCalledWith("ms_1", { summary: "wrapped up" }, expect.any(String));
         expect(state.api.mission).toHaveBeenCalledWith("ms_1");
         expect(state.api.missions).toHaveBeenCalled();
+    });
+
+    it.each([
+        ["saveMissionEdits", (client: MatronJournalClient) => client.saveMissionEdits("ms_1", { title: "t" })],
+        ["closeTrackerMission", (client: MatronJournalClient) => client.closeTrackerMission("ms_1", "done")],
+    ])("%s does not supersede the load of a mission selected while the write was in flight", async (_name, run) => {
+        const { client, state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail(),
+        });
+        let landWrite!: () => void;
+        const write = new Promise((resolve) => {
+            landWrite = () => resolve({});
+        });
+        state.api = {
+            patchMission: jest.fn().mockReturnValue(write),
+            closeMission: jest.fn().mockReturnValue(write),
+            mission: jest.fn().mockResolvedValue(missionDetail({ id: "ms_9", num: 9 })),
+            missions: jest.fn(),
+        };
+
+        const pending = run(client);
+        // Back, then open #9 while the write is still in flight; the pane's effect loads #9.
+        client.openTrackerMission(9);
+        const nine = client.loadMission(9);
+        landWrite();
+
+        await expect(pending).resolves.toBe(true);
+        await nine;
+        expect(state.api.mission).toHaveBeenCalledTimes(1);
+        expect(state.api.mission).toHaveBeenCalledWith(9);
+        expect(client.getSnapshot().trackerMission?.mission?.num).toBe(9);
     });
 
     // F2: the draft-preservation contract lives in the return value — true only on a confirmed write,
@@ -479,6 +710,52 @@ describe("MatronJournalClient tracker mutations", () => {
         await expect(client.commentItem(1, { body: "landed" })).resolves.toBe(true);
         await expect(client.commentItem(1, { body: "failed" })).resolves.toBe(false);
         expect(client.getSnapshot().trackerError).toBe("offline");
+    });
+
+    // The user can go Back and open another item while a write is in flight. Refetching the mutated
+    // item then would bump the detail generation and drop the newer selection's load.
+    it.each([
+        ["commentItem", (client: MatronJournalClient) => client.commentItem(7, { body: "on it" })],
+        ["closeTrackerItem", (client: MatronJournalClient) => client.closeTrackerItem(7, "done")],
+        ["reopenTrackerItem", (client: MatronJournalClient) => client.reopenTrackerItem(7)],
+    ])("%s does not supersede the load of an item selected while the write was in flight", async (_name, run) => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 7 } });
+        let landWrite!: () => void;
+        const write = new Promise((resolve) => {
+            landWrite = () => resolve({});
+        });
+        state.api = {
+            postItemComment: jest.fn().mockReturnValue(write),
+            closeItem: jest.fn().mockReturnValue(write),
+            reopenItem: jest.fn().mockReturnValue(write),
+            item: jest.fn().mockResolvedValue({ item: item({ num: 9 }), comments: [] }),
+            items: jest.fn(),
+        };
+
+        const pending = run(client);
+        // Back, then open #9 while the write is still in flight; the pane's effect loads #9.
+        client.openTrackerItem(9);
+        const nine = client.loadItem(9);
+        landWrite();
+
+        await expect(pending).resolves.toBe(true);
+        await nine;
+        expect(state.api.item).toHaveBeenCalledTimes(1);
+        expect(state.api.item).toHaveBeenCalledWith(9);
+        expect(client.getSnapshot().trackerItem?.item.num).toBe(9);
+    });
+
+    it("refetches the mutated item when the selection is written with a leading #", async () => {
+        const { client, state } = makeClient({ trackerView: { open: true, view: "inbox", selectedItemId: 7 } });
+        state.api = {
+            closeItem: jest.fn().mockResolvedValue({}),
+            item: jest.fn().mockResolvedValue({ item: item({ num: 7 }), comments: [] }),
+            items: jest.fn(),
+        };
+
+        await client.closeTrackerItem("#7", "done");
+
+        expect(state.api.item).toHaveBeenCalledWith("#7");
     });
 
     it("records a tracker error and skips the refetch when the mutation itself rejects", async () => {
@@ -498,8 +775,18 @@ describe("MatronJournalClient tracker mutations", () => {
 });
 
 describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    const OPEN = { open: true, view: "inbox" } as const;
+
     it("refetches the open item and the loaded inbox on a matching item marker", async () => {
         const { state } = makeClient({
+            trackerView: OPEN,
             trackerItem: { item: item({ num: 2 }), comments: [] },
             inboxItems: [item({ num: 2 })],
         });
@@ -510,13 +797,15 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
 
         state.handleTrackerMarker(marker("item", { num: 2, action: "commented" }));
         await flush();
-
         expect(state.api.item).toHaveBeenCalledWith(2);
+
+        jest.advanceTimersByTime(250);
         expect(state.api.items).toHaveBeenCalled();
     });
 
     it("refetches only the inbox when the item marker is for a different open item", async () => {
         const { state } = makeClient({
+            trackerView: OPEN,
             trackerItem: { item: item({ num: 2 }), comments: [] },
             inboxItems: [item({ num: 2 })],
         });
@@ -526,10 +815,28 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
         };
 
         state.handleTrackerMarker(marker("item", { num: 99, action: "created" }));
+        jest.advanceTimersByTime(250);
         await flush();
 
         expect(state.api.item).not.toHaveBeenCalled();
         expect(state.api.items).toHaveBeenCalled();
+    });
+
+    it("coalesces a burst of item markers into one inbox walk", async () => {
+        const { state } = makeClient({ trackerView: OPEN, inboxItems: [item({ num: 2 })] });
+        state.api = { item: jest.fn(), items: jest.fn().mockResolvedValue({ items: [], next_cursor: null }) };
+
+        for (let num = 1; num <= 5; num += 1) state.handleTrackerMarker(marker("item", { num, action: "created" }));
+        expect(state.api.items).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(250);
+        await flush();
+        expect(state.api.items).toHaveBeenCalledTimes(1);
+
+        // A later marker arms a fresh refetch.
+        state.handleTrackerMarker(marker("item", { num: 6, action: "created" }));
+        jest.advanceTimersByTime(250);
+        await flush();
+        expect(state.api.items).toHaveBeenCalledTimes(2);
     });
 
     it("is a no-op when the pane is closed and nothing is loaded", async () => {
@@ -537,6 +844,7 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
         state.api = { item: jest.fn(), items: jest.fn() };
 
         state.handleTrackerMarker(marker("item", { num: 2, action: "commented" }));
+        jest.advanceTimersByTime(250);
         await flush();
 
         expect(state.api.item).not.toHaveBeenCalled();
@@ -558,6 +866,7 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
         await flush();
 
         expect(state.api.mission).toHaveBeenCalledWith(5);
+        jest.advanceTimersByTime(250);
         expect(state.api.missions).toHaveBeenCalled();
     });
 
@@ -576,11 +885,80 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
         await flush();
 
         expect(state.api.mission).toHaveBeenCalledWith(5);
+        jest.advanceTimersByTime(250);
         expect(state.api.missions).toHaveBeenCalled();
+    });
+
+    // Closing the pane leaves the loaded data in the store; it must not keep refetching in the
+    // background for the rest of the session. Reopening remounts the pane, which reloads it.
+    it("fetches nothing once the pane is closed, even with data still loaded", async () => {
+        const { client, state } = makeClient({
+            trackerView: OPEN,
+            trackerItem: { item: item({ num: 2 }), comments: [] },
+            inboxItems: [item({ num: 2 })],
+        });
+        state.api = { item: jest.fn(), items: jest.fn() };
+        client.closeTrackerView();
+
+        state.handleTrackerMarker(marker("item", { num: 2, action: "commented" }));
+        jest.advanceTimersByTime(250);
+        await flush();
+
+        expect(state.api.item).not.toHaveBeenCalled();
+        expect(state.api.items).not.toHaveBeenCalled();
+    });
+
+    it("drops a pending inbox refetch when the pane closes before it fires", async () => {
+        const { client, state } = makeClient({ trackerView: OPEN, inboxItems: [item({ num: 2 })] });
+        state.api = { item: jest.fn(), items: jest.fn() };
+
+        state.handleTrackerMarker(marker("item", { num: 3, action: "created" }));
+        client.closeTrackerView();
+        jest.advanceTimersByTime(250);
+        await flush();
+
+        expect(state.api.items).not.toHaveBeenCalled();
+    });
+
+    it("coalesces a burst of mission and milestone markers into one missions refetch", async () => {
+        const { state } = makeClient({ trackerView: { open: true, view: "missions" }, missions: [mission()] });
+        state.api = { mission: jest.fn(), missions: jest.fn().mockResolvedValue({ missions: [] }) };
+
+        state.handleTrackerMarker(marker("mission", { num: 5, action: "updated" }));
+        state.handleTrackerMarker(marker("milestone", { num: 12, mission_num: 5, action: "created" }));
+        state.handleTrackerMarker(marker("milestone", { num: 13, mission_num: 6, action: "created" }));
+        expect(state.api.missions).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(250);
+        await flush();
+
+        expect(state.api.missions).toHaveBeenCalledTimes(1);
+    });
+
+    it("refreshes the missions list and the open mission when an item marker lands", async () => {
+        const { state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail({ num: 5 }),
+            missions: [mission()],
+        });
+        state.api = {
+            item: jest.fn(),
+            mission: jest.fn().mockResolvedValue(missionDetail({ num: 5 })),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+        };
+
+        state.handleTrackerMarker(marker("item", { num: 3, action: "closed" }));
+        state.handleTrackerMarker(marker("item", { num: 4, action: "commented" }));
+        jest.advanceTimersByTime(250);
+        await flush();
+
+        expect(state.api.missions).toHaveBeenCalledTimes(1);
+        expect(state.api.mission).toHaveBeenCalledTimes(1);
+        expect(state.api.mission).toHaveBeenCalledWith(5);
     });
 
     it("fires the marker refetch through handleJournal", async () => {
         const { client, state } = makeClient({
+            trackerView: OPEN,
             trackerItem: { item: item({ num: 2 }), comments: [] },
             inboxItems: [item({ num: 2 })],
         });
@@ -655,6 +1033,7 @@ describe("MatronJournalClient tracker needs-you badge", () => {
     });
 
     it("an item marker refreshes a primed badge even when the inbox is not loaded", async () => {
+        jest.useFakeTimers();
         const { client, state } = makeClient({ trackerNeedsYou: 0 });
         state.api = {
             item: jest.fn(),
@@ -662,6 +1041,10 @@ describe("MatronJournalClient tracker needs-you badge", () => {
         };
 
         state.handleTrackerMarker(marker("item", { num: 1, action: "created" }));
+        // Marker-driven refetches are coalesced (scheduleInboxRefetch), the badge-only one included.
+        expect(state.api.items).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(250);
+        jest.useRealTimers();
         await flush();
         await flush();
 
@@ -695,8 +1078,11 @@ describe("MatronJournalClient tracker needs-you badge (review round 1)", () => {
                 .mockResolvedValueOnce({ items: [item({ id: "it_1" }), item({ id: "it_2" })], next_cursor: null }),
         };
 
+        jest.useFakeTimers();
         const prime = client.refreshTrackerBadge(); // connection ready → prime in flight
         state.handleTrackerMarker(marker("item", { num: 2, action: "created" }));
+        jest.advanceTimersByTime(250); // the coalesced marker refetch fires
+        jest.useRealTimers();
         await flush();
         await flush();
         resolvePrime({ items: [], next_cursor: null }); // older state lands last

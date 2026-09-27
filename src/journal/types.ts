@@ -431,6 +431,21 @@ export interface ClientState {
     trackerLoading?: boolean;
     /** Last tracker fetch/mutation error; cleared on the next successful load. */
     trackerError?: string;
+    /** Error from the last inbox load only. Unlike trackerError, which any tracker load clears, this
+     *  is cleared only by the next inbox load, so a never-loaded inbox can tell "failed" from
+     *  "still loading" while other loads come and go. */
+    inboxError?: string;
+    /** Error from the last item-detail load, keyed by the item it was for (`id` is the item number
+     *  as a string, any leading "#" dropped). Unlike trackerError it survives other tracker loads
+     *  and an in-flight retry, and is cleared only when an item load succeeds, so the pane can keep
+     *  offering a retry for the selected item until it actually loads. */
+    itemLoadError?: { id: string; message: string };
+    /** Same as inboxError, for the missions list. */
+    missionsError?: string;
+    /** Same as itemLoadError, for the open mission detail: keyed by the mission number (leading "#"
+     *  dropped), survives other tracker loads and an in-flight retry, and is cleared only when a
+     *  mission load succeeds, so the pane can keep offering a retry until it actually loads. */
+    missionLoadError?: { id: string; message: string };
 }
 
 export interface FilesViewState {
@@ -511,10 +526,10 @@ export interface TrackerItem {
     links: TrackerLink[];
     supersedes: string | null;
     origin_convo_id: string;
-    /** Title of the origin conversation, for provenance labelling (this session / another session).
-     *  Null when the origin conversation row is gone, or on a marker/shape from a journal that
-     *  predates the field. */
-    origin_convo_title: string | null;
+    /** Title of the origin conversation as the journal resolved it, for provenance labels. Absent
+     *  on a journal that predates the field; null or "" when the origin conversation is gone or
+     *  untitled. */
+    origin_convo_title?: string | null;
     origin_device_id?: number;
     created_by: TrackerActor;
     created_at: number;

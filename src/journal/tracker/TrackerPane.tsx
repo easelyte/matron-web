@@ -59,12 +59,23 @@ export function TrackerPane({
         if (selectedMissionId != null) void client.loadMission(selectedMissionId);
     }, [client, selectedMissionId]);
 
-    // The view switch (and the detail back buttons) clear any open detail selection. openTrackerView
-    // merges with the previous view, so it can't clear a selected id on its own; closing first resets
-    // the view, then reopening on the wanted tab lands on a clean list.
-    const switchView = (next: "missions" | "inbox" | "work"): void => {
-        client.closeTrackerView();
-        client.openTrackerView({ view: next });
+    // The view switch (and the detail back buttons) clear any open detail selection; null clears a
+    // selected id explicitly, in one view update.
+    const switchView = (next: "missions" | "inbox" | "work"): void =>
+        client.openTrackerView({ view: next, itemId: null, missionId: null, loopId: null });
+
+    // Did the last load of the selected item fail? The error is keyed to the item, so a failure
+    // for an earlier selection never shows against this one.
+    const selectedItemLoadFailed = selectedItemId != null && state.itemLoadError?.id === String(selectedItemId);
+    const retryItem = (): void => {
+        if (selectedItemId != null) void client.loadItem(selectedItemId);
+    };
+    // Same for the selected mission: without a keyed error a failed GET /missions/:id left the
+    // list on screen and MissionDetail's own retry branch unreachable.
+    const selectedMissionLoadFailed =
+        selectedMissionId != null && state.missionLoadError?.id === String(selectedMissionId);
+    const retryMission = (): void => {
+        if (selectedMissionId != null) void client.loadMission(selectedMissionId);
     };
 
     const body = ((): React.ReactElement => {
@@ -78,13 +89,41 @@ export function TrackerPane({
             state.trackerItem &&
             state.trackerItem.item.num === selectedItemId
         ) {
+            // A failed refresh keeps the loaded record (loaders never clear data on failure), but
+            // says it may be out of date and offers a retry, which a later load's banner reset
+            // would otherwise take away.
             return (
-                <ItemDetail
-                    item={state.trackerItem.item}
-                    comments={state.trackerItem.comments}
-                    client={client}
-                    onBack={() => switchView("inbox")}
-                />
+                <>
+                    {selectedItemLoadFailed ? (
+                        <div className="mj_TrackerStaleNotice" role="status">
+                            Couldn't refresh this item, so it may be out of date.{" "}
+                            <button type="button" className="mj_TrackerTextButton" onClick={retryItem}>
+                                Try again
+                            </button>
+                        </div>
+                    ) : null}
+                    <ItemDetail
+                        item={state.trackerItem.item}
+                        comments={state.trackerItem.comments}
+                        client={client}
+                        onBack={() => switchView("inbox")}
+                    />
+                </>
+            );
+        }
+        // The selected item's load failed with nothing loaded to show. Re-tapping its inbox row
+        // would not reload it (the selection doesn't change), so say so here and offer a retry.
+        if (view === "inbox" && selectedItemLoadFailed) {
+            return (
+                <div className="mj_TrackerEmpty" role="status">
+                    <p className="mj_TrackerEmpty_title">Couldn't load this item</p>
+                    <button type="button" className="mj_TrackerTextButton" onClick={retryItem}>
+                        Try again
+                    </button>
+                    <button type="button" className="mj_TrackerTextButton" onClick={() => switchView("inbox")}>
+                        Back to inbox
+                    </button>
+                </div>
             );
         }
         if (
@@ -94,17 +133,35 @@ export function TrackerPane({
             state.trackerMission.mission?.num === selectedMissionId
         ) {
             return (
+                <>
+                    {selectedMissionLoadFailed ? (
+                        <div className="mj_TrackerStaleNotice" role="status">
+                            Couldn't refresh this mission, so it may be out of date.{" "}
+                            <button type="button" className="mj_TrackerTextButton" onClick={retryMission}>
+                                Try again
+                            </button>
+                        </div>
+                    ) : null}
+                    <MissionDetail
+                        detail={state.trackerMission}
+                        client={client}
+                        onOpenItem={(num) => client.openTrackerItem(num)}
+                        onBack={() => switchView("missions")}
+                    />
+                </>
+            );
+        }
+        // The selected mission's load failed with nothing loaded to show. Re-tapping its row would
+        // not reload it (the selection doesn't change), so hand MissionDetail a null record: its
+        // empty state says so and its "Try again" reloads the selected mission.
+        if (view === "missions" && selectedMissionLoadFailed) {
+            return (
                 <MissionDetail
-                    detail={state.trackerMission}
+                    detail={null}
                     client={client}
                     onOpenItem={(num) => client.openTrackerItem(num)}
                     onBack={() => switchView("missions")}
                 />
-            );
-        }
-        if (view === "missions") {
-            return (
-                <MissionsList missions={state.missions ?? []} onOpenMission={(num) => client.openTrackerMission(num)} />
             );
         }
         if (view === "work") {
@@ -118,6 +175,42 @@ export function TrackerPane({
                     onCloseLoop={() => client.openTrackerLoop(null)}
                     onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
                 />
+            );
+        }
+        // Until a list's first load lands there is nothing to reason over: an empty list would read
+        // as a false "No missions yet" / "Nothing needs you". A failed load says so and offers a retry;
+        // each list has its own error for this, since any other tracker load clears the shared banner.
+        const list =
+            view === "missions"
+                ? {
+                      loaded: state.missions,
+                      error: state.missionsError,
+                      noun: "missions",
+                      reload: () => client.loadMissions(),
+                  }
+                : {
+                      loaded: state.inboxItems,
+                      error: state.inboxError,
+                      noun: "the inbox",
+                      reload: () => client.loadInbox(),
+                  };
+        if (list.loaded === undefined) {
+            return list.error ? (
+                <div className="mj_TrackerEmpty" role="status">
+                    <p className="mj_TrackerEmpty_title">Couldn't load {list.noun}</p>
+                    <button type="button" className="mj_TrackerTextButton" onClick={() => void list.reload()}>
+                        Try again
+                    </button>
+                </div>
+            ) : (
+                <div className="mj_TrackerEmpty" role="status">
+                    <p className="mj_TrackerEmpty_title">Loading…</p>
+                </div>
+            );
+        }
+        if (view === "missions") {
+            return (
+                <MissionsList missions={state.missions ?? []} onOpenMission={(num) => client.openTrackerMission(num)} />
             );
         }
         return (
