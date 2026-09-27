@@ -908,6 +908,31 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
         expect(state.api.items).not.toHaveBeenCalled();
     });
 
+    // Work reads none of the tracker lists (and the pane re-primes them on the way back), so a
+    // marker while Work is showing refreshes only the badge, never a full inbox walk or /missions.
+    it("refreshes only the badge, not the retained lists, while the Work tab is showing", async () => {
+        const { state } = makeClient({
+            trackerView: { open: true, view: "work" },
+            inboxItems: [item({ num: 2 })],
+            missions: [mission()],
+            trackerNeedsYou: 0,
+        });
+        state.api = {
+            item: jest.fn(),
+            items: jest.fn().mockResolvedValue({ items: [], next_cursor: null }),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+        };
+
+        state.handleTrackerMarker(marker("item", { num: 3, action: "created" }));
+        state.handleTrackerMarker(marker("mission", { num: 5, action: "updated" }));
+        jest.advanceTimersByTime(250);
+        await flush();
+
+        expect(state.api.items).toHaveBeenCalledTimes(1);
+        expect(state.api.items).toHaveBeenCalledWith({ state: "open", awaiting: "user" });
+        expect(state.api.missions).not.toHaveBeenCalled();
+    });
+
     it("drops a pending inbox refetch when the pane closes before it fires", async () => {
         const { client, state } = makeClient({ trackerView: OPEN, inboxItems: [item({ num: 2 })] });
         state.api = { item: jest.fn(), items: jest.fn() };

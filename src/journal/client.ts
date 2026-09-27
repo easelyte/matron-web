@@ -2437,14 +2437,16 @@ export class MatronJournalClient {
     // Coalesce marker-driven inbox refetches: the first marker arms a short timer and any marker that
     // lands before it fires rides along, so a burst costs one paginated walk. The conditions are
     // re-checked when the timer fires, since the pane may have closed (or the session ended) since.
-    // With the pane closed (or its inbox not loaded yet) only the needs-you badge is refreshed, and
-    // only once it has been primed (see refreshInboxOrBadge).
+    // With the pane closed, the Work tab showing (it reads none of the tracker lists, and the pane
+    // re-primes them when Inbox/Missions is selected again), or the inbox not loaded yet, only the
+    // needs-you badge is refreshed, and only once it has been primed (see refreshInboxOrBadge).
     private scheduleInboxRefetch(): void {
         if (this.trackerInboxRefetchTimer !== undefined) return;
         this.trackerInboxRefetchTimer = window.setTimeout(() => {
             this.trackerInboxRefetchTimer = undefined;
             if (!this.api) return;
-            if (this.state.trackerView?.open && this.state.inboxItems) void this.loadInbox();
+            const view = this.state.trackerView;
+            if (view?.open && view.view !== "work" && this.state.inboxItems) void this.loadInbox();
             else if (this.trackerBadgeGen > 0 || this.state.trackerNeedsYou !== undefined) {
                 void this.refreshTrackerBadge();
             }
@@ -2458,7 +2460,8 @@ export class MatronJournalClient {
             this.trackerMissionsRefetchTimer = undefined;
             const detail = this.trackerMissionRefetchPending;
             this.trackerMissionRefetchPending = false;
-            if (!this.state.trackerView?.open) return;
+            // Nothing while closed, and nothing for the Work tab (see scheduleInboxRefetch).
+            if (!this.state.trackerView?.open || this.state.trackerView.view === "work") return;
             if (this.state.missions) void this.loadMissions();
             const selected = this.state.trackerView.selectedMissionId;
             if (detail && selected != null && this.state.trackerMission?.mission?.num === selected) {

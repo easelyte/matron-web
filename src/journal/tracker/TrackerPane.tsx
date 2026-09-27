@@ -208,17 +208,37 @@ export function TrackerPane({
                 </div>
             );
         }
+        // A failed refresh keeps the loaded list (loaders never clear data on failure). Its own error
+        // survives other tracker loads that clear the shared banner, so say the list may be out of
+        // date and offer a retry; otherwise an empty list would read as a current "Nothing needs you".
+        const staleNotice = list.error ? (
+            <div className="mj_TrackerStaleNotice" role="status">
+                Couldn't refresh {list.noun}, so {view === "missions" ? "they" : "it"} may be out of date.{" "}
+                <button type="button" className="mj_TrackerTextButton" onClick={() => void list.reload()}>
+                    Try again
+                </button>
+            </div>
+        ) : null;
         if (view === "missions") {
             return (
-                <MissionsList missions={state.missions ?? []} onOpenMission={(num) => client.openTrackerMission(num)} />
+                <>
+                    {staleNotice}
+                    <MissionsList
+                        missions={state.missions ?? []}
+                        onOpenMission={(num) => client.openTrackerMission(num)}
+                    />
+                </>
             );
         }
         return (
-            <ItemsInbox
-                items={state.inboxItems ?? []}
-                client={client}
-                onOpenItem={(num) => client.openTrackerItem(num)}
-            />
+            <>
+                {staleNotice}
+                <ItemsInbox
+                    items={state.inboxItems ?? []}
+                    client={client}
+                    onOpenItem={(num) => client.openTrackerItem(num)}
+                />
+            </>
         );
     })();
 

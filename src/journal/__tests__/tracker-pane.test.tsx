@@ -307,6 +307,60 @@ describe("TrackerPane inbox", () => {
         expect(client.loadInbox).toHaveBeenCalledTimes(1);
     });
 
+    // A failed REFRESH keeps the loaded list; its own error outlives the shared banner (which any
+    // other tracker load clears), so the pane must not present the retained list as current.
+    it("marks a loaded inbox whose refresh failed as possibly out of date, with a retry", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "inbox" }, inboxItems: [], inboxError: "offline" })}
+            />,
+        );
+
+        const notice = container.querySelector(".mj_TrackerStaleNotice");
+        expect(notice?.textContent).toContain("Couldn't refresh the inbox, so it may be out of date.");
+        client.loadInbox.mockClear();
+        await act(async () => {
+            notice!.querySelector<HTMLButtonElement>("button")!.click();
+        });
+        expect(client.loadInbox).toHaveBeenCalledTimes(1);
+    });
+
+    it("marks loaded missions whose refresh failed as possibly out of date", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "missions" },
+                    missions: [],
+                    missionsError: "offline",
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerStaleNotice")?.textContent).toContain(
+            "Couldn't refresh missions, so they may be out of date.",
+        );
+    });
+
+    it("shows no stale notice for a loaded inbox without an inbox error", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "inbox" },
+                    inboxItems: [],
+                    trackerError: "item gone",
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerStaleNotice")).toBeNull();
+    });
+
     // The shared banner error can come from (and be cleared by) an item load; it must not stand in
     // for the inbox's own state.
     it("keeps showing loading when only another tracker load has failed", async () => {
