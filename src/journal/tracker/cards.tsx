@@ -234,6 +234,39 @@ export function MilestoneCard({
 }
 
 /** `mission` marker — a one-line notice. */
+// A `memory` marker (spec 2026-09-27 memories): a quiet one-line notice, the MissionNotice
+// species. The journal may append the same change to two conversations; each renders its own
+// line. Across a privacy boundary the payload carries no name — the notice then has no target
+// and opens the Memories list instead of one memory.
+export function MemoryNotice({
+    client,
+    event,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+}): React.ReactElement {
+    const payload = event.payload;
+    const name = asString(payload.name).trim();
+    const description = oneLine(asString(payload.description));
+    const action = asString(payload.action);
+    const verb = action === "deleted" ? "deleted" : payload.created === true ? "saved" : "updated";
+    const who = asString(payload.by) === "user" ? "You" : "Agent";
+    const what = name ? ` · ${name}${description && action !== "deleted" ? ` — ${description}` : ""}` : "";
+    const text = `${who} ${verb} a memory${what}`;
+    const open = (): void => {
+        if (name && action !== "deleted") client.openTrackerMemory(name);
+        else client.openTrackerView({ view: "memories", itemId: null, missionId: null, memoryName: null });
+    };
+    return (
+        <button type="button" className="mj_TrackerMissionNotice mj_TrackerMemoryNotice" onClick={open}>
+            <span className="mj_TrackerMissionNotice_flag" aria-hidden="true">
+                🧠
+            </span>
+            {text}
+        </button>
+    );
+}
+
 export function MissionNotice({
     client,
     event,

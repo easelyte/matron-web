@@ -440,6 +440,7 @@ describe("TrackerPane inbox", () => {
             itemId: null,
             missionId: null,
             loopId: null,
+            memoryName: null,
         });
     });
 
@@ -522,6 +523,7 @@ describe("TrackerPane inbox", () => {
             itemId: null,
             missionId: null,
             loopId: null,
+            memoryName: null,
         });
         expect(client.closeTrackerView).not.toHaveBeenCalled();
     });

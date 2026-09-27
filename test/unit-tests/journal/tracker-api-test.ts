@@ -172,4 +172,34 @@ describe("JournalApi tracker routes", () => {
         await api().closeItem(9, { resolution: "cancelled" });
         expect(init().headers["Idempotency-Key"]).toBeUndefined();
     });
+
+    // ── Memories (spec 2026-09-27 memories) ───────────────────────────────────────────────────
+
+    it("GET /memories", async () => {
+        await api().memories();
+        expect(url()).toBe("https://journal.example/memories");
+        expect(init().method ?? "GET").toBe("GET");
+        expect(init().headers).toEqual(expect.objectContaining({ Authorization: "Bearer token" }));
+    });
+
+    it("PUT /memories/:name carries the whole memory as JSON, name URL-encoded", async () => {
+        await api().putMemory("avoid-eric", {
+            description: "Never use eric.",
+            body: "**Why:** reserved.",
+            type: "feedback",
+        });
+        expect(url()).toBe("https://journal.example/memories/avoid-eric");
+        expect(init().method).toBe("PUT");
+        expect(JSON.parse(init().body ?? "{}")).toEqual({
+            description: "Never use eric.",
+            body: "**Why:** reserved.",
+            type: "feedback",
+        });
+    });
+
+    it("DELETE /memories/:name", async () => {
+        await api().deleteMemory("avoid-eric");
+        expect(url()).toBe("https://journal.example/memories/avoid-eric");
+        expect(init().method).toBe("DELETE");
+    });
 });

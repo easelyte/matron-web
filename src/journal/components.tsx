@@ -92,7 +92,7 @@ function isElectronRuntime(): boolean {
 import { MarkdownBody, markdownToPlainText } from "./markdown";
 import { snippetText } from "./plain-text";
 import { ConnectionBanner, ConnectionStatus, mainSurfaceOpen, MobileNav, NavBadge, trackerLabel } from "./mobile-shell";
-import { isRenderableItemMarker, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
+import { isRenderableItemMarker, MemoryNotice, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
 import { OpsPane } from "./ops/OpsPane";
 import { TrackerPane } from "./tracker/TrackerPane";
 import {
@@ -4780,6 +4780,8 @@ export function EventContent({
             return <MissionNotice client={client} event={event} />;
         case "peer_message":
             return <PeerMessage event={event} />;
+        case "memory":
+            return <MemoryNotice client={client} event={event} />;
         case "prompt":
             if (asString(event.payload.kind) === "queued_release") {
                 return (

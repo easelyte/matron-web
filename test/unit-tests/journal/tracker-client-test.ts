@@ -8,7 +8,14 @@ Please see LICENSE files in the repository root for full details.
 import { webcrypto } from "node:crypto";
 
 import { MatronJournalClient } from "../../../src/journal/client";
-import type { ClientState, JournalEvent, Mission, MissionDetail, TrackerItem } from "../../../src/journal/types";
+import type {
+    ClientState,
+    JournalEvent,
+    Memory,
+    Mission,
+    MissionDetail,
+    TrackerItem,
+} from "../../../src/journal/types";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────────────────────────
 
@@ -86,6 +93,9 @@ interface TrackerApiMock {
     reopenItem: jest.Mock;
     patchMission: jest.Mock;
     closeMission: jest.Mock;
+    memories: jest.Mock;
+    putMemory: jest.Mock;
+    deleteMemory: jest.Mock;
 }
 
 interface Internals {
@@ -1102,6 +1112,134 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
         await internals(client).handleJournal(marker("item", { num: 2, action: "commented" }));
 
         expect(state.api.item).toHaveBeenCalledWith(2);
+    });
+
+    describe("memories (spec 2026-09-27 memories)", () => {
+        function memory(over: Partial<Memory> = {}): Memory {
+            return {
+                id: "me_1",
+                name: "avoid-eric",
+                type: "feedback",
+                description: "Never use eric.",
+                body: "",
+                origin_convo_id: "c1",
+                origin_device_id: 2,
+                created_by: "agent",
+                updated_by: "agent",
+                created_at: 1,
+                updated_at: 2,
+                ...over,
+            };
+        }
+
+        it("loadMemories fetches the list and stores it sorted by name", async () => {
+            const { client, state } = makeClient();
+            state.api = {
+                memories: jest
+                    .fn()
+                    .mockResolvedValue({ memories: [memory({ name: "b" }), memory({ id: "me_2", name: "a" })] }),
+            };
+
+            await client.loadMemories();
+
+            expect(client.getSnapshot().memories?.map((m) => m.name)).toEqual(["a", "b"]);
+            expect(client.getSnapshot().trackerLoading).toBe(false);
+            expect(client.getSnapshot().memoriesError).toBeUndefined();
+        });
+
+        it("loadMemories failure sets memoriesError and keeps any loaded list", async () => {
+            const { client, state } = makeClient({ memories: [memory()] });
+            state.api = { memories: jest.fn().mockRejectedValue(new Error("HTTP 404")) };
+
+            await client.loadMemories();
+
+            expect(client.getSnapshot().memoriesError).toMatch(/404/);
+            expect(client.getSnapshot().memories).toEqual([memory()]);
+        });
+
+        it("saveMemory PUTs then reloads; deleteMemory clears a selection of that name and reloads", async () => {
+            const { client, state } = makeClient({
+                trackerView: { open: true, view: "memories", selectedMemoryName: "avoid-eric" },
+            });
+            const putMemory = jest.fn().mockResolvedValue({ memory: memory() });
+            const deleteMemory = jest.fn().mockResolvedValue({ memory: memory() });
+            const memories = jest.fn().mockResolvedValue({ memories: [memory()] });
+            state.api = { putMemory, deleteMemory, memories };
+
+            expect(
+                await client.saveMemory("avoid-eric", { description: "Never use eric.", body: "", type: "feedback" }),
+            ).toBe(true);
+            expect(putMemory).toHaveBeenCalledWith("avoid-eric", {
+                description: "Never use eric.",
+                body: "",
+                type: "feedback",
+            });
+            expect(memories).toHaveBeenCalledTimes(1);
+
+            expect(await client.deleteMemory("avoid-eric")).toBe(true);
+            expect(deleteMemory).toHaveBeenCalledWith("avoid-eric");
+            expect(client.getSnapshot().trackerView?.selectedMemoryName).toBeUndefined();
+            expect(client.getSnapshot().trackerView?.view).toBe("memories");
+            expect(memories).toHaveBeenCalledTimes(2);
+        });
+
+        it("a failed save reports trackerError and returns false", async () => {
+            const { client, state } = makeClient();
+            state.api = { putMemory: jest.fn().mockRejectedValue(new Error("HTTP 409")), memories: jest.fn() };
+            expect(await client.saveMemory("x", { description: "d" })).toBe(false);
+            expect(client.getSnapshot().trackerError).toMatch(/409/);
+            expect(state.api?.memories).not.toHaveBeenCalled();
+        });
+
+        it("openTrackerMemory selects the name in the memories view and clears item/mission selections", () => {
+            const { client } = makeClient({
+                trackerView: { open: true, view: "inbox", selectedItemId: 7 },
+                trackerItem: { item: item({ num: 7 }), comments: [] },
+            });
+            client.openTrackerMemory("avoid-eric");
+            expect(client.getSnapshot().trackerView).toEqual({
+                open: true,
+                view: "memories",
+                selectedItemId: undefined,
+                selectedMissionId: undefined,
+                selectedMemoryName: "avoid-eric",
+            });
+            expect(client.getSnapshot().trackerItem).toBeNull();
+            client.closeTrackerMemory();
+            expect(client.getSnapshot().trackerView?.selectedMemoryName).toBeUndefined();
+        });
+
+        it("a memory marker refetches the loaded list once per burst, and nothing when the pane is closed", async () => {
+            jest.useFakeTimers();
+            try {
+                const { state } = makeClient({
+                    trackerView: { open: true, view: "memories" },
+                    memories: [memory()],
+                });
+                const memories = jest.fn().mockResolvedValue({ memories: [memory()] });
+                state.api = { memories };
+                state.handleTrackerMarker(
+                    marker("memory", { memory_id: "me_1", action: "saved", created: true, by: "agent" }),
+                );
+                state.handleTrackerMarker(
+                    marker("memory", { memory_id: "me_1", action: "saved", created: true, by: "agent" }),
+                );
+                expect(memories).not.toHaveBeenCalled();
+                jest.advanceTimersByTime(250);
+                await flush();
+                expect(memories).toHaveBeenCalledTimes(1);
+
+                const closed = makeClient({ memories: [memory()] });
+                const closedMemories = jest.fn();
+                closed.state.api = { memories: closedMemories };
+                closed.state.handleTrackerMarker(marker("memory", { memory_id: "me_1", action: "deleted" }));
+                jest.advanceTimersByTime(250);
+                await flush();
+                expect(closedMemories).not.toHaveBeenCalled();
+            } finally {
+                jest.useRealTimers();
+            }
+        });
     });
 });
 

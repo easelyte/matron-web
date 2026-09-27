@@ -24,6 +24,8 @@ import {
     type TrackerItemState,
     type TrackerLink,
     type TrackerResolution,
+    type Memory,
+    type MemoryWrite,
 } from "./types";
 import { parseBoxStatus, parseMetrics, type JournalMetrics } from "./ops/model";
 import { parseWorkViewEnvelope, type WorkViewEnvelope, type WorkViewGroupBy } from "./work-view";
@@ -39,7 +41,7 @@ interface JournalElectron {
     journalRequest(request: {
         serverUrl: string;
         path: string;
-        method: "GET" | "POST" | "PATCH";
+        method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
         token?: string;
         body?: string;
         // Extra request headers (e.g. Idempotency-Key). Optional + additive: older preloads
@@ -382,6 +384,23 @@ export class JournalApi {
         });
     }
 
+    // ── Memories (journal /memories, spec 2026-09-27 memories; Bearer-auth, user-global) ──
+
+    /** GET /memories — every memory, ordered by name (≤200 rows, no paging). */
+    public memories(): Promise<{ memories: Memory[] }> {
+        return this.json<{ memories: Memory[] }>("/memories");
+    }
+
+    /** PUT /memories/:name — upsert by name (201 created / 200 updated; the whole memory). */
+    public putMemory(name: string, body: MemoryWrite): Promise<{ memory: Memory }> {
+        return this.json<{ memory: Memory }>(`/memories/${encodeURIComponent(name)}`, { method: "PUT", body });
+    }
+
+    /** DELETE /memories/:name — the deleted row comes back. */
+    public deleteMemory(name: string): Promise<{ memory: Memory }> {
+        return this.json<{ memory: Memory }>(`/memories/${encodeURIComponent(name)}`, { method: "DELETE" });
+    }
+
     /** PATCH /missions/:id — edit the mission title/body. */
     public patchMission(
         id: string | number,
@@ -485,7 +504,7 @@ export class JournalApi {
     private async json<T>(
         path: string,
         options: {
-            method?: "GET" | "POST" | "PATCH";
+            method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
             body?: object;
             authenticated?: boolean;
             signal?: AbortSignal;
@@ -504,7 +523,7 @@ export class JournalApi {
     private async request(
         path: string,
         options: {
-            method?: "GET" | "POST" | "PATCH";
+            method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
             body?: object;
             authenticated?: boolean;
             rawBody?: ArrayBuffer;
