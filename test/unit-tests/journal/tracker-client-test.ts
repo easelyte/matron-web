@@ -437,6 +437,48 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().trackerNeedsYou).toBe(1);
     });
 
+    it("an inbox walk still publishes its count when a badge refresh started after it failed", async () => {
+        const { client, state } = makeClient({ inboxItems: [] });
+        let resolveWalk!: (value: { items: TrackerItem[]; next_cursor: null }) => void;
+        state.api = {
+            items: jest.fn((query: { awaiting?: string }) =>
+                query.awaiting === "user"
+                    ? Promise.reject(new Error("offline"))
+                    : new Promise((resolve) => (resolveWalk = resolve)),
+            ),
+        };
+
+        const walk = client.loadInbox();
+        await client.refreshTrackerBadge(); // fails, publishes nothing
+        resolveWalk({ items: [item({ id: "it_1", awaiting: "user" })], next_cursor: null });
+        await walk;
+
+        expect(client.getSnapshot().trackerNeedsYou).toBe(1);
+    });
+
+    it("a badge refresh still in flight when the walk lands publishes over the walk's count", async () => {
+        const { client, state } = makeClient({ inboxItems: [] });
+        let resolveWalk!: (value: { items: TrackerItem[]; next_cursor: null }) => void;
+        let resolveBadge!: (value: { items: TrackerItem[]; next_cursor: null }) => void;
+        state.api = {
+            items: jest.fn((query: { awaiting?: string }) =>
+                query.awaiting === "user"
+                    ? new Promise((resolve) => (resolveBadge = resolve))
+                    : new Promise((resolve) => (resolveWalk = resolve)),
+            ),
+        };
+
+        const walk = client.loadInbox();
+        const badge = client.refreshTrackerBadge();
+        resolveWalk({ items: [], next_cursor: null });
+        await walk;
+        expect(client.getSnapshot().trackerNeedsYou).toBe(0);
+
+        resolveBadge({ items: [item({ id: "it_new", awaiting: "user" })], next_cursor: null });
+        await badge;
+        expect(client.getSnapshot().trackerNeedsYou).toBe(1);
+    });
+
     it("loadInbox records its own error, which only the next inbox load clears", async () => {
         const { client, state } = makeClient();
         state.api = {

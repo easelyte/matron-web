@@ -363,6 +363,9 @@ export class MatronJournalClient {
     // Generation guard for the needs-you badge fetch; loadInbox bumps it too, so a full inbox load
     // (the authoritative count) supersedes a slower in-flight badge-only fetch.
     private trackerBadgeGen = 0;
+    // Generation of the last badge-only refresh that actually PUBLISHED a count (a failed one
+    // publishes nothing). loadInbox compares it to decide whether a newer count already landed.
+    private trackerBadgePublishedGen = 0;
     private trackerMissionsGen = 0;
     // Pending marker-driven inbox refetch. A burst of `item` markers (a reconnect replay, a batch of
     // agent writes) coalesces into ONE inbox walk instead of one per marker.
@@ -2130,16 +2133,21 @@ export class MatronJournalClient {
                 }
                 cursor = next_cursor;
             }
-            // The full walk is the authoritative count: it supersedes a badge fetch already in flight
-            // when it started (bumping the generation drops that response), but never one started
-            // since, which may reflect a newer change than this walk saw.
-            const badgeCurrent = this.trackerBadgeGen === badgeGenAtStart;
-            if (badgeCurrent) this.trackerBadgeGen += 1;
+            // The full walk is the authoritative count, except against a badge-only refresh started
+            // after it began, which may reflect a newer change than this walk saw:
+            // - none started since: publish, and bump the generation so an older in-flight badge
+            //   fetch is dropped;
+            // - one started since and already published: keep its (newer) count;
+            // - one started since but still in flight or failed: publish this count, leaving the
+            //   generation alone so a later success still lands over it.
+            const newerBadgeStarted = this.trackerBadgeGen !== badgeGenAtStart;
+            const newerBadgePublished = this.trackerBadgePublishedGen > badgeGenAtStart;
+            if (!newerBadgeStarted) this.trackerBadgeGen += 1;
             this.patch({
                 inboxItems: accumulated,
-                ...(badgeCurrent
-                    ? { trackerNeedsYou: accumulated.filter(needsUser).length, trackerNeedsYouPartial: truncated }
-                    : {}),
+                ...(newerBadgePublished
+                    ? {}
+                    : { trackerNeedsYou: accumulated.filter(needsUser).length, trackerNeedsYouPartial: truncated }),
                 inboxError: undefined,
                 trackerLoading: false,
                 trackerError: truncated
@@ -2193,6 +2201,7 @@ export class MatronJournalClient {
         } catch {
             return;
         }
+        this.trackerBadgePublishedGen = gen;
         this.patch({ trackerNeedsYou: count, trackerNeedsYouPartial: partial });
     }
 
