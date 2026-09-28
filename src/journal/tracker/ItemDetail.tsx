@@ -12,9 +12,10 @@ Please see LICENSE files in the repository root for full details.
  * mutations go through the client; the store refetch keeps the thread live.
  */
 
-import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import type { MatronJournalClient } from "../client";
+import { isSendKey, useAutoGrow } from "../composer-input";
 import { humanizeSize } from "../files/format";
 import { filesDeepLinkHash, handleFilesLinkClick } from "../files-link";
 import { ChevronLeftIcon, KebabIcon, SendIcon } from "../icons";
@@ -153,15 +154,22 @@ export function ItemDetail({
 }): React.ReactElement {
     const [reply, setReply] = useState("");
     // Operator call T3: the reply box behaves like the chat composer. One line tall at rest, grows
-    // with its content up to 160px (then scrolls), Send sits inside the box, no drag handle.
+    // with its content up to the composer max (then scrolls), Send sits inside the box, no drag
+    // handle; Enter sends and Shift+Enter inserts a newline, through the composer's own helpers.
     const replyRef = useRef<HTMLTextAreaElement>(null);
-    useLayoutEffect(() => {
-        const node = replyRef.current;
-        if (!node) return;
-        node.style.height = "auto";
-        if (reply) node.style.height = `${Math.min(node.scrollHeight, 160)}px`;
-    }, [reply]);
+    useAutoGrow(replyRef, reply);
     const [busy, setBusy] = useState(false);
+    // The box is disabled while a reply posts, which drops its focus. With Enter as the send key
+    // the operator is typing when that happens, so hand the focus back once the post settles, but
+    // only if the focus is still nowhere (the drop itself): a deliberate move to another control
+    // while the post was pending is left alone.
+    const refocusReplyRef = useRef(false);
+    useEffect(() => {
+        if (busy || !refocusReplyRef.current) return;
+        refocusReplyRef.current = false;
+        const active = document.activeElement;
+        if (active === null || active === document.body || active === replyRef.current) replyRef.current?.focus();
+    }, [busy]);
     const [menuOpen, setMenuOpen] = useState(false);
     // Stable idempotency key bound to the current draft TEXT. A failed send keeps the draft, so a
     // retry of the SAME text must reuse this key — otherwise a comment that committed before its
@@ -187,6 +195,7 @@ export function ItemDetail({
     const send = async (): Promise<void> => {
         const body = reply.trim();
         if (!body || busy) return;
+        refocusReplyRef.current = document.activeElement === replyRef.current;
         setBusy(true);
         try {
             // Reuse the key across retries of identical text; mint a fresh one when the text changed
@@ -391,7 +400,7 @@ export function ItemDetail({
                         disabled={busy}
                         onChange={(event) => setReply(event.target.value)}
                         onKeyDown={(event) => {
-                            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                            if (isSendKey(event)) {
                                 event.preventDefault();
                                 void send();
                             }

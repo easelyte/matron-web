@@ -31,6 +31,7 @@ import {
 } from "./client";
 import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
+import { isImeComposing, isSendKey, useAutoGrow } from "./composer-input";
 import { type EditFileEdit, type EditFileOutcome, pathRejectMessage } from "./edit-file";
 import { type ReadFileOutcome } from "./read-file";
 import { effectiveUnread } from "./conversation-flags";
@@ -6406,6 +6407,9 @@ function Composer({
     const store = useMemo(() => makeRecentFoldersStore(state.session), [state.session]);
     const [dismissedSeq, setDismissedSeq] = useState(0);
     const textarea = useRef<HTMLTextAreaElement>(null);
+    // Sized from the value, not from input events: a draft restored on a conversation switch (or
+    // on mount) opens at its full height, the same as it was while being typed.
+    useAutoGrow(textarea, body);
     const fileInput = useRef<HTMLInputElement>(null);
     const convoId = state.selectedConversationId;
     const convoIdRef = useRef(convoId);
@@ -6908,7 +6912,6 @@ function Composer({
         // Sync the badge FROM the store for the newly-selected convo — never a blind reset, so a
         // still-non-durable convo keeps its warning across switch-away/back (and a clear-failure flag surfaces).
         setNonDurable(convoId ? drafts.durability(convoId) === "non-durable" : false);
-        if (textarea.current) textarea.current.style.height = "auto";
         prevConvoIdRef.current = convoId;
     }, [convoId, draftReloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -6945,7 +6948,6 @@ function Composer({
                 if (draftUnchanged && convoIdRef.current === cid) {
                     setBody("");
                     setDismissed(null);
-                    if (textarea.current) textarea.current.style.height = "auto";
                 }
             }
         } catch (error) {
@@ -7078,11 +7080,9 @@ function Composer({
                                         setBodyDraft(nextBody);
                                         setHighlighted(null);
                                         if (dismissed !== null && nextBody !== dismissed) setDismissed(null);
-                                        event.target.style.height = "auto";
-                                        event.target.style.height = `${Math.min(event.target.scrollHeight, 160)}px`;
                                     }}
                                     onKeyDown={(event) => {
-                                        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                                        if (isImeComposing(event)) return;
                                         if (open) {
                                             const count = folders.length || commands.length;
                                             if (event.key === "ArrowDown") {
@@ -7119,7 +7119,7 @@ function Composer({
                                                 return;
                                             }
                                         }
-                                        if (event.key === "Enter" && !event.shiftKey) {
+                                        if (isSendKey(event)) {
                                             event.preventDefault();
                                             void send();
                                         }
@@ -7529,8 +7529,8 @@ function UploadConfirmPage({
                     value={caption}
                     onChange={(event) => setCaption(event.target.value)}
                     onKeyDown={(event) => {
-                        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                        if (event.key === "Enter" && !event.shiftKey) {
+                        if (isImeComposing(event)) return;
+                        if (isSendKey(event)) {
                             event.preventDefault();
                             send();
                         } else if (event.key === "Escape" && !staged.confirming) {

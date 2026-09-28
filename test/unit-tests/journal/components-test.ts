@@ -2135,6 +2135,73 @@ describe("composer sends", () => {
         await pressEnter(result.container);
         expect(send).toHaveBeenCalledTimes(1);
     });
+
+    // jsdom has no layout: stand in for the content height the browser measures (24px a line).
+    function stubLineHeights(): void {
+        jest.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
+            const value = (this as HTMLTextAreaElement).value ?? "";
+            return value ? value.split("\n").length * 24 : 0;
+        });
+    }
+
+    function composerHeight(container: HTMLElement): string {
+        return container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")!.style.height;
+    }
+
+    test("a draft restored on switching back keeps its typed height, capped at the max", async () => {
+        stubLineHeights();
+        const result = await renderComposerApp(["c1", "c2"]);
+        rendered = result;
+        await typeInComposer(rendered.container, "one\ntwo\nthree\nfour");
+        expect(composerHeight(rendered.container)).toBe("96px");
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        expect(composerHeight(rendered.container)).toBe("auto");
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        expect(composerValue(rendered.container)).toBe("one\ntwo\nthree\nfour");
+        expect(composerHeight(rendered.container)).toBe("96px");
+
+        await typeInComposer(rendered.container, "x\n".repeat(20));
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        expect(composerHeight(rendered.container)).toBe("160px");
+    });
+
+    test("a draft restored into a freshly mounted composer opens at its content height", async () => {
+        stubLineHeights();
+        const result = await renderComposerAppWithChild("c1", "c1-child");
+        rendered = result;
+        await typeInComposer(result.container, "alpha\nbeta\ngamma");
+        // The read-only child unmounts the composer; coming back mounts a new one from the draft.
+        await act(async () => {
+            await result.client.selectConversation("c1-child");
+        });
+        expect(result.container.querySelector(".mx_BasicMessageComposer_input")).toBeNull();
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        expect(composerValue(result.container)).toBe("alpha\nbeta\ngamma");
+        expect(composerHeight(result.container)).toBe("72px");
+    });
+
+    test("a send clears the box back to its one-row height", async () => {
+        stubLineHeights();
+        const result = await renderComposerApp(["c1"]);
+        rendered = result;
+        jest.spyOn(result.client, "sendMessage").mockResolvedValue(true);
+        await typeInComposer(rendered.container, "one\ntwo");
+        expect(composerHeight(rendered.container)).toBe("48px");
+        await pressEnter(rendered.container);
+        expect(composerValue(rendered.container)).toBe("");
+        expect(composerHeight(rendered.container)).toBe("auto");
+    });
 });
 
 describe("attachment composer", () => {
