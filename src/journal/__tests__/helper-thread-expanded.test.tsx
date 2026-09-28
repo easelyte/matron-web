@@ -179,6 +179,20 @@ describe("HeadlineList expanded", () => {
         expect(groupRows(container)[0].getAttribute("aria-expanded")).toBe("true");
     });
 
+    it("a remembered choice survives older steps joining the group (a history page prepended)", async () => {
+        const later = [read("/r/p/b.ts"), read("/r/p/c.ts"), bash("git status --short")];
+        const earlier = read("/r/p/a.ts");
+        await render(later, { expanded: true, persistKey: "c:4", turnKey: "20" });
+        expect(groupRows(container)).toHaveLength(1);
+        await act(async () => groupRows(container)[0].click());
+        await act(async () => root.unmount());
+        root = createRoot(container);
+        await render([earlier, ...later], { expanded: true, persistKey: "c:4", turnKey: "19" });
+        const [row] = groupRows(container);
+        expect(row.querySelector(".mj_TurnCard_count")?.textContent).toBe("3 steps");
+        expect(row.getAttribute("aria-expanded")).toBe("false");
+    });
+
     it("a user's open sticks after the group leaves the newest window", async () => {
         const items = groupedItems(2);
         await render(items, { persistKey: "c:2" });

@@ -151,9 +151,9 @@ export function HeadlineList({
     turnKey = "",
 }: HeadlineListProps): React.ReactElement {
     const baseId = useId();
-    // A headline's id is its first step's (`h-e{seq}`: a journal event, stable across history
-    // pages). Anything else (a raw line's index, the list's own "Show all") is scoped to the turn.
-    const scoped = (key: string): string => (/^[gs]:h-e\d+$/.test(key) ? key : `${turnKey}\u0000${key}`);
+    // A step's id `e{seq}` is its journal event, stable across history pages. Anything else (a
+    // raw line's index, the list's own "Show all") is scoped to the turn.
+    const scoped = (key: string): string => (/^[gs]:e\d+$/.test(key) ? key : `${turnKey}\u0000${key}`);
     const recall = (key: string): boolean | undefined =>
         persistKey === undefined ? undefined : remembered.get(`${persistKey}\u0000${scoped(key)}`);
     const keep = (key: string, value: boolean): void => {
@@ -186,20 +186,37 @@ export function HeadlineList({
         return ids;
     }, [expanded, shown]);
 
-    const isGroupOpen = (id: string): boolean => choices.get(id) ?? recall(`g:${id}`) ?? openByDefault.has(id);
+    /*
+     * A remembered group choice is anchored on the group's first AND last step: loading older
+     * history can prepend steps to a group (a new first step, so a new headline id) and a running
+     * group appends them (a new last step), but not both at once.
+     */
+    const anchors = (entry: Headline): string[] => [entry.steps[0].id, entry.steps[entry.steps.length - 1].id];
+    const recallGroup = (kind: "g" | "s", entry: Headline): boolean | undefined => {
+        for (const id of anchors(entry)) {
+            const value = recall(`${kind}:${id}`);
+            if (value !== undefined) return value;
+        }
+        return undefined;
+    };
+    const keepGroup = (kind: "g" | "s", entry: Headline, value: boolean): void => {
+        for (const id of anchors(entry)) keep(`${kind}:${id}`, value);
+    };
+    const isGroupOpen = (entry: Headline): boolean =>
+        choices.get(entry.id) ?? recallGroup("g", entry) ?? openByDefault.has(entry.id);
 
-    const toggle = (id: string): void => {
-        const next = !isGroupOpen(id);
-        keep(`g:${id}`, next);
-        setChoices((current) => new Map(current).set(id, next));
+    const toggle = (entry: Headline): void => {
+        const next = !isGroupOpen(entry);
+        keepGroup("g", entry, next);
+        setChoices((current) => new Map(current).set(entry.id, next));
     };
     const setShowAll = (): void => {
         keep("all", true);
         setShowAllState(true);
     };
-    const showAllSteps = (id: string): void => {
-        keep(`s:${id}`, true);
-        setStepsAll((current) => new Set(current).add(id));
+    const showAllSteps = (entry: Headline): void => {
+        keepGroup("s", entry, true);
+        setStepsAll((current) => new Set(current).add(entry.id));
     };
 
     const elapsedS = running && runningSince !== undefined ? Math.max(0, Math.floor((now - runningSince) / 1000)) : 0;
@@ -224,10 +241,10 @@ export function HeadlineList({
                     const single = entry.steps.length === 1;
                     const isRunning = entry.status === "running";
                     const listId = `${baseId}-${entry.id}`;
-                    const isOpen = single ? deep === entry.steps[0].id : isGroupOpen(entry.id);
+                    const isOpen = single ? deep === entry.steps[0].id : isGroupOpen(entry);
                     // Capped at HEADLINE_STEP_CAP rows: the first ones once done, the newest ones
                     // while running (so the "now" row stays in view), "Show all {k}" for the rest.
-                    const allSteps = stepsAll.has(entry.id) || Boolean(recall(`s:${entry.id}`));
+                    const allSteps = stepsAll.has(entry.id) || Boolean(recallGroup("s", entry));
                     const groupSize = entry.steps.length;
                     const firstShown =
                         allSteps || groupSize <= HEADLINE_STEP_CAP || !isRunning ? 0 : groupSize - HEADLINE_STEP_CAP;
@@ -235,7 +252,7 @@ export function HeadlineList({
                     const stepsHidden = groupSize - (lastShown - firstShown);
                     const moreSteps = stepsHidden > 0 && (
                         <li>
-                            <button type="button" className="mj_TurnCard_more" onClick={() => showAllSteps(entry.id)}>
+                            <button type="button" className="mj_TurnCard_more" onClick={() => showAllSteps(entry)}>
                                 Show all {groupSize}
                             </button>
                         </li>
@@ -253,7 +270,7 @@ export function HeadlineList({
                                 aria-expanded={isRunning && single ? undefined : isOpen}
                                 aria-controls={listId}
                                 disabled={isRunning && single}
-                                onClick={() => (single ? setDeep(isOpen ? null : entry.steps[0].id) : toggle(entry.id))}
+                                onClick={() => (single ? setDeep(isOpen ? null : entry.steps[0].id) : toggle(entry))}
                             >
                                 <span className="mj_TurnCard_icon" aria-hidden="true">
                                     <V6Icon name={ICON[entry.icon]} />
