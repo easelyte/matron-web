@@ -38,14 +38,14 @@ const T0 = 1_790_000_000_000;
 let stepSeq = 0;
 const read = (path: string): Step => ({
     kind: "step",
-    id: `s${++stepSeq}`,
+    id: `e${++stepSeq}`,
     tool: "Read",
     input: { path },
     status: "ok",
 });
 const bash = (command: string): Step => ({
     kind: "step",
-    id: `s${++stepSeq}`,
+    id: `e${++stepSeq}`,
     tool: "Bash",
     input: { command },
     status: "ok",
@@ -146,6 +146,37 @@ describe("HeadlineList expanded", () => {
         root = createRoot(container);
         await render([...items, ...groupedItems(1)], { expanded: true, persistKey: "c:1" });
         expect(firstId().getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("a running group stays capped, its newest steps and the running one in view", async () => {
+        const items: TurnItem[] = Array.from({ length: HEADLINE_STEP_CAP * 3 }, (_, i) => read(`/r/live/f${i}.ts`));
+        const running = { ...read("/r/live/now.ts"), status: "running" as const };
+        await render(items, { expanded: true, active: true, running });
+        const steps = [...container.querySelectorAll(".mj_TurnCard_steps .mj_TurnCard_step")];
+        expect(steps).toHaveLength(HEADLINE_STEP_CAP);
+        expect(steps.at(-1)?.textContent).toContain("now");
+        const more = container.querySelector<HTMLButtonElement>(".mj_TurnCard_steps .mj_TurnCard_more");
+        expect(more?.textContent).toBe(`Show all ${HEADLINE_STEP_CAP * 3 + 1}`);
+        await act(async () => more!.click());
+        expect(container.querySelectorAll(".mj_TurnCard_steps .mj_TurnCard_step")).toHaveLength(
+            HEADLINE_STEP_CAP * 3 + 1,
+        );
+    });
+
+    it("a remembered choice survives the turn's key changing (older history loaded)", async () => {
+        const items = groupedItems(2);
+        await render(items, { expanded: true, persistKey: "c:3", turnKey: "10" });
+        await act(async () => groupRows(container)[0].click());
+        expect(groupRows(container)[0].getAttribute("aria-expanded")).toBe("false");
+        await act(async () => root.unmount());
+        root = createRoot(container);
+        await render(items, { expanded: true, persistKey: "c:3", turnKey: "4" });
+        expect(groupRows(container)[0].getAttribute("aria-expanded")).toBe("false");
+        // Another conversation does not inherit it.
+        await act(async () => root.unmount());
+        root = createRoot(container);
+        await render(items, { expanded: true, persistKey: "c:other", turnKey: "4" });
+        expect(groupRows(container)[0].getAttribute("aria-expanded")).toBe("true");
     });
 
     it("a user's open sticks after the group leaves the newest window", async () => {

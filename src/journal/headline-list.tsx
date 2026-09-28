@@ -93,8 +93,13 @@ export interface HeadlineListProps {
      * headlines listed, the newest multi-step headlines open. Default: the compact list.
      */
     expanded?: boolean;
-    /** Scope of the remembered toggles (conversation + turn). Absent: toggles are per mount. */
+    /**
+     * Scope of the remembered toggles: the conversation. A headline is remembered by its first
+     * step's event, which survives history paging; Absent: toggles last as long as the mount.
+     */
     persistKey?: string;
+    /** The turn, for choices with no stable event behind them ("Show all", a raw-line headline). */
+    turnKey?: string;
 }
 
 function useNow(active: boolean): number {
@@ -143,12 +148,16 @@ export function HeadlineList({
     renderDetail,
     expanded = false,
     persistKey,
+    turnKey = "",
 }: HeadlineListProps): React.ReactElement {
     const baseId = useId();
+    // A headline's id is its first step's (`h-e{seq}`: a journal event, stable across history
+    // pages). Anything else (a raw line's index, the list's own "Show all") is scoped to the turn.
+    const scoped = (key: string): string => (/^[gs]:h-e\d+$/.test(key) ? key : `${turnKey}\u0000${key}`);
     const recall = (key: string): boolean | undefined =>
-        persistKey === undefined ? undefined : remembered.get(`${persistKey}\u0000${key}`);
+        persistKey === undefined ? undefined : remembered.get(`${persistKey}\u0000${scoped(key)}`);
     const keep = (key: string, value: boolean): void => {
-        if (persistKey !== undefined) rememberToggle(`${persistKey}\u0000${key}`, value);
+        if (persistKey !== undefined) rememberToggle(`${persistKey}\u0000${scoped(key)}`, value);
     };
     const [showAll, setShowAllState] = useState(() => recall("all") ?? false);
     // The user's explicit choices only (id → open). Everything else follows the default.
@@ -216,11 +225,21 @@ export function HeadlineList({
                     const isRunning = entry.status === "running";
                     const listId = `${baseId}-${entry.id}`;
                     const isOpen = single ? deep === entry.steps[0].id : isGroupOpen(entry.id);
-                    // A running group lists every step, so its "now" row stays in view.
-                    const stepCap =
-                        isRunning || stepsAll.has(entry.id) || recall(`s:${entry.id}`)
-                            ? entry.steps.length
-                            : HEADLINE_STEP_CAP;
+                    // Capped at HEADLINE_STEP_CAP rows: the first ones once done, the newest ones
+                    // while running (so the "now" row stays in view), "Show all {k}" for the rest.
+                    const allSteps = stepsAll.has(entry.id) || Boolean(recall(`s:${entry.id}`));
+                    const groupSize = entry.steps.length;
+                    const firstShown =
+                        allSteps || groupSize <= HEADLINE_STEP_CAP || !isRunning ? 0 : groupSize - HEADLINE_STEP_CAP;
+                    const lastShown = allSteps || isRunning ? groupSize : Math.min(groupSize, HEADLINE_STEP_CAP);
+                    const stepsHidden = groupSize - (lastShown - firstShown);
+                    const moreSteps = stepsHidden > 0 && (
+                        <li>
+                            <button type="button" className="mj_TurnCard_more" onClick={() => showAllSteps(entry.id)}>
+                                Show all {groupSize}
+                            </button>
+                        </li>
+                    );
                     const text = isRunning ? `${entry.text}…` : entry.text;
                     return (
                         <li
@@ -261,7 +280,9 @@ export function HeadlineList({
                             )}
                             {isOpen && !single && (
                                 <ul className="mj_TurnCard_steps" id={listId}>
-                                    {entry.steps.slice(0, stepCap).map((step, index) => {
+                                    {isRunning && moreSteps}
+                                    {entry.steps.slice(firstShown, lastShown).map((step, offset) => {
+                                        const index = firstShown + offset;
                                         const sentence = stepHeadline(step);
                                         const again =
                                             index > 0 && stepHeadline(entry.steps[index - 1]) === sentence
@@ -304,17 +325,7 @@ export function HeadlineList({
                                             </li>
                                         );
                                     })}
-                                    {entry.steps.length > stepCap && (
-                                        <li>
-                                            <button
-                                                type="button"
-                                                className="mj_TurnCard_more"
-                                                onClick={() => showAllSteps(entry.id)}
-                                            >
-                                                Show all {entry.steps.length}
-                                            </button>
-                                        </li>
-                                    )}
+                                    {!isRunning && moreSteps}
                                 </ul>
                             )}
                         </li>

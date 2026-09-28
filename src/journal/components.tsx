@@ -5290,7 +5290,8 @@ function AgentTurnRow({
                                 runningSince={live.runningSince}
                                 renderDetail={renderDetail}
                                 expanded={expandHeadlines}
-                                persistKey={`${first?.convo_id ?? ""}:${turn.key}`}
+                                persistKey={first?.convo_id}
+                                turnKey={turn.key}
                             />
                         ) : (
                             hasCard && (
