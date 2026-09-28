@@ -107,6 +107,7 @@ import { useShowTheWork } from "./show-the-work";
 import { assembleTurns, type Turn, threadRows, type ThreadRow } from "./turn-assembly";
 import { noticeText, TurnCard, type TurnCardMode, TurnErrorRow } from "./turn-card";
 import { V6Icon } from "./v6-icons";
+import { applyPaneBand } from "./pane-width";
 import { type Step, stepsOf } from "./turn-grouping";
 import {
     compactTokens,
@@ -2002,6 +2003,8 @@ export function useAdaptiveHeader(
         const observer = new ResizeObserver((entries) => {
             const entry = entries[0];
             latestWidth = entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
+            // v6: the same observer drives the chat-pane breakpoints (data-pane).
+            applyPaneBand(bodyEl, latestWidth);
             if (frame != null) return;
             frame = requestAnimationFrame(() => {
                 frame = null;
