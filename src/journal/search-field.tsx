@@ -66,8 +66,14 @@ export function SearchField({
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
                 onKeyDown={(event) => {
-                    // An Escape that cancels an IME candidate is the input method's, not a clear.
-                    if (event.key !== "Escape" || !value || isImeComposing(event)) return;
+                    if (event.key !== "Escape") return;
+                    // An Escape that cancels an IME candidate belongs to the input method: no clear,
+                    // default left alone, but it must not reach the app's Escape ladder either.
+                    if (isImeComposing(event)) {
+                        event.stopPropagation();
+                        return;
+                    }
+                    if (!value) return;
                     // Own this press: clear, and keep it from closing a pane or leaving a subagent.
                     event.preventDefault();
                     event.stopPropagation();

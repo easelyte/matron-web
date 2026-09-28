@@ -151,7 +151,7 @@ describe("SearchField bar and IME", () => {
         await act(async () => root.unmount());
     });
 
-    it("an Escape that cancels an IME candidate does not clear the query", async () => {
+    it("an Escape that cancels an IME candidate neither clears the query nor reaches the Escape ladder", async () => {
         const outer = jest.fn();
         document.addEventListener("keydown", outer);
         const { container, root } = await mount(<Harness initial="かな" />);
@@ -166,7 +166,7 @@ describe("SearchField bar and IME", () => {
         await act(async () => void input.dispatchEvent(composing));
         expect(input.value).toBe("かな");
         expect(composing.defaultPrevented).toBe(false);
-        expect(outer).toHaveBeenCalledTimes(1);
+        expect(outer).not.toHaveBeenCalled();
         document.removeEventListener("keydown", outer);
         await act(async () => root.unmount());
     });
