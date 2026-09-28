@@ -426,6 +426,26 @@ describe("MatronJournalClient tracker loaders", () => {
         expect(client.getSnapshot().missionsError).toBeUndefined();
     });
 
+    it("keeps the memories error while a retry is still in flight", async () => {
+        const { client, state } = makeClient();
+        let resolveRetry!: (value: { memories: [] }) => void;
+        state.api = {
+            memories: jest
+                .fn()
+                .mockRejectedValueOnce(new Error("offline"))
+                .mockReturnValueOnce(new Promise((resolve) => (resolveRetry = resolve))),
+        };
+
+        await client.loadMemories();
+        const retry = client.loadMemories();
+        await flush();
+        expect(client.getSnapshot().memoriesError).toBe("offline");
+
+        resolveRetry({ memories: [] });
+        await retry;
+        expect(client.getSnapshot().memoriesError).toBeUndefined();
+    });
+
     it("an inbox walk never overwrites the count of a badge refresh started after it", async () => {
         const { client, state } = makeClient({ inboxItems: [] });
         let resolveWalk!: (value: { items: TrackerItem[]; next_cursor: null }) => void;
@@ -1026,6 +1046,29 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
     it("refreshes only the badge, not the retained lists, while the Work tab is showing", async () => {
         const { state } = makeClient({
             trackerView: { open: true, view: "work" },
+            inboxItems: [item({ num: 2 })],
+            missions: [mission()],
+            trackerNeedsYou: 0,
+        });
+        state.api = {
+            item: jest.fn(),
+            items: jest.fn().mockResolvedValue({ items: [], next_cursor: null }),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+        };
+
+        state.handleTrackerMarker(marker("item", { num: 3, action: "created" }));
+        state.handleTrackerMarker(marker("mission", { num: 5, action: "updated" }));
+        jest.advanceTimersByTime(250);
+        await flush();
+
+        expect(state.api.items).toHaveBeenCalledTimes(1);
+        expect(state.api.items).toHaveBeenCalledWith({ state: "open", awaiting: "user" });
+        expect(state.api.missions).not.toHaveBeenCalled();
+    });
+
+    it("refreshes only the badge, not the retained lists, while the Memories tab is showing", async () => {
+        const { state } = makeClient({
+            trackerView: { open: true, view: "memories" },
             inboxItems: [item({ num: 2 })],
             missions: [mission()],
             trackerNeedsYou: 0,

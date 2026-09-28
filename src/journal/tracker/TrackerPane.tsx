@@ -49,7 +49,9 @@ export function TrackerPane({
     // stay warm exactly as before; switching to one of them from Work primes on
     // arrival.
     useEffect(() => {
-        if (view === "work") return;
+        // Memories is isolated the same way: it has its own list and error, and a missions/inbox
+        // failure must not raise the shared banner over a healthy Memories view.
+        if (view === "work" || view === "memories") return;
         void client.loadMissions();
         void client.loadInbox();
     }, [client, view]);

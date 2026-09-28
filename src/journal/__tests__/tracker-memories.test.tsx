@@ -200,6 +200,10 @@ describe("TrackerPane memories tab", () => {
         const base = { trackerView: { open: true, view: "memories" }, memories: [memory()] } as unknown as ClientState;
         const { container } = await mount(<TrackerPane client={client} state={base} />);
         expect(client.loadMemories).toHaveBeenCalledTimes(1);
+        // Memories is isolated from the missions/inbox lists: it does not prime them, so their
+        // failures cannot raise the shared banner over it.
+        expect(client.loadMissions).not.toHaveBeenCalled();
+        expect(client.loadInbox).not.toHaveBeenCalled();
         expect(container.querySelectorAll(".mj_TrackerMemoryRow")).toHaveLength(1);
         expect(container.querySelector(".mj_TrackerViewSwitch_tab[aria-selected='true']")?.textContent).toBe(
             "Memories",

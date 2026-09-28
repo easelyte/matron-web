@@ -240,9 +240,24 @@ Please see LICENSE files in the repository root for full details.
         visibility: hidden;
     }
 
-    /* Tracker header: title + three tabs + close must fit 360px. */
+    /* Tracker header: four tabs + close must fit 360px. The "Tracker" title yields its width
+       (kept for screen readers, like .mj_ScreenReaderOnly), and the tab track may shrink, its
+       segments ellipsizing rather than pushing the last tab out of the clipped header. */
     .mj_TrackerPane_top {
         padding: 0 var(--cpd-space-2x);
+    }
+    .mj_TrackerPane_title {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
+        white-space: nowrap;
+    }
+    .mj_TrackerViewSwitch {
+        flex: 0 1 auto;
+        min-width: 0;
     }
 }
 
