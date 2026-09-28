@@ -6,10 +6,9 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * The turn card (redesign v6, `.mj_TurnCard`): one per operator turn that has at least one
- * step, collapsed by default. See docs/design/redesign-v6/HANDOFF.md §4 and
- * GENERATIVE-SYSTEM.md §1-§8. The row carries no visible title (operator decision 2026-09-26,
- * HANDOFF §7a): running is a spinner + the live line, done is the step summary + chevron.
+ * The turn card (`.mj_TurnCard`): one per operator turn that has at least one step, collapsed
+ * by default. The row carries no visible title: running is a spinner + the live line, done is
+ * the step summary + chevron.
  *
  * The collapsed summary is ONE row in every state (done, running, slow, waiting, stopped), so
  * a turn finishing never moves the thread. Monospace and exit codes appear only in the deep
@@ -36,7 +35,7 @@ import {
 } from "./turn-grouping";
 import { V6Icon, type V6IconName } from "./v6-icons";
 
-/** The live line changes at most once per interval; a newer text replaces a queued one (§2). */
+/** The live line changes at most once per interval; a newer text replaces a queued one. */
 export const LIVE_MIN_INTERVAL_MS = 1200;
 /** Cross-fade of the outgoing and incoming live line (--mj-live-xfade). */
 export const LIVE_XFADE_MS = 240;
@@ -61,7 +60,7 @@ export interface TurnCardProps {
     liveText?: string;
     /** When the current step started (epoch ms) — drives the elapsed counter and slow state. */
     runningSince?: number;
-    /** Turn duration for the done meta (decision §7.5: from the operator message). */
+    /** Turn duration for the done meta (from the operator message). */
     durationMs: number;
     /** Interrupt the current step. Absent → no Stop control (the bridge has no interrupt yet). */
     onStop?: () => void;
@@ -608,27 +607,27 @@ function GroupBlock({
             </button>
             {open && (
                 <div ref={listRef} id={listId}>
-                        <ul className="mj_TurnCard_steps">
-                            {group.steps.slice(0, cap).map((step, index) => (
-                                <li key={step.id}>
-                                    <StepRowButton
-                                        step={step}
-                                        sentence={sentences[index]}
-                                        expanded={deep === step.id}
-                                        onOpenStep={onOpenStep}
-                                        registerStepRow={registerStepRow}
-                                    />
-                                    {deep === step.id && step.status !== "running" && renderDeep(step)}
-                                </li>
-                            ))}
-                            {k > cap && (
-                                <li>
-                                    <button type="button" className="mj_TurnCard_more" onClick={onShowAll}>
-                                        Show all {k}
-                                    </button>
-                                </li>
-                            )}
-                        </ul>
+                    <ul className="mj_TurnCard_steps">
+                        {group.steps.slice(0, cap).map((step, index) => (
+                            <li key={step.id}>
+                                <StepRowButton
+                                    step={step}
+                                    sentence={sentences[index]}
+                                    expanded={deep === step.id}
+                                    onOpenStep={onOpenStep}
+                                    registerStepRow={registerStepRow}
+                                />
+                                {deep === step.id && step.status !== "running" && renderDeep(step)}
+                            </li>
+                        ))}
+                        {k > cap && (
+                            <li>
+                                <button type="button" className="mj_TurnCard_more" onClick={onShowAll}>
+                                    Show all {k}
+                                </button>
+                            </li>
+                        )}
+                    </ul>
                 </div>
             )}
         </div>

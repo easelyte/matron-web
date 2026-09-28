@@ -6,15 +6,12 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * The turn-card activity-grouping algorithm (redesign v6, GENERATIVE-SYSTEM §1).
- *
- * A TypeScript port of docs/design/redesign-v6/src/model.js → CLASSES, groupTurn, stepSentence,
- * liveLine, changedFiles. Pure: no DOM, no React, no client. Input is the card's content for
+ * The turn-card activity-grouping algorithm: CLASSES, groupTurn, stepSentence, liveLine,
+ * changedFiles. Pure: no DOM, no React, no client. Input is the card's content for
  * one operator turn — steps and narration, in the order they happened (turn-assembly.ts builds
  * that from journal events). Break-throughs never reach this module.
  *
- * Every string produced here is a CLIENT TEMPLATE (§ CONTRACTS 1): the design supplies none of
- * them, the agent supplies only its narration.
+ * Every string produced here is a client template; the agent supplies only its narration.
  */
 
 /** "stopped": the command never reported an exit (killed, or the session died under it). */
@@ -72,7 +69,7 @@ export type GroupStatus = "ok" | "recovered" | "failed" | "running" | "stopped";
 
 export interface Group {
     type: "group";
-    /** Stable within a turn: `${class}-${seqIndex}-${segmentIndex}` (same scheme as model.js). */
+    /** Stable within a turn: `${class}-${seqIndex}-${segmentIndex}` (stable across re-renders). */
     id: string;
     key: ActivityClass;
     icon: GroupIcon;
@@ -95,7 +92,7 @@ export interface ChangedFile {
     name: string;
     added: number;
     removed: number;
-    /** The LAST change step for this path — its deep view (decision §7.4). */
+    /** The LAST change step for this path — its deep view. */
     stepId: string;
 }
 
@@ -157,7 +154,7 @@ const isGitCommand = (step: Step): boolean => /^git\s/.test(commandOf(step));
 
 const CHANGE_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "apply_patch", "file_change"]);
 
-/** Activity classes, first match wins (GENERATIVE-SYSTEM §1 table). */
+/** Activity classes, first match wins. */
 export const CLASSES: readonly ClassRule[] = [
     {
         key: "look",
@@ -239,7 +236,7 @@ function lastArg(cmd: string): string {
     return parts.length > 1 ? parts[parts.length - 1] : "";
 }
 
-/** Present-progressive live line for the step that is running now (§2). */
+/** Present-progressive live line for the step that is running now. */
 export function liveLine(step: Step): string {
     const c = classify(step).key;
     const i = step.input;
@@ -327,7 +324,7 @@ function groupSentence(key: ActivityClass, steps: Step[]): string {
 /**
  * groupTurn(items, running?) → the card body's sequence of narration and groups.
  *
- * Rules (§1): narration closes the current segment and is emitted as connective text; inside a
+ * Rules: narration closes the current segment and is emitted as connective text; inside a
  * segment steps merge by activity class, and groups are ordered by the first occurrence of
  * their class. Steps never merge across narration. `running`, when given, is the step that is
  * executing now; it joins its group as the last step and turns that group's sentence into the
@@ -392,7 +389,7 @@ export function groupRowText(group: Group): string {
 }
 
 /**
- * Step-row sentences for an opened group, with the §1 repeat rule applied: a step whose
+ * Step-row sentences for an opened group, with the repeat rule applied: a step whose
  * sentence equals the previous step's gets " again" appended. That is the only de-duplication.
  */
 export function stepRowSentences(steps: readonly Step[]): string[] {
@@ -421,13 +418,13 @@ export function changedFiles(items: readonly TurnItem[]): ChangedFile[] {
     return [...map.values()];
 }
 
-/** Any step failed along the way — the done glyph turns amber (§ decisions: card glyph). */
+/** Any step failed along the way — the done glyph turns amber. */
 export function turnIssues(items: readonly TurnItem[]): boolean {
     return stepsOf(items).some((step) => step.status === "failed" || step.status === "stopped");
 }
 
 /**
- * The deep view of a failed command also shows its passing rerun (decision §7.6): the NEXT ok
+ * The deep view of a failed command also shows its passing rerun: the NEXT ok
  * step in the same group with the same command.
  */
 export function passingRerun(step: Step, groupSteps: readonly Step[]): Step | undefined {
@@ -438,7 +435,7 @@ export function passingRerun(step: Step, groupSteps: readonly Step[]): Step | un
     return groupSteps.slice(index + 1).find((next) => next.status === "ok" && commandOf(next) === cmd);
 }
 
-/** Card meta duration: `Ns` · `Nm SSs` · `Nh MMm` (§4). */
+/** Card meta duration: `Ns` · `Nm SSs` · `Nh MMm`. */
 export function formatDuration(ms: number): string {
     const s = Math.max(0, Math.round(ms / 1000));
     if (s < 60) return `${s}s`;
@@ -448,7 +445,7 @@ export function formatDuration(ms: number): string {
     return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
 }
 
-/** Live-line elapsed counter: `42s` below a minute, `1m 04s` from 60s (§2). */
+/** Live-line elapsed counter: `42s` below a minute, `1m 04s` from 60s. */
 export function formatElapsed(seconds: number): string {
     const s = Math.max(0, Math.floor(seconds));
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;

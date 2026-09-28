@@ -57,7 +57,7 @@ afterEach(async () => {
     container.remove();
 });
 
-describe("Settings menu (v6 + round 2)", () => {
+describe("Settings menu", () => {
     it("is the last sidebar-header action; theme lives in the menu", () => {
         const actions = [...container.querySelectorAll(".mj_RoomListHeaderActions > button")].map((button) =>
             button.getAttribute("aria-label"),
@@ -77,7 +77,7 @@ describe("Settings menu (v6 + round 2)", () => {
             (item) => item.querySelector(".mj_MenuLabel")?.textContent,
         );
         expect(items).toEqual(["Theme", "Developer view", "Sign out"]);
-        // No descriptive hint lines (round 2).
+        // No descriptive hint lines.
         expect(menu()!.querySelector(".mj_MenuHint")).toBeNull();
         expect(document.activeElement?.textContent).toContain("Theme");
     });

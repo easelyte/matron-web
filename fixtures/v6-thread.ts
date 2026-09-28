@@ -6,8 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * Redesign-v6 visual fixture: the design's six-turn thread (docs/design/redesign-v6/src/model.js
- * → fixtures) rebuilt from REAL journal shapes — Bash tool_output finalizes, Edit diffs, agent
+ * Turn-card visual fixture: a six-turn thread built from real journal shapes — Bash tool_output finalizes, Edit diffs, agent
  * text — so the harness renders it through the live grouping + card code. Selected with
  * `?v6=<scenario>` on the fixtures page.
  */
@@ -131,7 +130,7 @@ function turn3(waiting: boolean): JournalEvent[] {
     });
     events.push(question);
     events.push(at(820, "user:operator", "prompt_reply", { target_seq: question.seq, choice: "Open PR" }));
-    events.push(say(828, "Pushed `fix/new-session-sheet` and opened PR #311 against main."));
+    events.push(say(828, "Pushed `fix/new-session-sheet` and opened a PR against main."));
     return events;
 }
 
@@ -163,7 +162,7 @@ function turn4(): JournalEvent[] {
         }),
         say(
             1154,
-            "Here is the sheet as it renders now, plus a PDF with both themes. I also filed #302 so we can decide which design session to run first.",
+            "Here is the sheet as it renders now, plus a PDF with both themes. I also filed an item so we can decide which design session to run first.",
         ),
     ];
 }
@@ -199,7 +198,7 @@ const PEER = (): JournalEvent =>
         from_convo: "peer-triage",
         from_name: "test-triage",
         from_kind: "codex",
-        body: "3 flaky tests on main are quarantined; the other 7 fail for real. Details in #298.",
+        body: "3 flaky tests on main are quarantined; the other 7 fail for real. Details in the tracker item.",
     });
 
 function turn210(): JournalEvent[] {

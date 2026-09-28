@@ -6,8 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * The redesign-v6 icon set (docs/design/redesign-v6/src/render.js → ICONS): 24-unit strokes in
- * currentColor, rendered at 16px unless a class sizes them.
+ * The turn-card icon set: 24-unit strokes in currentColor, rendered at 16px unless a class sizes them.
  */
 
 import React from "react";

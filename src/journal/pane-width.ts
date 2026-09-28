@@ -6,7 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * Chat-pane breakpoints (redesign v6, GENERATIVE-SYSTEM §3). The measured element is the CHAT
+ * Chat-pane breakpoints. The measured element is the CHAT
  * PANE, never the viewport: a ResizeObserver sets `data-pane` = narrow (≤480) · medium (≤760) ·
  * wide on it, and the order-of-sacrifice CSS keys on that. A phone's chat pane is narrow too, so
  * the same sacrifices apply there; the phone layout's own @media ≤700px rules are unchanged.

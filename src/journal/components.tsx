@@ -259,7 +259,7 @@ export function ThemeToggle(): React.ReactElement {
 }
 
 /**
- * The Settings menu (redesign v6 + round 2): opened by the sliders icon, the last action in the
+ * The Settings menu: opened by the sliders icon, the last action in the
  * sidebar header; a bottom sheet on the phone. Contents: identity (username + server) · Theme ·
  * Developer view · hairline · Sign out.
  */
@@ -282,9 +282,7 @@ export function SettingsMenu({
         panelRef.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus();
     }, [panelRef]);
     const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
-        const items = Array.from(
-            event.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
-        );
+        const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"]'));
         const index = items.findIndex((item) => item === document.activeElement);
         if (event.key === "Tab") {
             // Leaving the menu with Tab closes it; focus moves on as usual.
@@ -4118,7 +4116,7 @@ export function activityStep(detail: string, id = "activity"): Step | null {
     return make("Bash", { command: text });
 }
 
-/** First sentence of the agent's narration, trimmed to 90 characters (GENERATIVE-SYSTEM §2). */
+/** First sentence of the agent's narration, trimmed to 90 characters. */
 export function narrationLiveLine(text: string): string {
     const flat = text.replace(/\s+/g, " ").trim();
     const sentence = /^(.+?[.!?…])(\s|$)/.exec(flat)?.[1] ?? flat;
@@ -4477,7 +4475,7 @@ function Timeline({
     const [sourceEvent, setSourceEvent] = useState<JournalEvent>();
     const [showTheWork] = useShowTheWork();
     // Show the work toggled: re-render instantly, keeping the operator message nearest the top
-    // where it was (GENERATIVE-SYSTEM §7). Captured during render, while the DOM still shows the
+    // where it was. Captured during render, while the DOM still shows the
     // previous rendering; restored in the layout effect below.
     const shownWorkRef = useRef(showTheWork);
     const toggleAnchorRef = useRef<{ seq: string; offset: number } | undefined>(undefined);
@@ -4717,10 +4715,7 @@ function Timeline({
         () => (sessionRunning ? Object.values(state.toolStreams) : []),
         [sessionRunning, state.toolStreams],
     );
-    const activityDetail =
-        sessionRunning && state.activity?.state === "tool"
-            ? state.activity.detail || ""
-            : "";
+    const activityDetail = sessionRunning && state.activity?.state === "tool" ? state.activity.detail || "" : "";
     // The running step, stable across stream chunks (keyed on the stream, not its content).
     const lastStream = liveStreams.at(-1);
     const streamKey = lastStream
@@ -4748,8 +4743,7 @@ function Timeline({
             (sessionState === "running" || sessionState === "waiting") &&
             lastTurn.breaks.some((event) => isUnansweredAsk(event, answeredPromptReplies, spawnOutcomes));
         if (waiting) return { mode: "waiting" };
-        if (!sessionRunning)
-            return { mode: lastStep?.status === "stopped" ? "stopped" : "done" };
+        if (!sessionRunning) return { mode: lastStep?.status === "stopped" ? "stopped" : "done" };
         const seen = liveSeenRef.current;
         // Only the step running NOW keeps a clock: a repeat of the same command later starts fresh.
         const since = (key: string): number => {
@@ -4982,16 +4976,19 @@ function Timeline({
                             Object.values(state.toolStreams).map((stream) => (
                                 <ToolStream key={stream.messageRef} stream={stream} />
                             ))}
-                        {showActivityIndicator && state.activity && state.activity.state !== "idle" && sessionRunning && (
-                            <li className="mx_WhoIsTypingTile mj_Activity">
-                                <span />
-                                <span />
-                                <span />
-                                {state.activity.state === "thinking"
-                                    ? "Thinking"
-                                    : `Running ${state.activity.detail || "a tool"}`}
-                            </li>
-                        )}
+                        {showActivityIndicator &&
+                            state.activity &&
+                            state.activity.state !== "idle" &&
+                            sessionRunning && (
+                                <li className="mx_WhoIsTypingTile mj_Activity">
+                                    <span />
+                                    <span />
+                                    <span />
+                                    {state.activity.state === "thinking"
+                                        ? "Thinking"
+                                        : `Running ${state.activity.detail || "a tool"}`}
+                                </li>
+                            )}
                     </ol>
                 </div>
             </div>

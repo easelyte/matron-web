@@ -6,8 +6,8 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * The turn-card grouping algorithm, checked against the redesign-v6 fixtures
- * (docs/design/redesign-v6/src/model.js) and the HANDOFF §3 acceptance sentences.
+ * The turn-card grouping algorithm, checked against a worked six-turn thread and its expected
+ * group sentences.
  */
 
 import {
@@ -61,8 +61,8 @@ const T1: TurnItem[] = [
 const groupsOf = (seq: ReturnType<typeof groupTurn>): Group[] =>
     seq.filter((entry): entry is Group => entry.type === "group");
 
-describe("groupTurn — HANDOFF §3 acceptance (turn 1)", () => {
-    it("reproduces the §5 group sentences in narration order", () => {
+describe("groupTurn: worked example (turn 1)", () => {
+    it("reproduces the group sentences in narration order", () => {
         const seq = groupTurn(T1);
         expect(seq[0]).toEqual({ type: "narration", text: "Let me read the sheet component first." });
         expect(groupsOf(seq).map(groupRowText)).toEqual([
@@ -94,7 +94,7 @@ describe("groupTurn — HANDOFF §3 acceptance (turn 1)", () => {
         expect(groups.map((group) => group.icon)).toEqual(["file", "search", "history", "pencil", "flask", "shield"]);
     });
 
-    it("gives groups stable ids in the model.js scheme", () => {
+    it("gives groups stable ids", () => {
         const ids = groupsOf(groupTurn(T1)).map((group) => group.id);
         expect(ids).toEqual(["look-1-0", "search-1-1", "history-1-2", "change-1-3", "test-1-4", "check-1-5"]);
     });
@@ -210,7 +210,7 @@ describe("shell reads", () => {
     });
 });
 
-describe("classify — Claude tools and Codex (decision §7.3)", () => {
+describe("classify — Claude tools and Codex", () => {
     const keyOf = (tool: string, input: Step["input"]): string => classify(S("x", tool, input)).key;
 
     it("maps apply_patch and Codex file_change to change", () => {
@@ -239,7 +239,7 @@ describe("classify — Claude tools and Codex (decision §7.3)", () => {
     });
 });
 
-describe("step sentences and live lines (GENERATIVE-SYSTEM §1 templates)", () => {
+describe("step sentences and live lines", () => {
     it("writes past-tense step sentences from the basename only", () => {
         expect(stepSentence(S("a", "Read", { path: "/very/long/path/to/file.tsx" }))).toBe("Read file.tsx");
         expect(stepSentence(S("a", "Write", { path: "src/new.ts" }))).toBe("Created new.ts");

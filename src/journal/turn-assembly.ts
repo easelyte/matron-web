@@ -6,15 +6,14 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * Journal events → operator turns (redesign v6, "Show the work" OFF).
+ * Journal events → operator turns (Developer view off).
  *
- * A turn is the ordered journal events between one operator message and the next
- * (GENERATIVE-SYSTEM §1). Inside a turn every event lands in exactly one bucket:
+ * A turn is the ordered journal events between one operator message and the next. Inside a turn every event lands in exactly one bucket:
  *
  *   steps      tool_output and diff events — the agent's own work (the card's rows)
  *   narration  agent text that arrives BEFORE the turn's last step (inside the card)
  *   answer     agent text AFTER the last step (prose below the card)
- *   breaks     break-throughs (§6): prompts, permission requests, images, files, tracker
+ *   breaks     break-throughs: prompts, permission requests, images, files, tracker
  *              markers, spawn outcomes, unknown event types — rendered after the card
  *   notices    the bridge talking about the session (compaction, idle resume, queued sends,
  *              restarts) — one tertiary line each, outside the agent tile
@@ -23,7 +22,7 @@ Please see LICENSE files in the repository root for full details.
  *
  * Pure; no React. The bridge publishes its notices as ordinary `text` events, so
  * bridgeTextKind() recognises them by an allowlist of the bridge's fixed wordings. That is a
- * stop-gap until the bridge marks them (see docs/design/redesign-v6/HANDOFF.md, bridge gaps).
+ * stop-gap until the bridge marks them.
  */
 
 import { type JournalEvent } from "./types";
@@ -76,7 +75,7 @@ export function isTurnBoundary(event: JournalEvent): boolean {
     return isOperatorEvent(event) && event.type !== "prompt_reply";
 }
 
-/** A Codex generic completed item the bridge publishes as a one-token code span (loop #772). */
+/** A Codex generic completed item the bridge publishes as a one-token code span. */
 const CODEX_ITEM_TEXT = /^`([A-Z][A-Za-z0-9 ]{0,79})`$/;
 
 /** Body of an agent text event, or "" when it is not a plain agent text. */
@@ -165,7 +164,7 @@ export interface Turn {
     errors: JournalEvent[];
     notices: JournalEvent[];
     peers: JournalEvent[];
-    /** ms: operator message (decision §7.5) or the first event → the last event. */
+    /** ms: operator message or the first event → the last event. */
     startTs: number;
     endTs: number;
 }

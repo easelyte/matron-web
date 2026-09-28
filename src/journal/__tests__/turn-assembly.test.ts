@@ -67,7 +67,7 @@ describe("assembleTurns", () => {
             "Changed 1 file",
             "Checked the types: failed once, then passed",
         ]);
-        // Duration runs from the operator message (decision §7.5).
+        // Duration runs from the operator message.
         expect(first.endTs - first.startTs).toBe(9000);
         // A turn with no steps has no card content; its text is all answer.
         expect(second.items).toEqual([]);

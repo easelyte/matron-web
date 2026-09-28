@@ -116,7 +116,7 @@ describe("Show the work OFF (default)", () => {
         await render(client(sheetTurn()));
         expect(card()).not.toBeNull();
         expect(toggle().getAttribute("aria-expanded")).toBe("false");
-        // No visible title (operator decision 2026-09-26): the summary is the label, and the
+        // No visible title: the summary is the label, and the
         // toggle keeps an accessible name of its own plus the status as its description.
         expect(toggle().textContent).not.toContain("Under the hood");
         expect(toggle().getAttribute("aria-label")).toBe("Show steps");

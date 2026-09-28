@@ -1008,16 +1008,14 @@ textarea {
 }
 
 .mj_SubagentPill:not(.mj_SubagentPill_finished) .mj_Spinner {
-    /* The moving arc is an icon, not text: icon accent, so it stays distinct from the
-       bg-accent ring now that light accent TEXT shares #0f766e with it (v6 decision §7.1). */
-    border-top-color: var(--cpd-color-icon-accent-primary);
+    border-top-color: var(--cpd-color-text-action-accent);
     border-right-color: var(--cpd-color-bg-accent);
     border-bottom-color: var(--cpd-color-bg-accent);
     border-left-color: var(--cpd-color-bg-accent);
 }
 
 [data-theme="dark"] .mj_SubagentPill:not(.mj_SubagentPill_finished) .mj_Spinner {
-    border-top-color: var(--cpd-color-icon-accent-primary);
+    border-top-color: var(--cpd-color-text-action-accent);
     border-right-color: var(--cpd-color-bg-accent-emphasis);
     border-bottom-color: var(--cpd-color-bg-accent-emphasis);
     border-left-color: var(--cpd-color-bg-accent-emphasis);
@@ -4104,7 +4102,7 @@ button.mj_File {
 }
 
 /* ===========================================================================================
-   Redesign v6 — the turn card (docs/design/redesign-v6; was "Under the hood"). Show the work OFF renders one
+   The turn card. With Developer view off the thread renders one
    agent tile per operator turn: the card, then break-throughs, then a turn-ending error, then
    the answer prose. No height animation anywhere; the collapsed card is one row in every state.
    =========================================================================================== */
@@ -4211,8 +4209,7 @@ button.mj_File {
     background: var(--cpd-color-icon-accent-primary);
 }
 
-/* Running: a small rotating ring in place of the old pulsing dot (operator decision
-   2026-09-26, HANDOFF §7a). Muted track, accent arc; amber arc once the step runs slow. */
+/* Running: a small rotating ring. Muted track, accent arc; amber arc once the step runs slow. */
 .mj_TurnCard_spinner {
     display: inline-block;
     width: 12px;
@@ -4722,7 +4719,7 @@ button.mj_File {
     }
 }
 
-/* ---- v6 + round 2: Settings menu (identity · connection · Theme · Developer view · Sign out) ---- */
+/* ---- Settings menu (identity · Theme · Developer view · Sign out) ---- */
 .mj_HeaderMenu.mj_AccountMenu {
     width: min(272px, calc(100vw - var(--cpd-space-4x)));
 }
@@ -4879,7 +4876,7 @@ button.mj_File {
 }
 
 /* ---- v6 chat-pane breakpoints (data-pane on .mx_RoomView_body, set by a ResizeObserver).
-   Order of sacrifice at narrow (GENERATIVE-SYSTEM §3): card row drops the total duration;
+   Order of sacrifice at narrow: card row drops the total duration;
    group rows drop the count column, then the step indent shrinks 24 → 12; the deep panel
    pulls out to the card edge. Glyph, the live line / step summary, chevron and Stop are never
    dropped (there is no title since 2026-09-26). ---- */
