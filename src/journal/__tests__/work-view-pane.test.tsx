@@ -243,6 +243,43 @@ describe("WorkView list", () => {
         await unmount(root);
     });
 
+    it("the search's clear (x) resets the filtered list and keeps focus; Escape clears too", async () => {
+        const work = jest
+            .fn()
+            .mockResolvedValue(
+                ok("repo", [
+                    group("matron-web", [
+                        loop({ id: 11, title: "Tracker polish" }),
+                        loop({ id: 12, title: "Portal" }),
+                        loop({ id: 13, title: "Hooks" }),
+                    ]),
+                ]),
+            );
+        const { container, root } = await mount(<WorkView api={loader(work)} now={NOW} />);
+        const input = container.querySelector<HTMLInputElement>('input[aria-label="Search work"]')!;
+        const clearButton = (): HTMLButtonElement | null =>
+            container.querySelector<HTMLButtonElement>('button[aria-label="Clear search"]');
+        expect(clearButton()).toBeNull();
+
+        input.focus();
+        await typeSearch(container, "portal");
+        expect(rowTitles(container)).toEqual(["#12Portal"]);
+        await act(async () => clearButton()!.click());
+        expect(input.value).toBe("");
+        expect(document.activeElement).toBe(input);
+        expect(rowTitles(container)).toHaveLength(3);
+        expect(clearButton()).toBeNull();
+
+        await typeSearch(container, "hooks");
+        expect(rowTitles(container)).toEqual(["#13Hooks"]);
+        await act(async () => {
+            input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        });
+        expect(input.value).toBe("");
+        expect(rowTitles(container)).toHaveLength(3);
+        await unmount(root);
+    });
+
     it("drops a group the filters empty rather than leaving a bare header", async () => {
         const work = jest
             .fn()

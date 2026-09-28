@@ -466,43 +466,15 @@ button {
     padding: 0 12px 12px;
 }
 
-.mx_RoomListSearch_inputWrapper {
-    display: flex;
-    width: 100%;
-    height: var(--mj-control-h);
-    align-items: center;
-    gap: var(--cpd-space-2x);
-    border-radius: var(--cpd-radius-md);
-    background: var(--cpd-color-bg-subtle-secondary);
-    color: var(--cpd-color-text-secondary);
-    padding: 0 12px;
-}
-
-.mx_RoomListSearch_inputWrapper svg {
-    width: 16px;
-    height: 16px;
-    flex: 0 0 auto;
-}
-
-.mx_RoomListSearch_input {
-    width: 100%;
-    min-width: 0;
-    border: 0;
-    outline: 0;
-    background: transparent;
-    color: var(--cpd-color-text-primary);
-    /* v4 body.xs (search): 13px / 400 / 16px. */
+/* The sidebar bar is the shared search field (controls.pcss, subtle variant); only the v4
+   body.xs search type is local. */
+.mx_RoomListSearch_field .mj_SearchField_input {
     font-size: 13px;
-    font-weight: 400;
     line-height: 16px;
 }
-
-.mx_RoomListSearch_input::placeholder {
+.mx_RoomListSearch_field .mj_SearchField_icon,
+.mx_RoomListSearch_field .mj_SearchField_input::placeholder {
     color: var(--cpd-color-text-secondary);
-}
-
-.mx_RoomListSearch_input::-webkit-search-cancel-button {
-    display: none;
 }
 
 .mj_RoomList {

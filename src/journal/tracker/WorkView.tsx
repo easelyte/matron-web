@@ -24,7 +24,7 @@ Please see LICENSE files in the repository root for full details.
 
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { SearchIcon } from "../icons";
+import { SearchField } from "../search-field";
 import { useWorkView, type WorkViewLoader } from "../use-work-view";
 import type { WorkViewGroupBy, WorkViewLoop } from "../work-view";
 import { WorkLoopDetail } from "./WorkLoopDetail";
@@ -179,17 +179,13 @@ function FilterBar({
 
     return (
         <div className="mj_WorkFilters" role="search" aria-label="Filter work">
-            <label className="mj_InputIcon mj_WorkSearch">
-                <SearchIcon className="mj_WorkSearch_icon" aria-hidden="true" />
-                <input
-                    type="search"
-                    className="mj_Input mj_WorkSearch_input"
-                    placeholder="Search work"
-                    aria-label="Search work"
-                    value={filters.query}
-                    onChange={(event) => onFilters({ ...filters, query: event.target.value })}
-                />
-            </label>
+            <SearchField
+                className="mj_WorkSearch"
+                placeholder="Search work"
+                label="Search work"
+                value={filters.query}
+                onChange={(query) => onFilters({ ...filters, query })}
+            />
             <select
                 className={`mj_Input mj_Input_select mj_WorkSelect${filters.status !== "open" ? " mj_WorkSelect_set" : ""}`}
                 aria-label="Status"

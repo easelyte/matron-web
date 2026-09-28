@@ -80,7 +80,7 @@ const SCENES = [
         name: "field-focus",
         setup: async (p, phone) => {
             if (phone) await p.evaluate(() => window.__matron.client.patch({ selectedConversationId: undefined }));
-            await p.locator(".mx_RoomListSearch_input").focus();
+            await p.locator("#room-list-search-input").focus();
         },
     },
 ];
