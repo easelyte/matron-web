@@ -17,7 +17,7 @@ Please see LICENSE files in the repository root for full details.
  *              markers, spawn outcomes, unknown event types — rendered after the card
  *   notices    the bridge talking about the session (compaction, idle resume, queued sends,
  *              restarts) — one tertiary line each, outside the agent tile
- *   errors     a turn-ending error (session ended non-zero, couldn't resume) — .mj_TurnError
+ *   errors     a turn-ending error (session ended non-zero, can no longer resume) — .mj_TurnError
  *   peers      peer messages — their own rows, as today
  *
  * Pure; no React. The bridge publishes its notices as ordinary `text` events, so
@@ -49,7 +49,6 @@ const NOTICE_PATTERNS: readonly RegExp[] = [
 const ERROR_PATTERNS: readonly RegExp[] = [
     /^\[Session ended \(exit (?!0\))-?\d+\)\]$/,
     /^⚠️?\s*(That conversation can no longer be found or resumed|Could not carry on|Could not deliver your (message|answer))/u,
-    /^The session couldn[’']t resume\b/,
 ];
 
 export function bridgeTextKind(body: string): BridgeTextKind | null {

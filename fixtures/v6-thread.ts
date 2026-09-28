@@ -177,7 +177,7 @@ function turn5(): JournalEvent[] {
             room_id: "s1",
             child_convo_id: "s1",
         }),
-        say(1538, "The session couldn’t resume. Send a message to start fresh."),
+        say(1538, "⚠️ That conversation can no longer be found or resumed."),
         say(1540, "✅ Compacted — context now 3.7k/1m"),
         say(1541, "⏳ Session was idle — auto-resuming it now. Your message will be delivered as soon as it's ready."),
     ];

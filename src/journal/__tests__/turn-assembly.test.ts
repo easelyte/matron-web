@@ -269,7 +269,7 @@ describe("bridgeTextKind", () => {
         "[Session ended (exit 1)]",
         "[Session ended (exit 137)]",
         "⚠️ That conversation can no longer be found or resumed.",
-        "The session couldn’t resume. Send a message to start fresh.",
+        "⚠️ Could not deliver your message: session closed",
     ])("recognises the turn-ending error %#", (body) => {
         expect(bridgeTextKind(body)).toBe("error");
     });

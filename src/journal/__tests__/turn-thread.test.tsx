@@ -183,13 +183,13 @@ describe("Show the work OFF (default)", () => {
             client([
                 user("tests are failing", 0),
                 cmd("pnpm vitest run", 1, 1),
-                say("The session couldn’t resume. Send a message to start fresh.", 2),
+                say("⚠️ That conversation can no longer be found or resumed.", 2),
                 say("✅ Compacted — context now 3.7k/1m", 3),
             ]),
         );
         const error = container.querySelector(".mj_TurnError");
         expect(error?.getAttribute("role")).toBe("alert");
-        expect(error?.textContent).toBe("The session couldn’t resume. Send a message to start fresh.");
+        expect(error?.textContent).toBe("That conversation can no longer be found or resumed.");
         const notice = container.querySelector(".mj_SystemNotice");
         expect(notice?.textContent).toBe("Compacted — context now 3.7k/1m");
         expect(notice?.querySelector(".mj_MsgAvatar")).toBeNull();
