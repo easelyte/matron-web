@@ -6,7 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * The "Under the hood" grouping algorithm, checked against the redesign-v6 fixtures
+ * The turn-card grouping algorithm, checked against the redesign-v6 fixtures
  * (docs/design/redesign-v6/src/model.js) and the HANDOFF §3 acceptance sentences.
  */
 
