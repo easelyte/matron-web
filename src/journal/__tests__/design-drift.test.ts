@@ -140,6 +140,8 @@ describe("design drift ratchet", () => {
                 ".mx_MessageComposer_row:focus-within draws the accent border around the whole composer",
             ".mj_TrackerComposer_input:focus, .mj_TrackerComposer_input:focus-visible":
                 ".mj_TrackerComposer_row:focus-within draws the accent border around the whole reply box",
+            ".mj_SearchField_input:focus, .mj_SearchField_input:focus-visible":
+                ".mj_SearchField:has(.mj_SearchField_input:focus-visible) rings the whole rounded search bar",
             ".mj_UploadConfirm_caption:focus, .mj_UploadConfirm_caption:focus-visible":
                 "design v5 neutral-focus exception: the caption is autofocused on open, so its focus is the darker border, not an accent ring",
         };

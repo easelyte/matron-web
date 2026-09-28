@@ -69,7 +69,6 @@ import {
     MicOnIcon,
     OpenAIMark,
     PinIcon,
-    SearchIcon,
     SendIcon,
     SettingsIcon,
     StopIcon,
@@ -83,6 +82,7 @@ import {
     UploadTrayIcon,
 } from "./icons";
 import { FilesPane } from "./files/FilesPane";
+import { SearchField } from "./search-field";
 import { createLongPressController, type LongPressController } from "./longPress";
 
 // True inside the packaged Electron desktop app (its preload injects window.electron). The Files
@@ -1949,25 +1949,17 @@ function ConversationList({
                                     ))}
                                 </div>
                                 <div data-testid="room-list-search" className="mx_RoomListSearch" role="search">
-                                    <label
-                                        className="mx_RoomListSearch_inputWrapper mx_no_textinput"
-                                        htmlFor="room-list-search-input"
-                                    >
-                                        <SearchIcon aria-hidden />
-                                        <input
-                                            id="room-list-search-input"
-                                            className="mx_RoomListSearch_input"
-                                            type="search"
-                                            value={query}
-                                            onChange={(event) => setQuery(event.target.value)}
-                                            placeholder="Search"
-                                            aria-label="Search"
-                                            autoComplete="off"
-                                            // Server rejects message-search queries over 256 chars; cap the shared
-                                            // box so a giant paste can't produce a misleading "unavailable" state.
-                                            maxLength={256}
-                                        />
-                                    </label>
+                                    <SearchField
+                                        id="room-list-search-input"
+                                        className="mj_SearchField_subtle mx_RoomListSearch_field"
+                                        value={query}
+                                        onChange={setQuery}
+                                        placeholder="Search"
+                                        label="Search"
+                                        // Server rejects message-search queries over 256 chars; cap the shared
+                                        // box so a giant paste can't produce a misleading "unavailable" state.
+                                        maxLength={256}
+                                    />
                                 </div>
                                 {state.preferencesUnavailable && (
                                     <div className="mj_ConnectionError" role="status">

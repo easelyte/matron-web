@@ -58,25 +58,6 @@ Please see LICENSE files in the repository root for full details.
 .mj_Input_error {
     border-color: var(--mj-critical-border);
 }
-/* Search fields keep the engine's clear (x) affordance, redrawn in the icon ink so it matches
-   both themes (Chromium's own glyph is a blue x in dark). Same hit area and behaviour. */
-.mj_Input::-webkit-search-cancel-button {
-    -webkit-appearance: none;
-    appearance: none;
-    width: var(--cpd-icon-sm);
-    height: var(--cpd-icon-sm);
-    margin: 0;
-    background-color: var(--cpd-color-icon-secondary);
-    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 4l8 8M12 4l-8 8' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E")
-        center / contain no-repeat;
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 4l8 8M12 4l-8 8' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E")
-        center / contain no-repeat;
-    cursor: pointer;
-}
-.mj_Input::-webkit-search-cancel-button:hover {
-    background-color: var(--cpd-color-text-primary);
-}
-
 /* Phones and touch screens: iOS Safari zooms the page into any text field whose computed
    font-size is under 16px, and stays zoomed. Every text-entry field gets 16px here, the
    primitive and the hand-built ones alike (sidebar search 13px, the composer 14px). The fix is the
@@ -103,23 +84,112 @@ Please see LICENSE files in the repository root for full details.
     height: var(--mj-control-h-lg);
 }
 
-/* Leading icon slot: wrap the input in .mj_InputIcon with the svg before it. */
-.mj_InputIcon {
+/* ───────────── Search field: icon + input + clear (x), see search-field.tsx ───────────── */
+
+/* The bar is the field. It carries the border, radius, hover and focus ring, so every state
+   covers the whole rounded bar; the <input> inside is a bare, transparent text run. (A ring on
+   the input itself drew a square box over part of the bar.) */
+.mj_SearchField {
     position: relative;
     display: flex;
     align-items: center;
+    width: 100%;
     min-width: 0;
+    height: var(--mj-control-h);
+    box-sizing: border-box;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background-color: var(--cpd-color-bg-canvas-default);
+    transition: border-color var(--cpd-dur-fast) var(--cpd-ease);
 }
-.mj_InputIcon > svg {
-    position: absolute;
-    left: var(--mj-control-pad-x);
+.mj_SearchField:hover,
+.mj_SearchField:focus-within {
+    border-color: var(--cpd-color-border-interactive-primary);
+}
+.mj_SearchField:has(.mj_SearchField_input:focus-visible) {
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-field);
+}
+/* The quieter sidebar bar: a filled well with no resting border. */
+.mj_SearchField_subtle {
+    border-color: transparent;
+    background-color: var(--cpd-color-bg-subtle-secondary);
+}
+.mj_SearchField_icon {
+    flex: 0 0 auto;
     width: var(--cpd-icon-md);
     height: var(--cpd-icon-md);
+    margin-left: var(--mj-control-pad-x);
     color: var(--cpd-color-icon-tertiary);
     pointer-events: none;
 }
-.mj_InputIcon > .mj_Input {
-    padding-left: calc(var(--mj-control-pad-x) + var(--cpd-icon-md) + var(--cpd-space-2x));
+.mj_SearchField_input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0 var(--mj-control-pad-x) 0 var(--cpd-space-2x);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-sm-regular);
+    appearance: none;
+}
+.mj_SearchField_input:focus,
+.mj_SearchField_input:focus-visible {
+    outline: none;
+}
+.mj_SearchField_input::placeholder {
+    color: var(--cpd-color-text-placeholder);
+}
+/* One clear control in every engine: the drawn button below, never the engine's own glyph. */
+.mj_SearchField_input::-webkit-search-cancel-button,
+.mj_SearchField_input::-webkit-search-decoration {
+    display: none;
+    -webkit-appearance: none;
+    appearance: none;
+}
+/* The clear (x): icon ink, primary on hover (the #110 look), in a 28px square at the bar's end. */
+.mj_SearchField_clear {
+    position: relative;
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    width: var(--mj-control-h-sm);
+    height: var(--mj-control-h-sm);
+    margin: 0 calc((var(--mj-control-h) - var(--mj-control-h-sm)) / 2 - 1px) 0 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--cpd-radius-sm);
+    background: transparent;
+    color: var(--cpd-color-icon-secondary);
+    cursor: pointer;
+}
+.mj_SearchField_clear svg {
+    width: var(--cpd-icon-md);
+    height: var(--cpd-icon-md);
+}
+.mj_SearchField_clear:hover {
+    color: var(--cpd-color-text-primary);
+    background-color: var(--cpd-color-bg-subtle-primary);
+}
+.mj_SearchField_clear:focus-visible {
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-inset);
+}
+/* Touch: the hit area grows to the 44px target around the same visual button. */
+@media (max-width: 700px), (pointer: coarse) {
+    .mj_SearchField_clear::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: var(--mj-control-h-touch);
+        height: var(--mj-control-h-touch);
+        transform: translate(-50%, -50%);
+    }
 }
 
 /* Select: a drawn chevron keeps the control identical in both themes and across engines. */
