@@ -4195,7 +4195,7 @@ function AgentTurnRow({
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes: ReadonlyMap<string, EventPayload>;
     isReadOnly: boolean;
-    resolvedAction: (itemId: string) => "send" | "cancel" | "expired" | undefined;
+    resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
     const first = turn.events[0];

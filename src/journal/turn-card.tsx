@@ -16,7 +16,6 @@ Please see LICENSE files in the repository root for full details.
  */
 
 import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { List, type RowComponentProps } from "react-window";
 
 import {
     changedFiles,
@@ -48,9 +47,6 @@ export const SLOW_AFTER_S = 300;
 export const STEP_CAP = 12;
 /** Changed-files block shows this many rows before "Show all {n} files". */
 export const FILE_CAP = 5;
-/** An opened list longer than this virtualizes (§4). */
-export const VIRTUALIZE_AFTER = 200;
-const STEP_ROW_HEIGHT = 28;
 
 export type TurnCardMode = "done" | "running" | "waiting" | "stopped";
 
@@ -518,14 +514,6 @@ interface GroupBlockProps {
     renderDeep: (step: Step) => React.ReactElement;
 }
 
-interface StepRowData {
-    steps: readonly Step[];
-    sentences: readonly string[];
-    deep: string | null;
-    onOpenStep: (stepId: string) => void;
-    registerStepRow: (stepId: string, node: HTMLButtonElement | null) => void;
-}
-
 function StepRowButton({
     step,
     sentence,
@@ -568,29 +556,6 @@ function StepRowButton({
     );
 }
 
-function VirtualStepRow({
-    index,
-    style,
-    steps,
-    sentences,
-    deep,
-    onOpenStep,
-    registerStepRow,
-}: RowComponentProps<StepRowData>): React.ReactElement {
-    const step = steps[index];
-    return (
-        <div style={style} className="mj_TurnCard_virtualRow">
-            <StepRowButton
-                step={step}
-                sentence={sentences[index]}
-                expanded={deep === step.id}
-                onOpenStep={onOpenStep}
-                registerStepRow={registerStepRow}
-            />
-        </div>
-    );
-}
-
 function GroupBlock({
     group,
     open,
@@ -608,8 +573,6 @@ function GroupBlock({
     const k = group.steps.length;
     const sentences = useMemo(() => stepRowSentences(group.steps), [group.steps]);
     const cap = showAll ? k : STEP_CAP;
-    const virtualize = showAll && k > VIRTUALIZE_AFTER;
-    const deepStep = deep ? group.steps.find((step) => step.id === deep) : undefined;
 
     return (
         <div
@@ -641,19 +604,6 @@ function GroupBlock({
             </button>
             {open && (
                 <div ref={listRef} id={listId}>
-                    {virtualize ? (
-                        <>
-                            <List
-                                className="mj_TurnCard_virtualList"
-                                rowComponent={VirtualStepRow}
-                                rowCount={k}
-                                rowHeight={STEP_ROW_HEIGHT}
-                                rowProps={{ steps: group.steps, sentences, deep, onOpenStep, registerStepRow }}
-                                style={{ height: STEP_CAP * STEP_ROW_HEIGHT }}
-                            />
-                            {deepStep && renderDeep(deepStep)}
-                        </>
-                    ) : (
                         <ul className="mj_TurnCard_steps">
                             {group.steps.slice(0, cap).map((step, index) => (
                                 <li key={step.id}>
@@ -675,7 +625,6 @@ function GroupBlock({
                                 </li>
                             )}
                         </ul>
-                    )}
                 </div>
             )}
         </div>
