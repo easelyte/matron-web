@@ -2086,6 +2086,15 @@ export class MatronJournalClient {
         return this.api.work(groupBy, signal);
     }
 
+    // Whether the pane is showing a tracker list tab (Inbox or Missions). A list load that settles
+    // after the user moved to Work or Memories must not write the shared banner there: those tabs
+    // surface their own failures, and the list keeps its own error (inboxError / missionsError)
+    // for when its tab is shown again.
+    private trackerListTabShown(): boolean {
+        const view = this.state.trackerView;
+        return !!view?.open && (view.view === "inbox" || view.view === "missions");
+    }
+
     public async loadMissions(): Promise<void> {
         const api = this.api;
         if (!api) return;
@@ -2103,7 +2112,11 @@ export class MatronJournalClient {
         } catch (error) {
             if (this.api !== api || this.trackerMissionsGen !== gen) return;
             const message = errorMessage(error);
-            this.patch({ trackerError: message, missionsError: message, trackerLoading: false });
+            this.patch({
+                ...(this.trackerListTabShown() ? { trackerError: message } : {}),
+                missionsError: message,
+                trackerLoading: false,
+            });
         }
     }
 
@@ -2169,14 +2182,22 @@ export class MatronJournalClient {
                     : { trackerNeedsYou: accumulated.filter(needsUser).length, trackerNeedsYouPartial: truncated }),
                 inboxError: undefined,
                 trackerLoading: false,
-                trackerError: truncated
-                    ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
-                    : undefined,
+                ...(this.trackerListTabShown()
+                    ? {
+                          trackerError: truncated
+                              ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
+                              : undefined,
+                      }
+                    : {}),
             });
         } catch (error) {
             if (this.api !== api || this.trackerInboxGen !== gen) return;
             const message = errorMessage(error);
-            this.patch({ trackerError: message, inboxError: message, trackerLoading: false });
+            this.patch({
+                ...(this.trackerListTabShown() ? { trackerError: message } : {}),
+                inboxError: message,
+                trackerLoading: false,
+            });
         }
     }
 
