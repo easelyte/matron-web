@@ -424,33 +424,39 @@ describe("useAdaptiveHeader", () => {
         document.body.append(container);
         const root = createRoot(container);
         mountedProbes.push({ container, root });
+        // The full app mounts other ResizeObservers too (the composer's auto-grow watches its
+        // textarea); this test is about the header's observer on the timeline body.
+        const bodyObservers = (): ObserverRecord[] =>
+            observers.filter(
+                (observer) => !observer.observe.mock.calls.some(([target]) => target instanceof HTMLTextAreaElement),
+            );
 
         await act(async () => root.render(React.createElement(MatronApp, { client })));
         expect(container.querySelector(".mx_RoomView_body")).toBeNull();
-        expect(observers).toHaveLength(0);
+        expect(bodyObservers()).toHaveLength(0);
 
         await act(async () => client.selectConversation(PARENT.id));
         const firstBody = container.querySelector<HTMLElement>(".mx_RoomView_body")!;
         expect(firstBody).not.toBeNull();
-        expect(observers).toHaveLength(1);
-        expect(observers[0].observe).toHaveBeenCalledWith(firstBody);
+        expect(bodyObservers()).toHaveLength(1);
+        expect(bodyObservers()[0].observe).toHaveBeenCalledWith(firstBody);
         expect(container.textContent).toContain("Finished child");
 
-        resize(observers[0], firstBody, 560);
+        resize(bodyObservers()[0], firstBody, 560);
         await flushFrames();
         expect(container.querySelector(".mj_UsageCluster_collapsed")).not.toBeNull();
 
         await act(async () => client.clearSelection());
         expect(container.querySelector(".mx_RoomView_body")).toBeNull();
-        expect(observers[0].disconnect).toHaveBeenCalledTimes(1);
+        expect(bodyObservers()[0].disconnect).toHaveBeenCalledTimes(1);
 
         await act(async () => client.selectConversation(PARENT.id));
         const secondBody = container.querySelector<HTMLElement>(".mx_RoomView_body")!;
         expect(secondBody).not.toBe(firstBody);
-        expect(observers).toHaveLength(2);
-        expect(observers[1].observe).toHaveBeenCalledWith(secondBody);
+        expect(bodyObservers()).toHaveLength(2);
+        expect(bodyObservers()[1].observe).toHaveBeenCalledWith(secondBody);
 
-        resize(observers[1], secondBody, 560);
+        resize(bodyObservers()[1], secondBody, 560);
         await flushFrames();
         expect(container.querySelector(".mj_UsageCluster_collapsed")).not.toBeNull();
     });

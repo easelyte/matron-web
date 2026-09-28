@@ -529,6 +529,93 @@ describe("ItemDetail reply box (operator call T3: the chat composer's shape)", (
     });
 });
 
+describe("ItemDetail reply box keyboard (the chat composer's send key)", () => {
+    async function mountReply(): Promise<{ client: FakeClient; textarea: HTMLTextAreaElement }> {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({ num: 9 })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+        const textarea = container.querySelector<HTMLTextAreaElement>(".mj_TrackerComposer_input")!;
+        const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+        await act(async () => {
+            setValue.call(textarea, "ship it");
+            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        return { client, textarea };
+    }
+
+    async function keydown(target: HTMLElement, init: KeyboardEventInit): Promise<KeyboardEvent> {
+        const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init });
+        await act(async () => {
+            target.dispatchEvent(event);
+        });
+        return event;
+    }
+
+    it("sends on a plain Enter and swallows the newline", async () => {
+        const { client, textarea } = await mountReply();
+        const event = await keydown(textarea, {});
+        expect(event.defaultPrevented).toBe(true);
+        expect(client.commentItem).toHaveBeenCalledWith(9, { body: "ship it" }, expect.any(String));
+        expect(textarea.value).toBe("");
+    });
+
+    it("leaves Shift+Enter to insert a newline", async () => {
+        const { client, textarea } = await mountReply();
+        const event = await keydown(textarea, { shiftKey: true });
+        expect(event.defaultPrevented).toBe(false);
+        expect(client.commentItem).not.toHaveBeenCalled();
+    });
+
+    it.each([{ metaKey: true }, { ctrlKey: true }])("still sends on %o + Enter", async (modifier) => {
+        const { client, textarea } = await mountReply();
+        const event = await keydown(textarea, modifier);
+        expect(event.defaultPrevented).toBe(true);
+        expect(client.commentItem).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not send an Enter that commits an IME composition", async () => {
+        const { client, textarea } = await mountReply();
+        const composing = await keydown(textarea, { isComposing: true });
+        const legacyComposing = await keydown(textarea, { keyCode: 229 } as KeyboardEventInit);
+        expect(composing.defaultPrevented).toBe(false);
+        expect(legacyComposing.defaultPrevented).toBe(false);
+        expect(client.commentItem).not.toHaveBeenCalled();
+    });
+
+    it("hands the focus back to the box once an Enter-sent reply settles", async () => {
+        const { client, textarea } = await mountReply();
+        let settle!: (ok: boolean) => void;
+        client.commentItem.mockReturnValueOnce(new Promise<boolean>((resolve) => (settle = resolve)));
+        textarea.focus();
+        await keydown(textarea, {});
+        // A browser drops the focus of a field that turns disabled; jsdom does not, so move it off.
+        expect(textarea.disabled).toBe(true);
+        const elsewhere = document.createElement("button");
+        document.body.append(elsewhere);
+        elsewhere.focus();
+        expect(document.activeElement).not.toBe(textarea);
+        await act(async () => settle(true));
+        expect(textarea.disabled).toBe(false);
+        expect(document.activeElement).toBe(textarea);
+        elsewhere.remove();
+    });
+
+    it("does not pull the focus into the box after a reply sent with the button", async () => {
+        const { client, textarea } = await mountReply();
+        const button = textarea.parentElement!.querySelector<HTMLButtonElement>(".mj_TrackerComposer_send")!;
+        button.focus();
+        await act(async () => button.click());
+        expect(client.commentItem).toHaveBeenCalledTimes(1);
+        expect(document.activeElement).not.toBe(textarea);
+    });
+});
+
 describe("ItemDetail origin line", () => {
     beforeAll(() => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
