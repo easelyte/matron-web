@@ -406,13 +406,15 @@ export function headlineCount(entries: readonly HeadlineEntry[]): number {
 }
 
 /**
- * The entries shown before "Show all": every one while running; once done, the last
- * HEADLINES_SHOWN headlines (with the notes between them).
+ * The entries shown before "Show all": every one while running; once done, the last `limit`
+ * headlines (HEADLINES_SHOWN by default; the expanded helper thread passes a larger cap), with
+ * the notes between them.
  */
 export function visibleHeadlines(
     entries: readonly HeadlineEntry[],
     running: boolean,
     showAll: boolean,
+    limit: number = HEADLINES_SHOWN,
 ): {
     shown: HeadlineEntry[];
     hidden: number;
@@ -422,7 +424,7 @@ export function visibleHeadlines(
     let start = entries.length;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
         if (entries[i].type === "headline") {
-            if (seen === HEADLINES_SHOWN) break;
+            if (seen === limit) break;
             seen += 1;
         }
         start = i;

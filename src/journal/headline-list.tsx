@@ -15,6 +15,13 @@ Please see LICENSE files in the repository root for full details.
  * Default (2026-09-26): every headline is listed while the helper is running, the running one
  * carrying the spinner and the live line; once it is done the last HEADLINES_SHOWN (8) are
  * listed, with "Show all {n}" above them for the earlier ones.
+ *
+ * Expanded (operator decision 2026-09-28, `expanded`): the helper thread's newest turns open
+ * with their work in view. Up to EXPANDED_HEADLINES_SHOWN headlines are listed, and the newest
+ * EXPANDED_GROUPS_OPEN multi-step headlines start open onto their plain-English steps (each open
+ * one lists HEADLINE_STEP_CAP steps before "Show all {k}"). The caps bound the DOM on long
+ * threads. A headline the user opens or closes stays that way (rememberToggle): the default
+ * never overrides a choice, across re-renders and remounts.
  */
 
 import React, { useEffect, useId, useMemo, useState } from "react";
@@ -24,6 +31,35 @@ import { buildHeadlines, type Headline, headlineCount, visibleHeadlines } from "
 import { stepHeadline } from "./step-phrases";
 import { formatElapsed, type Step, stepCount, type TurnItem } from "./turn-grouping";
 import { V6Icon, type V6IconName } from "./v6-icons";
+
+/** Expanded list: headlines listed before "Show all {n}" once the helper is done. */
+export const EXPANDED_HEADLINES_SHOWN = 40;
+/** Expanded list: the newest multi-step headlines that start open. */
+export const EXPANDED_GROUPS_OPEN = 10;
+/** An open multi-step headline lists this many steps before "Show all {k}" (as the turn card). */
+export const HEADLINE_STEP_CAP = 12;
+
+/*
+ * The user's own toggles, keyed by list (persistKey) and headline. Module scope, so a choice
+ * survives the list remounting (a conversation switch and back, a history reload), not only a
+ * re-render. Bounded: the oldest choice is forgotten first.
+ */
+const REMEMBER_MAX = 1000;
+const remembered = new Map<string, boolean>();
+
+function rememberToggle(key: string, value: boolean): void {
+    remembered.delete(key);
+    remembered.set(key, value);
+    if (remembered.size > REMEMBER_MAX) {
+        const oldest = remembered.keys().next().value;
+        if (oldest !== undefined) remembered.delete(oldest);
+    }
+}
+
+/** Test seam: forget every remembered toggle. */
+export function resetRememberedToggles(): void {
+    remembered.clear();
+}
 
 const ICON: Record<Headline["icon"], V6IconName> = {
     file: "file",
@@ -52,6 +88,13 @@ export interface HeadlineListProps {
     runningSince?: number;
     /** Deep detail of one step: the tool output / diff card. */
     renderDetail: (step: Step) => React.ReactNode;
+    /**
+     * Open with the work in view (a helper thread's newest turns, Developer view off): more
+     * headlines listed, the newest multi-step headlines open. Default: the compact list.
+     */
+    expanded?: boolean;
+    /** Scope of the remembered toggles (conversation + turn). Absent: toggles are per mount. */
+    persistKey?: string;
 }
 
 function useNow(active: boolean): number {
@@ -98,31 +141,64 @@ export function HeadlineList({
     liveText,
     runningSince,
     renderDetail,
+    expanded = false,
+    persistKey,
 }: HeadlineListProps): React.ReactElement {
     const baseId = useId();
-    const [showAll, setShowAll] = useState(false);
-    const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
+    const recall = (key: string): boolean | undefined =>
+        persistKey === undefined ? undefined : remembered.get(`${persistKey}\u0000${key}`);
+    const keep = (key: string, value: boolean): void => {
+        if (persistKey !== undefined) rememberToggle(`${persistKey}\u0000${key}`, value);
+    };
+    const [showAll, setShowAllState] = useState(() => recall("all") ?? false);
+    // The user's explicit choices only (id → open). Everything else follows the default.
+    const [choices, setChoices] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+    const [stepsAll, setStepsAll] = useState<ReadonlySet<string>>(() => new Set());
     const [deep, setDeep] = useState<string | null>(null);
     const now = useNow(Boolean(running));
 
     const entries = useMemo(() => buildHeadlines(items, running ?? null), [items, running]);
-    const { shown, hidden } = visibleHeadlines(entries, active, showAll);
+    const { shown, hidden } = visibleHeadlines(
+        entries,
+        active,
+        showAll,
+        expanded ? EXPANDED_HEADLINES_SHOWN : undefined,
+    );
     const total = headlineCount(entries);
 
-    const toggle = (id: string): void =>
-        setOpen((current) => {
-            const next = new Set(current);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
-        });
+    // Expanded: the newest multi-step headlines start open.
+    const openByDefault = useMemo(() => {
+        const ids = new Set<string>();
+        if (!expanded) return ids;
+        for (let i = shown.length - 1; i >= 0 && ids.size < EXPANDED_GROUPS_OPEN; i -= 1) {
+            const entry = shown[i];
+            if (entry.type === "headline" && entry.steps.length > 1) ids.add(entry.id);
+        }
+        return ids;
+    }, [expanded, shown]);
+
+    const isGroupOpen = (id: string): boolean => choices.get(id) ?? recall(`g:${id}`) ?? openByDefault.has(id);
+
+    const toggle = (id: string): void => {
+        const next = !isGroupOpen(id);
+        keep(`g:${id}`, next);
+        setChoices((current) => new Map(current).set(id, next));
+    };
+    const setShowAll = (): void => {
+        keep("all", true);
+        setShowAllState(true);
+    };
+    const showAllSteps = (id: string): void => {
+        keep(`s:${id}`, true);
+        setStepsAll((current) => new Set(current).add(id));
+    };
 
     const elapsedS = running && runningSince !== undefined ? Math.max(0, Math.floor((now - runningSince) / 1000)) : 0;
 
     return (
         <section className="mj_Headlines" aria-label="Helper activity">
             {hidden > 0 && (
-                <button type="button" className="mj_TurnCard_more mj_Headlines_more" onClick={() => setShowAll(true)}>
+                <button type="button" className="mj_TurnCard_more mj_Headlines_more" onClick={setShowAll}>
                     Show all {total}
                 </button>
             )}
@@ -139,7 +215,12 @@ export function HeadlineList({
                     const single = entry.steps.length === 1;
                     const isRunning = entry.status === "running";
                     const listId = `${baseId}-${entry.id}`;
-                    const isOpen = single ? deep === entry.steps[0].id : open.has(entry.id);
+                    const isOpen = single ? deep === entry.steps[0].id : isGroupOpen(entry.id);
+                    // A running group lists every step, so its "now" row stays in view.
+                    const stepCap =
+                        isRunning || stepsAll.has(entry.id) || recall(`s:${entry.id}`)
+                            ? entry.steps.length
+                            : HEADLINE_STEP_CAP;
                     const text = isRunning ? `${entry.text}…` : entry.text;
                     return (
                         <li
@@ -180,7 +261,7 @@ export function HeadlineList({
                             )}
                             {isOpen && !single && (
                                 <ul className="mj_TurnCard_steps" id={listId}>
-                                    {entry.steps.map((step, index) => {
+                                    {entry.steps.slice(0, stepCap).map((step, index) => {
                                         const sentence = stepHeadline(step);
                                         const again =
                                             index > 0 && stepHeadline(entry.steps[index - 1]) === sentence
@@ -223,6 +304,17 @@ export function HeadlineList({
                                             </li>
                                         );
                                     })}
+                                    {entry.steps.length > stepCap && (
+                                        <li>
+                                            <button
+                                                type="button"
+                                                className="mj_TurnCard_more"
+                                                onClick={() => showAllSteps(entry.id)}
+                                            >
+                                                Show all {entry.steps.length}
+                                            </button>
+                                        </li>
+                                    )}
                                 </ul>
                             )}
                         </li>

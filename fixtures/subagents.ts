@@ -28,9 +28,17 @@ import type { Conversation, JournalEvent, SessionStatus } from "../src/journal/t
  * `real-claude` / `real-tests` / `real-codex`: a helper's own thread replayed from the scrubbed
  * sample of real traffic (src/journal/__tests__/fixtures/helper-corpus.json): the python3-heredoc
  * subagent from the operator's 2026-09-26 report, a Claude subagent that edits and runs tests,
- * and a Codex review run.
+ * and a Codex review run. `real-long`: a long, many-turn helper thread (the three corpus threads
+ * replayed three times, an operator follow-up between turns) for the DOM-weight check.
  */
-export type SubagentScenario = "thread" | "child" | "codex" | "real-claude" | "real-tests" | "real-codex";
+export type SubagentScenario =
+    | "thread"
+    | "child"
+    | "codex"
+    | "real-claude"
+    | "real-tests"
+    | "real-codex"
+    | "real-long";
 
 const REAL: Record<string, { id: string; thread: string; title: string; kind: "claude" | "codex"; state: string }> = {
     "real-claude": {
@@ -47,6 +55,13 @@ const REAL: Record<string, { id: string; thread: string; title: string; kind: "c
         kind: "claude",
         state: "done",
     },
+    "real-long": {
+        id: "p1:sub:long",
+        thread: "long",
+        title: "Long helper: nine rounds of work",
+        kind: "claude",
+        state: "done",
+    },
     "real-codex": {
         id: "p1:codex:real",
         thread: "codex-review",
@@ -59,13 +74,31 @@ const REAL: Record<string, { id: string; thread: string; title: string; kind: "c
 /** The corpus thread, re-timed onto this fixture's clock (one event every 4 seconds). */
 function realEvents(key: string): JournalEvent[] {
     const spec = REAL[key];
-    const events = (corpus as unknown as { threads: Record<string, JournalEvent[]> }).threads[spec.thread];
+    const threads = (corpus as unknown as { threads: Record<string, JournalEvent[]> }).threads;
+    const followUp = {
+        seq: 0,
+        convo_id: "",
+        ts: 0,
+        sender: "user:operator",
+        type: "text",
+        payload: { body: "Carry on with the next part." },
+    } as JournalEvent;
+    const events =
+        spec.thread === "long"
+            ? Array.from({ length: 3 }, () => ["claude-tests", "claude-heredoc", "codex-review"])
+                  .flat()
+                  .flatMap((name, turn) => [...(turn > 0 ? [followUp] : []), ...threads[name]])
+            : threads[spec.thread];
     return events.map((event, index) => ({
         ...event,
         seq: 9000 + index,
         convo_id: spec.id,
         ts: BASE + 1100_000 + index * 4000,
-        sender: spec.kind === "codex" ? "agent:codex" : "agent:claude",
+        sender: event.sender.startsWith("user:")
+            ? event.sender
+            : spec.kind === "codex"
+              ? "agent:codex"
+              : "agent:claude",
     }));
 }
 

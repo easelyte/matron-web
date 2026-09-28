@@ -5079,6 +5079,9 @@ export interface TurnLive {
 
 const NO_HELPERS: readonly Conversation[] = [];
 
+/** A helper thread's newest turns (with steps) whose headlines open expanded. */
+export const EXPANDED_HELPER_TURNS = 3;
+
 /** Developer view: a helper's card in the flat timeline, after the event it started at. */
 function DevHelperRow({ client, child }: { client: MatronJournalClient; child: Conversation }): React.ReactElement {
     return (
@@ -5148,6 +5151,7 @@ function AgentTurnRow({
     rowHandlers,
     helpers = NO_HELPERS,
     helperThread = null,
+    expandHeadlines = false,
 }: {
     client: MatronJournalClient;
     turn: Turn;
@@ -5157,6 +5161,8 @@ function AgentTurnRow({
      * list of headlines instead of one collapsed turn card. The value is the helper's worker.
      */
     helperThread?: { worker: "claude" | "codex" | null } | null;
+    /** In a helper thread: open the headlines with the work in view (the newest turns). */
+    expandHeadlines?: boolean;
     /** Child conversations (subagents, Codex runs) this turn started — one card each. */
     helpers?: readonly Conversation[];
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
@@ -5283,6 +5289,8 @@ function AgentTurnRow({
                                 liveText={live.liveText}
                                 runningSince={live.runningSince}
                                 renderDetail={renderDetail}
+                                expanded={expandHeadlines}
+                                persistKey={`${first?.convo_id ?? ""}:${turn.key}`}
                             />
                         ) : (
                             hasCard && (
@@ -5902,6 +5910,20 @@ function Timeline({
         [showTheWork, visibleEvents],
     );
     const lastTurn = turns[turns.length - 1];
+    // Inside a helper's thread the newest turns open with their work in view; older ones keep
+    // the compact list, which bounds the DOM on a long thread (EXPANDED_HELPER_TURNS).
+    const expandedHelperTurns = useMemo(
+        () =>
+            new Set(
+                helperThread
+                    ? turns
+                          .filter((turn) => stepsOf(turn.items).length > 0)
+                          .slice(-EXPANDED_HELPER_TURNS)
+                          .map((turn) => turn.key)
+                    : [],
+            ),
+        [helperThread, turns],
+    );
     // First-seen time of each live step, so the elapsed counter and slow state survive re-renders.
     const liveSeenRef = useRef(new Map<string, number>());
     const liveStreams = useMemo(
@@ -6037,6 +6059,7 @@ function Timeline({
                         rowHandlers={menu.rowHandlers}
                         helpers={turnHelpers.get(row.turn.key)}
                         helperThread={helperThread}
+                        expandHeadlines={expandedHelperTurns.has(row.turn.key)}
                     />
                 </React.Fragment>
             );
