@@ -18,12 +18,13 @@ import type { MatronJournalClient } from "../client";
 import { humanizeSize } from "../files/format";
 import { filesDeepLinkHash, handleFilesLinkClick } from "../files-link";
 import { ChevronLeftIcon, KebabIcon, SendIcon } from "../icons";
-import { MarkdownBody } from "../markdown";
-import type { TrackerComment, TrackerItem, TrackerResolution } from "../types";
+import { MarkdownBody, parseTrackerHref } from "../markdown";
+import type { TrackerComment, TrackerItem, TrackerLink, TrackerResolution } from "../types";
 import {
     availableResolutions,
     formatRelativeTime,
     isRouteElsewhere,
+    itemOriginTitle,
     itemStatusText,
     kindLabel,
     needsUser,
@@ -82,6 +83,63 @@ function CommentRow({
     );
 }
 
+/**
+ * One `item.links[]` chip. The protocol lets a link carry any URL, including the in-app
+ * `matron://` scheme, so this applies the SAME guard the markdown renderer does (parseTrackerHref):
+ * a valid `matron://item/<N>` / `matron://mission/<N>` opens it in-app; a Files deep link opens the
+ * pane in this window; http(s) opens in a new tab; anything else (an unknown scheme, a malformed
+ * tracker link, javascript:) renders as inert text — a custom or unsafe scheme is never handed to
+ * the browser as a live href.
+ */
+function LinkChip({
+    link,
+    onTrackerLink,
+}: {
+    link: TrackerLink;
+    onTrackerLink: (kind: "item" | "mission", num: number) => void;
+}): React.ReactElement {
+    const label = link.title?.trim() || link.url;
+    const tracker = parseTrackerHref(link.url);
+    if (tracker) {
+        return (
+            <a
+                className="mj_TrackerLinkChip mj_TrackerLink"
+                href={link.url}
+                onClick={(event) => {
+                    event.preventDefault();
+                    onTrackerLink(tracker.kind, tracker.num);
+                }}
+            >
+                {label}
+            </a>
+        );
+    }
+    const filesHash = filesDeepLinkHash(link.url);
+    if (filesHash) {
+        return (
+            <a
+                className="mj_TrackerLinkChip"
+                href={link.url}
+                onClick={(clickEvent) => handleFilesLinkClick(clickEvent, filesHash)}
+            >
+                {label}
+            </a>
+        );
+    }
+    if (!/^https?:\/\//i.test(link.url)) {
+        return (
+            <span className="mj_TrackerLinkChip mj_TrackerLinkChip_inert" title={link.url}>
+                {label}
+            </span>
+        );
+    }
+    return (
+        <a className="mj_TrackerLinkChip" href={link.url} target="_blank" rel="noreferrer noopener">
+            {label}
+        </a>
+    );
+}
+
 export function ItemDetail({
     item,
     comments,
@@ -116,10 +174,14 @@ export function ItemDetail({
     const resolutions = item.state === "open" ? availableResolutions(item, hasUserReply) : [];
 
     const selectedConvoId = client.getSnapshot().selectedConversationId;
+    // Keyed on the conversation list (replaced on a rename or load), so the line follows it live.
+    const conversations = client.getSnapshot().conversations;
     const originTitle = useMemo(() => {
-        const convo = client.getSnapshot().conversations.find((candidate) => candidate.id === item.origin_convo_id);
-        return convo?.title.trim() || undefined;
-    }, [client, item.origin_convo_id]);
+        const convo = conversations.find((candidate) => candidate.id === item.origin_convo_id);
+        // The live conversation list first (it tracks renames), then the title the journal put on
+        // the item: it resolves origins that are not in the loaded list (older or archived chats).
+        return convo?.title.trim() || itemOriginTitle(item) || undefined;
+    }, [conversations, item]);
     const showOrigin = item.origin_convo_id !== selectedConvoId;
 
     const send = async (): Promise<void> => {
@@ -296,25 +358,9 @@ export function ItemDetail({
 
                 {item.links.length > 0 ? (
                     <div className="mj_TrackerLinks">
-                        {item.links.map((link) => {
-                            // A Files deep link opens the pane in this window; anything else is a new tab.
-                            const filesHash = filesDeepLinkHash(link.url);
-                            return (
-                                <a
-                                    key={link.url}
-                                    className="mj_TrackerLinkChip"
-                                    href={link.url}
-                                    {...(filesHash
-                                        ? {
-                                              onClick: (clickEvent: React.MouseEvent<HTMLAnchorElement>) =>
-                                                  handleFilesLinkClick(clickEvent, filesHash),
-                                          }
-                                        : { target: "_blank", rel: "noreferrer noopener" })}
-                                >
-                                    {link.title?.trim() || link.url}
-                                </a>
-                            );
-                        })}
+                        {item.links.map((link) => (
+                            <LinkChip key={link.url} link={link} onTrackerLink={onTrackerLink} />
+                        ))}
                     </div>
                 ) : null}
 

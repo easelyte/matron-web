@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+# The GITHUB_TOKEN needs nothing beyond reading the checkout: no job here
+# posts a comment, cuts a release, or writes back to the repo. Declaring
+# that explicitly stops a token minted with broader default permissions
+# from being handed to third-party actions in the build.
+permissions:
+  contents: read
+
 jobs:
   checks:
     name: Lint & test

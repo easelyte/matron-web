@@ -7,7 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 /*
  * The Tracker pane — the main-region surface (Phase 3 renders it alongside the Files pane and the
- * conversation view, one at a time). A header with a Missions/Inbox/Work segmented switch and a close
+ * conversation view, one at a time). A header with a Missions/Inbox/Memories/Work segmented switch and a close
  * button; the body follows the store's selection precedence: an open item detail wins, then an open
  * mission detail, then the list for the active view. Loads are issued from effects and the data is
  * store-resident, so WS invalidation keeps every surface live. Presentational composition only —
@@ -21,6 +21,8 @@ import { CloseIcon } from "../icons";
 import type { ClientState } from "../types";
 import { ItemDetail } from "./ItemDetail";
 import { ItemsInbox } from "./ItemsInbox";
+import { MemoriesList } from "./MemoriesList";
+import { MemoryDetail } from "./MemoryDetail";
 import { MissionDetail } from "./MissionDetail";
 import { MissionsList } from "./MissionsList";
 import { WorkView } from "./WorkView";
@@ -35,6 +37,7 @@ export function TrackerPane({
     const view = state.trackerView?.view ?? "inbox";
     const selectedItemId = state.trackerView?.selectedItemId;
     const selectedMissionId = state.trackerView?.selectedMissionId;
+    const selectedMemoryName = state.trackerView?.selectedMemoryName;
 
     // Prime the two tracker list views, but NOT while Work is the active tab.
     // Work is served by a different endpoint and shares none of this state, yet
@@ -46,7 +49,9 @@ export function TrackerPane({
     // stay warm exactly as before; switching to one of them from Work primes on
     // arrival.
     useEffect(() => {
-        if (view === "work") return;
+        // Memories is isolated the same way: it has its own list and error, and a missions/inbox
+        // failure must not raise the shared banner over a healthy Memories view.
+        if (view === "work" || view === "memories") return;
         void client.loadMissions();
         void client.loadInbox();
     }, [client, view]);
@@ -59,12 +64,29 @@ export function TrackerPane({
         if (selectedMissionId != null) void client.loadMission(selectedMissionId);
     }, [client, selectedMissionId]);
 
-    // The view switch (and the detail back buttons) clear any open detail selection. openTrackerView
-    // merges with the previous view, so it can't clear a selected id on its own; closing first resets
-    // the view, then reopening on the wanted tab lands on a clean list.
-    const switchView = (next: "missions" | "inbox" | "work"): void => {
-        client.closeTrackerView();
-        client.openTrackerView({ view: next });
+    // Memories load only when their tab is shown: against a journal that predates /memories the
+    // list 404s, and that must not put an error banner on the inbox and missions tabs.
+    useEffect(() => {
+        if (view === "memories") void client.loadMemories();
+    }, [client, view]);
+
+    // The view switch (and the detail back buttons) clear any open detail selection; null clears a
+    // selected id explicitly, in one view update.
+    const switchView = (next: "missions" | "inbox" | "work" | "memories"): void =>
+        client.openTrackerView({ view: next, itemId: null, missionId: null, loopId: null, memoryName: null });
+
+    // Did the last load of the selected item fail? The error is keyed to the item, so a failure
+    // for an earlier selection never shows against this one.
+    const selectedItemLoadFailed = selectedItemId != null && state.itemLoadError?.id === String(selectedItemId);
+    const retryItem = (): void => {
+        if (selectedItemId != null) void client.loadItem(selectedItemId);
+    };
+    // Same for the selected mission: without a keyed error a failed GET /missions/:id left the
+    // list on screen and MissionDetail's own retry branch unreachable.
+    const selectedMissionLoadFailed =
+        selectedMissionId != null && state.missionLoadError?.id === String(selectedMissionId);
+    const retryMission = (): void => {
+        if (selectedMissionId != null) void client.loadMission(selectedMissionId);
     };
 
     const body = ((): React.ReactElement => {
@@ -78,13 +100,41 @@ export function TrackerPane({
             state.trackerItem &&
             state.trackerItem.item.num === selectedItemId
         ) {
+            // A failed refresh keeps the loaded record (loaders never clear data on failure), but
+            // says it may be out of date and offers a retry, which a later load's banner reset
+            // would otherwise take away.
             return (
-                <ItemDetail
-                    item={state.trackerItem.item}
-                    comments={state.trackerItem.comments}
-                    client={client}
-                    onBack={() => switchView("inbox")}
-                />
+                <>
+                    {selectedItemLoadFailed ? (
+                        <div className="mj_TrackerStaleNotice" role="status">
+                            Couldn't refresh this item, so it may be out of date.{" "}
+                            <button type="button" className="mj_TrackerTextButton" onClick={retryItem}>
+                                Try again
+                            </button>
+                        </div>
+                    ) : null}
+                    <ItemDetail
+                        item={state.trackerItem.item}
+                        comments={state.trackerItem.comments}
+                        client={client}
+                        onBack={() => switchView("inbox")}
+                    />
+                </>
+            );
+        }
+        // The selected item's load failed with nothing loaded to show. Re-tapping its inbox row
+        // would not reload it (the selection doesn't change), so say so here and offer a retry.
+        if (view === "inbox" && selectedItemLoadFailed) {
+            return (
+                <div className="mj_TrackerEmpty" role="status">
+                    <p className="mj_TrackerEmpty_title">Couldn't load this item</p>
+                    <button type="button" className="mj_TrackerTextButton" onClick={retryItem}>
+                        Try again
+                    </button>
+                    <button type="button" className="mj_TrackerTextButton" onClick={() => switchView("inbox")}>
+                        Back to inbox
+                    </button>
+                </div>
             );
         }
         if (
@@ -94,17 +144,35 @@ export function TrackerPane({
             state.trackerMission.mission?.num === selectedMissionId
         ) {
             return (
+                <>
+                    {selectedMissionLoadFailed ? (
+                        <div className="mj_TrackerStaleNotice" role="status">
+                            Couldn't refresh this mission, so it may be out of date.{" "}
+                            <button type="button" className="mj_TrackerTextButton" onClick={retryMission}>
+                                Try again
+                            </button>
+                        </div>
+                    ) : null}
+                    <MissionDetail
+                        detail={state.trackerMission}
+                        client={client}
+                        onOpenItem={(num) => client.openTrackerItem(num)}
+                        onBack={() => switchView("missions")}
+                    />
+                </>
+            );
+        }
+        // The selected mission's load failed with nothing loaded to show. Re-tapping its row would
+        // not reload it (the selection doesn't change), so hand MissionDetail a null record: its
+        // empty state says so and its "Try again" reloads the selected mission.
+        if (view === "missions" && selectedMissionLoadFailed) {
+            return (
                 <MissionDetail
-                    detail={state.trackerMission}
+                    detail={null}
                     client={client}
                     onOpenItem={(num) => client.openTrackerItem(num)}
                     onBack={() => switchView("missions")}
                 />
-            );
-        }
-        if (view === "missions") {
-            return (
-                <MissionsList missions={state.missions ?? []} onOpenMission={(num) => client.openTrackerMission(num)} />
             );
         }
         if (view === "work") {
@@ -120,12 +188,103 @@ export function TrackerPane({
                 />
             );
         }
+        // The memories view: the editor for the selected name ("" = a new memory) once the list is
+        // loaded, else the list. A name that is no longer in the list (deleted elsewhere) falls back
+        // to the list rather than an editor bound to a stale record.
+        if (view === "memories" && selectedMemoryName !== undefined && state.memories !== undefined) {
+            const memory = selectedMemoryName === "" ? null : state.memories.find((m) => m.name === selectedMemoryName);
+            if (memory !== undefined) {
+                return (
+                    <MemoryDetail
+                        key={selectedMemoryName}
+                        memory={memory}
+                        client={client}
+                        onBack={() => client.closeTrackerMemory()}
+                    />
+                );
+            }
+        }
+        // Until a list's first load lands there is nothing to reason over: an empty list would read
+        // as a false "No missions yet" / "Nothing needs you". A failed load says so and offers a retry;
+        // each list has its own error for this, since any other tracker load clears the shared banner.
+        const list =
+            view === "missions"
+                ? {
+                      loaded: state.missions,
+                      error: state.missionsError,
+                      noun: "missions",
+                      reload: () => client.loadMissions(),
+                  }
+                : view === "memories"
+                  ? {
+                        loaded: state.memories,
+                        error: state.memoriesError,
+                        noun: "memories",
+                        reload: () => client.loadMemories(),
+                    }
+                  : {
+                        loaded: state.inboxItems,
+                        error: state.inboxError,
+                        noun: "the inbox",
+                        reload: () => client.loadInbox(),
+                    };
+        if (list.loaded === undefined) {
+            return list.error ? (
+                <div className="mj_TrackerEmpty" role="status">
+                    <p className="mj_TrackerEmpty_title">Couldn't load {list.noun}</p>
+                    <button type="button" className="mj_TrackerTextButton" onClick={() => void list.reload()}>
+                        Try again
+                    </button>
+                </div>
+            ) : (
+                <div className="mj_TrackerEmpty" role="status">
+                    <p className="mj_TrackerEmpty_title">Loading…</p>
+                </div>
+            );
+        }
+        // A failed refresh keeps the loaded list (loaders never clear data on failure). Its own error
+        // survives other tracker loads that clear the shared banner, so say the list may be out of
+        // date and offer a retry; otherwise an empty list would read as a current "Nothing needs you".
+        const staleNotice = list.error ? (
+            <div className="mj_TrackerStaleNotice" role="status">
+                Couldn't refresh {list.noun}, so {view === "inbox" ? "it" : "they"} may be out of date.{" "}
+                <button type="button" className="mj_TrackerTextButton" onClick={() => void list.reload()}>
+                    Try again
+                </button>
+            </div>
+        ) : null;
+        if (view === "missions") {
+            return (
+                <>
+                    {staleNotice}
+                    <MissionsList
+                        missions={state.missions ?? []}
+                        onOpenMission={(num) => client.openTrackerMission(num)}
+                    />
+                </>
+            );
+        }
+        if (view === "memories") {
+            return (
+                <>
+                    {staleNotice}
+                    <MemoriesList
+                        memories={state.memories ?? []}
+                        onOpenMemory={(name) => client.openTrackerMemory(name)}
+                        onNewMemory={() => client.openTrackerMemory("")}
+                    />
+                </>
+            );
+        }
         return (
-            <ItemsInbox
-                items={state.inboxItems ?? []}
-                client={client}
-                onOpenItem={(num) => client.openTrackerItem(num)}
-            />
+            <>
+                {staleNotice}
+                <ItemsInbox
+                    items={state.inboxItems ?? []}
+                    client={client}
+                    onOpenItem={(num) => client.openTrackerItem(num)}
+                />
+            </>
         );
     })();
 
@@ -159,6 +318,15 @@ export function TrackerPane({
                         onClick={() => switchView("inbox")}
                     >
                         Inbox
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={view === "memories"}
+                        className={`mj_Seg_item mj_TrackerViewSwitch_tab${view === "memories" ? " mj_Seg_item_on mj_TrackerViewSwitch_tab_active" : ""}`}
+                        onClick={() => switchView("memories")}
+                    >
+                        Memories
                     </button>
                     <button
                         type="button"

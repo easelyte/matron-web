@@ -6055,6 +6055,29 @@ button.mj_SwitchButton:focus-visible {
     font: var(--cpd-font-meta);
 }
 
+/* Box usage under the chosen box in the New session sheet: the box's last capacity report —
+   limits with reset times, live sessions, disk — and an "as of" caption saying how old the
+   numbers are (ported from upstream's sheet onto the v6 sheet). */
+.mj_NewSessionSheet_usage {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 4px;
+    color: var(--cpd-color-text-secondary);
+    font:
+        400 12px/16px Inter,
+        sans-serif;
+}
+
+.mj_NewSessionSheet_usageLine {
+    display: block;
+}
+
+.mj_NewSessionSheet_usageAsOf {
+    display: block;
+    color: var(--cpd-color-text-tertiary);
+}
+
 /* ---- v6 chat-pane breakpoints (data-pane on .mx_RoomView_body, set by a ResizeObserver).
    Order of sacrifice at narrow (GENERATIVE-SYSTEM §3): card row drops the total duration;
    group rows drop the count column, then the step indent shrinks 24 → 12; the deep panel

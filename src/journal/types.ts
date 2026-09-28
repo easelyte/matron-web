@@ -431,6 +431,25 @@ export interface ClientState {
     trackerLoading?: boolean;
     /** Last tracker fetch/mutation error; cleared on the next successful load. */
     trackerError?: string;
+    /** Error from the last inbox load only. Unlike trackerError, which any tracker load clears, this
+     *  is cleared only by the next inbox load, so a never-loaded inbox can tell "failed" from
+     *  "still loading" while other loads come and go. */
+    inboxError?: string;
+    /** Error from the last item-detail load, keyed by the item it was for (`id` is the item number
+     *  as a string, any leading "#" dropped). Unlike trackerError it survives other tracker loads
+     *  and an in-flight retry, and is cleared only when an item load succeeds, so the pane can keep
+     *  offering a retry for the selected item until it actually loads. */
+    itemLoadError?: { id: string; message: string };
+    /** Same as inboxError, for the missions list. */
+    missionsError?: string;
+    /** Same as itemLoadError, for the open mission detail: keyed by the mission number (leading "#"
+     *  dropped), survives other tracker loads and an in-flight retry, and is cleared only when a
+     *  mission load succeeds, so the pane can keep offering a retry until it actually loads. */
+    missionLoadError?: { id: string; message: string };
+    /** The Memories view's list, sorted by name. Undefined = never loaded this session. */
+    memories?: Memory[];
+    /** Same as inboxError, for the memories list. */
+    memoriesError?: string;
 }
 
 export interface FilesViewState {
@@ -461,11 +480,44 @@ export interface FilesViewState {
 /** Which tracker surface the pane shows; `selected*Id` are #num values (integers). */
 export interface TrackerViewState {
     open: boolean;
-    view?: "missions" | "inbox" | "work";
+    view?: "missions" | "inbox" | "work" | "memories";
     selectedItemId?: number;
     selectedMissionId?: number;
     /** Work tab: the loop whose detail is open. The Work data itself is WorkView-local. */
     selectedLoopId?: number;
+    /** Memories view: the open memory's name, or "" for the new-memory form. Undefined = the list. */
+    selectedMemoryName?: string;
+}
+
+// ── Memories (journal /memories, spec 2026-09-27 memories) ─────────────────────
+// The user's shared agent memory: standing rules and facts every agent may save and the
+// Coordinator reads at spawn. Shaped like a Claude Code memory file. `name` is the key
+// (kebab-case, unique per user); PUT /memories/:name overwrites the whole memory.
+
+export type MemoryType = "user" | "feedback" | "project" | "reference";
+
+export interface Memory {
+    id: string;
+    name: string;
+    type: MemoryType;
+    /** One line, ≤200 chars — the line the Coordinator sees at spawn. */
+    description: string;
+    /** Markdown, ≤8192 bytes, may be empty. */
+    body: string;
+    origin_convo_id: string | null;
+    origin_device_id: number | null;
+    origin_private?: boolean;
+    created_by: "user" | "agent";
+    updated_by: "user" | "agent";
+    created_at: number;
+    updated_at: number;
+}
+
+/** PUT /memories/:name body. Omitted `body` clears the stored body; omitted `type` keeps it. */
+export interface MemoryWrite {
+    description: string;
+    body?: string;
+    type?: MemoryType;
 }
 
 export type TrackerItemKind = "task" | "question" | "decision";
@@ -511,10 +563,10 @@ export interface TrackerItem {
     links: TrackerLink[];
     supersedes: string | null;
     origin_convo_id: string;
-    /** Title of the origin conversation, for provenance labelling (this session / another session).
-     *  Null when the origin conversation row is gone, or on a marker/shape from a journal that
-     *  predates the field. */
-    origin_convo_title: string | null;
+    /** Title of the origin conversation as the journal resolved it, for provenance labels. Absent
+     *  on a journal that predates the field; null or "" when the origin conversation is gone or
+     *  untitled. */
+    origin_convo_title?: string | null;
     origin_device_id?: number;
     created_by: TrackerActor;
     created_at: number;
@@ -984,6 +1036,14 @@ export function eventSnippet(type: string, payload: EventPayload): string {
         const title = asString(payload.title).trim();
         const label = num ? `🏁 Mission #${num}` : "🏁 Mission";
         return (title ? `${label}: ${title}` : label).slice(0, 120);
+    }
+    if (type === "memory") {
+        // Memory marker (payload: {memory_id, action, created, by, name?, description?}); the name
+        // is absent across a privacy boundary. Mirrors MemoryNotice's timeline copy.
+        const name = asString(payload.name).trim();
+        const action = asString(payload.action);
+        const verb = action === "deleted" ? "deleted" : payload.created === true ? "saved" : "updated";
+        return (name ? `🧠 Memory ${verb}: ${name}` : `🧠 Memory ${verb}`).slice(0, 120);
     }
     if (typeof payload.snippet === "string") return payload.snippet.slice(0, 120);
     if (type === "tool_output" && typeof payload.command === "string") return `$ ${payload.command}`.slice(0, 120);

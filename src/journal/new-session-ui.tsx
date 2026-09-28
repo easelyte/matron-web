@@ -12,7 +12,16 @@ Please see LICENSE files in the repository root for full details.
  * agent, model, browser tools, a first task and "Remember as my defaults".
  */
 
-import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, {
+    useCallback,
+    useEffect,
+    useId,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+    useState,
+    useSyncExternalStore,
+} from "react";
 
 import { type MatronJournalClient, type StartOutcome } from "./client";
 import {
@@ -27,11 +36,72 @@ import {
     writeRememberedBox,
     writeRememberedDefaults,
 } from "./new-session";
+import { type BoxStatus } from "./ops/model";
+import { effectiveStatus } from "./ops/OpsPane";
+import { formatSampleAge, resetDisplay } from "./status";
 import { type DeviceDTO } from "./types";
 import { V6Icon } from "./v6-icons";
 
 function boxName(box: DeviceDTO): string {
     return box.name?.trim() || `Agent ${box.device_id}`;
+}
+
+// df -h style size for the disk line: "53G", "1.8T". One decimal below 10, whole numbers above.
+export function formatDiskSize(bytes: number): string {
+    const units = ["B", "K", "M", "G", "T", "P"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+    }
+    const text = unit > 0 && value < 10 ? value.toFixed(1).replace(/\.0$/, "") : String(Math.round(value));
+    return `${text}${units[unit]}`;
+}
+
+function useMinuteClock(): number {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+        return () => window.clearInterval(timer);
+    }, []);
+    return now;
+}
+
+// The box's last capacity report under its name: one line per limit (with its reset when the
+// bridge sent one), live sessions, disk, then how old the numbers are. No status → nothing.
+export function BoxUsage({ status, now }: { status: BoxStatus | undefined; now: number }): React.ReactElement | null {
+    if (!status) return null;
+    const lines: string[] = [];
+    for (const line of status.limits?.lines ?? []) {
+        const reset = resetDisplay(line.resets_at, line.resets, now);
+        const usage = `${line.label} ${Math.round(line.percent)}%`;
+        lines.push(reset ? `${usage} · resets ${reset}` : usage);
+    }
+    if (status.activity) {
+        const count = status.activity.live_sessions;
+        lines.push(`${count} live session${count === 1 ? "" : "s"}`);
+    }
+    if (status.disk) {
+        const { free_bytes: free, total_bytes: total } = status.disk;
+        const freePercent = Math.round((free / total) * 100);
+        lines.push(`${formatDiskSize(free)} free of ${formatDiskSize(total)} (${freePercent}% free)`);
+    }
+    if (lines.length === 0 && status.reported_at === undefined) return null;
+    return (
+        <span className="mj_NewSessionSheet_usage">
+            {lines.map((line, index) => (
+                <span key={index} className="mj_NewSessionSheet_usageLine">
+                    {line}
+                </span>
+            ))}
+            {status.reported_at !== undefined ? (
+                <span className="mj_NewSessionSheet_usageAsOf">
+                    as of {formatSampleAge(Math.max(0, now - status.reported_at))}
+                </span>
+            ) : null}
+        </span>
+    );
 }
 
 /** Resolves once the client knows the conversation (its row can lag the start reply). */
@@ -282,6 +352,9 @@ export function NewSessionSheet({
     const onClose = (): void => {
         if (!starting) close(false);
     };
+    // The chosen box's last capacity report: the roster's `status`, or a newer live `box_status`.
+    const boxStatusLive = useSyncExternalStore(client.subscribe, () => client.getSnapshot().boxStatusLive);
+    const now = useMinuteClock();
 
     const loadBox = useCallback(
         (box: DeviceDTO): void => {
@@ -656,6 +729,7 @@ export function NewSessionSheet({
                             ) : (
                                 <span className="mj_BoxCaption">On {boxName(form.box)}</span>
                             )}
+                            <BoxUsage status={effectiveStatus(form.box, boxStatusLive)} now={now} />
                             {error && (
                                 <p className="mj_FieldError" role="alert">
                                     {error}

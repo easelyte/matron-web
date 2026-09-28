@@ -9,8 +9,8 @@ Please see LICENSE files in the repository root for full details.
  * Timeline cards for the tracker markers (`item` / `milestone` / `mission` journal events). They
  * join the mj_PromptCard visual family so an inline tracker card reads as the same card species as
  * a permission / spawn card. Every field is parsed defensively — titles can be absent across a
- * privacy boundary, so each falls back to `#num`. Tapping a card opens the corresponding tracker
- * surface via the client.
+ * privacy boundary, so each falls back to `#num`. Tapping a card's header opens the corresponding
+ * tracker surface via the client.
  */
 
 import React from "react";
@@ -83,12 +83,11 @@ export function ItemCard({ client, event }: { client: MatronJournalClient; event
     const comment = closed ? parseComment(payload.comment) : null;
 
     return (
-        <button
-            type="button"
-            className={`mj_PromptCard mj_TrackerCard${needsYou ? " mj_TrackerCard_needsyou" : ""}`}
-            onClick={() => client.openTrackerItem(num)}
-        >
-            <div className="mj_TrackerCard_row">
+        // The card is a plain container and only its header row is the open-item button: the comment
+        // body renders markdown (links, code-block copy buttons), and interactive content may not
+        // nest inside a <button>. As a sibling, a link click opens its own target, not this item.
+        <div className={`mj_PromptCard mj_TrackerCard${needsYou ? " mj_TrackerCard_needsyou" : ""}`}>
+            <button type="button" className="mj_TrackerCard_row" onClick={() => client.openTrackerItem(num)}>
                 <span className="mj_TrackerCard_glyph" aria-hidden="true">
                     <TrackerGlyph kind={kind} />
                 </span>
@@ -101,7 +100,7 @@ export function ItemCard({ client, event }: { client: MatronJournalClient; event
                 >
                     {status}
                 </span>
-            </div>
+            </button>
             {comment ? (
                 <div className="mj_TrackerCard_comment">
                     {comment.body ? (
@@ -120,7 +119,7 @@ export function ItemCard({ client, event }: { client: MatronJournalClient; event
                     ))}
                 </div>
             ) : null}
-        </button>
+        </div>
     );
 }
 
@@ -142,13 +141,14 @@ export function ItemInlineNote({
     const comment = reopened ? null : parseComment(payload.comment);
 
     return (
-        <button type="button" className="mj_TrackerInlineNote" onClick={() => client.openTrackerItem(num)}>
-            <span className="mj_TrackerInlineNote_line">
+        // Same split as ItemCard: the lead line is the button, the markdown body is its sibling.
+        <div className="mj_TrackerInlineNote">
+            <button type="button" className="mj_TrackerInlineNote_line" onClick={() => client.openTrackerItem(num)}>
                 <span className="mj_TrackerInlineNote_glyph" aria-hidden="true">
                     <TrackerGlyph kind={kind} />
                 </span>
                 {lead}
-            </span>
+            </button>
             {comment?.body ? (
                 <div className="mj_TrackerProse mj_TrackerInlineNote_body">
                     <MarkdownBody
@@ -158,7 +158,7 @@ export function ItemInlineNote({
                     />
                 </div>
             ) : null}
-        </button>
+        </div>
     );
 }
 
@@ -234,6 +234,39 @@ export function MilestoneCard({
 }
 
 /** `mission` marker — a one-line notice. */
+// A `memory` marker (spec 2026-09-27 memories): a quiet one-line notice, the MissionNotice
+// species. The journal may append the same change to two conversations; each renders its own
+// line. Across a privacy boundary the payload carries no name — the notice then has no target
+// and opens the Memories list instead of one memory.
+export function MemoryNotice({
+    client,
+    event,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+}): React.ReactElement {
+    const payload = event.payload;
+    const name = asString(payload.name).trim();
+    const description = oneLine(asString(payload.description));
+    const action = asString(payload.action);
+    const verb = action === "deleted" ? "deleted" : payload.created === true ? "saved" : "updated";
+    const who = asString(payload.by) === "user" ? "You" : "Agent";
+    const what = name ? ` · ${name}${description && action !== "deleted" ? ` — ${description}` : ""}` : "";
+    const text = `${who} ${verb} a memory${what}`;
+    const open = (): void => {
+        if (name && action !== "deleted") client.openTrackerMemory(name);
+        else client.openTrackerView({ view: "memories", itemId: null, missionId: null, memoryName: null });
+    };
+    return (
+        <button type="button" className="mj_TrackerMissionNotice mj_TrackerMemoryNotice" onClick={open}>
+            <span className="mj_TrackerMissionNotice_flag" aria-hidden="true">
+                🧠
+            </span>
+            {text}
+        </button>
+    );
+}
+
 export function MissionNotice({
     client,
     event,

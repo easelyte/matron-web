@@ -425,8 +425,11 @@ export class JournalDatabase {
             const activity = (right.last_ts ?? right.created_at) - (left.last_ts ?? left.created_at);
             // Tie-break by the immutable id, NOT last_seq: last_seq advances on
             // every frame, so a last_seq tie-break would let a non-message event
-            // resurface a conversation whose last_ts ties another's (matches the
-            // server's ORDER BY ... , id DESC and keeps ordering total/stable).
+            // resurface a conversation whose last_ts ties another's. The server
+            // and the Apple app break the tie on last_seq; the id keeps this
+            // ordering total and stable across non-message frames instead, at
+            // the cost of differing from them only when two newest messages
+            // share a millisecond.
             return activity || (right.id < left.id ? -1 : right.id > left.id ? 1 : 0);
         });
     }

@@ -11,7 +11,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { MatronJournalClient } from "../../../src/journal/client";
 import { MatronApp } from "../../../src/journal/components";
 import { NewSessionSheet } from "../../../src/journal/new-session-ui";
-import type { ClientState, DeviceDTO, Session } from "../../../src/journal/types";
+import type { BoxStatus } from "../../../src/journal/ops/model";
+import type { ClientState, DeviceDTO, ServerFrame, Session } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -33,6 +34,7 @@ const AGENT_A: DeviceDTO = {
 
 interface ClientInternals {
     state: ClientState;
+    handleFrame(frame: ServerFrame): Promise<void>;
 }
 
 function internals(client: MatronJournalClient): ClientInternals {
@@ -327,6 +329,104 @@ describe("New session options sheet", () => {
         expect(error.textContent).toBe("That folder doesn’t exist on the box.");
         expect(input.getAttribute("aria-describedby")).toBe(error.id);
         expect(input.getAttribute("aria-invalid")).toBe("true");
+    });
+});
+
+// Box usage (ported from upstream's sheet): the v6 sheet renders the chosen box's last capacity
+// report — limits with reset times, live sessions, disk, and an "as of" caption — from the
+// roster's `status` or a newer live `box_status` frame.
+describe("New session sheet box usage", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    beforeEach(() => localStorage.clear());
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    function statusFor(now: number): BoxStatus {
+        return {
+            reported_at: now - 5 * 60_000,
+            activity: { live_sessions: 5, last_hour: [] },
+            limits: {
+                as_of: now - 5 * 60_000,
+                lines: [
+                    {
+                        id: "session",
+                        label: "Session",
+                        percent: 13,
+                        resets: "Sep 28 at 1:10am (Europe/London)",
+                        resets_at: new Date(now + 30.5 * 60_000).toISOString(),
+                    },
+                    { id: "week_all", label: "Week (all models)", percent: 22 },
+                    { id: "week_fable", label: "Week (Fable)", percent: 24, resets: "Oct 1 at 1am" },
+                ],
+            },
+            disk: { free_bytes: 56_908_316_672, total_bytes: 1_979_120_929_996 },
+            account: { email: "dan@example.com" },
+        };
+    }
+
+    async function openSheet(client: MatronJournalClient, agent: DeviceDTO): Promise<HTMLElement> {
+        jest.spyOn(client, "listAgents").mockResolvedValue([agent]);
+        jest.spyOn(client, "sessionOptions").mockResolvedValue(OPTIONS);
+        rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+        return rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
+    }
+
+    const usageLines = (dialog: HTMLElement): Array<string | null> =>
+        [...dialog.querySelectorAll(".mj_NewSessionSheet_usageLine")].map((line) => line.textContent);
+
+    it("renders limits, reset times, live sessions, disk and an as-of caption under the box", async () => {
+        const dialog = await openSheet(new MatronJournalClient(), { ...AGENT_A, status: statusFor(Date.now()) });
+        expect(usageLines(dialog)).toEqual([
+            "Session 13% · resets 30m",
+            "Week (all models) 22%",
+            "Week (Fable) 24% · resets Oct 1 at 1am",
+            "5 live sessions",
+            "53G free of 1.8T (3% free)",
+        ]);
+        expect(dialog.querySelector(".mj_NewSessionSheet_usageAsOf")?.textContent).toBe("as of 5m ago");
+    });
+
+    it("shows nothing extra for a box with no status", async () => {
+        const dialog = await openSheet(new MatronJournalClient(), AGENT_A);
+        expect(dialog.querySelector(".mj_NewSessionSheet_usage")).toBeNull();
+    });
+
+    it("renders only the blocks a status carries", async () => {
+        const dialog = await openSheet(new MatronJournalClient(), {
+            ...AGENT_A,
+            status: { reported_at: Date.now() - 3 * 60 * 60_000, activity: { live_sessions: 1, last_hour: [] } },
+        });
+        expect(usageLines(dialog)).toEqual(["1 live session"]);
+        expect(dialog.querySelector(".mj_NewSessionSheet_usageAsOf")?.textContent).toBe("as of 3h ago");
+    });
+
+    it("updates the lines and the as-of caption when a live box_status frame lands", async () => {
+        const client = new MatronJournalClient();
+        const dialog = await openSheet(client, { ...AGENT_A, status: statusFor(Date.now()) });
+        await act(async () =>
+            internals(client).handleFrame({
+                kind: "box_status",
+                device_id: AGENT_A.device_id,
+                status: {
+                    reported_at: Date.now(),
+                    limits: { as_of: Date.now(), lines: [{ id: "session", label: "Session", percent: 14 }] },
+                },
+            } as unknown as ServerFrame),
+        );
+        expect(usageLines(dialog)).toEqual(["Session 14%"]);
+        expect(dialog.querySelector(".mj_NewSessionSheet_usageAsOf")?.textContent).toBe("as of just now");
     });
 });
 

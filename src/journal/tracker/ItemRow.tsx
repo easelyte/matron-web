@@ -30,15 +30,16 @@ export function ItemRow({
     originTitle?: string;
     /** Journal convo id of the session viewing this row. Drives the provenance chip: same origin →
      *  no chip; different origin → "from «title»"; route-elsewhere label → "↪ Handle elsewhere". */
-    currentConvoId?: string;
+    currentConvoId?: string | null;
     onOpen: (num: number) => void;
 }): React.ReactElement {
     const urgent = needsUser(item);
     const body = oneLine(item.body);
-    // Provenance relative to the viewing session. The origin title comes from the item shape
-    // (origin_convo_title) with the caller-resolved originTitle as a fallback for older payloads.
+    // Provenance relative to the viewing session. The caller-resolved originTitle (the live
+    // conversation list, which tracks renames) wins; the title carried on the item
+    // (origin_convo_title) covers origins the caller could not resolve.
     const provenance = itemProvenance(item, currentConvoId);
-    const provTitle = (provenance.kind !== "here" ? provenance.title : null) ?? originTitle ?? null;
+    const provTitle = originTitle ?? (provenance.kind !== "here" ? provenance.title : null) ?? null;
     // The informational "from another session" chip stays gated to the all-conversations scope (a
     // chat-scoped list is all one origin); the actionable route-elsewhere chip shows in any scope.
     const showOtherChip = provenance.kind === "other" && scope === "all";
