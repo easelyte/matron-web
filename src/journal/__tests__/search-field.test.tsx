@@ -132,6 +132,46 @@ describe("SearchField", () => {
     });
 });
 
+describe("SearchField bar and IME", () => {
+    it("a press on the icon or padding focuses the field, without a blur flash", async () => {
+        const { container, root } = await mount(<Harness />);
+        const input = container.querySelector<HTMLInputElement>("input")!;
+        const icon = container.querySelector<SVGElement>(".mj_SearchField_icon")!;
+        const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+        icon.dispatchEvent(down);
+        expect(down.defaultPrevented).toBe(true);
+        await act(async () => void icon.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+        expect(document.activeElement).toBe(input);
+
+        // A press on the input itself is left to the browser (caret placement, selection).
+        input.blur();
+        const onInput = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+        input.dispatchEvent(onInput);
+        expect(onInput.defaultPrevented).toBe(false);
+        await act(async () => root.unmount());
+    });
+
+    it("an Escape that cancels an IME candidate does not clear the query", async () => {
+        const outer = jest.fn();
+        document.addEventListener("keydown", outer);
+        const { container, root } = await mount(<Harness initial="かな" />);
+        const input = container.querySelector<HTMLInputElement>("input")!;
+        input.focus();
+        const composing = new KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+            cancelable: true,
+            isComposing: true,
+        });
+        await act(async () => void input.dispatchEvent(composing));
+        expect(input.value).toBe("かな");
+        expect(composing.defaultPrevented).toBe(false);
+        expect(outer).toHaveBeenCalledTimes(1);
+        document.removeEventListener("keydown", outer);
+        await act(async () => root.unmount());
+    });
+});
+
 describe("sidebar search uses the shared field", () => {
     function conversation(id: string, title: string): Conversation {
         return {

@@ -7,6 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 import React, { useRef } from "react";
 
+import { isImeComposing } from "./composer-input";
 import { CloseIcon, SearchIcon } from "./icons";
 
 /**
@@ -42,7 +43,20 @@ export function SearchField({
         inputRef.current?.focus();
     };
     return (
-        <div className={`mj_SearchField${className ? ` ${className}` : ""}`}>
+        <div
+            className={`mj_SearchField${className ? ` ${className}` : ""}`}
+            // The whole bar is the target: a press on the icon or padding focuses the field (as the
+            // <label> wrappers these bars replaced did), without a blur flash. The input and the
+            // clear button handle their own presses.
+            onMouseDown={(event) => {
+                if (event.target === inputRef.current || (event.target as Element).closest("button")) return;
+                event.preventDefault();
+            }}
+            onClick={(event) => {
+                if (event.target === inputRef.current || (event.target as Element).closest("button")) return;
+                inputRef.current?.focus();
+            }}
+        >
             <SearchIcon className="mj_SearchField_icon" aria-hidden="true" />
             <input
                 ref={inputRef}
@@ -52,7 +66,8 @@ export function SearchField({
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
                 onKeyDown={(event) => {
-                    if (event.key !== "Escape" || !value) return;
+                    // An Escape that cancels an IME candidate is the input method's, not a clear.
+                    if (event.key !== "Escape" || !value || isImeComposing(event)) return;
                     // Own this press: clear, and keep it from closing a pane or leaving a subagent.
                     event.preventDefault();
                     event.stopPropagation();

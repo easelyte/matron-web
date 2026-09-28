@@ -40,18 +40,25 @@ const MIME = {
 };
 
 function serve(dir) {
+    const root = fs.realpathSync(dir);
     return new Promise((resolve) => {
         const server = http.createServer((req, res) => {
-            const urlPath = decodeURIComponent(req.url.split("?")[0]);
-            const file = path.join(dir, urlPath === "/" ? "index.html" : urlPath);
+            let file;
+            try {
+                const urlPath = decodeURIComponent(req.url.split("?")[0]);
+                // Contained in the build dir after resolving .. and symlinks, or refused.
+                file = fs.realpathSync(
+                    path.resolve(root, urlPath === "/" ? "index.html" : urlPath.replace(/^\/+/, "")),
+                );
+            } catch {
+                return res.writeHead(404).end();
+            }
+            if (file !== root && !file.startsWith(root + path.sep)) return res.writeHead(403).end();
             fs.readFile(file, (err, data) => {
-                if (err) {
-                    res.writeHead(404);
-                    res.end("not found");
-                    return;
-                }
-                res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" });
-                res.end(data);
+                if (err) return res.writeHead(404).end();
+                res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" }).end(
+                    data,
+                );
             });
         });
         server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port }));
