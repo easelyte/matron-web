@@ -160,12 +160,15 @@ export function ItemDetail({
     useAutoGrow(replyRef, reply);
     const [busy, setBusy] = useState(false);
     // The box is disabled while a reply posts, which drops its focus. With Enter as the send key
-    // the operator is typing when that happens, so hand the focus back once the post settles.
+    // the operator is typing when that happens, so hand the focus back once the post settles, but
+    // only if the focus is still nowhere (the drop itself): a deliberate move to another control
+    // while the post was pending is left alone.
     const refocusReplyRef = useRef(false);
     useEffect(() => {
         if (busy || !refocusReplyRef.current) return;
         refocusReplyRef.current = false;
-        replyRef.current?.focus();
+        const active = document.activeElement;
+        if (active === null || active === document.body || active === replyRef.current) replyRef.current?.focus();
     }, [busy]);
     const [menuOpen, setMenuOpen] = useState(false);
     // Stable idempotency key bound to the current draft TEXT. A failed send keeps the draft, so a

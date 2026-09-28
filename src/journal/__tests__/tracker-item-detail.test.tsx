@@ -594,15 +594,28 @@ describe("ItemDetail reply box keyboard (the chat composer's send key)", () => {
         client.commentItem.mockReturnValueOnce(new Promise<boolean>((resolve) => (settle = resolve)));
         textarea.focus();
         await keydown(textarea, {});
-        // A browser drops the focus of a field that turns disabled; jsdom does not, so move it off.
         expect(textarea.disabled).toBe(true);
+        // A browser drops the focus of a field that turns disabled (to <body>); jsdom does not.
+        const activeElement = jest.spyOn(document, "activeElement", "get").mockReturnValue(document.body);
+        const focus = jest.spyOn(textarea, "focus");
+        await act(async () => settle(true));
+        activeElement.mockRestore();
+        expect(textarea.disabled).toBe(false);
+        expect(focus).toHaveBeenCalled();
+        expect(document.activeElement).toBe(textarea);
+    });
+
+    it("leaves the focus where the operator moved it while the reply was posting", async () => {
+        const { client, textarea } = await mountReply();
+        let settle!: (ok: boolean) => void;
+        client.commentItem.mockReturnValueOnce(new Promise<boolean>((resolve) => (settle = resolve)));
+        textarea.focus();
+        await keydown(textarea, {});
         const elsewhere = document.createElement("button");
         document.body.append(elsewhere);
         elsewhere.focus();
-        expect(document.activeElement).not.toBe(textarea);
         await act(async () => settle(true));
-        expect(textarea.disabled).toBe(false);
-        expect(document.activeElement).toBe(textarea);
+        expect(document.activeElement).toBe(elsewhere);
         elsewhere.remove();
     });
 
