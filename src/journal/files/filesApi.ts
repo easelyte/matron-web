@@ -118,7 +118,11 @@ export type ContentDisposition = "inline" | "attachment";
  * the visual harness can drive every state without a live backend (mirrors the mediaUrl stub).
  */
 export interface FilesApiLike {
-    listDir(path: string, all?: boolean, signal?: AbortSignal): Promise<FileListing>;
+    /**
+     * `path` undefined asks the SERVER for its default folder (a path-less `GET /files/list`), so
+     * the client never hardcodes a host path. A server that predates the default answers 400.
+     */
+    listDir(path: string | undefined, all?: boolean, signal?: AbortSignal): Promise<FileListing>;
     fileMeta(path: string, signal?: AbortSignal): Promise<FileMeta>;
     /** Text bytes decoded as UTF-8 (markdown/code preview). Never cached — always current. */
     textContent(path: string, signal?: AbortSignal): Promise<string>;
@@ -306,14 +310,19 @@ export class FilesApi implements FilesApiLike {
         private readonly token: string,
     ) {}
 
-    public async listDir(path: string, all = false, signal?: AbortSignal): Promise<FileListing> {
-        const query = new URLSearchParams({ path });
+    public async listDir(path: string | undefined, all = false, signal?: AbortSignal): Promise<FileListing> {
+        const query = new URLSearchParams();
+        if (path !== undefined) query.set("path", path);
         if (all) query.set("all", "1");
-        const raw = await this.fetchJson(`/files/list?${query.toString()}`, signal);
+        const qs = query.toString();
+        const raw = await this.fetchJson(qs ? `/files/list?${qs}` : "/files/list", signal);
         if (!isObject(raw)) throw new JournalApiError("The server returned a malformed directory listing.", 200);
         const rawEntries = Array.isArray(raw.entries) ? raw.entries : [];
         const entries = rawEntries.map(parseEntry).filter((entry): entry is FileEntry => entry !== undefined);
-        const resolvedPath = asString(raw.path) || path;
+        const resolvedPath = asString(raw.path) || path || "";
+        // A default-folder request has nothing to fall back on: without a server path there is no
+        // directory to show, browse from, or write into.
+        if (!resolvedPath) throw new JournalApiError("The server returned a malformed directory listing.", 200);
         return {
             path: resolvedPath,
             // Older server without the F4 field: fall back to the path itself so the breadcrumb

@@ -45,9 +45,6 @@ import { useAsyncResource } from "./preview/useAsyncResource";
 import { useFileWrites } from "./useFileWrites";
 import { isEditableText, type PendingWrite } from "./writeActions";
 
-// The directory the pane opens at when it has no remembered path. The server must have this within
-// MATRON_FILE_READ_ROOTS — it is the documented default read root.
-const DEFAULT_FILES_PATH = "/root/.openclaw/workspace";
 const ROW_HEIGHT = 40;
 
 interface Selected {
@@ -159,7 +156,12 @@ function pendingKey(pending: PendingWrite): string {
 
 export function FilesPane({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const api = useMemo<FilesApiLike | undefined>(() => client.filesApi(), [client]);
-    const [dir, setDir] = useState(() => state.filesView?.path ?? DEFAULT_FILES_PATH);
+    // `undefined` = the SERVER's default folder (a path-less listing). The client never hardcodes a
+    // host path: which folders exist and are browsable is the journal's configuration, not ours.
+    const [dir, setDir] = useState<string | undefined>(() => state.filesView?.path);
+    // Set when a remembered/deep-linked folder could not be listed and the pane fell back to the
+    // default folder instead of stranding the operator on an error. Cleared on navigation.
+    const [fallbackNotice, setFallbackNotice] = useState<string | undefined>(undefined);
     const [selected, setSelected] = useState<Selected | undefined>(undefined);
     const [showHidden, setShowHidden] = useState(false);
     // Deep-link freshness nonce (see the auto-preview effect). Folded into the listing key so a deep
@@ -167,25 +169,41 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
     // already browsing that directory with a stale listing (an agent may have just created the file).
     const [deepLinkNonce, setDeepLinkNonce] = useState<number | undefined>(undefined);
 
-    const listingKey = `list:${dir}:${showHidden ? 1 : 0}:${deepLinkNonce ?? ""}`;
+    const listingKey = `list:${dir ?? ""}:${showHidden ? 1 : 0}:${deepLinkNonce ?? ""}`;
     const listing = useAsyncResource<FileListing>(
         (signal) => (api ? api.listDir(dir, showHidden, signal) : Promise.reject(new Error("Not signed in."))),
         listingKey,
     );
 
+    // What the server's default folder resolved to, once it has answered. While a reload of the
+    // default folder is in flight (after a write) the listing has no data, and the directory must
+    // keep its identity: a parked upload queue compares it against its own target directory.
+    const [defaultPath, setDefaultPath] = useState<string | undefined>(undefined);
+
     // Keep app-global filesView.path in sync with the server-normalized path so a reopen returns
     // here. Runs only after a successful listing (never persists a path the server rejected).
     useEffect(() => {
-        if (listing.status === "loaded" && listing.data) client.setFilesPath(listing.data.path);
-    }, [client, listing.status, listing.data]);
+        if (listing.status !== "loaded" || !listing.data) return;
+        client.setFilesPath(listing.data.path);
+        // Only the CURRENT request's answer names the default (not a prior key's settled payload).
+        if (dir === undefined && listing.key === listingKey) setDefaultPath(listing.data.path);
+    }, [client, listing.status, listing.data, listing.key, listingKey, dir]);
 
-    const openDir = useCallback((entry: FileEntry) => {
-        setSelected(undefined);
-        setDir((current) => joinPath(current, entry.name));
-    }, []);
+    // The directory the rows belong to: the server-normalized path once a listing has landed (the
+    // only answer when `dir` is the path-less default), else the requested one.
+    const listingPath = listing.data?.path ?? dir ?? defaultPath ?? "";
+    const openDir = useCallback(
+        (entry: FileEntry) => {
+            setSelected(undefined);
+            setFallbackNotice(undefined);
+            setDir(joinPath(listingPath, entry.name));
+        },
+        [listingPath],
+    );
     const selectFile = useCallback(
-        (entry: FileEntry) => setSelected({ path: joinPath(dir, entry.name), name: entry.name, at: Date.now() }),
-        [dir],
+        (entry: FileEntry) =>
+            setSelected({ path: joinPath(listingPath, entry.name), name: entry.name, at: Date.now() }),
+        [listingPath],
     );
 
     // ── Files deep link (#files=<abs>) auto-preview ─────────────────────────────────────────────
@@ -248,11 +266,32 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
         listing.key,
     ]);
 
+    // ── Not-found fallback ─────────────────────────────────────────────────────────────────────
+    // A remembered path, a deep link, or a folder removed under us can stop being listable (the
+    // runtime moved, the folder was deleted, the read roots changed). Rather than a dead-end error,
+    // go to the server's default folder and say why. Only for answers about THAT PATH (404 gone,
+    // 403 outside the read roots, 400 malformed); a 401/5xx/network failure keeps the error + Retry,
+    // since the same folder may well load on the next try. Gated on the current request key so a
+    // superseded listing's error never triggers it, and never for the default itself (no loop).
+    useEffect(() => {
+        if (dir === undefined) return;
+        if (listing.status !== "error" || listing.key !== listingKey) return;
+        const status = listing.errorStatus;
+        if (status !== 404 && status !== 403 && status !== 400) return;
+        const deepLinked = targetToken !== undefined && dir === targetDir;
+        // The deep link is settled (its folder is gone); without this it would re-browse to it.
+        if (deepLinked) deepLinkTokenRef.current = targetToken;
+        setSelected(undefined);
+        setFallbackNotice(
+            `Couldn't open ${deepLinked && targetFile ? targetFile : dir}. Showing the default folder instead.`,
+        );
+        setDir(undefined);
+    }, [dir, listing.status, listing.key, listing.errorStatus, listingKey, targetToken, targetDir, targetFile]);
+
     // ── Writes (Phase 2) ──────────────────────────────────────────────────────────────────────
     // `writable` is whatever the SERVER said for THIS directory. Writes off, dry-run, or a dir
     // outside the write-roots ⇒ false ⇒ nothing below renders. The client never infers it.
     const writable = listing.data?.writable === true;
-    const listingPath = listing.data?.path ?? dir;
     const reload = listing.reload;
     // A write can remove or rename the previewed file, so the selection is dropped on every
     // successful mutation and the listing is re-read from the server (no optimistic row patching).
@@ -368,10 +407,11 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
 
     // Breadcrumb spans root → path ONLY (never above the read-root jail, F4). Falls back to the
     // path as its own root before the first listing loads (single crumb, nothing above).
-    const crumbs = useMemo(
-        () => breadcrumb(listing.data?.root ?? listing.data?.path ?? dir, listing.data?.path ?? dir),
-        [listing.data?.root, listing.data?.path, dir],
-    );
+    // Before the default folder's first listing lands there is no path at all: no crumbs yet.
+    const crumbs = useMemo(() => {
+        const at = listing.data?.path ?? dir;
+        return at === undefined ? [] : breadcrumb(listing.data?.root ?? at, at);
+    }, [listing.data?.root, listing.data?.path, dir]);
     const rowData = useMemo<RowData>(
         () => ({
             entries: listing.data?.entries ?? [],
@@ -438,6 +478,7 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
                                     disabled={crumb.path === (listing.data?.path ?? dir)}
                                     onClick={() => {
                                         setSelected(undefined);
+                                        setFallbackNotice(undefined);
                                         setDir(crumb.path);
                                     }}
                                 >
@@ -489,7 +530,10 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
                             <PreviewStatus variant="loading">Loading…</PreviewStatus>
                         ) : listing.status === "error" ? (
                             <PreviewStatus variant="error" onRetry={listing.reload}>
-                                {listing.error}
+                                {dir === undefined && listing.errorStatus === 400
+                                    ? // A journal that predates the path-less default listing.
+                                      "This server doesn't report a default folder. Update the journal server, or open a file link from a chat."
+                                    : listing.error}
                             </PreviewStatus>
                         ) : rowData.entries.length === 0 ? (
                             <PreviewStatus variant="empty">This folder is empty.</PreviewStatus>
@@ -504,6 +548,20 @@ export function FilesPane({ client, state }: { client: MatronJournalClient; stat
                             />
                         )}
                     </div>
+
+                    {fallbackNotice ? (
+                        <p className="mj_FilesPane_notice mj_FilesPane_fallback" role="status">
+                            <span>{fallbackNotice}</span>
+                            <button
+                                type="button"
+                                className="mj_FilesPane_noticeClose"
+                                aria-label="Dismiss"
+                                onClick={() => setFallbackNotice(undefined)}
+                            >
+                                <CloseIcon />
+                            </button>
+                        </p>
+                    ) : null}
 
                     {listing.data?.truncated ? (
                         <p className="mj_FilesPane_truncated">Showing the first entries — this folder is large.</p>
