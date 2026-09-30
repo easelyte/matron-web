@@ -602,7 +602,9 @@ const README_SAMPLE = [
 
 const PDF_BYTES = Uint8Array.from(atob(MINIMAL_PDF.split(",")[1]), (c) => c.charCodeAt(0));
 const mockFilesApi: FilesApiLike = {
-    listDir: async (path: string, all?: boolean): Promise<FileListing> => {
+    listDir: async (requested: string | undefined, all?: boolean): Promise<FileListing> => {
+        // No path = the server's default folder (the mock's only read root).
+        const path = requested ?? FILES_ROOT;
         if (path.endsWith("denied-dir")) throw new JournalApiError("denied", 403, "forbidden");
         // `root` per the F4 contract: the read-root containing `path`. Breadcrumbs never go above it.
         // `writable` is the Phase-2 capability flag: true everywhere EXCEPT read-only-dir, which

@@ -180,6 +180,28 @@ describe("FilesApi", () => {
         expect(listing.truncated).toBe(true);
     });
 
+    it("listDir(undefined) asks for the server's default folder: no path param at all", async () => {
+        const fetchMock = jest
+            .fn()
+            .mockResolvedValue(
+                fakeResponse({ status: 200, body: { path: "/srv/w", root: "/srv/w", parent: null, entries: [] } }),
+            );
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        const api = new FilesApi(SERVER, "tok");
+        const listing = await api.listDir(undefined);
+        expect(listing.path).toBe("/srv/w");
+        expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/files\/list$/);
+        await api.listDir(undefined, true);
+        expect(String(fetchMock.mock.calls[1][0])).toMatch(/\/files\/list\?all=1$/);
+    });
+
+    it("listDir(undefined) rejects a listing with no path (nothing to browse from)", async () => {
+        globalThis.fetch = jest
+            .fn()
+            .mockResolvedValue(fakeResponse({ status: 200, body: { entries: [] } })) as unknown as typeof fetch;
+        await expect(new FilesApi(SERVER, "tok").listDir(undefined)).rejects.toMatchObject({ status: 200 });
+    });
+
     it("parses file meta including is_text", async () => {
         globalThis.fetch = jest.fn().mockResolvedValue(
             fakeResponse({
