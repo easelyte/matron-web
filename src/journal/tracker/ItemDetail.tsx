@@ -8,8 +8,9 @@ Please see LICENSE files in the repository root for full details.
 /*
  * Item detail — header (kind glyph, #num · kind, status pill), the origin-conversation jump, the
  * item body, its comment thread (status rows rendered as centered muted lines from the structured
- * transition, never the raw body), a pinned reply composer, and a resolve/reopen menu. All
- * mutations go through the client; the store refetch keeps the thread live.
+ * transition, with any closing/reopening note beneath as an ordinary comment card), a pinned reply
+ * composer, and a resolve/reopen menu. All mutations go through the client; the store refetch keeps
+ * the thread live.
  */
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -49,24 +50,14 @@ function AttachmentChips({ comment }: { comment: TrackerComment }): React.ReactE
     );
 }
 
-function CommentRow({
+/** An ordinary comment card: author, relative time, markdown body (links live) and attachments. */
+function CommentCard({
     comment,
     onTrackerLink,
 }: {
     comment: TrackerComment;
     onTrackerLink: (kind: "item" | "mission", num: number) => void;
 }): React.ReactElement {
-    if (comment.kind === "status") {
-        const text = statusRowText(comment);
-        if (text) {
-            return <div className="mj_TrackerStatusRow">{text}</div>;
-        }
-        // No displayable transition; fall back to the body only if the status carries one.
-        if (comment.body.trim()) {
-            return <div className="mj_TrackerStatusRow mj_TrackerStatusRow_body">{comment.body}</div>;
-        }
-        return <div className="mj_TrackerStatusRow" aria-hidden="true" />;
-    }
     const who = comment.author === "user" ? "You" : "Agent";
     return (
         <div className={`mj_TrackerComment mj_TrackerComment_${comment.author}`}>
@@ -82,6 +73,34 @@ function CommentRow({
             <AttachmentChips comment={comment} />
         </div>
     );
+}
+
+/**
+ * One thread entry. A `status` comment is the transition as a small centred line ("Agent closed this
+ * as done"); the note the closer/reopener wrote travels as that comment's body and, when present,
+ * renders beneath the line as an ordinary comment card so it reads (and links) like any comment.
+ */
+function CommentRow({
+    comment,
+    onTrackerLink,
+}: {
+    comment: TrackerComment;
+    onTrackerLink: (kind: "item" | "mission", num: number) => void;
+}): React.ReactElement {
+    if (comment.kind === "status") {
+        const text = statusRowText(comment);
+        const hasNote = comment.body.trim().length > 0;
+        if (!text && !hasNote) {
+            return <div className="mj_TrackerStatusRow" aria-hidden="true" />;
+        }
+        return (
+            <>
+                {text ? <div className="mj_TrackerStatusRow">{text}</div> : null}
+                {hasNote ? <CommentCard comment={comment} onTrackerLink={onTrackerLink} /> : null}
+            </>
+        );
+    }
+    return <CommentCard comment={comment} onTrackerLink={onTrackerLink} />;
 }
 
 /**

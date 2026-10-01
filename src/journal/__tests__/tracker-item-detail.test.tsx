@@ -331,7 +331,7 @@ describe("ItemDetail", () => {
         expect(anchor?.getAttribute("href") ?? "").not.toContain("matron:");
     });
 
-    it("renders a status comment as a centered derived line, never its raw body", async () => {
+    it("renders a status comment as a centered derived line with its note beneath as a comment card", async () => {
         const client = fakeClient();
         const to: StatusSnapshot = { state: "closed", resolution: "done", awaiting: null };
         const { container } = await mount(
@@ -342,7 +342,7 @@ describe("ItemDetail", () => {
                         id: "cm_status",
                         kind: "status",
                         author: "agent",
-                        body: "PRIVATE-ELIDED-BODY",
+                        body: "Shipped in the **morning** build.",
                         meta: { to },
                     }),
                 ]}
@@ -351,9 +351,127 @@ describe("ItemDetail", () => {
             />,
         );
 
-        const statusRow = container.querySelector(".mj_TrackerStatusRow");
+        const thread = container.querySelector(".mj_TrackerThread")!;
+        const statusRow = thread.querySelector(".mj_TrackerStatusRow");
         expect(statusRow?.textContent).toBe("Agent closed this as done");
-        expect(container.textContent).not.toContain("PRIVATE-ELIDED-BODY");
+        // The line stays the bare transition; the note is NOT folded into it.
+        expect(statusRow?.textContent).not.toContain("Shipped");
+
+        const card = thread.querySelector(".mj_TrackerComment");
+        expect(card).not.toBeNull();
+        expect(card?.classList.contains("mj_TrackerComment_agent")).toBe(true);
+        expect(card?.querySelector(".mj_TrackerComment_author")?.textContent).toBe("Agent");
+        expect(card?.querySelector(".mj_TrackerComment_time")?.textContent).toBeTruthy();
+        expect(card?.querySelector(".mj_TrackerProse strong")?.textContent).toBe("morning");
+        // Line first, card second.
+        expect(Array.from(thread.children).map((node) => node.className)).toEqual([
+            "mj_TrackerStatusRow",
+            "mj_TrackerComment mj_TrackerComment_agent",
+        ]);
+    });
+
+    it("styles a user's closing note card with the user class", async () => {
+        const client = fakeClient();
+        const from: StatusSnapshot = { state: "closed", resolution: "done", awaiting: null };
+        const to: StatusSnapshot = { state: "open", resolution: null, awaiting: "agent" };
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({ state: "open", awaiting: "agent" })}
+                comments={[
+                    trackerComment({
+                        id: "cm_reopen",
+                        kind: "status",
+                        author: "user",
+                        body: "Not fixed",
+                        meta: { from, to },
+                    }),
+                ]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerStatusRow")?.textContent).toBe("You reopened this");
+        const card = container.querySelector(".mj_TrackerComment_user");
+        expect(card?.querySelector(".mj_TrackerComment_author")?.textContent).toBe("You");
+        expect(card?.querySelector(".mj_TrackerProse")?.textContent).toBe("Not fixed");
+    });
+
+    it("makes links in a closing note clickable: bare matron://item opens the item, https opens a tab", async () => {
+        const client = fakeClient();
+        const to: StatusSnapshot = { state: "closed", resolution: "cancelled", awaiting: null };
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({ state: "closed", awaiting: null, resolution: "cancelled" })}
+                comments={[
+                    trackerComment({
+                        id: "cm_status",
+                        kind: "status",
+                        author: "agent",
+                        body: "Duplicate: the steps are on #5685 (matron://item/5685). See https://example.com/run",
+                        meta: { to },
+                    }),
+                ]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+
+        const card = container.querySelector(".mj_TrackerComment")!;
+        const itemLink = card.querySelector<HTMLAnchorElement>("a.mj_TrackerLink");
+        expect(itemLink?.textContent).toBe("matron://item/5685");
+        expect(itemLink?.getAttribute("href")).toBe("matron://item/5685");
+        await act(async () => {
+            itemLink!.click();
+        });
+        expect(client.openTrackerLink).toHaveBeenCalledWith("item", 5685);
+
+        const external = card.querySelector<HTMLAnchorElement>('a[href="https://example.com/run"]');
+        expect(external?.getAttribute("target")).toBe("_blank");
+    });
+
+    it("renders only the centered line for a status comment with an empty body", async () => {
+        const client = fakeClient();
+        const to: StatusSnapshot = { state: "closed", resolution: "done", awaiting: null };
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({ state: "closed", awaiting: null, resolution: "done" })}
+                comments={[
+                    trackerComment({ id: "cm_status", kind: "status", author: "agent", body: "  \n", meta: { to } }),
+                ]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+
+        const thread = container.querySelector(".mj_TrackerThread")!;
+        expect(thread.children).toHaveLength(1);
+        expect(thread.querySelector(".mj_TrackerStatusRow")?.textContent).toBe("Agent closed this as done");
+        expect(thread.querySelector(".mj_TrackerComment")).toBeNull();
+    });
+
+    it("renders a status comment with no displayable transition but a note as just the card", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem()}
+                comments={[
+                    trackerComment({
+                        id: "cm_status",
+                        kind: "status",
+                        author: "agent",
+                        body: "Context note",
+                        meta: null,
+                    }),
+                ]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+
+        const thread = container.querySelector(".mj_TrackerThread")!;
+        expect(thread.querySelector(".mj_TrackerStatusRow")).toBeNull();
+        expect(thread.querySelector(".mj_TrackerComment .mj_TrackerProse")?.textContent).toBe("Context note");
     });
 
     describe("route-elsewhere label (#213)", () => {

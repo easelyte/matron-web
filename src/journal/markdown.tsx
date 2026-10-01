@@ -256,6 +256,77 @@ function trackerUrlTransform(url: string): string {
     return parseTrackerHref(url) ? url : defaultUrlTransform(url);
 }
 
+interface LinkifyNode {
+    type: string;
+    value?: string;
+    url?: string;
+    title?: string | null;
+    children?: LinkifyNode[];
+}
+
+/**
+ * A bare canonical item deep link in prose: lowercase `matron://item/<N>` with N a positive integer
+ * without leading zeros. The lookbehind refuses a match glued to a preceding URL/word character (so
+ * `?next=matron://item/5` or `foomatron://item/5` stays text); the lookahead refuses one that runs on
+ * into more URL characters (`matron://item/5/x`, `matron://item/5abc`, `matron://item/5.6`) while
+ * still allowing sentence punctuation after it (`…item/5.` / `…item/5)`).
+ */
+const BARE_ITEM_URL = /(?<![\w/?#&=%~+@.:-])matron:\/\/item\/[1-9][0-9]*(?![\w/?#&=%~+@-]|[.:,;!][\w/?#])/g;
+
+// Subtrees whose text must never be linkified: an existing link (its text and URL are the author's),
+// and link references. Code (`inlineCode`/`code`) and raw HTML (`html`) are literal nodes with no
+// `text` children, so they are never visited at all.
+const NO_LINKIFY_PARENTS = new Set(["link", "linkReference"]);
+
+function linkifyText(value: string): LinkifyNode[] | null {
+    const out: LinkifyNode[] = [];
+    let last = 0;
+    for (const match of value.matchAll(BARE_ITEM_URL)) {
+        const url = match[0];
+        // Same predicate the renderer applies (rejects out-of-range integers).
+        if (!parseTrackerHref(url)) continue;
+        const start = match.index;
+        if (start > last) out.push({ type: "text", value: value.slice(last, start) });
+        out.push({ type: "link", url, title: null, children: [{ type: "text", value: url }] });
+        last = start + url.length;
+    }
+    if (out.length === 0) return null;
+    if (last < value.length) out.push({ type: "text", value: value.slice(last) });
+    return out;
+}
+
+/**
+ * remark plugin: turn a bare canonical `matron://item/<N>` in prose into a link node, so it renders
+ * through the same `a()` path as `[#N](matron://item/N)`. GFM's autolink-literal only covers http(s),
+ * www and email, and CommonMark autolinks need angle brackets, so without this a note like
+ * "the steps are on #5685 (matron://item/5685)" stays dead text. Only applied where an in-app
+ * handler exists. Bare `matron://convo/…` is deliberately left alone.
+ */
+export function remarkBareItemLinks() {
+    return (tree: LinkifyNode): void => {
+        const pending: LinkifyNode[] = [tree];
+        while (pending.length > 0) {
+            const node = pending.pop()!;
+            if (!node.children || NO_LINKIFY_PARENTS.has(node.type)) continue;
+            const next: LinkifyNode[] = [];
+            let changed = false;
+            for (const child of node.children) {
+                if (child.type === "text" && child.value?.includes("matron://item/")) {
+                    const replaced = linkifyText(child.value);
+                    if (replaced) {
+                        next.push(...replaced);
+                        changed = true;
+                        continue;
+                    }
+                }
+                next.push(child);
+                pending.push(child);
+            }
+            if (changed) node.children = next;
+        }
+    };
+}
+
 interface CodeBlockProps extends ComponentPropsWithoutRef<"pre">, ExtraProps {
     source: string;
 }
@@ -451,7 +522,7 @@ function MarkdownBodyComponent({
     return (
         <MarkdownErrorBoundary text={text} streaming={streaming} label={label}>
             <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={onTrackerLink ? [remarkGfm, remarkBareItemLinks] : [remarkGfm]}
                 rehypePlugins={streaming ? [] : [capCodeBlockHighlighting, [rehypeHighlight, HIGHLIGHT_OPTIONS]]}
                 urlTransform={onTrackerLink ? trackerUrlTransform : defaultUrlTransform}
                 components={componentsFor(text, onTrackerLink)}

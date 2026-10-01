@@ -461,3 +461,93 @@ describe("Files deep links (#files=<abs>) open in the current window", () => {
         expect(container.querySelector("a")?.getAttribute("target")).toBe("_blank");
     });
 });
+
+describe("bare matron://item links", () => {
+    async function renderWithTracker(
+        text: string,
+        onTrackerLink: (kind: "item" | "mission", num: number) => void = jest.fn(),
+    ): Promise<HTMLDivElement> {
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        rendered.push({ container, root });
+        await act(async () => {
+            root.render(React.createElement(MarkdownBody, { text, label: "test-message", onTrackerLink }));
+        });
+        return container;
+    }
+
+    function trackerHrefs(container: HTMLElement): string[] {
+        return Array.from(container.querySelectorAll("a.mj_TrackerLink")).map(
+            (node) => node.getAttribute("href") ?? "",
+        );
+    }
+
+    test("links a bare canonical item URL in prose and opens it in-app", async () => {
+        const onTrackerLink = jest.fn();
+        const container = await renderWithTracker("the steps are on #5685 (matron://item/5685).", onTrackerLink);
+
+        const link = container.querySelector<HTMLAnchorElement>("a.mj_TrackerLink");
+        expect(link?.textContent).toBe("matron://item/5685");
+        expect(container.textContent).toBe("the steps are on #5685 (matron://item/5685).");
+        await act(async () => link!.click());
+        expect(onTrackerLink).toHaveBeenCalledWith("item", 5685);
+    });
+
+    test("links several bare item URLs in lists, quotes and emphasis", async () => {
+        const container = await renderWithTracker(
+            "- see matron://item/1, matron://item/2\n\n> quoted matron://item/3\n\n*em matron://item/4*",
+        );
+        expect(trackerHrefs(container)).toEqual([
+            "matron://item/1",
+            "matron://item/2",
+            "matron://item/3",
+            "matron://item/4",
+        ]);
+    });
+
+    test("leaves item URLs in inline code and fenced code alone", async () => {
+        const container = await renderWithTracker("run `matron://item/5`\n\n```\nmatron://item/6\n```");
+        expect(container.querySelectorAll("a")).toHaveLength(0);
+        expect(container.querySelector("code.mj_InlineCode")?.textContent).toBe("matron://item/5");
+    });
+
+    test("does not re-link an existing link, autolink, or URL that embeds an item URL", async () => {
+        const container = await renderWithTracker(
+            "[label matron://item/7](https://example.com) <matron://item/8> https://example.com/?next=matron://item/9 x?next=matron://item/10",
+        );
+        // Only the explicit autolink is a tracker link; the link text and query-embedded URLs stay as they are.
+        expect(trackerHrefs(container)).toEqual(["matron://item/8"]);
+        expect(container.querySelector('a[href="https://example.com"]')?.textContent).toBe("label matron://item/7");
+    });
+
+    test("ignores non-canonical forms and bare convo URLs", async () => {
+        const container = await renderWithTracker(
+            [
+                "MATRON://item/5",
+                "matron://ITEM/5",
+                "matron://item/0",
+                "matron://item/05",
+                "matron://item/5abc",
+                "matron://item/5/more",
+                "matron://item/5?x=1",
+                "matron://item/5.6",
+                "matron://item/99999999999999999999",
+                "matron://convo/abc",
+                "foomatron://item/5",
+            ].join(" "),
+        );
+        expect(container.querySelectorAll("a")).toHaveLength(0);
+    });
+
+    test("does not linkify item URLs inside raw HTML attributes", async () => {
+        const container = await renderWithTracker('<span title="matron://item/5">x</span>');
+        expect(container.querySelectorAll("a")).toHaveLength(0);
+    });
+
+    test("leaves bare item URLs as text where no in-app handler is wired", async () => {
+        const container = await renderMarkdown("see matron://item/5");
+        expect(container.querySelectorAll("a")).toHaveLength(0);
+        expect(container.textContent).toBe("see matron://item/5");
+    });
+});
