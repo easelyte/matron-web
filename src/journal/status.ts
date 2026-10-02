@@ -242,6 +242,9 @@ function suppliesLegacyHostMeters(update: SessionStatus): boolean {
 export function mergeSessionStatus(current: SessionStatus | undefined, update: SessionStatus): SessionStatus {
     return {
         model: update.model ?? current?.model,
+        // Last-known-wins like the rest: a frame that says nothing about extras (a helper's
+        // model-only frame) must not blank a known on/off.
+        extras: update.extras ?? current?.extras,
         workdir: update.workdir ?? current?.workdir,
         context: update.context ?? current?.context,
         limits: update.limits ?? current?.limits,

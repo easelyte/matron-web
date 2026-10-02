@@ -209,6 +209,13 @@ describe("journal session status presentation", () => {
         });
     });
 
+    it("carries extras through updates that omit them, and lets [] turn them off", () => {
+        const on = mergeSessionStatus(undefined, { model: "claude-fable-5", extras: ["browser"] });
+        expect(mergeSessionStatus(on, { model: "gpt-5.6-codex" }).extras).toEqual(["browser"]);
+        expect(mergeSessionStatus(on, { extras: [] }).extras).toEqual([]);
+        expect(mergeSessionStatus(undefined, { model: "claude-fable-5" }).extras).toBeUndefined();
+    });
+
     it("carries top-level vitals through a partial status update", () => {
         // Host CPU/RAM live on status.vitals; a limits-only repaint must not blank them.
         const vitals = { cpu_pct: 12, ram_pct: 47, sampled_at_ms: 1_753_000_000_000 };

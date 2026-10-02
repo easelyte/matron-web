@@ -371,6 +371,23 @@ describe("usage limit accessibility", () => {
         const labels = Array.from(menu?.querySelectorAll('[role="menuitem"]') ?? []).map((item) =>
             item.textContent?.trim(),
         );
+        // No status frame with `extras` yet: the browser-tools row is hidden, never guessed.
+        expect(labels).toEqual(["Pin", "Add to Favorites", "Mark as unread", "Archive"]);
+    });
+
+    it("adds the browser-tools row once the bridge reports the session's extras", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...internals(client).state,
+            sessionStatus: { model: "claude-fable-5", extras: [] },
+        };
+        const view = await renderClient(client);
+        rendered = view;
+        await act(async () => button(view.container, "Conversation actions").click());
+        const menu = view.container.querySelector('.mj_HeaderOverflow [role="menu"]');
+        const labels = Array.from(menu?.querySelectorAll('[role="menuitem"]') ?? []).map((item) =>
+            item.textContent?.trim(),
+        );
         expect(labels).toEqual(["Pin", "Add to Favorites", "Mark as unread", "Enable browser tools", "Archive"]);
     });
 });

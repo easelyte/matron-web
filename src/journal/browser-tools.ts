@@ -8,18 +8,23 @@ Please see LICENSE files in the repository root for full details.
 /*
  * "Enable browser tools" state (redesign v6, CONTRACTS 3): idle → queued → restarting → on.
  *
- * The bridge has no structured restart events yet, so the state is read from the conversation
- * itself: the operator's own `/restart --browser` message and the bridge's fixed replies to it —
+ * Whether browser tools are ON is read from data, never from the transcript: the bridge's
+ * status frame carries `extras`, the MCP extras the session's process was spawned with (the
+ * journal caches and replays it, so it survives reconnects, offline spells and stopped
+ * sessions). A frame without `extras` (an older bridge) makes the state "unknown", and the
+ * session-menu row is hidden rather than guessed.
+ *
+ * Only the TRANSIENT phases of a request the operator just made are read from the conversation:
+ * their own `/restart --browser` message and the bridge's fixed replies to it —
  *   "Waiting for turn to finish before restarting…"   → queued (the restart waits for the turn)
  *   "🔄 Restarting Claude session..."                   → restarting
- *   "Claude session restarted.\n…\nExtras: browser"     → on (no `browser` extra → off)
+ *   "Claude session restarted.…"                        → done (the status frame says on/off)
  *   "--browser is a Claude-only session extra…"         → refused (back to idle)
- * A structured bridge event would replace this scan (see HANDOFF bridge gaps).
  */
 
 import { type JournalEvent } from "./types";
 
-export type BrowserToolsState = "idle" | "queued" | "restarting" | "on";
+export type BrowserToolsState = "unknown" | "idle" | "queued" | "restarting" | "on";
 
 export const BROWSER_RESTART_COMMAND = "/restart --browser";
 export const BROWSER_RESTART_NOW_COMMAND = "/restart --browser --force";
@@ -48,12 +53,18 @@ const ABANDONED = [
 type Pending = { phase: "sent" | "queued" | "restarting"; force: boolean } | null;
 
 /**
- * Derive the browser-tools state of one conversation from its events (oldest first).
+ * Derive the browser-tools state of one conversation from its status-frame `extras` and its
+ * events (oldest first). `extras` undefined = the bridge publishes none (older bridge).
  * `sessionRunning` covers the moment between sending the request and the bridge's first reply
  * (a busy agent means a plain request waits for the turn; `--force` restarts at once).
  */
-export function browserToolsState(events: readonly JournalEvent[], sessionRunning: boolean): BrowserToolsState {
-    let on = false;
+export function browserToolsState(
+    events: readonly JournalEvent[],
+    sessionRunning: boolean,
+    extras: readonly string[] | undefined,
+): BrowserToolsState {
+    // The spawned process has the extra: on, whatever a (possibly windowed) transcript implies.
+    if (extras?.includes("browser")) return "on";
     let pending: Pending = null;
     for (const event of events) {
         if (event.type !== "text") continue;
@@ -69,7 +80,6 @@ export function browserToolsState(events: readonly JournalEvent[], sessionRunnin
         }
         if (!pending && !RESTARTED.test(body)) continue;
         if (RESTARTED.test(body)) {
-            on = /^Extras:.*\bbrowser\b/im.test(body);
             pending = null;
         } else if (REFUSED.test(body) || ABANDONED.some((pattern) => pattern.test(body))) {
             pending = null;
@@ -82,7 +92,7 @@ export function browserToolsState(events: readonly JournalEvent[], sessionRunnin
             pending = null;
         }
     }
-    if (!pending) return on ? "on" : "idle";
+    if (!pending) return extras ? "idle" : "unknown";
     if (pending.phase === "restarting") return "restarting";
     if (pending.force) return "restarting";
     // Parked behind the turn. session_state can't tell "turn over" from "waiting on a prompt"
