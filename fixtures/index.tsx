@@ -358,6 +358,8 @@ const state: ClientState = {
     trackerNeedsYou: 2,
     sessionStatus: {
         model: "claude-sonnet",
+        // A current bridge reporting no MCP extras: the browser-tools row shows "Enable".
+        extras: [],
         context: { tokens: 144_000, window: 200_000, pct: 72 },
         // id-driven limits (v5+ bridge): ctx is synthesized from context; the rest carry
         // stable ids → short tags 5h/fbl/wk/cpu/ram + column-first 3×2 grid order.
@@ -416,6 +418,9 @@ if (v6Scenario) {
                     "Claude session restarted.\nSession: 1a2b3c4d...\nWorkdir: /repo\nExtras: browser",
                 ),
             ];
+        // On/off is read from the status frame's extras, not the restart notice above.
+        if (browser === "on" && state.sessionStatus)
+            state.sessionStatus = { ...state.sessionStatus, extras: ["browser"] };
         state.conversations = state.conversations.map((conversation) =>
             conversation.id === "c1"
                 ? {
