@@ -127,7 +127,7 @@
         },
         {
             "name": "ephemeral.status.extras_browser",
-            "source": "matron-bridge buildSessionStatus + publishedExtras (feat/session-extras-status, loop #791), generated",
+            "source": "matron-bridge buildSessionStatus + publishedExtras (feat/session-extras-status), generated",
             "frame": {
                 "kind": "ephemeral",
                 "convo_id": "c1",

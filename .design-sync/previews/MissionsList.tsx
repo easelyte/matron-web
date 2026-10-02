@@ -9,7 +9,7 @@ const busier = [
     ...backups,
     id: "ms_7",
     num: 7,
-    title: "SNAFU invoice export",
+    title: "Client invoice export",
     needs_you: 1,
     open_items: 2,
     last_milestone_at: Date.now() - 45 * 60_000,

@@ -286,7 +286,7 @@ describe("WorkView list", () => {
             .mockResolvedValue(
                 ok("repo", [
                     group("matron-web", [loop({ id: 1, title: "In play" })]),
-                    group("snafu-studio", [loop({ id: 2, title: "Set aside", status: "parked" })]),
+                    group("client-app", [loop({ id: 2, title: "Set aside", status: "parked" })]),
                 ]),
             );
         const { container, root } = await mount(<WorkView api={loader(work)} now={NOW} />);

@@ -645,7 +645,7 @@ bridge runs non-iv mode, so this exercises the tail-append path).
       dir), then `corepack pnpm build` (rebuild in place — nginx keeps
       serving old assets from page caches; the swap window is the build's
       write, not a missing directory), then verify.
-   3. Verify: `https://vmi3096107.taild3d6c4.ts.net:8443` loads, login works,
+   3. Verify: `https://<tailnet-host>:8443` loads, login works,
       then the Manual acceptance captioned send (completing the bridge health
       gate's end-to-end half).
    4. Failure at any step → restore: `rm -rf webapp && mv webapp.bak.<ts> webapp`
