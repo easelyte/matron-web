@@ -181,7 +181,7 @@ function timers(mode: OpsFixtureMode): unknown {
                       t("ops-sysadmin-maintenance-daily.timer", "Daily maintenance", 86_400, 26 * H, {
                           result: "failed",
                       }),
-                      t("snafu-studio-cron@reconcile.timer", "SNAFU reconcile", 3600, 5 * H, { stale: true }),
+                      t("client-app-cron@reconcile.timer", "Client reconcile", 3600, 5 * H, { stale: true }),
                   ]
                 : []),
             t("ops-watchdog-15m.timer", "Watchdog probes", 900, 6 * M),
@@ -189,7 +189,7 @@ function timers(mode: OpsFixtureMode): unknown {
             t("ops-production-truth-sync-daily.timer", "Production truth sync", 86_400, 4 * H),
             t("ops-auto-fix-loop.timer", "Auto-fix loop", 1800, 11 * M, { result: hot ? "running" : "success" }),
             t("ops-metrics-anomaly-detector-daily.timer", "Anomaly detector", 86_400, 4 * H + 20 * M),
-            t("snafu-studio-backup.timer", "SNAFU studio backup", 86_400, 20 * H),
+            t("client-app-backup.timer", "Client app backup", 86_400, 20 * H),
         ],
         cron: [
             { schedule: "*/30 * * * *", label: "mc_smoke_test.py" },
@@ -293,7 +293,7 @@ function usage(): unknown {
                 ended_ms: NOW - 3 * H,
                 machine: "macbook",
                 model: "claude-sonnet-5",
-                project: "snafu-studio",
+                project: "client-app",
                 tokens: 1_120_000,
                 cost_usd: 2.44,
                 duration_s: 47 * 60,

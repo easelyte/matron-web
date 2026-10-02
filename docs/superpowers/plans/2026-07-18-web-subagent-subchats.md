@@ -921,7 +921,7 @@ cd "$DEPLOY_DIR"
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 cp -a webapp "webapp.bak.$TS"               # explicit resolved timestamp; backup BEFORE any mutation
 # build the new bundle into place (from the built worktree artifacts per the runbook), then:
-# verify https://vmi3096107.taild3d6c4.ts.net:8443 loads + sub-chat features work
+# verify https://<tailnet-host>:8443 loads + sub-chat features work
 # --- rollback (ONLY if verification fails) — reversible rename-swap, validated backup, never rm live first:
 [ -d "webapp.bak.$TS" ] || { echo "ABORT: backup webapp.bak.$TS missing"; exit 1; }
 mv webapp "webapp.failed.$TS"               # set the bad build ASIDE (retained), not deleted

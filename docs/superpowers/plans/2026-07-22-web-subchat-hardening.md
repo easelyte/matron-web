@@ -357,7 +357,7 @@ mv "$STAGE/webapp" "$WEB/webapp"
 **Acceptance:**
 - The live checkout's HEAD **exactly equals** `MERGED_SHA` before the staged build.
 - The build runs in `$STAGE`; the live `webapp/` is deleted at **no** point — only renamed. A failed staged build leaves `:8443` serving the prior bundle.
-- Live `https://vmi3096107.taild3d6c4.ts.net:8443` serves the swapped-in bundle after the atomic rename.
+- Live `https://<tailnet-host>:8443` serves the swapped-in bundle after the atomic rename.
 - Smoke: the three touched paths don't visibly regress (subchat list renders, uploads to top-level convos still work, reconnect replay shows the read-only notice). NOTE: the three races are timing-dependent and won't be *proven* by manual smoke — the unit tests (Phases 1-3) are the correctness evidence.
 - `webapp.old.<ts>` retained until operator-confirmed, then pruned.
 

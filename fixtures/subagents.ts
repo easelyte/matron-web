@@ -352,8 +352,8 @@ export function subagentFixture(scenario: SubagentScenario): SubagentFixture {
             agent_kind: "codex",
         },
         {
-            id: "snafu",
-            title: "[17] easelyte/snafu-studio · Prep briefs and invoices",
+            id: "client",
+            title: "[17] acme/client-app · Prep briefs and invoices",
             session_state: "idle",
             last_seq: 4,
             unread_count: 1,
