@@ -362,7 +362,7 @@ test("resets a tripped boundary when the same row receives new text", async () =
 });
 
 describe("Files deep links (#files=<abs>) open in the current window", () => {
-    const FILE = "/root/.openclaw/workspace/docs/plan.md";
+    const FILE = "/home/user/workspace/docs/plan.md";
     const HREF = `${window.location.origin}/#files=${encodeURIComponent(FILE)}`;
     let hashchanges: string[];
     const onHashChange = (): void => {

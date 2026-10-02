@@ -47,7 +47,7 @@ jest.mock("react-window", () => {
     };
 });
 
-const DIR = "/root/.openclaw/workspace";
+const DIR = "/home/user/workspace";
 const encode = (text: string): ArrayBuffer => new TextEncoder().encode(text).buffer as ArrayBuffer;
 const ENTRIES: FileEntry[] = [
     { name: "src", kind: "dir", size: 0, mtime: 1, mime: "" },
@@ -289,7 +289,7 @@ describe("FilesPane deep-link auto-preview", () => {
         // The pane is browsing OTHER_DIR (its listing contains a same-named file), but the deep link
         // targets DIR. listDir is asked for OTHER_DIR first, then DIR. The effect must wait for DIR's
         // own listing and never select dan-offer.md out of OTHER_DIR's payload.
-        const OTHER = "/root/.openclaw/other";
+        const OTHER = "/home/user/other";
         const otherListing: FileListing = {
             path: OTHER,
             root: OTHER,

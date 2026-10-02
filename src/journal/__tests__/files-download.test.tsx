@@ -6,7 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * File-explorer download-to-local (loop #773). The gap #773 closes: previewable files (text, image,
+ * File-explorer download-to-local. The gap this closes: previewable files (text, image,
  * pdf, media) had NO download affordance — only unpreviewable / too-large / load-error states did,
  * via a per-renderer DownloadControl. This suite pins the fix: FilePreview renders exactly ONE
  * download control for EVERY file type, it goes through the existing api.download attachment path
@@ -94,7 +94,7 @@ const preview = (path: string, filename: string, api: FilesApiLike): React.React
     <FilePreview api={api} path={path} filename={filename} />
 );
 
-describe("every previewable file type now offers download (loop #773)", () => {
+describe("every previewable file type now offers download", () => {
     // These are the types that previously rendered inline with NO download button at all.
     it("offers download for a markdown/text file", async () => {
         const c = await mount(

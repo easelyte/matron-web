@@ -6,7 +6,7 @@
 
 # Generated, byte-identical-to-source artifacts. Reformatting these would break
 # the drift checks that are the whole point of vendoring them:
-#   - the schema is published byte-for-byte from son-of-anton's canonical copy
+#   - the schema is published byte-for-byte from the producer repository's canonical copy
 #   - the fixtures are raw producer stdout (see fixtures/WORK-VIEW-FIXTURES.md)
 /src/contracts/work-view.schema.json
 /src/journal/__tests__/fixtures/work-view-ok.json

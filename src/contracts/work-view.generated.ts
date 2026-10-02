@@ -6,7 +6,7 @@ Please see LICENSE files in the repository root for full details.
 
 GENERATED FILE — DO NOT EDIT.
 Source: src/contracts/work-view.schema.json
-Source SHA-256: 101fe9411e650e42890b0887a6da5c460cc31c3ce4d055713d0a1ccffce63e9e
+Source SHA-256: f2fad11f4cd7e3b9520bb397ee909aeec224f4155c15f01423d4a3c3c02488c9
 Regenerate: node src/contracts/generate-work-view-types.cjs
 */
 

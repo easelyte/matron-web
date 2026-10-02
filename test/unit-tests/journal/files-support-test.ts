@@ -52,7 +52,7 @@ describe("format helpers", () => {
 
 // F4: breadcrumbs are built from the read-root DOWN to path — NEVER above the jail.
 describe("breadcrumb (read-root jail)", () => {
-    const root = "/root/.openclaw/workspace";
+    const root = "/home/user/workspace";
 
     it("spans root → path, root labelled by basename, nothing above root", () => {
         expect(breadcrumb(root, `${root}/src/journal`)).toEqual([
@@ -62,10 +62,10 @@ describe("breadcrumb (read-root jail)", () => {
         ]);
     });
 
-    it("never emits a segment above root (no '/', 'root', '.openclaw')", () => {
+    it("never emits a segment above root (no '/', 'home', 'user')", () => {
         for (const crumb of breadcrumb(root, `${root}/a/b/c`)) {
             expect(crumb.path.startsWith(root)).toBe(true);
-            expect(["/", "root", ".openclaw"]).not.toContain(crumb.label);
+            expect(["/", "home", "user"]).not.toContain(crumb.label);
         }
     });
 

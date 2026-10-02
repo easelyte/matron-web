@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 # Please see LICENSE files in the repository root for full details.
 
-# Unit test for resolve_nginx_bin (deploy.sh, loop #740). deploy.sh runs the
+# Unit test for resolve_nginx_bin (deploy.sh). deploy.sh runs the
 # resolved binary as root, so it accepts ONLY an explicit absolute override or a
 # binary under the known standard sbin locations, never PATH; and every candidate
 # (binary + parent dir) must be root-owned and not group/other-writable. A non-root

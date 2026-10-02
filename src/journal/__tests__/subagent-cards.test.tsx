@@ -80,9 +80,9 @@ describe("tool-indicator lines → steps", () => {
         expect(indicatorStep("📋 Todos:\n✅ one\n⬚ two")).toMatchObject({ tool: "TodoWrite" });
         // A heredoc script spans lines inside the one pair of backticks.
         expect(indicatorStep("🔧 `python3 - <<'EOF'\nimport sqlite3\nprint(1)\nEOF`")).toMatchObject({ tool: "Bash" });
-        expect(indicatorStep("🔀 Subtask: Premise-check loop #791")).toMatchObject({
+        expect(indicatorStep("🔀 Subtask: Premise-check the workspace-root task")).toMatchObject({
             tool: "Task",
-            input: { description: "Premise-check loop #791" },
+            input: { description: "Premise-check the workspace-root task" },
         });
         expect(indicatorStep("🔀 Nested subtask: dig deeper")).toMatchObject({ tool: "Task" });
     });
@@ -251,7 +251,7 @@ describe("subagent card model", () => {
     });
 
     it("matches a helper step to the child titled from its description", () => {
-        const a = convo("p:sub:1", { title: "Premise-check loop #791" });
+        const a = convo("p:sub:1", { title: "Premise-check the workspace-root task" });
         const b = convo("p:sub:2", { title: "Review the RPC migration diff for mi…" });
         const step = (description: string): Step => ({
             kind: "step",
@@ -260,12 +260,12 @@ describe("subagent card model", () => {
             input: { description },
             status: "ok",
         });
-        expect(helperForStep(step("Premise-check loop #791"), [a, b])).toBe(a);
+        expect(helperForStep(step("Premise-check the workspace-root task"), [a, b])).toBe(a);
         expect(helperForStep(step("Review the RPC migration diff for missed callers"), [a, b])).toBe(b);
         expect(helperForStep(step("Something else"), [a, b])).toBeUndefined();
         // Two helpers with one description: ambiguous, so the step links neither.
-        const twin = convo("p:sub:3", { title: "Premise-check loop #791" });
-        expect(helperForStep(step("Premise-check loop #791"), [a, twin])).toBeUndefined();
+        const twin = convo("p:sub:3", { title: "Premise-check the workspace-root task" });
+        expect(helperForStep(step("Premise-check the workspace-root task"), [a, twin])).toBeUndefined();
     });
 
     it("anchors each child to the turn it started in", () => {

@@ -4592,7 +4592,7 @@ describe("session creation orchestration", () => {
 
     it("reconciles a stale pinned summary from a duplicate convo_meta a peer tab already applied", async () => {
         // Same shared-IndexedDB race as the session_status case above, for the frame that
-        // carries the pinned digest (loop #554). The peer tab wrote the new summary and
+        // carries the pinned digest. The peer tab wrote the new summary and
         // advanced the shared cursor, so this tab gets applied=false; without refreshing off
         // the durable row its pinned bar shows the superseded digest indefinitely (P48). No
         // upload is in flight here — the refresh must not be gated on one.

@@ -116,7 +116,7 @@
                 "convo_id": "c1",
                 "status": {
                     "model": "claude-opus-4-8",
-                    "workdir": "/root/.openclaw/workspace",
+                    "workdir": "/home/user/workspace",
                     "context": { "tokens": 144000, "window": 200000, "pct": 72 },
                     "limits": [
                         { "id": "session", "label": "Session", "percent": 40 },

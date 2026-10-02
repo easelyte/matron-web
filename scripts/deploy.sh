@@ -153,7 +153,7 @@ release_has_referenced_bundles() {
     )
 }
 
-# Re-assert the templated nginx config (loop #740) so its loop-#568 hardening
+# Re-assert the templated nginx config so its hardening
 # blocks (.mjs MIME, index.html no-cache, /assets/ immutable) cannot silently
 # regress by hand-editing the live conf. Guards the repo conf, installs it,
 # validates with `nginx -t`, and reloads — restoring the prior conf and failing
@@ -662,7 +662,7 @@ main() {
         exit 1
     fi
 
-    # Re-assert the templated nginx hardening (loop #740) before flipping the
+    # Re-assert the templated nginx hardening before flipping the
     # release, so a broken/regressed conf aborts the deploy while the prior release
     # keeps serving with its restored, known-good conf.
     if should_install_nginx && ! install_nginx_conf; then

@@ -10,7 +10,7 @@ Please see LICENSE files in the repository root for full details.
 import type { ConversationSummary } from "./components";
 
 /**
- * Parse the bridge's rolling digest wire format into display bullets (loop #554).
+ * Parse the bridge's rolling digest wire format into display bullets.
  *
  * The grammar is the producer's, not ours: matron-bridge `lib/pinned-summary.js` exports
  * `summaryBlocks()` precisely so every consumer agrees on what "a bullet" is in a stored
