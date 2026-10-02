@@ -95,7 +95,15 @@ function sanitizeSearchHits(response: { hits?: unknown } | null | undefined): Se
     }
     return hits;
 }
-const RPC_CREATE_WATCHDOG_MS = 10_000;
+// The bridge publishes the new convo's first frame (convo_upsert -> convo_meta) at create time,
+// before the CLI emits anything, so a healthy create clears this within milliseconds. It only
+// fires when that frame sits in the bridge publisher's queue across a reconnect, whose backoff
+// caps at 30s (journal-publisher DEFAULT_BACKOFF_CAP_MS). 10s flagged ordinary blips under load.
+export const RPC_CREATE_WATCHDOG_MS = 30_000;
+// Shown (as a dismissible status) when the watchdog fires; cleared again by the first frame for
+// the created convo, so it never outlives the delay it describes.
+export const RPC_CREATE_STALLED_NOTICE =
+    "New session is still starting — it will appear once it syncs. Refresh if it doesn't.";
 // #766 reconnect-loop guard. A malformed-seq LIVE frame triggers a full resync; a single one
 // recovers cleanly (a fresh snapshot never contains it), so the healthy case never approaches
 // this bound. But a server that repeatedly pushes malformed frames would re-poison each clean
@@ -397,6 +405,8 @@ export class MatronJournalClient {
     private rpcCreateWatchdog?: number;
     private rpcCreateWatchdogConvo?: string;
     private rpcCreateWatchdogGen?: number;
+    // Convo whose watchdog fired and put RPC_CREATE_STALLED_NOTICE up; a later frame for it lifts it.
+    private rpcCreateStalledConvo?: string;
     private storageListener?: (event: StorageEvent) => void;
     /** Guards the one-time `hashchange` binding for the Files deep link (see initialise). */
     private deepLinkListenerBound = false;
@@ -2952,27 +2962,58 @@ export class MatronJournalClient {
     }
 
     private armRpcCreateWatchdog(conversationId: string): void {
-        this.clearRpcCreateWatchdog();
+        // A create for a different convo supersedes an older convo's stall notice.
+        if (this.rpcCreateStalledConvo !== undefined && this.rpcCreateStalledConvo !== conversationId) {
+            this.clearRpcCreateStall();
+        }
+        this.cancelRpcCreateTimer();
         const gen = this.sessionGen;
         this.rpcCreateWatchdogConvo = conversationId;
         this.rpcCreateWatchdogGen = gen;
         this.rpcCreateWatchdog = window.setTimeout(() => {
             if (this.rpcCreateWatchdogConvo !== conversationId || this.rpcCreateWatchdogGen !== gen) return;
-            this.rpcCreateWatchdog = undefined;
-            this.rpcCreateWatchdogConvo = undefined;
-            this.rpcCreateWatchdogGen = undefined;
+            this.cancelRpcCreateTimer();
             if (this.sessionGen !== gen || this.state.selectedConversationId !== conversationId) return;
+            // Its frames can sync before the start RPC replies (and so before this was armed): a convo
+            // the client already knows is not stalled, whatever frames follow.
+            if (this.state.conversations.some((conversation) => conversation.id === conversationId)) {
+                this.clearRpcCreateStall();
+                return;
+            }
+            // Stay armed until a frame for the convo (or logout / snapshot replace) clears it: a
+            // reconnect resets connectionError, which must not silently retire the warning.
+            this.armRpcCreateWatchdog(conversationId);
+            // Never replace an error already on screen (e.g. the first-task send refused while the
+            // convo was still unknown): the later clear would then hide that failure too.
+            if (this.state.connectionError) return;
             this.logRpcCreateDiag("sync_watchdog_fire", conversationId);
-            this.patch({ connectionError: "Session created but not syncing yet — refresh to retry." });
+            this.rpcCreateStalledConvo = conversationId;
+            this.patch({ connectionError: RPC_CREATE_STALLED_NOTICE });
         }, RPC_CREATE_WATCHDOG_MS);
     }
 
-    private clearRpcCreateWatchdog(conversationId?: string): void {
-        if (conversationId !== undefined && this.rpcCreateWatchdogConvo !== conversationId) return;
+    private cancelRpcCreateTimer(): void {
         if (this.rpcCreateWatchdog !== undefined) window.clearTimeout(this.rpcCreateWatchdog);
         this.rpcCreateWatchdog = undefined;
         this.rpcCreateWatchdogConvo = undefined;
         this.rpcCreateWatchdogGen = undefined;
+    }
+
+    // Lift the stall notice, but only if it is still ours (never clobber an unrelated error).
+    private clearRpcCreateStall(): void {
+        if (this.rpcCreateStalledConvo === undefined) return;
+        this.rpcCreateStalledConvo = undefined;
+        if (this.state.connectionError === RPC_CREATE_STALLED_NOTICE) this.patch({ connectionError: undefined });
+    }
+
+    /**
+     * A frame for `conversationId` means it is syncing: stop watching it and lift its notice. A bare
+     * call (logout, snapshot replace) drops any watchdog and notice.
+     */
+    private clearRpcCreateWatchdog(conversationId?: string): void {
+        if (conversationId === undefined || conversationId === this.rpcCreateStalledConvo) this.clearRpcCreateStall();
+        if (conversationId !== undefined && this.rpcCreateWatchdogConvo !== conversationId) return;
+        this.cancelRpcCreateTimer();
     }
 
     private async replaceSnapshot(): Promise<void> {
