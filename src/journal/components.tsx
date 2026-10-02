@@ -3192,7 +3192,7 @@ function HeaderOverflowMenu({
                         </button>
                     )}
                     {/* Hidden, never guessed, until the bridge reports the session's extras. */}
-                    {browserState !== "unknown" && (
+                    {extras !== undefined && (
                         <BrowserToolsItem
                             state={browserState}
                             codex={codex}

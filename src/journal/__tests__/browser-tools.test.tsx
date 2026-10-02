@@ -307,6 +307,17 @@ describe("Enable browser tools in the session menu", () => {
         expect(item()).toBeUndefined();
     });
 
+    it("keeps the row hidden on an older bridge even while a browser restart is pending", async () => {
+        await act(async () =>
+            root.render(<MatronApp client={client([op("/restart --browser")], { session_state: "running" }, null)} />),
+        );
+        // The transient chip still reflects the operator's own request...
+        expect(container.querySelector(".mj_HeaderChip")?.textContent).toBe("Restarting after this step");
+        await openMenu();
+        // ...but the row never appears without the bridge's extras.
+        expect(item()).toBeUndefined();
+    });
+
     it("is unavailable for Codex sessions", async () => {
         await act(async () => root.render(<MatronApp client={client([op("hi")], { agent_kind: "codex" })} />));
         await openMenu();
