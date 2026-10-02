@@ -4405,6 +4405,27 @@ describe("session creation orchestration", () => {
         expect(client.getSnapshot().connectionError).toBe("Connection lost");
     });
 
+    it("does not overwrite an earlier connection error (e.g. a refused first-task send) when it fires", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        state.state = { ...state.state, connectionError: "Send refused" };
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe("Send refused");
+
+        await state.handleJournal({
+            seq: 16,
+            convo_id: "created",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+        expect(client.getSnapshot().connectionError).toBe("Send refused");
+    });
+
     it("ordinary reselect does not wipe another conversation's in-flight streaming state", async () => {
         const { client, state } = watchdogClient();
         const activity = { state: "thinking" as const };

@@ -2973,6 +2973,9 @@ export class MatronJournalClient {
             this.rpcCreateWatchdogGen = undefined;
             if (this.sessionGen !== gen || this.state.selectedConversationId !== conversationId) return;
             this.logRpcCreateDiag("sync_watchdog_fire", conversationId);
+            // Never replace an error already on screen (e.g. the first-task send refused while the
+            // convo was still unknown): the later clear would then hide that failure too.
+            if (this.state.connectionError) return;
             this.rpcCreateStalledConvo = conversationId;
             this.patch({ connectionError: RPC_CREATE_STALLED_NOTICE });
         }, RPC_CREATE_WATCHDOG_MS);
