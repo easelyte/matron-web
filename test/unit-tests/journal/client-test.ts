@@ -4467,6 +4467,18 @@ describe("session creation orchestration", () => {
         expect(client.getSnapshot().connectionError).toBeUndefined();
     });
 
+    it("never flags a created conversation whose frames synced before the watchdog was armed", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+        state.state = { ...state.state, conversations: [...CONVERSATIONS, { ...CONVERSATIONS[0], id: "created" }] };
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS * 3);
+
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+    });
+
     it("ordinary reselect does not wipe another conversation's in-flight streaming state", async () => {
         const { client, state } = watchdogClient();
         const activity = { state: "thinking" as const };

@@ -2974,6 +2974,12 @@ export class MatronJournalClient {
             if (this.rpcCreateWatchdogConvo !== conversationId || this.rpcCreateWatchdogGen !== gen) return;
             this.cancelRpcCreateTimer();
             if (this.sessionGen !== gen || this.state.selectedConversationId !== conversationId) return;
+            // Its frames can sync before the start RPC replies (and so before this was armed): a convo
+            // the client already knows is not stalled, whatever frames follow.
+            if (this.state.conversations.some((conversation) => conversation.id === conversationId)) {
+                this.clearRpcCreateStall();
+                return;
+            }
             // Stay armed until a frame for the convo (or logout / snapshot replace) clears it: a
             // reconnect resets connectionError, which must not silently retire the warning.
             this.armRpcCreateWatchdog(conversationId);
