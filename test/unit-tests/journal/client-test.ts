@@ -4441,6 +4441,32 @@ describe("session creation orchestration", () => {
         expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
     });
 
+    it("re-raises the notice when a reconnect clears it before the created conversation syncs", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
+
+        state.state = { ...state.state, connectionError: undefined };
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
+
+        await state.handleJournal({
+            seq: 17,
+            convo_id: "created",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS * 2);
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+    });
+
     it("ordinary reselect does not wipe another conversation's in-flight streaming state", async () => {
         const { client, state } = watchdogClient();
         const activity = { state: "thinking" as const };

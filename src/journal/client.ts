@@ -2962,45 +2962,52 @@ export class MatronJournalClient {
     }
 
     private armRpcCreateWatchdog(conversationId: string): void {
-        this.clearRpcCreateWatchdog();
+        // A create for a different convo supersedes an older convo's stall notice.
+        if (this.rpcCreateStalledConvo !== undefined && this.rpcCreateStalledConvo !== conversationId) {
+            this.clearRpcCreateStall();
+        }
+        this.cancelRpcCreateTimer();
         const gen = this.sessionGen;
         this.rpcCreateWatchdogConvo = conversationId;
         this.rpcCreateWatchdogGen = gen;
         this.rpcCreateWatchdog = window.setTimeout(() => {
             if (this.rpcCreateWatchdogConvo !== conversationId || this.rpcCreateWatchdogGen !== gen) return;
-            this.rpcCreateWatchdog = undefined;
-            this.rpcCreateWatchdogConvo = undefined;
-            this.rpcCreateWatchdogGen = undefined;
+            this.cancelRpcCreateTimer();
             if (this.sessionGen !== gen || this.state.selectedConversationId !== conversationId) return;
+            // Stay armed until a frame for the convo (or logout / snapshot replace) clears it: a
+            // reconnect resets connectionError, which must not silently retire the warning.
+            this.armRpcCreateWatchdog(conversationId);
             // Never replace an error already on screen (e.g. the first-task send refused while the
-            // convo was still unknown): the later clear would then hide that failure too. Re-arm
-            // instead of retiring, so a convo that still hasn't synced once the error clears warns.
-            if (this.state.connectionError) {
-                this.armRpcCreateWatchdog(conversationId);
-                return;
-            }
+            // convo was still unknown): the later clear would then hide that failure too.
+            if (this.state.connectionError) return;
             this.logRpcCreateDiag("sync_watchdog_fire", conversationId);
             this.rpcCreateStalledConvo = conversationId;
             this.patch({ connectionError: RPC_CREATE_STALLED_NOTICE });
         }, RPC_CREATE_WATCHDOG_MS);
     }
 
-    private clearRpcCreateWatchdog(conversationId?: string): void {
-        // A frame for the convo whose watchdog already fired means it is syncing after all: lift the
-        // notice, but only if it is still ours (never clobber a later, unrelated connection error).
-        // A bare clear (logout, snapshot replace, re-arm) drops the notice the same way.
-        if (
-            this.rpcCreateStalledConvo !== undefined &&
-            (conversationId === undefined || conversationId === this.rpcCreateStalledConvo)
-        ) {
-            this.rpcCreateStalledConvo = undefined;
-            if (this.state.connectionError === RPC_CREATE_STALLED_NOTICE) this.patch({ connectionError: undefined });
-        }
-        if (conversationId !== undefined && this.rpcCreateWatchdogConvo !== conversationId) return;
+    private cancelRpcCreateTimer(): void {
         if (this.rpcCreateWatchdog !== undefined) window.clearTimeout(this.rpcCreateWatchdog);
         this.rpcCreateWatchdog = undefined;
         this.rpcCreateWatchdogConvo = undefined;
         this.rpcCreateWatchdogGen = undefined;
+    }
+
+    // Lift the stall notice, but only if it is still ours (never clobber an unrelated error).
+    private clearRpcCreateStall(): void {
+        if (this.rpcCreateStalledConvo === undefined) return;
+        this.rpcCreateStalledConvo = undefined;
+        if (this.state.connectionError === RPC_CREATE_STALLED_NOTICE) this.patch({ connectionError: undefined });
+    }
+
+    /**
+     * A frame for `conversationId` means it is syncing: stop watching it and lift its notice. A bare
+     * call (logout, snapshot replace) drops any watchdog and notice.
+     */
+    private clearRpcCreateWatchdog(conversationId?: string): void {
+        if (conversationId === undefined || conversationId === this.rpcCreateStalledConvo) this.clearRpcCreateStall();
+        if (conversationId !== undefined && this.rpcCreateWatchdogConvo !== conversationId) return;
+        this.cancelRpcCreateTimer();
     }
 
     private async replaceSnapshot(): Promise<void> {
