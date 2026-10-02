@@ -10,6 +10,8 @@ import {
     favoriteStore,
     MatronJournalClient,
     pinnedStore,
+    RPC_CREATE_STALLED_NOTICE,
+    RPC_CREATE_WATCHDOG_MS,
     unreadStore,
 } from "../../../src/journal/client";
 import { JournalApi, JournalApiError } from "../../../src/journal/api";
@@ -4227,9 +4229,9 @@ describe("session creation orchestration", () => {
 
         await client.selectConversation("created", { fromRpcCreate: true });
         expect(client.getSnapshot().connectionError).toBeUndefined();
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
 
-        expect(client.getSnapshot().connectionError).toBe("Session created but not syncing yet — refresh to retry.");
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
     });
 
     it("does not fire after a matching journal frame syncs the created conversation", async () => {
@@ -4245,7 +4247,7 @@ describe("session creation orchestration", () => {
             type: "text",
             payload: {},
         });
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
 
         expect(client.getSnapshot().connectionError).toBeUndefined();
     });
@@ -4267,7 +4269,7 @@ describe("session creation orchestration", () => {
         });
         await Promise.resolve();
         await Promise.resolve();
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
         expect(client.getSnapshot().connectionError).toBeUndefined();
 
         events.resolve([]);
@@ -4282,9 +4284,9 @@ describe("session creation orchestration", () => {
         await client.selectConversation("created", { fromRpcCreate: true });
         await client.selectConversation("c2");
         await client.selectConversation("created");
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
 
-        expect(client.getSnapshot().connectionError).toBe("Session created but not syncing yet — refresh to retry.");
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
     });
 
     it("suppresses the watchdog notice when another conversation is selected at expiry", async () => {
@@ -4293,7 +4295,7 @@ describe("session creation orchestration", () => {
 
         await client.selectConversation("created", { fromRpcCreate: true });
         await client.selectConversation("c2");
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
 
         expect(client.getSnapshot().connectionError).toBeUndefined();
     });
@@ -4303,7 +4305,7 @@ describe("session creation orchestration", () => {
         const first = watchdogClient();
         await first.client.selectConversation("created", { fromRpcCreate: true });
         await first.client.logout();
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
         expect(first.client.getSnapshot().connectionError).toBeUndefined();
 
         const second = watchdogClient();
@@ -4313,7 +4315,7 @@ describe("session creation orchestration", () => {
         };
         await second.client.selectConversation("created", { fromRpcCreate: true });
         await second.state.replaceSnapshot();
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
         expect(second.client.getSnapshot().connectionError).toBeUndefined();
     });
 
@@ -4324,9 +4326,83 @@ describe("session creation orchestration", () => {
         await client.selectConversation("created-1", { fromRpcCreate: true });
         await client.selectConversation("created-2", { fromRpcCreate: true });
         await client.selectConversation("created-1");
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
 
         expect(client.getSnapshot().connectionError).toBeUndefined();
+    });
+
+    it("gives a cold spawn at least 30s before showing the not-syncing notice", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        jest.advanceTimersByTime(29_999);
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
+    });
+
+    it("clears its own notice when the created conversation starts syncing after the watchdog fired", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
+
+        await state.handleJournal({
+            seq: 13,
+            convo_id: "created",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+    });
+
+    it("keeps the notice when a frame for a different conversation arrives", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+
+        await state.handleJournal({
+            seq: 14,
+            convo_id: "c2",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
+    });
+
+    it("never clears an unrelated connection error when the created conversation syncs", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        state.state = { ...state.state, connectionError: "Connection lost" };
+
+        await state.handleJournal({
+            seq: 15,
+            convo_id: "created",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+
+        expect(client.getSnapshot().connectionError).toBe("Connection lost");
     });
 
     it("ordinary reselect does not wipe another conversation's in-flight streaming state", async () => {

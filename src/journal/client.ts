@@ -95,7 +95,15 @@ function sanitizeSearchHits(response: { hits?: unknown } | null | undefined): Se
     }
     return hits;
 }
-const RPC_CREATE_WATCHDOG_MS = 10_000;
+// The bridge publishes the new convo's first frame (convo_upsert -> convo_meta) at create time,
+// before the CLI emits anything, so a healthy create clears this within milliseconds. It only
+// fires when that frame sits in the bridge publisher's queue across a reconnect, whose backoff
+// caps at 30s (journal-publisher DEFAULT_BACKOFF_CAP_MS). 10s flagged ordinary blips under load.
+export const RPC_CREATE_WATCHDOG_MS = 30_000;
+// Shown (as a dismissible status) when the watchdog fires; cleared again by the first frame for
+// the created convo, so it never outlives the delay it describes.
+export const RPC_CREATE_STALLED_NOTICE =
+    "New session is still starting — it will appear once it syncs. Refresh if it doesn't.";
 // #766 reconnect-loop guard. A malformed-seq LIVE frame triggers a full resync; a single one
 // recovers cleanly (a fresh snapshot never contains it), so the healthy case never approaches
 // this bound. But a server that repeatedly pushes malformed frames would re-poison each clean
@@ -397,6 +405,8 @@ export class MatronJournalClient {
     private rpcCreateWatchdog?: number;
     private rpcCreateWatchdogConvo?: string;
     private rpcCreateWatchdogGen?: number;
+    // Convo whose watchdog fired and put RPC_CREATE_STALLED_NOTICE up; a later frame for it lifts it.
+    private rpcCreateStalledConvo?: string;
     private storageListener?: (event: StorageEvent) => void;
     /** Guards the one-time `hashchange` binding for the Files deep link (see initialise). */
     private deepLinkListenerBound = false;
@@ -2963,11 +2973,22 @@ export class MatronJournalClient {
             this.rpcCreateWatchdogGen = undefined;
             if (this.sessionGen !== gen || this.state.selectedConversationId !== conversationId) return;
             this.logRpcCreateDiag("sync_watchdog_fire", conversationId);
-            this.patch({ connectionError: "Session created but not syncing yet — refresh to retry." });
+            this.rpcCreateStalledConvo = conversationId;
+            this.patch({ connectionError: RPC_CREATE_STALLED_NOTICE });
         }, RPC_CREATE_WATCHDOG_MS);
     }
 
     private clearRpcCreateWatchdog(conversationId?: string): void {
+        // A frame for the convo whose watchdog already fired means it is syncing after all: lift the
+        // notice, but only if it is still ours (never clobber a later, unrelated connection error).
+        // A bare clear (logout, snapshot replace, re-arm) drops the notice the same way.
+        if (
+            this.rpcCreateStalledConvo !== undefined &&
+            (conversationId === undefined || conversationId === this.rpcCreateStalledConvo)
+        ) {
+            this.rpcCreateStalledConvo = undefined;
+            if (this.state.connectionError === RPC_CREATE_STALLED_NOTICE) this.patch({ connectionError: undefined });
+        }
         if (conversationId !== undefined && this.rpcCreateWatchdogConvo !== conversationId) return;
         if (this.rpcCreateWatchdog !== undefined) window.clearTimeout(this.rpcCreateWatchdog);
         this.rpcCreateWatchdog = undefined;
