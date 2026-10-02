@@ -21,6 +21,7 @@ import {
     usageShortLabel,
     worstLimit,
 } from "../../../src/journal/status";
+import type { SessionStatus } from "../../../src/journal/types";
 
 describe("journal session status presentation", () => {
     it("matches the Apple client's compact token and limit labels", () => {
@@ -207,6 +208,23 @@ describe("journal session status presentation", () => {
             limits: [{ label: "Session", percent: 39, resets: "soon" }],
             email: "agent@example.com",
         });
+    });
+
+    it("carries extras through updates that omit them, and lets [] turn them off", () => {
+        const on = mergeSessionStatus(undefined, { model: "claude-fable-5", extras: ["browser"] });
+        expect(mergeSessionStatus(on, { model: "gpt-5.6-codex" }).extras).toEqual(["browser"]);
+        expect(mergeSessionStatus(on, { extras: [] }).extras).toEqual([]);
+        expect(mergeSessionStatus(undefined, { model: "claude-fable-5" }).extras).toBeUndefined();
+    });
+
+    it("clears extras when a complete frame from a pre-extras bridge supersedes them (rollback)", () => {
+        const on = mergeSessionStatus(undefined, { model: "claude-fable-5", extras: ["browser"] });
+        // A full journalStatus frame always carries model_options; one without extras is a bridge
+        // that cannot report them, so the old "on" must not survive it.
+        const rolledBack = { model: "claude-fable-5", model_options: [{ value: "opus", label: "Opus" }] };
+        expect(mergeSessionStatus(on, rolledBack as SessionStatus).extras).toBeUndefined();
+        // ...including one whose offer list is empty (Codex).
+        expect(mergeSessionStatus(on, { model: "gpt", model_options: [] } as SessionStatus).extras).toBeUndefined();
     });
 
     it("carries top-level vitals through a partial status update", () => {

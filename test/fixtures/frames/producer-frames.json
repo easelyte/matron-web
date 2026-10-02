@@ -126,6 +126,20 @@
             }
         },
         {
+            "name": "ephemeral.status.extras_browser",
+            "source": "matron-bridge buildSessionStatus + publishedExtras (feat/session-extras-status, loop #791), generated",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": { "model": "claude-fable-5", "extras": ["browser"], "workdir": "/repo" }
+            }
+        },
+        {
+            "name": "ephemeral.status.extras_empty",
+            "source": "matron-bridge buildSessionStatus: [] states no extras, distinct from absent (older bridge)",
+            "frame": { "kind": "ephemeral", "convo_id": "c1", "status": { "model": "claude-fable-5", "extras": [] } }
+        },
+        {
             "name": "ephemeral.activity.thinking",
             "source": "matron-bridge activity frame; state consumed at client.ts handleEphemeral:2664",
             "frame": { "kind": "ephemeral", "convo_id": "c1", "activity": { "state": "thinking" } }
@@ -212,6 +226,24 @@
                 "status": { "model": "x", "limits": [{ "id": "session", "label": "Session" }] }
             },
             "expect": ["status.limits"]
+        },
+        {
+            "name": "status.extras_not_array",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": { "model": "claude-fable-5", "extras": "browser" }
+            },
+            "expect": ["status.extras"]
+        },
+        {
+            "name": "status.extras_non_string_element",
+            "frame": {
+                "kind": "ephemeral",
+                "convo_id": "c1",
+                "status": { "model": "claude-fable-5", "extras": ["browser", 7] }
+            },
+            "expect": ["status.extras"]
         },
         {
             "name": "status.not_object",

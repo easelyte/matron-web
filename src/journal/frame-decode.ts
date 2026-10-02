@@ -205,6 +205,15 @@ function decodeEphemeral(raw: Record<string, unknown>): FrameDecodeResult {
                 delete status.limits;
                 narrowed.push("status.limits");
             }
+            // status.extras: string[] (matron-bridge buildSessionStatus). Consumers call
+            // .includes on it, so anything else is dropped (reads as "unknown", row hidden).
+            if (
+                status.extras !== undefined &&
+                !(Array.isArray(status.extras) && status.extras.every((x) => typeof x === "string"))
+            ) {
+                delete status.extras;
+                narrowed.push("status.extras");
+            }
             out.status = status;
         }
     }

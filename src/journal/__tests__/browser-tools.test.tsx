@@ -31,31 +31,43 @@ beforeEach(() => {
 });
 
 describe("browserToolsState (read from the bridge's replies)", () => {
-    it("is idle with no request, and on after a restart that reports the browser extra", () => {
-        expect(browserToolsState([], false)).toBe("idle");
-        expect(
-            browserToolsState(
-                [op("/restart --browser"), ev("🔄 Restarting Claude session..."), ev(RESTARTED_ON)],
-                false,
-            ),
-        ).toBe("on");
+    it("is unknown without extras (older bridge), idle with none, on when the spawn has browser", () => {
+        expect(browserToolsState([], false, undefined)).toBe("unknown");
+        expect(browserToolsState([], false, [])).toBe("idle");
+        expect(browserToolsState([], false, ["share", "browser"])).toBe("on");
     });
 
-    it("walks queued → restarting → on", () => {
+    it("never reads on/off from the transcript: a restart notice listing the extra is not data", () => {
+        const events = [op("/restart --browser"), ev("🔄 Restarting Claude session..."), ev(RESTARTED_ON)];
+        expect(browserToolsState(events, false, [])).toBe("idle");
+        expect(browserToolsState(events, false, undefined)).toBe("unknown");
+        expect(browserToolsState(events, false, ["browser"])).toBe("on");
+    });
+
+    it("trusts the status frame over a stale pending request (windowed or reconnected transcript)", () => {
+        expect(browserToolsState([op("/restart --browser")], true, ["browser"])).toBe("on");
+    });
+
+    it("walks queued → restarting → done, then reads on from the new status frame", () => {
         const events = [op("/restart --browser")];
-        expect(browserToolsState(events, true)).toBe("queued");
+        expect(browserToolsState(events, true, [])).toBe("queued");
         events.push(
             ev("Waiting for turn to finish before restarting. Send again with --force to restart immediately."),
         );
-        expect(browserToolsState(events, true)).toBe("queued");
+        expect(browserToolsState(events, true, [])).toBe("queued");
         events.push(ev("🔄 Restarting Claude session..."));
-        expect(browserToolsState(events, false)).toBe("restarting");
+        expect(browserToolsState(events, false, [])).toBe("restarting");
         events.push(ev(RESTARTED_ON));
-        expect(browserToolsState(events, false)).toBe("on");
+        expect(browserToolsState(events, false, [])).toBe("idle");
+        expect(browserToolsState(events, false, ["browser"])).toBe("on");
+    });
+
+    it("reports a pending request's phase on an older bridge too (the queued chip)", () => {
+        expect(browserToolsState([op("/restart --browser")], true, undefined)).toBe("queued");
     });
 
     it("reads an idle agent's request as restarting straight away", () => {
-        expect(browserToolsState([op("/restart --browser")], false)).toBe("restarting");
+        expect(browserToolsState([op("/restart --browser")], false, [])).toBe("restarting");
     });
 
     it("goes back to idle on a refusal or a later restart without the extra", () => {
@@ -66,38 +78,46 @@ describe("browserToolsState (read from the bridge's replies)", () => {
                     ev("--browser is a Claude-only session extra. Codex uses MCP servers from its own config."),
                 ],
                 false,
+                [],
             ),
         ).toBe("idle");
         expect(
             browserToolsState(
                 [op("/restart --browser"), ev(RESTARTED_ON), op("/restart --model sonnet"), ev(RESTARTED_OFF)],
                 false,
+                [],
             ),
         ).toBe("idle");
     });
 
     it("reads Restart now (--force) as restarting straight away, even mid-task", () => {
-        expect(browserToolsState([op("/restart --browser --force")], true)).toBe("restarting");
+        expect(browserToolsState([op("/restart --browser --force")], true, [])).toBe("restarting");
     });
 
     it("drops a pending request the bridge abandoned", () => {
         expect(
-            browserToolsState([op("/restart --browser"), ev("No active session. Use !start to begin.")], false),
+            browserToolsState([op("/restart --browser"), ev("No active session. Use !start to begin.")], false, []),
         ).toBe("idle");
         expect(
             browserToolsState(
                 [op("/restart --browser"), ev("Waiting for turn to finish before restarting."), ev("Session stopped.")],
                 false,
+                [],
             ),
         ).toBe("idle");
         // Waiting on a prompt reads 'waiting' too: a parked request stays queued until answered.
         expect(
-            browserToolsState([op("/restart --browser"), ev("Waiting for turn to finish before restarting.")], false),
+            browserToolsState(
+                [op("/restart --browser"), ev("Waiting for turn to finish before restarting.")],
+                false,
+                [],
+            ),
         ).toBe("queued");
         expect(
             browserToolsState(
                 [op("/restart --browser"), ev("🔄 Restarting Claude session..."), ev("Couldn't restart: spawn failed")],
                 false,
+                [],
             ),
         ).toBe("idle");
         expect(
@@ -108,6 +128,7 @@ describe("browserToolsState (read from the bridge's replies)", () => {
                     ev("Deferred /restart failed: boom"),
                 ],
                 true,
+                [],
             ),
         ).toBe("idle");
     });
@@ -121,12 +142,13 @@ describe("browserToolsState (read from the bridge's replies)", () => {
                     ev("Still reading files."),
                 ],
                 true,
+                [],
             ),
         ).toBe("queued");
     });
 
     it("ignores other restarts' queue replies", () => {
-        expect(browserToolsState([op("/restart"), ev("Waiting for turn to finish before restarting.")], true)).toBe(
+        expect(browserToolsState([op("/restart"), ev("Waiting for turn to finish before restarting.")], true, [])).toBe(
             "idle",
         );
     });
@@ -154,7 +176,12 @@ describe("Enable browser tools in the session menu", () => {
         username: "op",
     };
 
-    function client(events: JournalEvent[], conversation: Partial<Conversation> = {}): MatronJournalClient {
+    // Default: a current bridge reporting no extras. Pass `null` for an older bridge (no extras).
+    function client(
+        events: JournalEvent[],
+        conversation: Partial<Conversation> = {},
+        extras: string[] | null = [],
+    ): MatronJournalClient {
         const instance = new MatronJournalClient();
         (instance as unknown as { state: ClientState }).state = {
             ...instance.getSnapshot(),
@@ -174,6 +201,7 @@ describe("Enable browser tools in the session menu", () => {
                 },
             ],
             selectedConversationId: "c1",
+            sessionStatus: extras === null ? { model: "claude-fable-5" } : { model: "claude-fable-5", extras },
             events,
             pendingMessages: [],
             connection: "online",
@@ -249,13 +277,45 @@ describe("Enable browser tools in the session menu", () => {
         expect(item().querySelector(".mj_MenuHint")?.textContent).toBe("Restarting after this step");
     });
 
-    it("shows 'Browser tools on' as a checked, disabled item", async () => {
-        await act(async () => root.render(<MatronApp client={client([op("/restart --browser"), ev(RESTARTED_ON)])} />));
+    it("shows 'Browser tools on' as a checked, disabled item, from the status frame's extras", async () => {
+        await act(async () => root.render(<MatronApp client={client([op("hi")], {}, ["browser"])} />));
         await openMenu();
         expect(item().getAttribute("role")).toBe("menuitemcheckbox");
         expect(item().getAttribute("aria-checked")).toBe("true");
         expect(item().getAttribute("aria-disabled")).toBe("true");
         expect(item().textContent).toBe("Browser tools on");
+    });
+
+    it("stays on for a stopped session with no restart in its loaded events (offline / reconnect)", async () => {
+        await act(async () => root.render(<MatronApp client={client([], { session_state: "done" }, ["browser"])} />));
+        await openMenu();
+        expect(item().textContent).toBe("Browser tools on");
+    });
+
+    it("does not turn on from a transcript notice while the status frame says no extras", async () => {
+        await act(async () => root.render(<MatronApp client={client([op("/restart --browser"), ev(RESTARTED_ON)])} />));
+        await openMenu();
+        expect(item().textContent).toBe("Enable browser tools");
+    });
+
+    it("hides the row, never guesses, when the bridge reports no extras (older bridge)", async () => {
+        await act(async () =>
+            root.render(<MatronApp client={client([op("/restart --browser"), ev(RESTARTED_ON)], {}, null)} />),
+        );
+        await openMenu();
+        expect(container.querySelector('[role="menu"], .mj_RoomItemMenu')).not.toBeNull();
+        expect(item()).toBeUndefined();
+    });
+
+    it("keeps the row hidden on an older bridge even while a browser restart is pending", async () => {
+        await act(async () =>
+            root.render(<MatronApp client={client([op("/restart --browser")], { session_state: "running" }, null)} />),
+        );
+        // The transient chip still reflects the operator's own request...
+        expect(container.querySelector(".mj_HeaderChip")?.textContent).toBe("Restarting after this step");
+        await openMenu();
+        // ...but the row never appears without the bridge's extras.
+        expect(item()).toBeUndefined();
     });
 
     it("is unavailable for Codex sessions", async () => {

@@ -3060,7 +3060,8 @@ function HeaderOverflowMenu({
     const restoreFrameRef = useRef<number | undefined>(undefined);
     const busy = conversation.session_state === "running";
     const codex = conversation.agent_kind === "codex";
-    const browserState = useMemo(() => browserToolsState(state.events, busy), [state.events, busy]);
+    const extras = state.sessionStatus?.extras;
+    const browserState = useMemo(() => browserToolsState(state.events, busy, extras), [state.events, busy, extras]);
     const close = useCallback(() => setOpen(false), []);
     useDismissablePopover(open, close, { openerRef, panelRef });
     const toggle = usePressToggle(open, (next) => {
@@ -3190,14 +3191,17 @@ function HeaderOverflowMenu({
                             {isUnread ? "Mark as read" : "Mark as unread"}
                         </button>
                     )}
-                    <BrowserToolsItem
-                        state={browserState}
-                        codex={codex}
-                        onEnable={() => {
-                            close();
-                            setConfirmBrowser(true);
-                        }}
-                    />
+                    {/* Hidden, never guessed, until the bridge reports the session's extras. */}
+                    {extras !== undefined && (
+                        <BrowserToolsItem
+                            state={browserState}
+                            codex={codex}
+                            onEnable={() => {
+                                close();
+                                setConfirmBrowser(true);
+                            }}
+                        />
+                    )}
                     <MenuSeparator />
                     <button
                         className="mj_RoomItemMenu_item"
@@ -3393,8 +3397,8 @@ function ChatHeader({
     const browserQueued = useMemo(
         () =>
             conversation?.agent_kind !== "codex" &&
-            browserToolsState(state.events, runState === "running") === "queued",
-        [conversation?.agent_kind, state.events, runState],
+            browserToolsState(state.events, runState === "running", status?.extras) === "queued",
+        [conversation?.agent_kind, state.events, runState, status?.extras],
     );
     return (
         <HeaderShell

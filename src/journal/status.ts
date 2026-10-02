@@ -239,9 +239,24 @@ function suppliesLegacyHostMeters(update: SessionStatus): boolean {
     return Boolean(update.limits?.some((limit) => limit.id === "host_cpu" || limit.id === "host_ram"));
 }
 
+/**
+ * `extras` across status updates. A frame that carries it wins. A frame without it is either
+ * partial (keep the last known value) or a COMPLETE frame from a bridge that cannot report extras
+ * (a rollback to a pre-extras build): that one must clear it, or a stale "browser tools on" would
+ * outlive the process that had them. Every complete session frame from matron-bridge's
+ * journalStatus carries `model_options` (an array, possibly empty); partial frames do not. When in
+ * doubt this errs toward unknown (row hidden), never toward a false "on".
+ */
+function mergeExtras(current: SessionStatus | undefined, update: SessionStatus): string[] | undefined {
+    if (update.extras !== undefined) return update.extras;
+    if (Array.isArray((update as { model_options?: unknown }).model_options)) return undefined;
+    return current?.extras;
+}
+
 export function mergeSessionStatus(current: SessionStatus | undefined, update: SessionStatus): SessionStatus {
     return {
         model: update.model ?? current?.model,
+        extras: mergeExtras(current, update),
         workdir: update.workdir ?? current?.workdir,
         context: update.context ?? current?.context,
         limits: update.limits ?? current?.limits,

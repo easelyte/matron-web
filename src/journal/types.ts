@@ -240,6 +240,10 @@ export type ServerFrame = JournalEvent | JournalControlFrame | JournalEphemeralF
 
 export interface SessionStatus {
     model?: string;
+    // The MCP extras the session's process was spawned with (e.g. ["browser"]), from matron-bridge
+    // buildSessionStatus. Absent on older bridges and on subagent/helper frames: consumers must
+    // treat absence as "unknown" (hide), never as "none". [] means no extras.
+    extras?: string[];
     // v5 header subtitle: `model · workdir · run-state`. The bridge does not yet
     // include the session cwd in the status frame — the segment renders only when
     // present, so it lights up the moment the bridge adds it (tracked follow-up).
