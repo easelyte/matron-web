@@ -4426,6 +4426,21 @@ describe("session creation orchestration", () => {
         expect(client.getSnapshot().connectionError).toBe("Send refused");
     });
 
+    it("still warns after a transient error at expiry clears without the created conversation syncing", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        state.state = { ...state.state, connectionError: "Reconnecting" };
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe("Reconnecting");
+
+        state.state = { ...state.state, connectionError: undefined };
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
+    });
+
     it("ordinary reselect does not wipe another conversation's in-flight streaming state", async () => {
         const { client, state } = watchdogClient();
         const activity = { state: "thinking" as const };
