@@ -683,7 +683,7 @@ function readOutcomeMessage(outcome: ReadFileOutcome): string {
 }
 
 /**
- * Guarded file editor (loop #548). Applies a small edit to an EXISTING file on
+ * Guarded file editor. Applies a small edit to an EXISTING file on
  * an agent's box through the bridge `edit_file` RPC — for the operator on the
  * bridge with no SSH/VSCode (tweak a config value, flip a feature flag). The
  * bridge refuses sensitive basenames (.env, secrets, keys, credentials, …), so
@@ -3240,7 +3240,7 @@ function HeaderOverflowMenu({
     );
 }
 
-// Backstop for the compact in-flight pulse (loop #627). Compaction emits no incremental
+// Backstop for the compact in-flight pulse. Compaction emits no incremental
 // progress signal, so the pulse is cleared by the post-compact status frame (context
 // tokens drop below the pre-send baseline). This timeout is the fallback for when that
 // never arrives — e.g. snap-compact declines because pressure is <50%, or already
@@ -3305,7 +3305,7 @@ function hasResetTime(limit: NonNullable<SessionStatus["limits"]>[number]): bool
     return limit.resets_at_ms != null || limit.resets_at != null || Boolean(limit.resets);
 }
 
-// The usage-window limit whose reset time the header countdown tracks (loop #628): the
+// The usage-window limit whose reset time the header countdown tracks: the
 // 5-hour session window first, falling back to the soonest listed rate limit that carries
 // a reset (excluding the synthetic context bar and the host cpu/ram meters, which have no
 // meaningful reset). Reuses the reset data already flowing to the pressure bars — no new
@@ -3339,7 +3339,7 @@ function pick5hResetLimit(
     return limits.find((limit) => limit.id === "session" && hasResetTime(limit));
 }
 
-// Header subtitle countdown that replaces the workdir path (loop #628): shows BOTH usage
+// Header subtitle countdown that replaces the workdir path: shows BOTH usage
 // windows when present — "resets 5h 3h05 / wk Wed 5pm" — the 5-hour session limit and the
 // weekly (all-models) limit. Shows a single segment when only one window carries a reset,
 // and falls back to the prior soonest-reset chip for frames with neither (a bare rate
@@ -3662,7 +3662,7 @@ export function QueuedReleaseCard({
                 </div>
             )}
             {resolution === "expired" && (
-                // Terminal abandoned state (loop #536, spec §6): the bridge has
+                // Terminal abandoned state: the bridge has
                 // authoritatively expired this card (restart/crash abandoned the
                 // live queue). Both buttons are already removed (gated on
                 // `resolution === undefined` above); render a muted terminal
@@ -4673,7 +4673,7 @@ export function isQueuedReleaseReply(
 // card. The card already renders the decision inline (answered/allowed/denied
 // via answeredPromptReplies), so its reply must NOT also render as a standalone
 // chat bubble — that duplicate reads as if the operator typed "Allow"/"Deny"
-// into the thread (loop #643). Identified by target-seq provenance, mirroring
+// into the thread. Identified by target-seq provenance, mirroring
 // isQueuedReleaseReply: prompt_reply carries no self-identifying kind, so a
 // permission reply is only distinguishable by the permission_request it targets.
 export function isPermissionDecisionReply(event: JournalEvent, permissionRequestSeqs: ReadonlySet<number>): boolean {
@@ -4702,7 +4702,7 @@ function PeerMessage({ event }: { event: JournalEvent }): React.ReactElement {
     const fromKind = rawFromKind === "claude" || rawFromKind === "codex" ? rawFromKind : null;
     const fromName = sanitizePeerText(event.payload.from_name, PEER_NAME_CAP) || "peer agent";
     const body = sanitizePeerText(event.payload.body, PEER_BODY_CAP);
-    // Priority is a net-new, not-yet-produced payload key (loop #688) — read defensively so
+    // Priority is a net-new, not-yet-produced payload key — read defensively so
     // the louder variant lights up the moment a producer sets it, and stays dormant until then.
     const priority = event.payload.priority === true || asString(event.payload.priority) === "true";
     const mark = markForKind(fromKind, "mj_PeerMessage_mark");
@@ -5671,7 +5671,7 @@ function Timeline({
                 if (!itemId) continue;
                 // Terminal precedence: a real resolution (send/cancel) is FINAL
                 // and outranks a later — or earlier — `expired` release for the
-                // same item (loop #536, spec §6). This neutralizes the bridge's
+                // same item. This neutralizes the bridge's
                 // narrow disk-fail-then-restart re-expiry: even if the bridge
                 // re-emits `expired` for a release it already committed as
                 // sent/cancelled, the card keeps showing the true result.
@@ -7675,7 +7675,7 @@ export function SubagentStrip({
  * server-generated digest rendered as a bullet list, pinned between the SubagentStrip
  * and the Timeline. The bar IS the expand control; the body is aria-live="polite" so a
  * server refresh is announced without stealing the operator's focus. The feed landed in
- * loop #554: the owning bridge publishes its rolling digest to conversations.summary and
+ * Pinned summary: the owning bridge publishes its rolling digest to conversations.summary and
  * the call site in SignedInApp parses it via `conversationSummary()`. A conversation with
  * no digest passes null and this renders nothing at all.
  *
@@ -7916,7 +7916,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 )}
                                 <SubagentStrip client={client} state={state} mode={childMode ? "child" : "parent"} />
                                 {/* Surface A — pinned conversation summary, fed by the bridge's
-                                    rolling digest (loop #554): conversations.summary on the
+                                    rolling digest: conversations.summary on the
                                     snapshot row, refreshed live by convo_meta. Renders nothing
                                     when the conversation has no digest — sub-chats never do, and
                                     neither does any conversation owned by a bridge or server

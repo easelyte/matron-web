@@ -48,7 +48,7 @@ jest.mock("react-window", () => {
     };
 });
 
-const DIR = "/root/.openclaw/workspace";
+const DIR = "/home/user/workspace";
 const encode = (text: string): ArrayBuffer => new TextEncoder().encode(text).buffer as ArrayBuffer;
 const ENTRIES: FileEntry[] = [
     { name: "src", kind: "dir", size: 0, mtime: 1, mime: "" },

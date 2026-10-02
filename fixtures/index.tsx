@@ -62,7 +62,7 @@ const SESSION: Session = {
     username: "operator@easelyte.ai",
 };
 
-// The pinned digest (loop #554) arrives as the bridge's raw wire text: one "\u2022 "-prefixed
+// The pinned digest arrives as the bridge's raw wire text: one "\u2022 "-prefixed
 // line per pass. The last bullet is deliberately >160 chars so the fixture shows the clamp +
 // Expand affordance alongside short ones. c2/c3 carry none, which is the "renders nothing" case.
 const PINNED_SUMMARY_TEXT = [
@@ -328,7 +328,7 @@ const events: JournalEvent[] = [
         },
     },
     {
-        // Surface B priority variant (loop #688) — louder marker, never a focus steal.
+        // Surface B priority variant — louder marker, never a focus steal.
         seq: 22,
         convo_id: "c1",
         ts: T + 860,
@@ -548,7 +548,7 @@ const imageFile = (name: string): File =>
 // A mock FilesApi returning canned data so the harness can shoot every Files state (list, each
 // preview kind, empty, error/denied, truncated) in both themes without a live backend. Mirrors
 // how mediaUrl is stubbed above.
-const FILES_ROOT = "/root/.openclaw/workspace";
+const FILES_ROOT = "/home/user/workspace";
 // Global write switch for the harness: `openFilesReadOnly()` flips it off to shoot the dormant
 // (MATRON_FILE_ENABLE_WRITES=0 / dry-run) deploy, where the pane must look exactly like Phase 1.
 let filesWritable = true;
@@ -601,7 +601,7 @@ const README_SAMPLE = [
     "- Path-jailed server-side; secrets never served",
     "",
     "```bash",
-    "curl -s /journal/files/list?path=/root/.openclaw/workspace",
+    "curl -s /journal/files/list?path=/home/user/workspace",
     "```",
 ].join("\n");
 
@@ -1039,7 +1039,7 @@ let workMode: WorkFixtureMode = "ok";
             pendingMessages: [],
             sessionStatus: state.sessionStatus,
         }),
-    // Drive the pinned summary (loop #554) by rewriting the selected conversation's stored
+    // Drive the pinned summary by rewriting the selected conversation's stored
     // digest, which is exactly how the real feed reaches it (snapshot row / convo_meta).
     // "none" is the renders-nothing case; the empty-state box and the "updating" shimmer have
     // no wire representation by design and are covered by unit tests instead.

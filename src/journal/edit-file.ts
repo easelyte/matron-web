@@ -6,7 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /**
- * Client-side plumbing for the bridge `edit_file` RPC (loop #548): the guarded,
+ * Client-side plumbing for the bridge `edit_file` RPC: the guarded,
  * atomic edit of an EXISTING file inside the bridge's pinned allowed roots.
  *
  * The wire contract this MUST match exactly (bridge lib/edit-file.js + journal-rpc.js):

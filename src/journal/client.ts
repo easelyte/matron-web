@@ -183,7 +183,7 @@ export function workerKind(conversation: Conversation): WorkerKind | null {
         if (/:sub:[^:]+$/.test(conversation.id)) return "claude";
         return null;
     }
-    // Top-level rows use the server-recorded agent_kind (loop #619) — their ids
+    // Top-level rows use the server-recorded agent_kind — their ids
     // are bare UUIDs with no infix. An absent/unknown value renders no marker.
     if (conversation.agent_kind === "codex") return "codex";
     if (conversation.agent_kind === "claude") return "claude";
@@ -588,7 +588,7 @@ export class MatronJournalClient {
 
     /**
      * Apply a guarded, atomic edit to an existing file on the agent's box via
-     * the bridge `edit_file` RPC (loop #548). Thin wrapper: build the exact wire
+     * the bridge `edit_file` RPC. Thin wrapper: build the exact wire
      * params -> agentRpc -> classify the reply into a UI-ready outcome. All the
      * param-shape + error-code mapping (the CAS + path-safety surface) lives in
      * the pure, unit-tested ./edit-file module.
@@ -600,7 +600,7 @@ export class MatronJournalClient {
 
     /**
      * Read an existing file on the agent's box via the bridge `read_file` RPC
-     * (loop #548 follow-up). Thin wrapper mirroring editFile: build the wire
+     * Thin wrapper mirroring editFile: build the wire
      * params -> agentRpc -> classify into a UI-ready outcome. Its whole point is
      * to make edit_file's expected_sha256 CAS usable — the editor reads to get
      * the current content + sha, then edits WITH that sha as the precondition.
@@ -3369,7 +3369,7 @@ export class MatronJournalClient {
                 }
             }
             // Same argument for convo_meta, and it is not upload-specific: the frame mutates
-            // title, the parent link, agent_kind and (loop #554) the pinned summary, so a peer
+            // title, the parent link, agent_kind and the pinned summary, so a peer
             // tab that won the cursor race has already written all of them to the shared store
             // while our mirror still renders the old values — the pinned digest most visibly,
             // since it sits above the live timeline and only this frame refreshes it. Refresh

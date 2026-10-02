@@ -77,7 +77,7 @@ export interface Conversation {
     last_ts?: number;
     read_up_to_seq: number;
     agent_kind?: string | null; // which backend runs this conversation ('claude' | 'codex'); null/undefined = unknown, no marker
-    /** Rolling bullet digest maintained by the owning bridge (loop #554), stored as the raw
+    /** Rolling bullet digest maintained by the owning bridge, stored as the raw
         "• a\n• b" text the bridge published. Absent against a server that does not send the
         field; "" when the server knows the field but the bridge never wrote a digest. Parsed
         for display by `conversationSummary()` in ./summary. */

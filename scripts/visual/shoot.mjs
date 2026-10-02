@@ -149,7 +149,7 @@ const SHOTS_SPEC = [
             await p.waitForSelector(".mj_RoomListCollapsedSubs");
         },
     },
-    // Pinned conversation summary (loop #554). Only two states are reachable from real data —
+    // Pinned conversation summary. Only two states are reachable from real data —
     // a "ready" digest and nothing at all — so those are what the sheet shows; the empty-state
     // box and the "updating" shimmer have no wire field (design 554 §5.4) and stay unit-tested.
     {

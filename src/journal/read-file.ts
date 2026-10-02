@@ -6,7 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /**
- * Client-side plumbing for the bridge `read_file` RPC (loop #548 follow-up):
+ * Client-side plumbing for the bridge `read_file` RPC:
  * the guarded read of an EXISTING file inside the bridge's pinned allowed roots.
  *
  * Its reason to exist is edit_file's compare-and-swap. The in-client editor

@@ -77,7 +77,7 @@ export function isTurnBoundary(event: JournalEvent): boolean {
     return isOperatorEvent(event) && event.type !== "prompt_reply";
 }
 
-/** A Codex generic completed item the bridge publishes as a one-token code span (loop #772). */
+/** A Codex generic completed item the bridge publishes as a one-token code span. */
 const CODEX_ITEM_TEXT = /^`([A-Z][A-Za-z0-9 ]{0,79})`$/;
 
 /** Body of an agent text event, or "" when it is not a plain agent text. */

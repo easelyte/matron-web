@@ -133,14 +133,14 @@ async function applyEventToConversation(
             conversation.parent_convo_id = incomingParent;
         }
         // agent_kind rides convo_meta so a live-created codex/claude row is
-        // marked immediately (loop #619). Mutable last-write-wins (a
+        // marked immediately. Mutable last-write-wins (a
         // claude<->codex switch re-emits it); an omitted/blank value leaves
         // the recorded kind untouched.
         if (typeof event.payload.agent_kind === "string" && event.payload.agent_kind) {
             conversation.agent_kind = event.payload.agent_kind;
         }
         // The pinned digest rides convo_meta so the summary surface refreshes live
-        // instead of only at /snapshot (loop #554). The always-both-keys guarantee holds
+        // instead of only at /snapshot. The always-both-keys guarantee holds
         // only for bridge-originated convo_upsert frames — server-authored convo_meta
         // variants (a membership change, a spawn room) carry just what changed — so the
         // presence guards are load-bearing, not defensive padding.
@@ -384,7 +384,7 @@ export class JournalDatabase {
             if (!validConversationIds.has(message.convoId)) outbox.delete(message.localId);
         }
         // `row`, not `summary`: rows themselves now carry a `summary` field (the pinned
-        // digest, loop #554), and `summary.summary` would read as a typo.
+        // digest), and `summary.summary` would read as a typo.
         for (const row of snapshot.conversations) {
             let incomingParent = coerceParentId(row.parent_convo_id);
             if (incomingParent === row.id) incomingParent = null;

@@ -9,7 +9,7 @@
 | T1 done | narration + 11 steps (4 reads over 3 files, 2 searches, git log, 1 edit +18 −6, tests pass, tsc exit 2 → tsc exit 0) + 3-paragraph answer with a file link |
 | T2 running | 6 steps done; live line script `Reading journal-rpc.js…` → `Searching for default_model…` → `Running the tests…` (elapsed from 30s) |
 | T3 waiting | 2 steps, then a permission request `Allow: push the fix branch?` blocks the turn; later a question card |
-| T4 done | 3 steps; break-throughs: image, PDF, tracker item #302 |
+| T4 done | 3 steps; break-throughs: image, PDF, tracker item |
 | T5 error | tests fail, `Asked a helper: triage failing tests`, helper-started row, then `The session couldn’t resume. Send a message to start fresh.` |
 | T6 | plain Q&A, no steps, no card |
 | T210 | 140 reads over 96 files, 30 searches, 12 edits, 8 test runs (2 failures), 6 tsc (1 failure), 6 other commands, 6 git, 2 helpers, 3 narrations |

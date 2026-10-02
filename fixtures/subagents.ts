@@ -127,11 +127,11 @@ const cmd = (convo: string, sec: number, command: string, exit_code: number | nu
 const edit = (convo: string, sec: number, path: string, added: number, removed: number): JournalEvent =>
     at(convo, sec, "agent:claude", "diff", {
         tool: "Edit",
-        file_path: `/root/.openclaw/workspace/${path}`,
+        file_path: `/home/user/workspace/${path}`,
         display_path: path,
         added,
         removed,
-        diff: "@@ -1,3 +1,3 @@\n-WORKSPACE = '/root/.openclaw/workspace'\n+WORKSPACE = paths.workspace_root()\n",
+        diff: "@@ -1,3 +1,3 @@\n-WORKSPACE = '/home/user/workspace'\n+WORKSPACE = paths.workspace_root()\n",
         from: "assistant",
     });
 
@@ -143,24 +143,24 @@ const S_CODEX = "p1:codex:review";
 
 function parentEvents(): JournalEvent[] {
     return [
-        op(PARENT, 0, "premise-check #791 and have codex review the retention diff"),
+        op(PARENT, 0, "premise-check the workspace-root task and have codex review the retention diff"),
         say(PARENT, 2, "I'll hand the premise check to a helper and ask Codex for the review."),
-        at(PARENT, 5, "agent:claude", "text", { body: "🔀 Subtask: Premise-check loop #791", from: "assistant" }),
+        at(PARENT, 5, "agent:claude", "text", { body: "🔀 Subtask: Premise-check the workspace-root task", from: "assistant" }),
         cmd(PARENT, 300, "codex exec --json 'review the retention diff on feat/785'", 1, "codex exited 1"),
         say(
             PARENT,
             420,
-            "The premise holds, so #791 is ready to build. Codex found two type errors in the retention diff; I'll fix them in the next wave.",
+            "The premise holds, so the task is ready to build. Codex found two type errors in the retention diff; I'll fix them in the next wave.",
         ),
-        op(PARENT, 1000, "go: run wave 2 for #785"),
+        op(PARENT, 1000, "go: run wave 2 for the cleanup"),
         say(PARENT, 1003, "Starting wave 2 with two helpers."),
-        cmd(PARENT, 1006, "git -C /tmp/wt-785 status --short", 0, " M anton/core/paths.py"),
+        cmd(PARENT, 1006, "git -C /tmp/wt-cleanup status --short", 0, " M app/core/paths.py"),
         at(PARENT, 1010, "agent:claude", "text", {
-            body: "🔀 Subtask: Wave 2: #785 units + docs + script",
+            body: "🔀 Subtask: Wave 2: cleanup units + docs + script",
             from: "assistant",
         }),
         at(PARENT, 1012, "agent:claude", "text", {
-            body: "🔀 Subtask: Wave 2: #785 test leaks + retention",
+            body: "🔀 Subtask: Wave 2: cleanup test leaks + retention",
             from: "assistant",
         }),
     ];
@@ -170,22 +170,22 @@ function unitsEvents(): JournalEvent[] {
     return [
         say(S_UNITS, 1011, "I'll start with the paths module."),
         at(S_UNITS, 1014, "agent:claude", "text", {
-            body: "🔧 `sed -n 1,60p anton/core/paths.py | grep -n WORKSPACE`",
+            body: "🔧 `sed -n 1,60p app/core/paths.py | grep -n WORKSPACE`",
             from: "assistant",
         }),
         at(S_UNITS, 1016, "agent:claude", "text", {
-            body: "📖 /root/.openclaw/workspace/anton/core/paths.py",
+            body: "📖 /home/user/workspace/app/core/paths.py",
             from: "assistant",
         }),
         at(S_UNITS, 1018, "agent:claude", "text", { body: "🔍 WORKSPACE_ROOT", from: "assistant" }),
-        edit(S_UNITS, 1030, "anton/core/paths.py", 6, 2),
+        edit(S_UNITS, 1030, "app/core/paths.py", 6, 2),
         edit(S_UNITS, 1034, "docs/filesystem-layout.md", 4, 1),
         at(S_UNITS, 1040, "agent:claude", "text", {
             body: "🔧 `python3 -m pytest tests/test_paths.py -q`",
             from: "assistant",
         }),
         at(S_UNITS, 1052, "agent:claude", "text", {
-            body: "🔧 `sed -n 1,60p anton/core/paths.py | grep -n PATHS`",
+            body: "🔧 `sed -n 1,60p app/core/paths.py | grep -n PATHS`",
             from: "assistant",
         }),
     ];
@@ -204,28 +204,28 @@ function leaksEvents(): JournalEvent[] {
 
 function premiseEvents(): JournalEvent[] {
     return [
-        say(S_PREMISE, 6, "Checking #791 against the current code."),
+        say(S_PREMISE, 6, "Checking the task against the current code."),
         at(S_PREMISE, 8, "agent:claude", "text", {
-            body: "📖 /root/.openclaw/workspace/anton/core/paths.py",
+            body: "📖 /home/user/workspace/app/core/paths.py",
             from: "assistant",
         }),
-        at(S_PREMISE, 12, "agent:claude", "text", { body: "🔍 /root/.openclaw/workspace", from: "assistant" }),
+        at(S_PREMISE, 12, "agent:claude", "text", { body: "🔍 /home/user/workspace", from: "assistant" }),
         at(S_PREMISE, 20, "agent:claude", "text", {
-            body: "🔧 `rg -n '/root/.openclaw/workspace' anton scripts | wc -l`",
+            body: "🔧 `rg -n '/home/user/workspace' app scripts | wc -l`",
             from: "assistant",
         }),
         at(S_PREMISE, 40, "agent:claude", "text", {
-            body: "🔧 `git log --oneline -5 -- anton/core/paths.py`",
+            body: "🔧 `git log --oneline -5 -- app/core/paths.py`",
             from: "assistant",
         }),
         at(S_PREMISE, 60, "agent:claude", "text", {
-            body: "📖 /root/.openclaw/workspace/docs/filesystem-layout.md",
+            body: "📖 /home/user/workspace/docs/filesystem-layout.md",
             from: "assistant",
         }),
         say(
             S_PREMISE,
             244,
-            "**The premise holds.** `anton/core/paths.py` still hardcodes the workspace root in 3 places, and nothing on main has touched it since the loop was filed.\n\nRecommend implementing: about 40 lines plus a test.\n\n```python\nWORKSPACE = '/root/.openclaw/workspace'\n```",
+            "**The premise holds.** `app/core/paths.py` still hardcodes the workspace root in 3 places, and nothing on main has touched it since the task was filed.\n\nRecommend implementing: about 40 lines plus a test.\n\n```python\nWORKSPACE = '/home/user/workspace'\n```",
         ),
     ];
 }
@@ -250,7 +250,7 @@ function codexEvents(): JournalEvent[] {
     ];
 }
 
-const SNIPPET_UNITS = "🔧 `sed -n 1,60p anton/core/paths.py | grep -n PATHS`";
+const SNIPPET_UNITS = "🔧 `sed -n 1,60p app/core/paths.py | grep -n PATHS`";
 const SNIPPET_LEAKS = "🔧 `cat docs/filesystem-layout.md /root/.claude/CLAUDE.md`";
 
 export interface SubagentFixture {
@@ -285,11 +285,11 @@ export function subagentFixture(scenario: SubagentScenario): SubagentFixture {
         },
         {
             id: PARENT,
-            title: "[96] son-of-anton · Workspace cleanup",
+            title: "[96] sample-app · Workspace cleanup",
             session_state: "running",
             last_seq: parent.at(-1)!.seq,
             unread_count: 40,
-            snippet: "The first wave is finished. #779 and #783 shipped and the loop store is updated.",
+            snippet: "The first wave is finished. two tasks shipped and the tracker is updated.",
             created_at: BASE - 3_600_000,
             last_ts: lastTs(parent),
             read_up_to_seq: 0,
@@ -297,7 +297,7 @@ export function subagentFixture(scenario: SubagentScenario): SubagentFixture {
         },
         {
             id: S_UNITS,
-            title: "Wave 2: #785 units + docs + script",
+            title: "Wave 2: cleanup units + docs + script",
             session_state: "running",
             last_seq: childEvents[S_UNITS].at(-1)!.seq,
             unread_count: 7,
@@ -310,7 +310,7 @@ export function subagentFixture(scenario: SubagentScenario): SubagentFixture {
         },
         {
             id: S_LEAKS,
-            title: "Wave 2: #785 test leaks + retention",
+            title: "Wave 2: cleanup test leaks + retention",
             session_state: "running",
             last_seq: childEvents[S_LEAKS].at(-1)!.seq,
             unread_count: 2,
@@ -323,13 +323,13 @@ export function subagentFixture(scenario: SubagentScenario): SubagentFixture {
         },
         {
             id: S_PREMISE,
-            title: "Premise-check loop #791",
+            title: "Premise-check the workspace-root task",
             session_state: "done",
             session_outcome: "completed",
             last_seq: childEvents[S_PREMISE].at(-1)!.seq,
             unread_count: 0,
             snippet:
-                "**The premise holds.** `anton/core/paths.py` still hardcodes the workspace root in 3 places, and nothing on main has…",
+                "**The premise holds.** `app/core/paths.py` still hardcodes the workspace root in 3 places, and nothing on main has…",
             created_at: BASE + 6_000,
             last_ts: lastTs(childEvents[S_PREMISE]),
             parent_convo_id: PARENT,

@@ -5,7 +5,7 @@
 > no-CSS-in-JS rule, sanctioned literals, do-not-touch geometry. But the *type scale, spacing,
 > colour roles, states, motion and breakpoints* are now derived from the runnable design artifact
 > and its parsed tokens — `docs/design/redesign-v4/design-tokens.json` / `.css` — under the
-> artifact-first process (`son-of-anton/docs/design-handoff-playbook.md`). Probe the artifact for
+> artifact-first process (an internal design-handoff playbook). Probe the artifact for
 > exact values; don't transcribe them here. The warm-neutral ladder + teal accent
 > (`#0d9488`/`#2dd4bf`) landed via v2 and are unchanged. (`docs/design/primitives-v2.md` was the v2
 > working doc — now superseded; see its header.) New interactive surfaces compose the
