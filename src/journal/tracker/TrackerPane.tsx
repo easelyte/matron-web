@@ -26,6 +26,7 @@ import { MemoriesList } from "./MemoriesList";
 import { MemoryDetail } from "./MemoryDetail";
 import { MissionDetail } from "./MissionDetail";
 import { MissionsList } from "./MissionsList";
+import { WorkView } from "./WorkView";
 import { ProjectPage } from "./ProjectPage";
 import { ProjectsDashboard } from "./ProjectsDashboard";
 
@@ -43,11 +44,22 @@ export function TrackerPane({
     const selectedProjectId = state.trackerView?.selectedProjectId;
     const briefingOpen = state.trackerView?.briefingOpen === true;
 
-    // Opening the pane primes both list views so the sidebar badges + either tab are ready.
+    // Prime the two tracker list views, but NOT while Work is the active tab.
+    // Work is served by a different endpoint and shares none of this state, yet
+    // priming would fetch /missions and walk the paginated /items inbox (up to
+    // 20 pages) on its behalf -- and any failure of those lands in the shared
+    // `trackerError`, which renders as an error banner ABOVE a perfectly
+    // healthy Work view. Work would look degraded because a dependency it never
+    // uses failed. The inbox/missions tabs still prime both, so their badges
+    // stay warm exactly as before; switching to one of them from Work primes on
+    // arrival.
     useEffect(() => {
+        // Memories is isolated the same way: it has its own list and error, and a missions/inbox
+        // failure must not raise the shared banner over a healthy Memories view.
+        if (view === "work" || view === "memories") return;
         void client.loadMissions();
         void client.loadInbox();
-    }, [client]);
+    }, [client, view]);
 
     useEffect(() => {
         if (selectedItemId != null) void client.loadItem(selectedItemId);
@@ -83,8 +95,15 @@ export function TrackerPane({
 
     // The view switch (and the detail back buttons) clear any open detail selection; null clears a
     // selected id explicitly, in one view update.
-    const switchView = (next: "missions" | "inbox" | "memories"): void =>
-        client.openTrackerView({ view: next, itemId: null, missionId: null, memoryName: null, projectId: null });
+    const switchView = (next: "missions" | "inbox" | "work" | "memories"): void =>
+        client.openTrackerView({
+            view: next,
+            itemId: null,
+            missionId: null,
+            loopId: null,
+            memoryName: null,
+            projectId: null,
+        });
     // A mission or item opened from a project returns to that project; otherwise to its list. The
     // project id is unchanged, so the selection effect will not reload it: reload here, or a mission
     // just closed or an item just answered would still show as open on the project page.
@@ -195,6 +214,19 @@ export function TrackerPane({
                     client={client}
                     onOpenItem={(num) => client.openTrackerItem(num)}
                     onBack={backFromMission}
+                />
+            );
+        }
+        if (view === "work") {
+            // One element at one position for both the list and a loop detail, so the Work view
+            // stays mounted across the switch and keeps its filters, grouping and loaded data.
+            return (
+                <WorkView
+                    api={client}
+                    selectedLoopId={state.trackerView?.selectedLoopId}
+                    onOpenLoop={(id) => client.openTrackerLoop(id)}
+                    onCloseLoop={() => client.openTrackerLoop(null)}
+                    onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
                 />
             );
         }
@@ -339,6 +371,17 @@ export function TrackerPane({
                 </>
             );
         }
+        // A failed refresh keeps the loaded list (loaders never clear data on failure). Its own error
+        // survives other tracker loads that clear the shared banner, so say the list may be out of
+        // date and offer a retry; otherwise an empty list would read as a current "Nothing needs you".
+        const staleNotice = list.error ? (
+            <div className="mj_TrackerStaleNotice" role="status">
+                Couldn't refresh {list.noun}, so {view === "inbox" ? "it" : "they"} may be out of date.{" "}
+                <button type="button" className="mj_TrackerTextButton" onClick={() => void list.reload()}>
+                    Try again
+                </button>
+            </div>
+        ) : null;
         if (view === "missions") {
             return projectsMode ? (
                 <>
@@ -373,22 +416,9 @@ export function TrackerPane({
             );
         }
         if (view === "memories") {
-            // A refresh that failed after a load keeps the list (loaders never clear data on
-            // failure) but says it may be out of date and offers a retry, as the item detail does.
             return (
                 <>
-                    {state.memoriesError ? (
-                        <div className="mj_TrackerStaleNotice" role="status">
-                            Couldn't refresh memories, so they may be out of date.{" "}
-                            <button
-                                type="button"
-                                className="mj_TrackerTextButton"
-                                onClick={() => void client.loadMemories()}
-                            >
-                                Try again
-                            </button>
-                        </div>
-                    ) : null}
+                    {staleNotice}
                     <MemoriesList
                         memories={state.memories ?? []}
                         onOpenMemory={(name) => client.openTrackerMemory(name)}
@@ -398,11 +428,14 @@ export function TrackerPane({
             );
         }
         return (
-            <ItemsInbox
-                items={state.inboxItems ?? []}
-                client={client}
-                onOpenItem={(num) => client.openTrackerItem(num)}
-            />
+            <>
+                {staleNotice}
+                <ItemsInbox
+                    items={state.inboxItems ?? []}
+                    client={client}
+                    onOpenItem={(num) => client.openTrackerItem(num)}
+                />
+            </>
         );
     })();
 
@@ -418,12 +451,12 @@ export function TrackerPane({
                     <CloseIcon />
                 </button>
                 <h1 className="mj_TrackerPane_title">Tracker</h1>
-                <div className="mj_TrackerViewSwitch" role="tablist" aria-label="Tracker view">
+                <div className="mj_Seg mj_TrackerViewSwitch" role="tablist" aria-label="Tracker view">
                     <button
                         type="button"
                         role="tab"
                         aria-selected={view === "missions"}
-                        className={`mj_TrackerViewSwitch_tab${view === "missions" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
+                        className={`mj_Seg_item mj_TrackerViewSwitch_tab${view === "missions" ? " mj_Seg_item_on mj_TrackerViewSwitch_tab_active" : ""}`}
                         onClick={() => switchView("missions")}
                     >
                         {state.projectsUnsupported ? "Missions" : "Projects"}
@@ -432,7 +465,7 @@ export function TrackerPane({
                         type="button"
                         role="tab"
                         aria-selected={view === "inbox"}
-                        className={`mj_TrackerViewSwitch_tab${view === "inbox" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
+                        className={`mj_Seg_item mj_TrackerViewSwitch_tab${view === "inbox" ? " mj_Seg_item_on mj_TrackerViewSwitch_tab_active" : ""}`}
                         onClick={() => switchView("inbox")}
                     >
                         For you
@@ -441,16 +474,35 @@ export function TrackerPane({
                         type="button"
                         role="tab"
                         aria-selected={view === "memories"}
-                        className={`mj_TrackerViewSwitch_tab${view === "memories" ? " mj_TrackerViewSwitch_tab_active" : ""}`}
+                        className={`mj_Seg_item mj_TrackerViewSwitch_tab${view === "memories" ? " mj_Seg_item_on mj_TrackerViewSwitch_tab_active" : ""}`}
                         onClick={() => switchView("memories")}
                     >
                         Memories
                     </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={view === "work"}
+                        className={`mj_Seg_item mj_TrackerViewSwitch_tab${view === "work" ? " mj_Seg_item_on mj_TrackerViewSwitch_tab_active" : ""}`}
+                        onClick={() => switchView("work")}
+                    >
+                        Work
+                    </button>
                 </div>
-                {state.trackerLoading ? <span className="mj_TrackerPane_spinner" aria-label="Loading" /> : null}
+                {state.trackerLoading && view !== "work" ? (
+                    // Same isolation as the error banner below, and for the same
+                    // reason: `trackerLoading` belongs to missions/inbox, which
+                    // Work never reads. Gating one without the other would leave a
+                    // healthy Work view showing an unrelated tab's spinner
+                    // indefinitely if that request hangs.
+                    <span className="mj_TrackerPane_spinner" aria-label="Loading" />
+                ) : null}
             </div>
 
-            {state.trackerError ? (
+            {state.trackerError && view !== "work" ? (
+                // `trackerError` belongs to missions/inbox. Work surfaces its own
+                // failures inline (fail-loud, never a blank list), so showing this
+                // banner over it would attribute an unrelated tab's failure to Work.
                 <div className="mj_TrackerErrorBanner" role="alert">
                     {state.trackerError}
                 </div>

@@ -1,0 +1,11 @@
+[Unit]
+Description=Repair the Matron web current release pointer
+Before=nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/matron/web-journal/scripts/recover-current.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

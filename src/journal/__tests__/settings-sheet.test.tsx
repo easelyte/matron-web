@@ -96,6 +96,7 @@ describe("Settings sheet (Mac grouped form)", () => {
         expect([...dialog.querySelectorAll(".mj_SettingsSheet_groupTitle")].map((el) => el.textContent)).toEqual([
             "Account",
             "Appearance",
+            "Developer",
             "New chats",
         ]);
         expect(dialog.querySelector('button[data-action="sign-out"]')?.textContent).toBe("Sign out");
@@ -518,7 +519,7 @@ describe("Settings sheet: Boxes defaults", () => {
             [...document.querySelectorAll(".mj_SettingsSheet .mj_SettingsSheet_groupTitle")].map(
                 (el) => el.textContent,
             ),
-        ).toEqual(["Account", "Appearance", "New chats", "Boxes"]);
+        ).toEqual(["Account", "Appearance", "Developer", "New chats", "Boxes"]);
         expect(box(10).querySelector(".mj_SettingsSheet_boxName")?.textContent).toBe("elm");
         expect(optionValues(10, "agent")).toEqual(["", "claude", "codex"]);
         expect([...field(10, "agent").options].map((option) => option.textContent)).toEqual([

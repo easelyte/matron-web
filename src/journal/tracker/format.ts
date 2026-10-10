@@ -9,6 +9,7 @@ Please see LICENSE files in the repository root for full details.
 // Status text ALWAYS derives from the structured item/comment fields (never a raw comment body),
 // so a privacy-elided body never leaks and the labels stay consistent across surfaces.
 
+import { humanizeMtime } from "../files/format";
 import type {
     Mission,
     TrackerComment,
@@ -43,6 +44,36 @@ export function isFromViewedConvo(
     viewedConvoId: string | null | undefined,
 ): boolean {
     return !!viewedConvoId && item.origin_convo_id === viewedConvoId;
+}
+
+/** The reserved label that marks an item as "handle elsewhere" — the explicit, actionable routing
+ * state. Set/cleared via the item's labels; distinct from the informational "this came
+ *  from another session" state so an operator can say "route this to its home" without collapsing
+ *  the two. */
+export const ROUTE_ELSEWHERE_LABEL = "route-elsewhere";
+
+export function isRouteElsewhere(item: Pick<TrackerItem, "labels">): boolean {
+    return item.labels.includes(ROUTE_ELSEWHERE_LABEL);
+}
+
+/** An item's relationship to the session currently viewing it: `here` (same origin as
+ *  the viewer — no badge), `other` (a different session — informational "from «title»"), or
+ *  `elsewhere` (the explicit route-elsewhere label — actionable). */
+export type ItemProvenance =
+    { kind: "here" } | { kind: "other"; title: string | null } | { kind: "elsewhere"; title: string | null };
+
+// The route-elsewhere label is ACTIONABLE and wins over the origin comparison: an item flagged
+// "handle elsewhere" reads that way even when viewed from its own origin. Otherwise same origin as
+// the viewer is "here"; a different (or unknown) viewer is "other". An unknown viewer therefore
+// degrades to labelling everything "other" — the pre-#213 all-scope behaviour, never a wrong "here".
+export function itemProvenance(
+    item: Pick<TrackerItem, "labels" | "origin_convo_id" | "origin_convo_title">,
+    currentConvoId: string | null | undefined,
+): ItemProvenance {
+    const title = itemOriginTitle(item);
+    if (isRouteElsewhere(item)) return { kind: "elsewhere", title };
+    if (isFromViewedConvo(item, currentConvoId)) return { kind: "here" };
+    return { kind: "other", title };
 }
 
 /** Human label for a resolution (title case). */
@@ -154,38 +185,16 @@ export function milestoneKindLabel(kind: TrackerMilestoneKind): string {
 }
 
 /**
- * Relative age for a timestamp ("just now", "5m ago", "3d ago", then a short date). Epoch ms;
- * `now` injectable for tests. Null/0/non-finite → "".
+ * Relative age for a timestamp ("just now", "5m ago", "3d ago", then a short date). Thin wrapper
+ * over the Files pane's `humanizeMtime` (the repo's existing relative-time helper) so the tracker
+ * and Files read time the same way. Epoch ms; `now` injectable for tests. Null/0 → "".
  */
 export function formatRelativeTime(ms: number | null | undefined, now: number = Date.now()): string {
-    if (ms == null || !Number.isFinite(ms) || ms <= 0) return "";
-    const deltaSec = Math.max(0, Math.round((now - ms) / 1000));
-    if (deltaSec < 45) return "just now";
-    const min = Math.round(deltaSec / 60);
-    if (min < 60) return `${min}m ago`;
-    const hr = Math.round(min / 60);
-    if (hr < 24) return `${hr}h ago`;
-    const day = Math.round(hr / 24);
-    if (day < 7) return `${day}d ago`;
-    return new Date(ms).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    if (ms == null) return "";
+    return humanizeMtime(ms, now);
 }
 
 /** Collapse newlines to spaces for a single-line row preview. */
 export function oneLine(text: string): string {
     return text.replace(/\s*\n+\s*/g, " ").trim();
-}
-
-const SIZE_UNITS = ["B", "KB", "MB", "GB", "TB"];
-
-/** Human-readable byte size. 0 → "0 B"; keeps one decimal above KB (e.g. "1.4 MB"). */
-export function humanizeSize(bytes: number): string {
-    if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-    let value = bytes;
-    let unit = 0;
-    while (value >= 1024 && unit < SIZE_UNITS.length - 1) {
-        value /= 1024;
-        unit += 1;
-    }
-    const rounded = unit === 0 ? Math.round(value) : Math.round(value * 10) / 10;
-    return `${rounded} ${SIZE_UNITS[unit]}`;
 }

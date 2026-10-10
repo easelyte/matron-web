@@ -35,6 +35,7 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 
 import { copyText } from "./clipboard";
+import { filesDeepLinkHash, handleFilesLinkClick } from "./files-link";
 import type { MatronLinkKind, TrackerLinkHandler } from "./types";
 
 export const MARKDOWN_MAX = 200_000;
@@ -505,6 +506,16 @@ function componentsFor(source: string, onTrackerLink?: TrackerLinkHandler): Comp
                             onTrackerLink(tracker.kind, tracker.target);
                         }}
                     >
+                        {children}
+                    </a>
+                );
+            }
+            // A Files deep link into this app opens the Files pane in the current window (plain
+            // click); modified/middle clicks keep the browser default, so no target="_blank".
+            const filesHash = filesDeepLinkHash(href);
+            if (filesHash) {
+                return (
+                    <a {...props} href={href} onClick={(clickEvent) => handleFilesLinkClick(clickEvent, filesHash)}>
                         {children}
                     </a>
                 );

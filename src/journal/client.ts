@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import { parseSessionOptions, type SessionOptions } from "./new-session";
 import {
     JournalApi,
     JournalApiError,
@@ -14,8 +15,13 @@ import {
     parseUserDefaults,
 } from "./api";
 import { JournalConnection } from "./connection";
+import { FilesApi } from "./files/filesApi";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { JournalDatabase } from "./database";
+import { buildEditFileParams, classifyEditFileReply, type EditFileInput, type EditFileOutcome } from "./edit-file";
+import { buildReadFileParams, classifyReadFileReply, type ReadFileInput, type ReadFileOutcome } from "./read-file";
+import { helperContextStatus, mergeSessionStatus } from "./status";
+import { sectionStateFromReply, type JournalMetrics, type OpsSection, type OpsSectionState } from "./ops/model";
 import {
     DEFAULT_PIN_LIMIT,
     markPinImportDone,
@@ -29,12 +35,11 @@ import {
     readCachedPins,
     writeCachedPins,
 } from "./pins";
-import { mergeSessionStatus } from "./status";
 import {
     asNumber,
     buildSidebarIndex,
-    childSidebarPlacement,
     type BoxStatus,
+    type JournalBoxStatusFrame,
     type BriefingLatest,
     type BriefingRefresh,
     type BriefingState,
@@ -46,7 +51,7 @@ import {
     type DefaultsState,
     type ConvoPin,
     type DeviceDTO,
-    type JournalBoxStatusFrame,
+    type HostVitals,
     isSubChat,
     type MatronLinkKind,
     type JournalEphemeralFrame,
@@ -60,6 +65,7 @@ import {
     type SearchHit,
     type ServerFrame,
     type Session,
+    type SessionStatus,
     type SnapshotResponse,
     type TrackerAttachment,
     type JournalControlFrame,
@@ -75,11 +81,15 @@ import {
     type ToolStreamState,
     utf8Length,
 } from "./types";
+import type { WorkViewEnvelope, WorkViewGroupBy } from "./work-view";
 
 const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
 const SELECTED_CONVERSATION_KEY_PREFIX = "matron_journal_selected_conversation_v1";
 const HISTORY_PAGE_SIZE = 80;
+// A subagent card's one-off tail fetch: the server's page cap, and how long a card waits for it.
+const CONVERSATION_TAIL_SIZE = 200;
+const CONVERSATION_TAIL_TIMEOUT_MS = 15_000;
 // Message-content search hits per query (server caps at 50; 20 keeps the Messages section tight).
 const MESSAGE_SEARCH_LIMIT = 20;
 // Max query length the server accepts (over this it returns 400); guard client-side so an
@@ -122,7 +132,23 @@ function sanitizeSearchHits(response: { hits?: unknown } | null | undefined): Se
     }
     return hits;
 }
-const RPC_CREATE_WATCHDOG_MS = 10_000;
+// The bridge publishes the new convo's first frame (convo_upsert -> convo_meta) at create time,
+// before the CLI emits anything, so a healthy create clears this within milliseconds. It only
+// fires when that frame sits in the bridge publisher's queue across a reconnect, whose backoff
+// caps at 30s (journal-publisher DEFAULT_BACKOFF_CAP_MS). 10s flagged ordinary blips under load.
+export const RPC_CREATE_WATCHDOG_MS = 30_000;
+// Shown (as a dismissible status) when the watchdog fires; cleared again by the first frame for
+// the created convo, so it never outlives the delay it describes.
+export const RPC_CREATE_STALLED_NOTICE =
+    "New session is still starting — it will appear once it syncs. Refresh if it doesn't.";
+// reconnect-loop guard. A malformed-seq LIVE frame triggers a full resync; a single one
+// recovers cleanly (a fresh snapshot never contains it), so the healthy case never approaches
+// this bound. But a server that repeatedly pushes malformed frames would re-poison each clean
+// cursor immediately, so more than LIMIT resyncs inside WINDOW halts auto-resync and surfaces an
+// error instead of looping. The counter resets on the next well-formed frame (server recovered).
+const MALFORMED_SEQ_RESYNC_LIMIT = 3;
+const MALFORMED_SEQ_RESYNC_WINDOW_MS = 30_000;
+export const MALFORMED_SEQ_HALTED_ERROR = "Sync paused — the server is sending malformed updates. Reload to try again.";
 const BACKFILL_SNAPSHOT_TIMEOUT_MS = 10_000;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 const MARK_ALL_READ_ERROR = "Some conversations couldn't be updated — device storage is full or unavailable.";
@@ -155,15 +181,13 @@ export const favoriteStore: IdSetStore = makeIdSetStore(
     "favorite-conversations",
 );
 export const unreadStore: IdSetStore = makeIdSetStore("matron_journal_unread_conversations_v1", "unread-conversations");
-export const collapsedSubagentStore: IdSetStore = makeIdSetStore(
-    "matron_journal_collapsed_subagents_v1",
-    "collapsed-subagents",
-);
 
 interface ConversationHistoryState {
     initialized: boolean;
     oldestSeq?: number;
+    newestSeq?: number;
     hasMore: boolean;
+    hasMoreNewer: boolean;
 }
 
 interface ElectronBadgeBridge {
@@ -180,14 +204,26 @@ type PersistPendingAttachmentOutcome =
     { kind: "persisted-uploadable" } | { kind: "persisted-terminal" } | { kind: "persist-failed" };
 
 export type StartOutcome =
-    { kind: "created"; convoId: string } | { kind: "error"; message: string } | { kind: "uncertain" };
+    | { kind: "created"; convoId: string }
+    /** `code` is the agent's error code when it gave one (e.g. `bad_workdir`); `reach` = the box
+        couldn't be reached at all. */
+    | { kind: "error"; message: string; code?: string; reach?: boolean }
+    | { kind: "uncertain" };
 
 export type WorkerKind = "claude" | "codex";
 
 export function workerKind(conversation: Conversation): WorkerKind | null {
-    if (!isSubChat(conversation)) return null;
-    if (/:codex:[^:]+$/.test(conversation.id)) return "codex";
-    if (/:sub:[^:]+$/.test(conversation.id)) return "claude";
+    // Sub-chats resolve their kind from the convo-id infix: children go through
+    // a separate mint path and carry no agent_kind field.
+    if (isSubChat(conversation)) {
+        if (/:codex:[^:]+$/.test(conversation.id)) return "codex";
+        if (/:sub:[^:]+$/.test(conversation.id)) return "claude";
+        return null;
+    }
+    // Top-level rows use the server-recorded agent_kind — their ids
+    // are bare UUIDs with no infix. An absent/unknown value renders no marker.
+    if (conversation.agent_kind === "codex") return "codex";
+    if (conversation.agent_kind === "claude") return "claude";
     return null;
 }
 
@@ -218,6 +254,8 @@ function blankState(): ClientState {
         connectionErrorSeq: 0,
         loadingHistory: false,
         hasOlderHistory: false,
+        pendingScrollSeq: undefined,
+        viewingHistoryWindow: false,
         textStreams: {},
         toolStreams: {},
         boxStatuses: {},
@@ -278,8 +316,9 @@ function firstSelectableConversation(
 ): Conversation | undefined {
     // auto-selection uses the SAME canonical predicate as rendering — a child that
     // is not a top-level sidebar row (hidden done child, or a nested child) must never be
-    // silently auto-selected on reload; skip to the next selectable top-level row. The collapsed
-    // set matches render/mark-all/badge, so a collapsed (hidden) child is never auto-selected.
+    // silently auto-selected on reload; skip to the next selectable top-level row.
+    // same collapsed set as render/mark-all/badge, so a collapsed (hidden) child is
+    // never auto-selected either.
     const index = buildSidebarIndex(conversations, archivedIds, collapsedParentIds);
     const selectable = (conversation: Conversation): boolean =>
         !archivedIds.has(conversation.id) && rendersAsTopLevelRow(conversation, index);
@@ -333,13 +372,24 @@ export class MatronJournalClient {
     private database?: JournalDatabase;
     private connection?: JournalConnection;
     private readonly history = new Map<string, ConversationHistoryState>();
+    // refreshConversationTail(): one request per conversation per session (settled or in flight).
+    private readonly conversationTailFetches = new Map<string, Promise<boolean>>();
     private readonly activities = new Map<string, JournalEphemeralFrame["activity"]>();
     private readonly statuses = new Map<string, NonNullable<JournalEphemeralFrame["status"]>>();
+    // Host-global vitals: ONE value for the whole app, keyed to no conversation. Set from
+    // the host-scoped ephemeral push (~5s) and threaded into every UsageCluster via
+    // ClientState.hostVitals to OVERRIDE the host_cpu / host_ram meters buildUsageMeters
+    // synthesizes from the turn-end `status.vitals`. Null until the first push (or on a server
+    // that never sends it) → the status.vitals figures stand.
+    private hostVitals: HostVitals | null = null;
     private readonly textStreams = new Map<string, Record<string, string>>();
     private readonly toolStreams = new Map<string, Record<string, ToolStreamState>>();
     private readonly retiredStreamRefs = new Set<string>();
     private readonly mediaUrls = new Map<string, string>();
     private readonly mediaUrlRequests = new Map<string, Promise<string>>();
+    // Files pane (Phase 1b): one FilesApi bound to the current session, built lazily on first use
+    // and torn down (blob URLs revoked) on sign-out. Mirrors the mediaUrls ownership model.
+    private filesApiInstance?: FilesApi;
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
@@ -352,10 +402,13 @@ export class MatronJournalClient {
     private readonly uploadConvos = new Map<string, string>();
     private readonly issuedRefreshEpochs = new Map<string, number>();
     private readonly appliedRefreshEpochs = new Map<string, number>();
-    // Monotonic guards so only the latest tracker request writes its result — an earlier slow
-    // response (out-of-order load, or a superseded selection) can never clobber a newer one.
-    // Bumped on every load* call; the resolved response checks it before patching (F1/F2
-    // stale-response guards).
+    // Every explicit conversation selection supersedes all earlier selection work, including a
+    // deep link to another sequence in the same conversation (where an id-only guard is insufficient).
+    private selectionEpoch = 0;
+    // Monotonic guards so only the latest tracker detail request writes its result — an earlier slow
+    // response (out-of-order load, or a superseded selection) can never clobber a newer one. Mirrors
+    // searchSeq. Bumped on every loadItem/loadMission call; the resolved response checks it before
+    // patching (F1 stale-response guard).
     private trackerItemGen = 0;
     private trackerMissionGen = 0;
     private trackerInboxGen = 0;
@@ -425,14 +478,29 @@ export class MatronJournalClient {
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
+    // timestamps (ms) of recent malformed-seq-triggered resyncs, for the reconnect-loop
+    // guard in handleMalformedJournalFrame. Pruned to MALFORMED_SEQ_RESYNC_WINDOW_MS on each hit —
+    // the sliding window IS the "clean period" reset, so a burst inside the window trips the guard
+    // while a genuinely transient blip ages out on its own. Deliberately NOT reset on a single good
+    // frame: that would let a server alternating good/malformed frames resync unbounded.
+    private malformedSeqResyncs: number[] = [];
+    // once the reconnect-loop guard trips, journal processing is HALTED — the connection is
+    // stopped and every subsequent frame is ignored so no later frame can advance/ack the cursor
+    // past the unrecovered malformed row (applyJournal has no gap detection). Cleared only by a
+    // fresh session (resetTransientSyncState on logout / snapshot transition, or a reload).
+    private journalHalted = false;
     private historyError?: string;
     private startSessionRequest?: Promise<StartOutcome>;
     private rpcCreateWatchdog?: number;
     private rpcCreateWatchdogConvo?: string;
     private rpcCreateWatchdogGen?: number;
+    // Convo whose watchdog fired and put RPC_CREATE_STALLED_NOTICE up; a later frame for it lifts it.
+    private rpcCreateStalledConvo?: string;
     private storageListener?: (event: StorageEvent) => void;
-    private storeHydrated = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
-    private storeWritable = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
+    /** Guards the one-time `hashchange` binding for the Files deep link (see initialise). */
+    private deepLinkListenerBound = false;
+    private storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
+    private storeWritable = { archive: true, pinned: true, favorite: true, unread: true };
     // The one-time carry-over of browser-local pins to the journal: one run at a time, retried
     // after a failure (the localStorage flag makes a finished import once per server+user).
     private pinImportStarted = false;
@@ -485,6 +553,14 @@ export class MatronJournalClient {
         }
         this.patch({ config });
 
+        // Re-apply the Files deep link on every hash change so a bridge link clicked into an
+        // already-open app deep-links with no reload. Bound once, before sign-in, so a link that
+        // arrives while the session is still restoring is honoured on the next hashchange.
+        if (!this.deepLinkListenerBound && typeof window !== "undefined") {
+            this.deepLinkListenerBound = true;
+            window.addEventListener("hashchange", () => this.applyDeepLinks());
+        }
+
         const session = storedSession();
         if (!session) {
             this.patch({ phase: "signed-out" });
@@ -493,6 +569,9 @@ export class MatronJournalClient {
 
         try {
             await this.startSession(session);
+            // Signed in: honour a `#files=<abs>` fragment present at load (the common flow — the
+            // operator followed a bridge link into a fresh tab with a stored session).
+            this.applyDeepLinks();
         } catch (error) {
             localStorage.removeItem(SESSION_KEY);
             this.patch({
@@ -521,6 +600,10 @@ export class MatronJournalClient {
         localStorage.setItem(SESSION_KEY, JSON.stringify(session));
         localStorage.setItem(LAST_SERVER_KEY, serverUrl);
         await this.startSession(session);
+        // A deep link followed WITHOUT a stored session lands here (interactive login), not in
+        // initialise's stored-session branch, and no hashchange fires — apply it now so the linked
+        // file opens instead of being stranded behind the conversation view.
+        this.applyDeepLinks();
     }
 
     public async logout(message?: string): Promise<void> {
@@ -559,6 +642,8 @@ export class MatronJournalClient {
         this.boxDefaultsErrorAt = 0;
         for (const url of this.mediaUrls.values()) URL.revokeObjectURL(url);
         this.mediaUrls.clear();
+        this.filesApiInstance?.dispose();
+        this.filesApiInstance = undefined;
         // The archived-conversations key is deliberately left in place: it is a per-device
         // preference that re-login should restore. Clearing it here would also go unnoticed
         // by this tab, since storage events only fire in other tabs.
@@ -586,30 +671,6 @@ export class MatronJournalClient {
             );
     }
 
-    // Seed each box's stored report from the roster, but never regress a row a live
-    // `box_status` frame has already moved past (protocol.md: latest report wins).
-    private rememberBoxStatuses(devices: DeviceDTO[]): void {
-        let next: Record<number, BoxStatus> | undefined;
-        for (const device of devices) {
-            if (!device.status) continue;
-            const current = this.state.boxStatuses[device.device_id];
-            if (current && current.reported_at > device.status.reported_at) continue;
-            next ??= { ...this.state.boxStatuses };
-            next[device.device_id] = device.status;
-        }
-        if (next) this.patch({ boxStatuses: next });
-    }
-
-    // A live report replaces the stored row for that box wholesale — the blocks the frame
-    // omits are gone, not kept (only `box_status` itself carries the full picture).
-    private handleBoxStatus(frame: JournalBoxStatusFrame): void {
-        const deviceId: unknown = frame.device_id;
-        if (typeof deviceId !== "number" || !Number.isFinite(deviceId)) return;
-        const status = parseBoxStatus(frame);
-        if (!status) return;
-        this.patch({ boxStatuses: { ...this.state.boxStatuses, [deviceId]: status } });
-    }
-
     public async recentFolders(agentDeviceId: number): Promise<RecentFolder[]> {
         const reply = await this.agentRpc(agentDeviceId, "recent_folders", {});
         if (!reply.ok || typeof reply.result !== "object" || reply.result === null || Array.isArray(reply.result)) {
@@ -632,12 +693,53 @@ export class MatronJournalClient {
         });
     }
 
-    public startSessionRpc(agentDeviceId: number, workdir: string, browser: boolean): Promise<StartOutcome> {
+    /**
+     * Apply a guarded, atomic edit to an existing file on the agent's box via
+     * the bridge `edit_file` RPC. Thin wrapper: build the exact wire
+     * params -> agentRpc -> classify the reply into a UI-ready outcome. All the
+     * param-shape + error-code mapping (the CAS + path-safety surface) lives in
+     * the pure, unit-tested ./edit-file module.
+     */
+    public async editFile(agentDeviceId: number, input: EditFileInput): Promise<EditFileOutcome> {
+        const reply = await this.agentRpc(agentDeviceId, "edit_file", buildEditFileParams(input));
+        return classifyEditFileReply(reply);
+    }
+
+    /**
+     * Read an existing file on the agent's box via the bridge `read_file` RPC
+     * Thin wrapper mirroring editFile: build the wire
+     * params -> agentRpc -> classify into a UI-ready outcome. Its whole point is
+     * to make edit_file's expected_sha256 CAS usable — the editor reads to get
+     * the current content + sha, then edits WITH that sha as the precondition.
+     * All the shape + error-code mapping lives in the pure ./read-file module.
+     */
+    public async readFile(agentDeviceId: number, input: ReadFileInput): Promise<ReadFileOutcome> {
+        const reply = await this.agentRpc(agentDeviceId, "read_file", buildReadFileParams(input));
+        return classifyReadFileReply(reply);
+    }
+
+    /**
+     * What a box offers for a new session (v6 options sheet): recent folders plus the model and
+     * agent options and defaults the bridge's `recent_folders` reply carries. Throws when the box
+     * can't answer, so the caller can show its own error.
+     */
+    public async sessionOptions(agentDeviceId: number): Promise<SessionOptions> {
+        const reply = await this.agentRpc(agentDeviceId, "recent_folders", {});
+        if (!reply.ok) throw new Error(reply.code ?? "unavailable");
+        return parseSessionOptions(reply.result);
+    }
+
+    public startSessionRpc(
+        agentDeviceId: number,
+        workdir: string,
+        browser: boolean,
+        choice: { model?: string; agent?: "claude" | "codex"; idempotencyKey?: string } = {},
+    ): Promise<StartOutcome> {
         if (this.startSessionRequest) {
             return Promise.resolve({ kind: "error", message: "A session is already starting — please wait." });
         }
 
-        const request = this.performStartSessionRpc(agentDeviceId, workdir, browser);
+        const request = this.performStartSessionRpc(agentDeviceId, workdir, browser, choice);
         this.startSessionRequest = request;
         const clear = (): void => {
             if (this.startSessionRequest === request) this.startSessionRequest = undefined;
@@ -650,11 +752,23 @@ export class MatronJournalClient {
         agentDeviceId: number,
         workdir: string,
         browser: boolean,
+        choice: { model?: string; agent?: "claude" | "codex"; idempotencyKey?: string } = {},
     ): Promise<StartOutcome> {
-        const params: { workdir?: string; browser?: true } = {};
+        const params: {
+            workdir?: string;
+            browser?: true;
+            model?: string;
+            agent?: string;
+            idempotency_key?: string;
+        } = {};
         const normalizedWorkdir = workdir.trim();
         if (normalizedWorkdir) params.workdir = normalizedWorkdir;
         if (browser) params.browser = true;
+        if (choice.model) params.model = choice.model;
+        if (choice.agent) params.agent = choice.agent;
+        // One key per operator intent: a retry after an uncertain start re-answers the same
+        // conversation instead of spawning a second one (bridge start dedup).
+        if (choice.idempotencyKey) params.idempotency_key = choice.idempotencyKey;
 
         const reply = await this.agentRpc(agentDeviceId, "start", params);
         if (reply.ok) {
@@ -669,6 +783,7 @@ export class MatronJournalClient {
         if (reply.origin === "relay") {
             return {
                 kind: "error",
+                reach: true,
                 message:
                     reply.code === "not_connected" || reply.code === "not_ready"
                         ? "Still connecting — try again in a moment."
@@ -676,7 +791,15 @@ export class MatronJournalClient {
             };
         }
         if (reply.origin === "agent" && reply.code === "bad_workdir") {
-            return { kind: "error", message: "That folder doesn't exist on the box." };
+            return { kind: "error", code: "bad_workdir", message: "That folder doesn’t exist on the box." };
+        }
+        if (reply.origin === "agent" && (reply.code === "bad_model" || reply.code === "bad_agent")) {
+            return {
+                kind: "error",
+                code: reply.code,
+                message:
+                    reply.code === "bad_model" ? "The box can’t run that model." : "The box can’t start that agent.",
+            };
         }
         return { kind: "uncertain" };
     }
@@ -736,11 +859,175 @@ export class MatronJournalClient {
         }
     }
 
+    /**
+     * The stored events of a conversation that is NOT (necessarily) selected — a subagent card
+     * reads its child's steps here. Every live frame lands in IndexedDB whatever is selected, so
+     * this is local and immediate; refreshConversationTail() tops it up from the server.
+     */
+    public async conversationEvents(conversationId: string): Promise<JournalEvent[]> {
+        const database = this.database;
+        if (!database) return [];
+        return database.events(conversationId);
+    }
+
+    /**
+     * Pull a conversation's newest page from the server into the local store, once per session,
+     * for a child whose history predates this tab. Concurrent callers share one request; it is
+     * bounded by CONVERSATION_TAIL_TIMEOUT_MS so a stalled request never holds a card. Resolves
+     * true when new history was stored (callers then re-read conversationEvents), false when
+     * nothing changed or the request failed (a later call retries a failure).
+     */
+    public refreshConversationTail(conversationId: string): Promise<boolean> {
+        const inflight = this.conversationTailFetches.get(conversationId);
+        if (inflight) return inflight;
+        const database = this.database;
+        const api = this.api;
+        if (!database || !api) return Promise.resolve(false);
+        // The catch below compares against this to forget only its own request.
+        const slot: { request?: Promise<boolean> } = {};
+        const request = (async (): Promise<boolean> => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try {
+                const response = await Promise.race([
+                    api.messages(conversationId, undefined, CONVERSATION_TAIL_SIZE),
+                    new Promise<never>((_resolve, reject) => {
+                        timer = setTimeout(
+                            () => reject(new Error("conversation tail timed out")),
+                            CONVERSATION_TAIL_TIMEOUT_MS,
+                        );
+                    }),
+                ]);
+                if (this.database !== database) return false;
+                await database.putHistory(response.events);
+                return response.events.length > 0;
+            } catch {
+                // Let a later mount retry; the stored events still render meanwhile. Only forget
+                // THIS request: a reset may have cleared the map and a newer one taken the slot.
+                if (this.conversationTailFetches.get(conversationId) === slot.request) {
+                    this.conversationTailFetches.delete(conversationId);
+                }
+                return false;
+            } finally {
+                if (timer !== undefined) clearTimeout(timer);
+            }
+        })();
+        slot.request = request;
+        this.conversationTailFetches.set(conversationId, request);
+        return request;
+    }
+
     public async selectConversation(
         conversationId: string,
         opts?: { clearUnread?: boolean; fromRpcCreate?: boolean; suppressNotFound?: boolean },
     ): Promise<void> {
-        if (!this.database || !this.state.session) return;
+        const selectionEpoch = ++this.selectionEpoch;
+        const existingHistory = this.history.get(conversationId);
+        const returningFromHistoryWindow = existingHistory?.hasMoreNewer === true;
+        if (returningFromHistoryWindow) {
+            this.history.set(conversationId, {
+                initialized: false,
+                oldestSeq: undefined,
+                newestSeq: undefined,
+                hasMore: true,
+                hasMoreNewer: false,
+            });
+        }
+        if (!this.beginConversationSelection(conversationId, opts, false)) return;
+        if (!returningFromHistoryWindow) {
+            await this.refreshSelectedConversation(conversationId, this.database, this.sessionGen, selectionEpoch);
+            if (!this.isCurrentSelection(conversationId, selectionEpoch)) return;
+        }
+        if (!this.isCurrentSelection(conversationId, selectionEpoch)) return;
+        this.announceConversationViewing(conversationId);
+
+        if (!this.history.get(conversationId)?.initialized) {
+            await this.loadOlderHistory({
+                suppressNotFound: opts?.fromRpcCreate || opts?.suppressNotFound,
+            });
+        }
+    }
+
+    public async selectConversationAtSeq(conversationId: string, seq: number): Promise<void> {
+        const selectionEpoch = ++this.selectionEpoch;
+        const database = this.database;
+        const api = this.api;
+        const gen = this.sessionGen;
+        if (!database || !api || !this.state.session) return;
+        const ownsSelection = (): boolean =>
+            this.isCurrentSelection(conversationId, selectionEpoch) &&
+            this.sessionGen === gen &&
+            this.database === database &&
+            this.api === api;
+
+        this.history.set(conversationId, {
+            initialized: true,
+            oldestSeq: undefined,
+            newestSeq: undefined,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+        // A historical window does not prove that the unread tail was seen. Preserve both the
+        // local unread override and the durable read position until Jump to latest.
+        if (!this.beginConversationSelection(conversationId, { clearUnread: false }, true)) return;
+
+        try {
+            const response = await api.messages(conversationId, undefined, HISTORY_PAGE_SIZE, seq);
+            if (!ownsSelection()) return;
+            await database.putHistory(response.events);
+            if (!ownsSelection()) return;
+            await this.reconcilePersistedOwnMessages(database);
+            if (!ownsSelection()) return;
+            const oldestSeq = response.events.reduce<number | undefined>(
+                (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
+                undefined,
+            );
+            const newestSeq = response.events.reduce<number | undefined>(
+                (current, event) => (current === undefined ? event.seq : Math.max(current, event.seq)),
+                undefined,
+            );
+            this.history.set(conversationId, {
+                initialized: true,
+                oldestSeq,
+                newestSeq,
+                hasMore: response.events.length === HISTORY_PAGE_SIZE && oldestSeq !== undefined && oldestSeq > 1,
+                hasMoreNewer: true,
+            });
+            if (!ownsSelection()) return;
+            this.patch({
+                viewingHistoryWindow: true,
+                hasOlderHistory: this.history.get(conversationId)?.hasMore ?? false,
+            });
+            await this.refreshSelectedConversation(conversationId, database, gen, selectionEpoch);
+            if (!ownsSelection()) return;
+            // Publish the target only after the matching rows are in state, so the view cannot
+            // consume it during the intermediate empty-timeline render.
+            this.patch({ pendingScrollSeq: seq });
+            this.clearHistoryError();
+        } catch {
+            if (!ownsSelection()) return;
+            await this.selectConversation(conversationId);
+            if (this.state.selectedConversationId !== conversationId || this.state.viewingHistoryWindow) return;
+            this.historyError = "Couldn't jump to that message";
+            this.patch({ connectionError: this.historyError });
+        }
+    }
+
+    public async jumpToLatest(): Promise<void> {
+        const conversationId = this.state.selectedConversationId;
+        if (!conversationId) return;
+        await this.selectConversation(conversationId);
+    }
+
+    public clearPendingScrollSeq(seq: number): void {
+        if (this.state.pendingScrollSeq === seq) this.patch({ pendingScrollSeq: undefined });
+    }
+
+    private beginConversationSelection(
+        conversationId: string,
+        opts: { clearUnread?: boolean; fromRpcCreate?: boolean } | undefined,
+        viewingHistoryWindow: boolean,
+    ): boolean {
+        if (!this.database || !this.state.session) return false;
         // fromRpcCreate is for a room created milliseconds ago by this client's own RPC: it arms
         // the sync watchdog (frames must follow shortly) AND tolerates a young room's 404 on
         // history. suppressNotFound wants only the latter — opening a spawn-created room long
@@ -758,35 +1045,73 @@ export class MatronJournalClient {
         }
         this.patch({
             selectedConversationId: conversationId,
-            // Selecting a conversation closes the Tracker pane so the chosen room becomes visible
-            // (trackerView is a main-region discriminant checked ahead of selectedConversationId).
+            // Selecting a conversation closes the Files pane and the Tracker pane so the chosen
+            // room becomes visible (both are main-region discriminants checked ahead of
+            // selectedConversationId; the tracker also takes precedence over Files).
+            filesView: undefined,
             trackerView: undefined,
+            opsView: undefined,
             ...(this.state.trackerView ? { trackerItem: null, trackerMission: null, trackerProject: null } : {}),
             events: [],
             pendingMessages: [],
             loadingHistory: false,
             hasOlderHistory: this.history.get(conversationId)?.hasMore ?? true,
-            activity: this.activities.get(conversationId),
-            sessionStatus: this.statuses.get(conversationId),
-            textStreams: { ...(this.textStreams.get(conversationId) ?? {}) },
-            toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
+            pendingScrollSeq: undefined,
+            viewingHistoryWindow,
+            activity: viewingHistoryWindow ? undefined : this.activities.get(conversationId),
+            sessionStatus: this.statusFor(conversationId),
+            textStreams: viewingHistoryWindow ? {} : { ...(this.textStreams.get(conversationId) ?? {}) },
+            toolStreams: viewingHistoryWindow ? {} : { ...(this.toolStreams.get(conversationId) ?? {}) },
         });
-        await this.refreshSelectedConversation(conversationId);
-        if (this.state.selectedConversationId !== conversationId) return;
+        return true;
+    }
+
+    private isCurrentSelection(conversationId: string, selectionEpoch: number): boolean {
+        return this.selectionEpoch === selectionEpoch && this.state.selectedConversationId === conversationId;
+    }
+
+    private isViewingHistoricalWindow(conversationId: string): boolean {
+        return this.history.get(conversationId)?.hasMoreNewer === true;
+    }
+
+    private announceConversationViewing(conversationId: string): void {
         this.connection?.send({ op: "viewing", convo_id: conversationId });
 
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
         if (conversation?.unread_count) this.scheduleRead(conversationId, conversation.last_seq, 0);
+    }
 
-        if (!this.history.get(conversationId)?.initialized) {
-            await this.loadOlderHistory({ suppressNotFound: opts?.fromRpcCreate || opts?.suppressNotFound });
-        }
+    /**
+     * complete the historical→live transition when forward-paging (loadNewerHistory) reaches
+     * the true tail. beginConversationSelection suppresses these for a historical window; now that
+     * the reader has caught up they must run — but without re-selecting (which would reset the
+     * window and lose the forward-paged rows). Mirrors the live-entry effects of selectConversation:
+     * resubscribe via `viewing` (the deep-link path never sent it, and it drives the server's
+     * ephemeral replay per the subchats design), clear the unread override now that the tail is
+     * seen, schedule the read marker, and repopulate the activity/stream caches that were blanked
+     * while viewing history.
+     */
+    private resumeLiveFromHistoryWindow(conversationId: string): void {
+        this.clearUnreadOverride(conversationId);
+        this.patch({
+            activity: this.activities.get(conversationId),
+            sessionStatus: this.statusFor(conversationId),
+            textStreams: { ...(this.textStreams.get(conversationId) ?? {}) },
+            toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
+        });
+        this.announceConversationViewing(conversationId);
     }
 
     public clearSelection(): void {
         this.connection?.send({ op: "viewing", convo_id: null });
         if (this.state.session) storeSelectedConversation(this.state.session, undefined);
-        this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [] });
+        this.patch({
+            selectedConversationId: undefined,
+            events: [],
+            pendingMessages: [],
+            pendingScrollSeq: undefined,
+            viewingHistoryWindow: false,
+        });
     }
 
     public archiveConversation(conversationId: string): void {
@@ -950,43 +1275,16 @@ export class MatronJournalClient {
     }
 
     /**
-     * Toggle whether a parent conversation's subagent child rows are collapsed in the sidebar.
-     * Persisted per session/user like the other row flags; the collapsed set is threaded into
-     * every buildSidebarIndex call, so collapsing suppresses the child rows across render,
-     * selection, unread aggregation, the desktop badge, and mark-all in lock-step.
+     * toggle whether a parent conversation's subagent child rows are collapsed in the
+     * sidebar. Session-local (no store persistence) — the collapsed set is threaded into every
+     * buildSidebarIndex call, so collapsing suppresses the child rows across render, selection,
+     * unread aggregation, the desktop badge, and mark-all in lock-step.
      */
     public toggleSubagentCollapse(parentId: string): void {
-        const collapse = !this.state.collapsedSubagentParentIds.has(parentId);
-        const applied = this.setFlag(collapsedSubagentStore, "collapsedSubagentParentIds", parentId, collapse);
-        // Collapsing suppresses the parent's child rows. If the reading pane is pointed at one of
-        // those now-hidden children, leaving selection there lets the next snapshot resync reject it
-        // and swap the pane to an unrelated top-level convo. Fold selection UP to the (still-visible)
-        // host parent — matching the collapse mental model (cf. archive's deselect precedent).
-        if (applied && collapse) this.foldSelectionUnderCollapsedParent();
-    }
-
-    /**
-     * After a subagent parent is collapsed (locally or cross-tab), a RUNNING child that was the
-     * reading-pane selection just became a hidden row. Fold selection up to that child's host
-     * parent so the resync can't yank the pane elsewhere. No-op unless the current selection is a
-     * running child that the canonical index now resolves to "hidden" under a visible parent, so a
-     * done child (hidden for an unrelated reason) is never dragged into its parent.
-     */
-    private foldSelectionUnderCollapsedParent(): void {
-        const selectedId = this.state.selectedConversationId;
-        if (!selectedId) return;
-        const selected = this.state.conversations.find((conversation) => conversation.id === selectedId);
-        if (!selected || selected.session_state !== "running") return;
-        const parentId = selected.parent_convo_id;
-        if (parentId == null || parentId === "") return;
-        const index = buildSidebarIndex(
-            this.state.conversations,
-            this.state.archivedIds,
-            this.state.collapsedSubagentParentIds,
-        );
-        if (childSidebarPlacement(selected, index) !== "hidden") return;
-        const parent = this.state.conversations.find((conversation) => conversation.id === parentId);
-        if (parent && rendersAsTopLevelRow(parent, index)) void this.selectConversation(parentId);
+        const next = new Set(this.state.collapsedSubagentParentIds);
+        if (next.has(parentId)) next.delete(parentId);
+        else next.add(parentId);
+        this.patch({ collapsedSubagentParentIds: next });
     }
 
     public markConversationRead(conversationId: string): boolean {
@@ -1027,21 +1325,41 @@ export class MatronJournalClient {
     public async loadOlderHistory(opts?: { suppressNotFound?: boolean }): Promise<void> {
         const conversationId = this.state.selectedConversationId;
         if (!conversationId || !this.database || !this.api || this.state.loadingHistory) return;
-        const history = this.history.get(conversationId) ?? { initialized: false, hasMore: true };
+        const database = this.database;
+        const api = this.api;
+        const gen = this.sessionGen;
+        const selectionEpoch = this.selectionEpoch;
+        const ownsLoad = (): boolean =>
+            this.sessionGen === gen &&
+            this.database === database &&
+            this.api === api &&
+            this.isCurrentSelection(conversationId, selectionEpoch);
+        const history = this.history.get(conversationId) ?? {
+            initialized: false,
+            hasMore: true,
+            hasMoreNewer: false,
+        };
         if (history.initialized && !history.hasMore) return;
 
         this.patch({ loadingHistory: true });
         try {
-            const response = await this.api.messages(
+            const response = await api.messages(
                 conversationId,
                 history.initialized ? history.oldestSeq : undefined,
                 HISTORY_PAGE_SIZE,
             );
-            await this.database.putHistory(response.events);
-            await this.reconcilePersistedOwnMessages(this.database);
+            if (!ownsLoad()) return;
+            await database.putHistory(response.events);
+            if (!ownsLoad()) return;
+            await this.reconcilePersistedOwnMessages(database);
+            if (!ownsLoad()) return;
             const minimum = response.events.reduce<number | undefined>(
                 (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
                 history.oldestSeq,
+            );
+            const maximum = response.events.reduce<number | undefined>(
+                (current, event) => (current === undefined ? event.seq : Math.max(current, event.seq)),
+                history.newestSeq,
             );
             const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
             const emptyInitialPageWithKnownHistory =
@@ -1049,29 +1367,147 @@ export class MatronJournalClient {
             this.history.set(conversationId, {
                 initialized: !emptyInitialPageWithKnownHistory,
                 oldestSeq: minimum,
+                newestSeq: maximum,
                 hasMore: emptyInitialPageWithKnownHistory || response.events.length === HISTORY_PAGE_SIZE,
+                hasMoreNewer: history.hasMoreNewer,
             });
-            if (this.state.selectedConversationId === conversationId)
-                await this.refreshSelectedConversation(conversationId);
+            if (this.state.selectedConversationId === conversationId) {
+                await this.refreshSelectedConversation(conversationId, database, gen, selectionEpoch);
+                if (!ownsLoad()) return;
+            }
             this.clearHistoryError();
         } catch (error) {
+            if (!ownsLoad()) return;
             if (
                 opts?.suppressNotFound &&
                 error instanceof JournalApiError &&
                 error.status === 404 &&
                 error.code === "not_found"
             ) {
-                this.history.set(conversationId, { initialized: true, hasMore: false });
+                this.history.set(conversationId, {
+                    initialized: true,
+                    hasMore: false,
+                    hasMoreNewer: false,
+                });
                 this.clearHistoryError();
                 return;
             }
             this.historyError = error instanceof Error ? error.message : "Could not load message history";
             this.patch({ connectionError: this.historyError });
         } finally {
-            if (this.state.selectedConversationId === conversationId) {
+            if (ownsLoad()) {
                 this.patch({
                     loadingHistory: false,
                     hasOlderHistory: this.history.get(conversationId)?.hasMore ?? false,
+                    viewingHistoryWindow: this.history.get(conversationId)?.hasMoreNewer ?? false,
+                });
+            }
+        }
+    }
+
+    /**
+     * forward-page a deep-link historical window toward the live tail. The mirror of
+     * loadOlderHistory — where that extends the window's oldest edge downward, this extends the
+     * newest edge upward so scrolling DOWN loads NEWER messages instead of forcing "Jump to
+     * latest" (which discards reading position). The server has no after_seq, so the forward
+     * half is obtained via around_seq = newestSeq + 1: messagesAround returns floor(limit/2)
+     * rows before the anchor (already held — deduped by putHistory) and the remainder from the
+     * anchor up, i.e. the events with seq >= newestSeq + 1. Only meaningful while a historical
+     * window is open (hasMoreNewer); once a forward page brings nothing past the newest edge the
+     * window collapses (hasMoreNewer = false) and the normal live-append path (handleEvent)
+     * resumes. Tail detection is response-derived (no-forward-progress), never from cached
+     * summary state, so it can neither strand unfetched rows nor wedge. Reuses loadOlderHistory's
+     * selection-epoch / session / database ownership guard so a response that lost the selection
+     * never mutates it.
+     */
+    public async loadNewerHistory(): Promise<void> {
+        const conversationId = this.state.selectedConversationId;
+        if (!conversationId || !this.database || !this.api || this.state.loadingHistory) return;
+        const history = this.history.get(conversationId);
+        // Forward-paging only applies inside an open historical window with a known newest edge.
+        if (!history || !history.hasMoreNewer || history.newestSeq === undefined) return;
+        const anchorNewestSeq = history.newestSeq;
+        const database = this.database;
+        const api = this.api;
+        const gen = this.sessionGen;
+        const selectionEpoch = this.selectionEpoch;
+        const ownsLoad = (): boolean =>
+            this.sessionGen === gen &&
+            this.database === database &&
+            this.api === api &&
+            this.isCurrentSelection(conversationId, selectionEpoch);
+
+        this.patch({ loadingHistory: true });
+        try {
+            const response = await api.messages(conversationId, undefined, HISTORY_PAGE_SIZE, anchorNewestSeq + 1);
+            if (!ownsLoad()) return;
+            await database.putHistory(response.events);
+            if (!ownsLoad()) return;
+            await this.reconcilePersistedOwnMessages(database);
+            if (!ownsLoad()) return;
+            const minimum = response.events.reduce<number | undefined>(
+                (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
+                history.oldestSeq,
+            );
+            const maximum = response.events.reduce<number | undefined>(
+                (current, event) => (current === undefined ? event.seq : Math.max(current, event.seq)),
+                history.newestSeq,
+            );
+            // Tail detection is derived purely from the response, never from independently-cached
+            // metadata: the window collapses only once a forward page brings nothing past the
+            // newest edge (no event with seq > anchor). Using the sidebar's last_seq as terminal
+            // proof would be a canonical-source violation — a stale-low summary could prematurely
+            // flip to "live" and strand server rows the window never fetched, while a stale-high
+            // one could wedge it. No-forward-progress costs at most one extra overlap-only request
+            // at the true tail and can neither hide nor skip rows.
+            const reachedTail = maximum === undefined || maximum <= anchorNewestSeq;
+            // On collapse the upper bound must cover any live frame that raced in and was persisted
+            // (with a higher seq) while the window was open — handleJournal suppresses the newestSeq
+            // bump during a historical window, so a stale response maximum would filter that frame
+            // out of the "live" timeline. Take the max with the canonical last_seq (the DB's newest
+            // applied seq); max() also means a stale-LOW last_seq can never pull the bound below the
+            // fetched edge. While still paging the bound stays at the fetched maximum.
+            const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
+            const liveNewestSeq =
+                reachedTail && maximum !== undefined ? Math.max(maximum, conversation?.last_seq ?? maximum) : maximum;
+            this.history.set(conversationId, {
+                initialized: true,
+                oldestSeq: minimum,
+                newestSeq: liveNewestSeq,
+                hasMore: history.hasMore,
+                hasMoreNewer: !reachedTail,
+            });
+            if (this.state.selectedConversationId === conversationId) {
+                // Check-act ordering: the abort-capable refresh must land BEFORE any irreversible
+                // live-entry side effect. If db.events()/outbox() rejects, roll the window back so
+                // the reader is not stranded on stale rows with pagination gone — and, crucially,
+                // without having cleared unread or flushed a durable read marker for messages the
+                // refreshed timeline never actually showed.
+                try {
+                    await this.refreshSelectedConversation(conversationId, database, gen, selectionEpoch);
+                } catch (refreshError) {
+                    this.history.set(conversationId, history);
+                    throw refreshError;
+                }
+                if (!ownsLoad()) return;
+                // Only now that the timeline is refreshed: reaching the tail is a full historical→
+                // live transition, not just a flag flip — run the same live-entry side effects
+                // selectConversation performs (subscribe via `viewing`, clear unread, schedule the
+                // read marker, repopulate ephemerals) WITHOUT resetting the window (which would
+                // discard the forward-paged rows and the reading position).
+                if (reachedTail) this.resumeLiveFromHistoryWindow(conversationId);
+            }
+            this.clearHistoryError();
+        } catch (error) {
+            if (!ownsLoad()) return;
+            this.historyError = error instanceof Error ? error.message : "Could not load newer messages";
+            this.patch({ connectionError: this.historyError });
+        } finally {
+            if (ownsLoad()) {
+                this.patch({
+                    loadingHistory: false,
+                    hasOlderHistory: this.history.get(conversationId)?.hasMore ?? false,
+                    viewingHistoryWindow: this.history.get(conversationId)?.hasMoreNewer ?? false,
                 });
             }
         }
@@ -1081,6 +1517,8 @@ export class MatronJournalClient {
         const body = bodyInput.trim();
         const conversationId = targetConvoId ?? this.state.selectedConversationId;
         if (!body || !conversationId || !this.database) return false;
+        if (this.state.selectedConversationId === conversationId && this.isViewingHistoricalWindow(conversationId))
+            return false;
         if (this.isChildConvo(conversationId)) return false;
         const db = this.database;
         const gen = this.sessionGen;
@@ -1176,7 +1614,8 @@ export class MatronJournalClient {
             } catch {
                 if (
                     this.ownsAttachment(owner, message.localId) &&
-                    this.state.selectedConversationId === message.convoId
+                    this.state.selectedConversationId === message.convoId &&
+                    !this.isViewingHistoricalWindow(message.convoId)
                 ) {
                     const pendingMessages = this.state.pendingMessages.filter(
                         (pending) => pending.localId !== message.localId,
@@ -1203,6 +1642,7 @@ export class MatronJournalClient {
         const api = this.api;
         const db = this.database;
         if (!api || !db) return "skipped";
+        if (this.state.selectedConversationId === convoId && this.isViewingHistoricalWindow(convoId)) return "skipped";
         if (this.isChildConvo(convoId)) return "skipped";
         const owner = { gen, api, db };
         const message = this.buildPendingAttachment(file, convoId, caption);
@@ -1390,7 +1830,7 @@ export class MatronJournalClient {
         // and the send are atomic w.r.t. in-memory state. The convo may have transitioned to a read-only
         // child during the awaits above (concurrent convo_meta / snapshot refresh) after the entry check
         // at line 701. Defense-in-depth last line; authoritative read-only enforcement is server-side
-        // (three-layer model, a documented server follow-up).
+        // — a documented server follow-up). (ship-review B1)
         if (this.isChildConvo(message.convoId)) {
             this.markChildBlocked(message);
             if (!(await this.persistAttachment(message, owner.db, owner.gen))) return;
@@ -1449,6 +1889,7 @@ export class MatronJournalClient {
         }
         const convoId = this.state.selectedConversationId;
         if (!convoId) return;
+        if (this.isViewingHistoricalWindow(convoId)) return;
         if (this.isChildConvo(convoId)) return;
         this.patch({
             stagedUploads: {
@@ -1581,9 +2022,10 @@ export class MatronJournalClient {
     }
 
     public sendPromptReply(targetSeq: number, choice?: string, text?: string): boolean {
-        if (this.isChildConvo(this.state.selectedConversationId ?? "")) return false;
         const conversationId = this.state.selectedConversationId;
         if (!conversationId) return false;
+        if (this.state.viewingHistoryWindow || this.isViewingHistoricalWindow(conversationId)) return false;
+        if (this.isChildConvo(conversationId)) return false;
         const sent =
             this.connection?.send({
                 op: "prompt_reply",
@@ -1603,6 +2045,10 @@ export class MatronJournalClient {
         decision: "approve" | "deny",
         signal?: AbortSignal,
     ): Promise<void> {
+        const conversationId = this.state.selectedConversationId;
+        if (conversationId && (this.state.viewingHistoryWindow || this.isViewingHistoricalWindow(conversationId))) {
+            throw new Error("Jump to latest to answer this request.");
+        }
         if (!this.api) throw new Error("Not signed in.");
         await this.api.answerAgentSpawn(requestId, decision, signal);
     }
@@ -1643,25 +2089,135 @@ export class MatronJournalClient {
         return this.state.conversations.find((conversation) => conversation.id === this.state.selectedConversationId);
     }
 
-    // ── Tracker pane (Missions / Milestones / Decisions-Inbox) ──────────────────────
-    // The tracker shares the main region with the conversation view — one surface at a
-    // time. `trackerView` is the discriminant; the list/detail data is store-resident
-    // (loaded lazily by the load* helpers below, invalidated over WS).
+    // ── Files pane (Phase 1b) ───────────────────────────────────────────────────────────────
+    // The session-scoped file API, built lazily. Returns undefined when signed out. The fixture
+    // harness overrides this method with a mock (mirrors how it stubs mediaUrl).
+    public filesApi(): FilesApi | undefined {
+        const session = this.state.session;
+        if (!session) return undefined;
+        this.filesApiInstance ??= new FilesApi(session.serverUrl, session.token);
+        return this.filesApiInstance;
+    }
+
+    // Open the Files pane (main-region discriminant). Preserves the selected conversation so
+    // closing returns to it. `path` seeds the browsed directory; defaults to the remembered one.
+    // `targetFile` (absolute) asks FilesPane to auto-open a preview for that file once its
+    // directory listing lands — used by the `#files=<abs>` deep link; omit for a plain open (it
+    // then clears any stale target so a later plain open doesn't re-trigger a previous deep link).
+    public openFilesView(path?: string, targetFile?: string): void {
+        // Symmetric to openTrackerView closing Files: one main-region surface at a time, so
+        // opening Files closes the tracker (the tracker takes render precedence otherwise).
+        this.closeTrackerView();
+        this.closeOpsView();
+        // Bump the invocation token whenever a target is supplied, so re-opening the SAME file (e.g.
+        // the operator clicks the same deep link again after browsing elsewhere) is a distinct
+        // invocation FilesPane will act on, not a no-op deduped by the unchanged path string.
+        const targetToken = targetFile ? (this.state.filesView?.targetToken ?? 0) + 1 : undefined;
+        this.patch({ filesView: { open: true, path: path ?? this.state.filesView?.path, targetFile, targetToken } });
+    }
+
+    public closeFilesView(): void {
+        if (!this.state.filesView) return;
+        this.patch({ filesView: undefined });
+    }
+
+    // Persist the last-browsed directory so a reopen returns there. No-op when the pane is closed.
+    // Preserves the deep-link `targetFile` so persisting the server-normalized directory does not
+    // wipe a target that FilesPane has not yet had a chance to select.
+    public setFilesPath(path: string): void {
+        if (!this.state.filesView?.open) return;
+        if (this.state.filesView.path === path) return;
+        this.patch({
+            filesView: {
+                open: true,
+                path,
+                targetFile: this.state.filesView.targetFile,
+                targetToken: this.state.filesView.targetToken,
+            },
+        });
+    }
+
+    // Hash-based deep link into the Files pane: `#files=<url-encoded-absolute-path>`. Opens the
+    // pane at the file's directory and asks FilesPane to auto-preview it, then CLEARS the hash so a
+    // refresh or back-button does not re-trigger. No token — auth is the operator's existing web
+    // session, exactly like every other Files read. Called at bootstrap (after sign-in) and on
+    // every `hashchange`, so clicking a bridge-minted link into an already-open app just works with
+    // no reload. A malformed or non-absolute payload is ignored (hash left as-is for inspection).
+    public applyFilesDeepLink(): void {
+        if (typeof window === "undefined") return;
+        const hash = window.location.hash || "";
+        const match = /^#files=(.*)$/.exec(hash);
+        if (!match) return;
+        let abs: string;
+        try {
+            abs = decodeURIComponent(match[1]);
+        } catch {
+            return; // malformed percent-encoding — leave the hash for the operator to see
+        }
+        if (!abs || !abs.startsWith("/")) return;
+        // Only meaningful once signed in (the pane renders only then); leave the hash otherwise so
+        // it can be re-applied on the next hashchange once the session is up.
+        if (this.state.phase !== "signed-in") return;
+        const slash = abs.lastIndexOf("/");
+        const dir = abs.slice(0, Math.max(1, slash));
+        this.openFilesView(dir, abs);
+        // Clear the fragment without a history entry so refresh/back does not re-fire the deep link.
+        try {
+            window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        } catch {
+            window.location.hash = "";
+        }
+    }
+
+    /** Every hash deep link the app understands. Each applier ignores a hash that is not its own. */
+    public applyDeepLinks(): void {
+        this.applyFilesDeepLink();
+        this.applyWorkDeepLink();
+    }
+
+    // Hash-based deep link into the tracker's Work tab: `#work` opens the list, `#work=<loop id>`
+    // opens that loop's detail. Same lifecycle as `#files=`: applied after sign-in and on every
+    // hashchange, left in place while signed out so it is honoured once the session is up, and
+    // cleared once applied so a refresh or back-button does not re-fire it.
+    public applyWorkDeepLink(): void {
+        if (typeof window === "undefined") return;
+        const match = /^#work(?:=(\d+))?$/.exec(window.location.hash || "");
+        if (!match) return;
+        const loopId = match[1] === undefined ? null : Number(match[1]);
+        // A malformed id is left in place for inspection, exactly like a malformed #files= link.
+        if (loopId !== null && (!Number.isSafeInteger(loopId) || loopId < 1)) return;
+        if (this.state.phase !== "signed-in") return;
+        this.openTrackerLoop(loopId);
+        try {
+            window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        } catch {
+            window.location.hash = "";
+        }
+    }
+
+    // ── Tracker pane (Missions / Milestones / Decisions-Inbox / Work) ───────────────
+    // The tracker shares the main region with the Files pane and the conversation view —
+    // one surface at a time — so opening it closes Files (mirrors how Files closes over the
+    // conversation view). `trackerView` is the discriminant; the list/detail data is
+    // store-resident (loaded lazily by the load* helpers below, invalidated over WS).
 
     // `itemId`/`missionId`: a number selects that row; `null` explicitly CLEARS that selection
     // (mutual exclusion — see openTrackerItem/openTrackerMission); `undefined` preserves the prev
     // selection. `null ?? prev` would resolve to prev, so the clear needs the explicit === null arm.
     public openTrackerView(
         opts: {
-            view?: "missions" | "inbox" | "memories";
+            view?: "missions" | "inbox" | "work" | "memories";
             itemId?: number | null;
             missionId?: number | null;
+            loopId?: number | null;
             memoryName?: string | null;
             projectId?: number | null;
             /** true opens the latest briefing in full (Projects view); false closes it. */
             briefing?: boolean;
         } = {},
     ): void {
+        this.closeFilesView();
+        this.closeOpsView();
         const prev = this.state.trackerView;
         const view = opts.view ?? prev?.view ?? "inbox";
         // An open briefing survives only an update in the same view that touches no other
@@ -1683,11 +2239,21 @@ export class MatronJournalClient {
             view,
             selectedItemId: opts.itemId === null ? undefined : (opts.itemId ?? prev?.selectedItemId),
             selectedMissionId: opts.missionId === null ? undefined : (opts.missionId ?? prev?.selectedMissionId),
+            selectedLoopId: opts.loopId === null ? undefined : (opts.loopId ?? prev?.selectedLoopId),
             selectedMemoryName: opts.memoryName === null ? undefined : (opts.memoryName ?? prev?.selectedMemoryName),
             selectedProjectId: opts.projectId === null ? undefined : (opts.projectId ?? prev?.selectedProjectId),
             ...(briefingOpen ? { briefingOpen } : {}),
         };
+        // Omit an absent selection rather than carrying `key: undefined`, so a plain view switch
+        // leaves the state shape exactly as it was before loop selection existed.
+        if (next.selectedLoopId === undefined) delete next.selectedLoopId;
+        if (next.selectedMemoryName === undefined) delete next.selectedMemoryName;
         this.patch({ trackerView: next });
+    }
+
+    /** Open the Work tab, on a loop's detail when `loopId` is a number, else on the list. */
+    public openTrackerLoop(loopId: number | null): void {
+        this.openTrackerView({ view: "work", loopId, itemId: null, missionId: null, memoryName: null });
     }
 
     // Memories view entry points: a name opens that memory's editor, "" opens the new-memory form,
@@ -1696,7 +2262,14 @@ export class MatronJournalClient {
     public openTrackerMemory(name: string): void {
         if (this.state.trackerItem) this.patch({ trackerItem: null });
         if (this.state.trackerMission) this.patch({ trackerMission: null });
-        this.openTrackerView({ view: "memories", memoryName: name, itemId: null, missionId: null, projectId: null });
+        this.openTrackerView({
+            view: "memories",
+            memoryName: name,
+            itemId: null,
+            missionId: null,
+            loopId: null,
+            projectId: null,
+        });
     }
 
     public closeTrackerMemory(): void {
@@ -1712,6 +2285,39 @@ export class MatronJournalClient {
         this.trackerMissionGen += 1;
         this.trackerProjectGen += 1;
         this.patch({ trackerView: undefined, trackerItem: null, trackerMission: null, trackerProject: null });
+    }
+
+    // ── Ops pane ───────────────────────────────────────────────
+    // Boxes, quotas, host, alerts, timers, usage. Same one-surface-at-a-time rule as Files and the
+    // tracker. Its data is fetched by the pane on open (GET /devices, GET /metrics, and one
+    // `ops_snapshot` agent RPC per section); only live `box_status` reports land in the store.
+
+    public openOpsView(): void {
+        this.closeFilesView();
+        this.closeTrackerView();
+        if (this.state.opsView?.open) return;
+        this.patch({ opsView: { open: true } });
+    }
+
+    public closeOpsView(): void {
+        if (!this.state.opsView) return;
+        this.patch({ opsView: undefined });
+    }
+
+    /** Journal health for the Ops page; null when the server has no /metrics or it failed. */
+    public async journalMetrics(): Promise<JournalMetrics | null> {
+        if (!this.api) return null;
+        try {
+            return await this.api.metrics();
+        } catch {
+            return null;
+        }
+    }
+
+    /** One `ops_snapshot` section from a box, mapped onto the page's section state. Read-only. */
+    public async opsSnapshot<S extends OpsSection>(agentDeviceId: number, section: S): Promise<OpsSectionState<S>> {
+        const reply = await this.agentRpc(agentDeviceId, "ops_snapshot", { section });
+        return sectionStateFromReply(section, reply);
     }
 
     // Deep-link / row-tap entry points: select the row (last-tap-wins) and switch to its view.
@@ -2263,9 +2869,24 @@ export class MatronJournalClient {
         });
     }
 
-    // ── Tracker data loaders (fetch → patch, sharing the trackerLoading/trackerError pair). Each
-    // guards on the api instance so a response that races a logout / re-login can never write into a
-    // newer session's store. ──────────────────────
+    // ── Tracker data loaders (fetch → patch; the SAME trackerLoading/trackerError pair as the
+    // messageSearch precedent). Each guards on the api instance so a response that races a
+    // logout / re-login can never write into a newer session's store. ──────────────────────
+
+    /** Data seam used by the mounted Work view; the hook owns refresh cancellation and ordering. */
+    public work(groupBy: WorkViewGroupBy, signal?: AbortSignal): Promise<WorkViewEnvelope> {
+        if (!this.api) return Promise.reject(new Error("Not signed in"));
+        return this.api.work(groupBy, signal);
+    }
+
+    // Whether the pane is showing a tracker list tab (Inbox or Missions). A list load that settles
+    // after the user moved to Work or Memories must not write the shared banner there: those tabs
+    // surface their own failures, and the list keeps its own error (inboxError / missionsError)
+    // for when its tab is shown again.
+    private trackerListTabShown(): boolean {
+        const view = this.state.trackerView;
+        return !!view?.open && (view.view === "inbox" || view.view === "missions");
+    }
 
     public async loadMissions(): Promise<void> {
         const api = this.api;
@@ -2274,15 +2895,21 @@ export class MatronJournalClient {
         // open and mission markers independently restart it, so a slower earlier request must never
         // overwrite a newer one's result (else closed missions / obsolete counts reappear) (F2).
         const gen = ++this.trackerMissionsGen;
-        this.patch({ trackerLoading: true, trackerError: undefined, missionsError: undefined });
+        // Like itemLoadError, missionsError stays until a load succeeds: a retry that stalls must not
+        // take the "may be out of date" notice off a list it has not replaced yet.
+        this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             const { missions } = await api.missions();
             if (this.api !== api || this.trackerMissionsGen !== gen) return;
-            this.patch({ missions, trackerLoading: false });
+            this.patch({ missions, trackerLoading: false, missionsError: undefined });
         } catch (error) {
             if (this.api !== api || this.trackerMissionsGen !== gen) return;
             const message = errorMessage(error);
-            this.patch({ trackerError: message, missionsError: message, trackerLoading: false });
+            this.patch({
+                ...(this.trackerListTabShown() ? { trackerError: message } : {}),
+                missionsError: message,
+                trackerLoading: false,
+            });
         }
     }
 
@@ -2354,10 +2981,10 @@ export class MatronJournalClient {
     public async loadInbox(): Promise<void> {
         const api = this.api;
         if (!api) return;
-        // Request-generation guard: like loadItem, a slower earlier load must never overwrite a
-        // newer one's result. A marker (WS) can restart loadInbox while an in-flight multi-page walk
-        // is mid-pagination; without this the older walk could finish last and restore rows the newer
-        // load already dropped (e.g. items closed meanwhile) (F2).
+        // Request-generation guard: like loadItem/loadMission, a slower earlier load must never
+        // overwrite a newer one's result. A marker (WS) can restart loadInbox while an in-flight
+        // multi-page walk is mid-pagination; without this the older walk could finish last and
+        // restore rows the newer load already dropped (e.g. items closed meanwhile) (F2).
         const gen = ++this.trackerInboxGen;
         this.inboxWalking = true;
         this.patch({ trackerLoading: true, trackerError: undefined, inboxError: undefined });
@@ -2397,16 +3024,29 @@ export class MatronJournalClient {
             this.patch({
                 inboxItems: merged,
                 trackerLoading: false,
-                trackerError: truncated
-                    ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
-                    : undefined,
+                ...(this.trackerListTabShown()
+                    ? {
+                          trackerError: truncated
+                              ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
+                              : undefined,
+                      }
+                    : {}),
             });
         } catch (error) {
             if (this.api !== api || this.trackerInboxGen !== gen) return;
             this.inboxWalking = false;
             const message = errorMessage(error);
-            this.patch({ trackerError: message, inboxError: message, trackerLoading: false });
+            this.patch({
+                ...(this.trackerListTabShown() ? { trackerError: message } : {}),
+                inboxError: message,
+                trackerLoading: false,
+            });
         }
+    }
+
+    /** Operator-triggered reconnect (Settings menu / connection banner). */
+    public reconnect(): void {
+        this.connection?.reconnectNow();
     }
 
     public async loadMemories(): Promise<void> {
@@ -2415,12 +3055,15 @@ export class MatronJournalClient {
         // Same generation guard as loadInbox: a memory marker restarts this while an earlier load
         // is in flight, and the older answer must never overwrite the newer one.
         const gen = ++this.trackerMemoriesGen;
-        this.patch({ trackerLoading: true, trackerError: undefined, memoriesError: undefined });
+        // memoriesError stays until a load succeeds (as inboxError / missionsError do), so a stalled
+        // retry keeps the "may be out of date" notice over the rows it has not replaced yet.
+        this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             const { memories } = await api.memories();
             if (this.api !== api || this.trackerMemoriesGen !== gen) return;
             this.patch({
                 memories: [...memories].sort((a, b) => a.name.localeCompare(b.name)),
+                memoriesError: undefined,
                 trackerLoading: false,
             });
         } catch (error) {
@@ -2482,8 +3125,8 @@ export class MatronJournalClient {
 
     // ── Tracker mutations (fresh Idempotency-Key per call → refetch the affected row + patch).
     // On failure they surface trackerError but leave the loaded data intact (await-refetch, no
-    // optimistic outbox in v1). The inbox is refetched only when already loaded, so a mutation from
-    // a detail view keeps its badges live without forcing a cold load.
+    // optimistic outbox in v1). The inbox / missions list are refetched only when already loaded,
+    // so a mutation from a detail view keeps their badges live without forcing a cold load.
     // Each resolves `true` only on a CONFIRMED successful write and `false` on any handled failure
     // (offline/auth-expiry/timeout/5xx, or signed-out) — callers gate destructive UI resets (e.g.
     // clearing a reply draft) on that flag so a failed mutation never silently drops user input (F2).
@@ -2659,6 +3302,25 @@ export class MatronJournalClient {
         return true;
     }
 
+    /** PATCH an item's labels — the seam the route-elsewhere toggle uses. Generic on purpose (the
+     *  reserved-label constant lives in the tracker UI, not here). Returns false on failure, leaving
+     *  state untouched so the caller can keep its optimistic UI honest. */
+    public async setItemLabels(id: number | string, labels: string[]): Promise<boolean> {
+        const api = this.api;
+        if (!api) return false;
+        try {
+            await api.patchItem(id, { labels });
+        } catch (error) {
+            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
+            return false;
+        }
+        if (this.api !== api) return true;
+        if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
+        if (this.inboxTracked()) await this.loadInbox();
+        if (this.state.missions) await this.loadMissions();
+        return true;
+    }
+
     // Mission counterpart of isSelectedTrackerItem: a mission mutation refetches its detail only while
     // that mission is still selected, so a late refetch can't supersede a newer selection's load. The
     // selection is a #num while mission mutators take the mission id, so an id matches through the
@@ -2704,10 +3366,12 @@ export class MatronJournalClient {
 
     // WS invalidation for tracker markers (`item` / `mission` / `milestone` journal frames).
     // A marker is a change connected clients must reflect without re-polling; we refetch ONLY the
-    // tracker data the OPEN pane is showing. A closed pane fetches nothing: reopening it remounts the
-    // pane, which reloads the lists and the selection itself. The inbox refetch is coalesced (see
-    // scheduleInboxRefetch). The missions list refetch is coalesced the same way. `mission` is treated as pure invalidation. Item/mission numbers on the
-    // wire are the human #num; milestone markers carry `mission_num` for their parent mission.
+    // tracker data the OPEN pane is showing. A closed pane fetches nothing but the needs-you badge
+    // (the mobile nav + header badges outlive the pane); reopening it remounts the pane, which
+    // reloads the lists and the selection itself. The inbox/badge refetch is coalesced (see
+    // scheduleInboxRefetch), and the missions list refetch the same way (scheduleMissionsRefetch).
+    // `mission` is treated as pure invalidation. Item/mission numbers on the wire are the human
+    // #num; milestone markers carry `mission_num` for their parent mission.
     private handleTrackerMarker(event: JournalEvent): void {
         // The inbox feeds the For you badge on the rail, so it follows item markers even while the
         // pane is closed; everything else is refetched only for an open pane.
@@ -2751,6 +3415,9 @@ export class MatronJournalClient {
     // Coalesce marker-driven inbox refetches: the first marker arms a short timer and any marker that
     // lands before it fires rides along, so a burst costs one paginated walk. The conditions are
     // re-checked when the timer fires, since the pane may have closed (or the session ended) since.
+    // With the pane closed, the Work or Memories tab showing (neither reads these lists, and the
+    // pane re-primes them when Inbox/Missions is selected again), or the inbox not loaded yet, only the
+    // needs-you badge is refreshed, and only once it has been primed (see refreshInboxOrBadge).
     private scheduleInboxRefetch(): void {
         if (this.trackerInboxRefetchTimer !== undefined) return;
         this.trackerInboxRefetchTimer = window.setTimeout(() => {
@@ -2774,15 +3441,17 @@ export class MatronJournalClient {
             this.trackerMissionsRefetchTimer = undefined;
             const detail = this.trackerMissionRefetchPending;
             this.trackerMissionRefetchPending = false;
-            if (!this.state.trackerView?.open) return;
+            // Nothing while closed, and nothing for the Work or Memories tabs (see scheduleInboxRefetch).
+            const view = this.state.trackerView;
+            if (!view?.open || (view.view !== "inbox" && view.view !== "missions")) return;
             if (this.state.missions) void this.loadMissions();
             // Projects roll up their missions (protocol: refresh on any mission marker).
             if (this.state.projects) void this.loadProjects();
-            const selectedProject = this.state.trackerView.selectedProjectId;
+            const selectedProject = view.selectedProjectId;
             if (selectedProject != null && this.state.trackerProject?.project.num === selectedProject) {
                 void this.loadProject(selectedProject);
             }
-            const selected = this.state.trackerView.selectedMissionId;
+            const selected = view.selectedMissionId;
             if (detail && selected != null && this.state.trackerMission?.mission?.num === selected) {
                 void this.loadMission(selected);
             }
@@ -2791,9 +3460,16 @@ export class MatronJournalClient {
 
     private async startSession(session: Session): Promise<void> {
         this.sessionGen += 1;
+        // A genuinely new session (initialise / login) establishes a fresh cursor and
+        // connection, so this is the ONLY place the malformed-seq reconnect-loop budget and halt
+        // are cleared. They deliberately survive resyncs (replaceSnapshot / resetTransientSyncState)
+        // — clearing them there would wipe the budget on every resnapshot, so a server emitting one
+        // malformed frame per reconnect would never reach the halt threshold (unbounded loop).
+        this.malformedSeqResyncs = [];
+        this.journalHalted = false;
         this.pinImportStarted = false;
         this.stagedPins = null;
-        this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true, collapsed: true };
+        this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
         const writeProbeKey = `${archiveStore.storageKey(session)}:__wprobe__`;
         let storeWritable = false;
         try {
@@ -2808,7 +3484,6 @@ export class MatronJournalClient {
             pinned: storeWritable,
             favorite: storeWritable,
             unread: storeWritable,
-            collapsed: storeWritable,
         };
         for (const controller of this.inFlightUploads.values()) controller.abort();
         this.inFlightUploads.clear();
@@ -2824,7 +3499,6 @@ export class MatronJournalClient {
         this.defaultsSaving.clear();
         this.api = new JournalApi(session.serverUrl, session.token);
         this.database = await JournalDatabase.open(session.serverUrl, session.userId, session.username);
-        await this.database.expireToolLogs();
 
         let cursor = await this.database.cursor();
         const freshInstall = cursor === undefined;
@@ -2889,17 +3563,14 @@ export class MatronJournalClient {
         const pinnedRead = pinnedStore.read(session);
         const favoriteRead = favoriteStore.read(session);
         const unreadRead = unreadStore.read(session);
-        const collapsedRead = collapsedSubagentStore.read(session);
         this.storeHydrated.archive = archiveRead.ok;
         this.storeHydrated.pinned = pinnedRead.ok;
         this.storeHydrated.favorite = favoriteRead.ok;
         this.storeHydrated.unread = unreadRead.ok;
-        this.storeHydrated.collapsed = collapsedRead.ok;
         if (!archiveRead.ok) this.logStorageDiag("read_fail", "archive", false);
         if (!pinnedRead.ok) this.logStorageDiag("read_fail", "pinned", false);
         if (!favoriteRead.ok) this.logStorageDiag("read_fail", "favorite", false);
         if (!unreadRead.ok) this.logStorageDiag("read_fail", "unread", false);
-        if (!collapsedRead.ok) this.logStorageDiag("read_fail", "collapsed", false);
         const bootstrapTransitionStore = !archiveRead.ok
             ? "archive"
             : !pinnedRead.ok
@@ -2908,20 +3579,17 @@ export class MatronJournalClient {
                 ? "favorite"
                 : !unreadRead.ok
                   ? "unread"
-                  : !collapsedRead.ok
-                    ? "collapsed"
-                    : "all";
+                  : "all";
         const bootstrapReadFailed = this.storageUnavailable(bootstrapTransitionStore);
         const archivedIds = archiveRead.ids;
         const pinnedIds = pinnedRead.ids;
         const favoriteIds = favoriteRead.ids;
         const unreadOverrideIds = unreadRead.ids;
-        const collapsedSubagentParentIds = collapsedRead.ids;
         const selectedConversation = firstSelectableConversation(
             conversations,
             storedConversationId,
             archivedIds,
-            collapsedSubagentParentIds,
+            this.state.collapsedSubagentParentIds,
         );
         this.state = {
             ...blankState(),
@@ -2933,7 +3601,6 @@ export class MatronJournalClient {
             pinnedIds,
             favoriteIds,
             unreadOverrideIds,
-            collapsedSubagentParentIds,
             preferencesUnavailable: bootstrapReadFailed,
             selectedConversationId: selectedConversation?.id,
             // The last adopted journal pins, until hello_ok brings the current list — unless
@@ -2983,32 +3650,52 @@ export class MatronJournalClient {
                     ...(read.ok ? { unreadOverrideIds: read.ids } : {}),
                     preferencesUnavailable: this.storageUnavailable("unread"),
                 });
-            } else if (event.key === collapsedSubagentStore.storageKey(currentSession)) {
-                const read = collapsedSubagentStore.read(currentSession);
-                this.storeHydrated.collapsed = read.ok;
-                if (read.ok) this.storeWritable.collapsed = true;
-                if (!read.ok) this.logStorageDiag("read_fail", "collapsed", false);
-                this.patch({
-                    ...(read.ok ? { collapsedSubagentParentIds: read.ids } : {}),
-                    preferencesUnavailable: this.storageUnavailable("collapsed"),
-                });
-                // Mirror the local toggle: a cross-tab collapse can hide the selected child too.
-                if (read.ok) this.foldSelectionUnderCollapsedParent();
             }
         };
         window.addEventListener("storage", this.storageListener);
         this.emit();
         if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
 
+        // bind every callback to the generation that created this connection. A stopped
+        // connection keeps draining its processing queue, so a frame (or snapshot_required) queued
+        // before logout can run after the NEXT session started — and every handler below reads the
+        // client's CURRENT database/api, so an unbound callback would act on the new session (a
+        // stale resync would replace the new journal; a stale revoke would log the new account out).
+        const connectionGen = this.sessionGen;
+        const current = (): boolean => this.sessionGen === connectionGen;
         this.connection = new JournalConnection(session.serverUrl, session.token, {
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
-            onFrame: async (frame) => this.handleFrame(frame),
-            onReady: async (hello) => this.handleReady(hello),
-            onSnapshotRequired: async () => this.replaceSnapshot(),
-            onRevoked: () => void this.logout("This device was revoked. Sign in again to continue."),
-            onState: (connection, error) => this.patch({ connection, connectionError: error }),
+            onFrame: async (frame) => {
+                if (current()) await this.handleFrame(frame);
+            },
+            onJournalBatch: async (frames) => {
+                if (current()) await this.handleJournalBatch(frames);
+            },
+            onReady: async (hello) => {
+                if (current()) await this.handleReady(hello);
+            },
+            onSnapshotRequired: async () => {
+                if (current()) await this.replaceSnapshot();
+            },
+            onRevoked: () => {
+                if (current()) void this.logout("This device was revoked. Sign in again to continue.");
+            },
+            onState: (connection, error) => {
+                if (current()) this.patch({ connection, connectionError: error });
+            },
         });
         this.connection.start();
+        // Physically purge expired live tool logs only once the session is up: it walks every cached
+        // row, and the store holds every row this device has ever received, so awaiting it before
+        // the first paint kept a long-lived device on a blank screen for seconds. It runs in short
+        // chunked transactions (see expireToolLogs) so reads and live frames interleave with it.
+        // Reads already apply the TTL (events() / putHistory / applyJournal run
+        // enforceToolLogTtl), so nothing expired is shown meanwhile; this only drops stale payloads
+        // from disk.
+        const expiringDatabase = this.database;
+        void expiringDatabase.expireToolLogs().catch((error) => {
+            if (this.database === expiringDatabase) console.warn("matron: tool-log expiry deferred", error);
+        });
     }
 
     private setArchived(conversationId: string, archived: boolean): void {
@@ -3049,14 +3736,14 @@ export class MatronJournalClient {
 
     private setFlag(
         store: IdSetStore,
-        stateKey: "pinnedIds" | "favoriteIds" | "unreadOverrideIds" | "collapsedSubagentParentIds",
+        stateKey: "pinnedIds" | "favoriteIds" | "unreadOverrideIds",
         id: string,
         on: boolean,
     ): boolean {
         const session = this.state.session;
         if (!session) return false;
 
-        let storeName: "pinned" | "favorite" | "unread" | "collapsed";
+        let storeName: "pinned" | "favorite" | "unread";
         switch (stateKey) {
             case "pinnedIds":
                 storeName = "pinned";
@@ -3066,9 +3753,6 @@ export class MatronJournalClient {
                 break;
             case "unreadOverrideIds":
                 storeName = "unread";
-                break;
-            case "collapsedSubagentParentIds":
-                storeName = "collapsed";
                 break;
             default: {
                 const _exhaustive: never = stateKey;
@@ -3128,31 +3812,70 @@ export class MatronJournalClient {
     }
 
     private armRpcCreateWatchdog(conversationId: string): void {
-        this.clearRpcCreateWatchdog();
+        // A create for a different convo supersedes an older convo's stall notice.
+        if (this.rpcCreateStalledConvo !== undefined && this.rpcCreateStalledConvo !== conversationId) {
+            this.clearRpcCreateStall();
+        }
+        this.cancelRpcCreateTimer();
         const gen = this.sessionGen;
         this.rpcCreateWatchdogConvo = conversationId;
         this.rpcCreateWatchdogGen = gen;
         this.rpcCreateWatchdog = window.setTimeout(() => {
             if (this.rpcCreateWatchdogConvo !== conversationId || this.rpcCreateWatchdogGen !== gen) return;
-            this.rpcCreateWatchdog = undefined;
-            this.rpcCreateWatchdogConvo = undefined;
-            this.rpcCreateWatchdogGen = undefined;
+            this.cancelRpcCreateTimer();
             if (this.sessionGen !== gen || this.state.selectedConversationId !== conversationId) return;
+            // Its frames can sync before the start RPC replies (and so before this was armed): a convo
+            // the client already knows is not stalled, whatever frames follow.
+            if (this.state.conversations.some((conversation) => conversation.id === conversationId)) {
+                this.clearRpcCreateStall();
+                return;
+            }
+            // Stay armed until a frame for the convo (or logout / snapshot replace) clears it: a
+            // reconnect resets connectionError, which must not silently retire the warning.
+            this.armRpcCreateWatchdog(conversationId);
+            // Never replace an error already on screen (e.g. the first-task send refused while the
+            // convo was still unknown): the later clear would then hide that failure too.
+            if (this.state.connectionError) return;
             this.logRpcCreateDiag("sync_watchdog_fire", conversationId);
-            this.patch({ connectionError: "Session created but not syncing yet — refresh to retry." });
+            this.rpcCreateStalledConvo = conversationId;
+            this.patch({ connectionError: RPC_CREATE_STALLED_NOTICE });
         }, RPC_CREATE_WATCHDOG_MS);
     }
 
-    private clearRpcCreateWatchdog(conversationId?: string): void {
-        if (conversationId !== undefined && this.rpcCreateWatchdogConvo !== conversationId) return;
+    private cancelRpcCreateTimer(): void {
         if (this.rpcCreateWatchdog !== undefined) window.clearTimeout(this.rpcCreateWatchdog);
         this.rpcCreateWatchdog = undefined;
         this.rpcCreateWatchdogConvo = undefined;
         this.rpcCreateWatchdogGen = undefined;
     }
 
+    // Lift the stall notice, but only if it is still ours (never clobber an unrelated error).
+    private clearRpcCreateStall(): void {
+        if (this.rpcCreateStalledConvo === undefined) return;
+        this.rpcCreateStalledConvo = undefined;
+        if (this.state.connectionError === RPC_CREATE_STALLED_NOTICE) this.patch({ connectionError: undefined });
+    }
+
+    /**
+     * A frame for `conversationId` means it is syncing: stop watching it and lift its notice. A bare
+     * call (logout, snapshot replace) drops any watchdog and notice.
+     */
+    private clearRpcCreateWatchdog(conversationId?: string): void {
+        if (conversationId === undefined || conversationId === this.rpcCreateStalledConvo) this.clearRpcCreateStall();
+        if (conversationId !== undefined && this.rpcCreateWatchdogConvo !== conversationId) return;
+        this.cancelRpcCreateTimer();
+    }
+
     private async replaceSnapshot(): Promise<void> {
-        if (!this.api || !this.database) return;
+        // capture the session this replace belongs to and use ONLY the captured refs. A
+        // logout + login (another account, or the same one in a new generation) can land during
+        // any await below; without the guard the old snapshot would be written into the NEW
+        // session's database and published into its state. Mirrors handleReady's ownsReplay.
+        const gen = this.sessionGen;
+        const db = this.database;
+        const api = this.api;
+        if (!api || !db) return;
+        const owns = (): boolean => this.sessionGen === gen && this.database === db;
         const previousSelection = this.state.selectedConversationId;
         this.resetTransientSyncState();
         this.patch({
@@ -3162,16 +3885,27 @@ export class MatronJournalClient {
             pendingMessages: [],
             loadingHistory: false,
             hasOlderHistory: true,
+            pendingScrollSeq: undefined,
+            viewingHistoryWindow: false,
             activity: undefined,
             sessionStatus: undefined,
+            hostVitals: null,
             textStreams: {},
             toolStreams: {},
         });
-        const snapshot = await this.api.snapshot();
-        await this.database.replaceWithSnapshot(snapshot);
-        await this.reconcilePersistedOwnMessages(this.database);
-        const conversations = await this.database.conversations();
-        let { archivedIds, pinnedIds, favoriteIds, unreadOverrideIds, collapsedSubagentParentIds } = this.state;
+        const snapshot = await api.snapshot();
+        if (!owns()) return;
+        await db.replaceWithSnapshot(snapshot);
+        if (!owns()) return;
+        const removed = await db.reconcilePersistedOwnMessages();
+        if (!owns()) return;
+        for (const localId of removed) {
+            this.pendingFiles.delete(localId);
+            this.transientAttachmentErrors.delete(localId);
+        }
+        const conversations = await db.conversations();
+        if (!owns()) return;
+        let { archivedIds, pinnedIds, favoriteIds, unreadOverrideIds } = this.state;
         const session = this.state.session;
         if (session) {
             const archiveRead = archiveStore.read(session);
@@ -3190,10 +3924,6 @@ export class MatronJournalClient {
             this.storeHydrated.unread = unreadRead.ok;
             if (!unreadRead.ok) this.logStorageDiag("read_fail", "unread", false);
             if (unreadRead.ok) unreadOverrideIds = unreadRead.ids;
-            const collapsedRead = collapsedSubagentStore.read(session);
-            this.storeHydrated.collapsed = collapsedRead.ok;
-            if (!collapsedRead.ok) this.logStorageDiag("read_fail", "collapsed", false);
-            if (collapsedRead.ok) collapsedSubagentParentIds = collapsedRead.ids;
         }
         const snapshotTransitionStore = !this.storeHydrated.archive
             ? "archive"
@@ -3203,14 +3933,12 @@ export class MatronJournalClient {
                 ? "favorite"
                 : !this.storeHydrated.unread
                   ? "unread"
-                  : !this.storeHydrated.collapsed
-                    ? "collapsed"
-                    : "all";
+                  : "all";
         const selectedConversation = firstSelectableConversation(
             conversations,
             previousSelection,
             archivedIds,
-            collapsedSubagentParentIds,
+            this.state.collapsedSubagentParentIds,
         );
         this.applyJournalPins(pinsFromContainer(snapshot));
         this.patch({
@@ -3220,13 +3948,12 @@ export class MatronJournalClient {
             pinnedIds,
             favoriteIds,
             unreadOverrideIds,
-            collapsedSubagentParentIds,
             selectedConversationId: selectedConversation?.id,
             preferencesUnavailable: this.storageUnavailable(snapshotTransitionStore),
         });
         // A snapshot can be the first place THIS tab observes a convo's parent link (→ read-only child).
         // Mirror the journal-event path and abort any in-flight upload to a now-child convo so it can't
-        // egress to a read-only transcript. Guarded to skip work when idle.
+        // egress to a read-only transcript (ship-review major 2). Guarded to skip work when idle.
         if (this.uploadConvos.size > 0) this.abortUploadsForChildConvos();
         if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
         else if (this.state.session) storeSelectedConversation(this.state.session, undefined);
@@ -3288,7 +4015,9 @@ export class MatronJournalClient {
         if (this.state.selectedConversationId) {
             connection.send({ op: "viewing", convo_id: this.state.selectedConversationId });
             const conversation = this.selectedConversation();
-            if (conversation?.unread_count) this.scheduleRead(conversation.id, conversation.last_seq, 0);
+            if (conversation?.unread_count && !this.isViewingHistoricalWindow(conversation.id)) {
+                this.scheduleRead(conversation.id, conversation.last_seq, 0);
+            }
         }
         for (const [conversationId, upToSeq] of this.readHighWater) {
             this.scheduleRead(conversationId, upToSeq, 0);
@@ -3296,6 +4025,30 @@ export class MatronJournalClient {
         const cursor = await db.cursor();
         if (!ownsReplay()) return;
         if (cursor !== undefined) connection.send({ op: "ack", cursor });
+    }
+
+    // Seed each box's stored report from the roster, but never regress a row a live
+    // `box_status` frame has already moved past (protocol.md: latest report wins).
+    private rememberBoxStatuses(devices: DeviceDTO[]): void {
+        let next: Record<number, BoxStatus> | undefined;
+        for (const device of devices) {
+            if (!device.status) continue;
+            const current = this.state.boxStatuses[device.device_id];
+            if (current && current.reported_at > device.status.reported_at) continue;
+            next ??= { ...this.state.boxStatuses };
+            next[device.device_id] = device.status;
+        }
+        if (next) this.patch({ boxStatuses: next });
+    }
+
+    // A live report replaces the stored row for that box wholesale — the blocks the frame
+    // omits are gone, not kept (only `box_status` itself carries the full picture).
+    private handleBoxStatus(frame: JournalBoxStatusFrame): void {
+        const deviceId: unknown = frame.device_id;
+        if (typeof deviceId !== "number" || !Number.isFinite(deviceId)) return;
+        const status = parseBoxStatus(frame);
+        if (!status) return;
+        this.patch({ boxStatuses: { ...this.state.boxStatuses, [deviceId]: status } });
     }
 
     private async handleFrame(frame: ServerFrame): Promise<void> {
@@ -3343,8 +4096,156 @@ export class MatronJournalClient {
         }
     }
 
+    /**
+     * A coalesced run of sequenced journal frames (see JournalConnection.onJournalBatch). One frame
+     * takes the ordinary per-frame path unchanged. A longer run — a reconnect replay, or a burst
+     * that arrived while the previous run was still being applied — is applied in ONE store
+     * transaction, and the sidebar / open timeline are refreshed ONCE for the whole run instead of
+     * once per frame. Per-frame side effects (tracker markers, outbox reconciliation, stream
+     * retirement, acks, read scheduling) still run for every frame, in order. A malformed frame
+     * ends the batched prefix: it and everything after it take the per-frame path, which owns the
+     * halt-and-resync handling.
+     */
+    private async handleJournalBatch(events: JournalEvent[]): Promise<void> {
+        if (events.length === 1) {
+            await this.handleJournal(events[0]);
+            return;
+        }
+        const database = this.database;
+        if (!database || this.journalHalted) return;
+        const firstBad = events.findIndex(
+            (event) =>
+                !Number.isSafeInteger(event.seq) ||
+                event.seq < 0 ||
+                typeof event.convo_id !== "string" ||
+                !event.convo_id,
+        );
+        const prefix = firstBad === -1 ? events : events.slice(0, firstBad);
+        if (prefix.length > 0) await this.applyJournalRun(prefix, database);
+        if (firstBad === -1) return;
+        // The malformed frame takes the per-frame path (halt, or re-snapshot). Rows after it
+        // are NOT applied: committing them would advance the durable cursor past the unrecovered
+        // row, so a failed re-snapshot would reconnect beyond it and lose it for good. The resync
+        // abandons this socket, and a clean cursor replays them after the malformed row.
+        await this.handleJournal(events[firstBad]);
+    }
+
+    private async applyJournalRun(events: JournalEvent[], database: JournalDatabase): Promise<void> {
+        for (const event of events) this.handleTrackerMarker(event);
+        const applied =
+            typeof database.applyJournalBatch === "function"
+                ? await database.applyJournalBatch(events)
+                : await (async () => {
+                      const results: boolean[] = [];
+                      for (const event of events) results.push(await database.applyJournal(event));
+                      return results;
+                  })();
+        if (this.database !== database) return;
+        const selectedId = this.state.selectedConversationId;
+        let refreshConversations = false;
+        let abortUploads = false;
+        let refreshSelected = false;
+        let maxAppliedSeq: number | undefined;
+        const reads: Array<[string, number]> = [];
+        // Every row below is already durable (the run committed with its final cursor), so a
+        // failure on one row must not strand the side effects of the rows after it: they would never
+        // be replayed. Keep going, then surface the first failure once the run is fully handled.
+        let firstError: unknown;
+        for (let index = 0; index < events.length; index++) {
+            const event = events[index];
+            this.clearRpcCreateWatchdog(event.convo_id);
+            let removed: string | null = null;
+            try {
+                removed = await database.reconcileOwnMessage(event);
+            } catch (error) {
+                firstError ??= error;
+            }
+            if (removed) {
+                this.pendingFiles.delete(removed);
+                this.transientAttachmentErrors.delete(removed);
+            }
+            if (!applied[index]) {
+                // Mirrors handleJournal's duplicate-frame branch (P48): a peer tab already wrote it.
+                if (removed && event.convo_id === selectedId) refreshSelected = true;
+                if (event.type === "session_status") {
+                    refreshConversations = true;
+                    if (event.convo_id === selectedId && this.history.get(event.convo_id)?.hasMoreNewer !== true) {
+                        refreshSelected = true;
+                    }
+                }
+                if (event.type === "convo_meta") {
+                    refreshConversations = true;
+                    if (this.uploadConvos.size > 0) abortUploads = true;
+                }
+                continue;
+            }
+            maxAppliedSeq = Math.max(maxAppliedSeq ?? event.seq, event.seq);
+            const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
+            if (messageRef) {
+                this.retiredStreamRefs.add(`${event.convo_id}:${messageRef}`);
+                const text = this.textStreams.get(event.convo_id);
+                const tools = this.toolStreams.get(event.convo_id);
+                if (text) delete text[messageRef];
+                if (tools) delete tools[messageRef];
+            }
+            refreshConversations = true;
+            abortUploads = true;
+            if (event.convo_id === selectedId) {
+                const history = this.history.get(event.convo_id);
+                const viewingHistoryWindow = history?.hasMoreNewer === true;
+                if (!viewingHistoryWindow) {
+                    if (history) {
+                        history.newestSeq = Math.max(history.newestSeq ?? event.seq, event.seq);
+                        this.history.set(event.convo_id, history);
+                    }
+                    refreshSelected = true;
+                    if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
+                        reads.push([event.convo_id, event.seq]);
+                    }
+                }
+            }
+        }
+        if (maxAppliedSeq !== undefined) {
+            this.clearHistoryError();
+            this.scheduleAck(maxAppliedSeq);
+        }
+        if (refreshConversations) await this.refreshConversations();
+        if (abortUploads) this.abortUploadsForChildConvos();
+        if (refreshSelected && selectedId !== undefined && this.state.selectedConversationId === selectedId) {
+            await this.refreshSelectedConversation(selectedId);
+        }
+        for (const [conversationId, seq] of reads) this.scheduleRead(conversationId, seq);
+        if (firstError !== undefined) throw firstError;
+    }
+
     private async handleJournal(event: JournalEvent): Promise<void> {
         if (!this.database) return;
+        // once the reconnect-loop guard has halted journal processing, ignore every frame
+        // (well-formed or not) until the session is reset. Applying a later frame here would advance
+        // the cursor past the malformed row that was never recovered — the exact silent gap this
+        // recovery exists to prevent — and re-arming the guard on a good frame would let an
+        // alternating good/malformed server evade the bound.
+        if (this.journalHalted) return;
+        // frame-decode passes journal (sequenced) frames through UNVALIDATED by design — a
+        // boundary drop would advance the cursor past the dropped seq and lose the row silently
+        // (applyJournal has no gap detection). But a frame whose `seq` is not a usable cursor value
+        // is a cursor-POISON hazard, not just a bad payload: applyJournal's dedup guard
+        // `event.seq <= currentCursor` is FALSE when seq is NaN/non-numeric (NaN comparisons are
+        // always false), so the poison frame is applied, `Math.max(last_seq, seq)` becomes NaN, and
+        // `meta.put(seq, CURSOR_KEY)` writes the poison as the durable cursor — which is then acked
+        // to the server and returned by db.cursor() on every reconnect. So a malformed seq must be
+        // neither applied NOR acked NOR allowed to advance the cursor; instead halt and re-snapshot
+        //. convo_id is validated too
+        // because applyJournal and handleTrackerMarker read it unguarded as an IndexedDB key.
+        if (
+            !Number.isSafeInteger(event.seq) ||
+            event.seq < 0 ||
+            typeof event.convo_id !== "string" ||
+            !event.convo_id
+        ) {
+            this.handleMalformedJournalFrame(event);
+            return;
+        }
         // Tracker markers (item/mission/milestone) drive a live refetch of the open tracker pane's
         // data regardless of whether this event is newly applied below — fire-and-forget so it
         // never blocks (or is blocked by) timeline application. Non-tracker types return at once.
@@ -3360,9 +4261,35 @@ export class MatronJournalClient {
             if (removed && event.convo_id === this.state.selectedConversationId) {
                 await this.refreshSelectedConversation(event.convo_id);
             }
-            if (event.type === "convo_meta" && this.uploadConvos.size > 0) {
+            // A duplicate session_status is not a no-op for our mirror: tabs sharing a server/user
+            // share one IndexedDB, so applied=false means a peer tab already wrote the row and
+            // advanced the shared cursor — the durable store holds the new run-state and ours is
+            // the stale copy (P48). Without this the tab that dropped the ephemeral turn-end frame
+            // (the backgrounded one — the exact failure the activity reconcile fixes) keeps
+            // rendering a stale "Thinking" until some later frame it wins. session_status is the
+            // ONLY frame that mutates session_state (database.ts applyJournal), so this covers the
+            // whole run-state surface while keeping ordinary duplicate message frames off the
+            // O(conversations) scan. Refresh the selected timeline alongside it, on the applied
+            // path's terms, so the sidebar cannot advance past the events list.
+            if (event.type === "session_status") {
                 await this.refreshConversations();
-                this.abortUploadsForChildConvos();
+                if (
+                    event.convo_id === this.state.selectedConversationId &&
+                    this.history.get(event.convo_id)?.hasMoreNewer !== true
+                ) {
+                    await this.refreshSelectedConversation(event.convo_id);
+                }
+            }
+            // Same argument for convo_meta, and it is not upload-specific: the frame mutates
+            // title, the parent link, agent_kind and the pinned summary, so a peer
+            // tab that won the cursor race has already written all of them to the shared store
+            // while our mirror still renders the old values — the pinned digest most visibly,
+            // since it sits above the live timeline and only this frame refreshes it. Refresh
+            // unconditionally against the durable row (P48); the upload abort stays gated on
+            // there being uploads to abort.
+            if (event.type === "convo_meta") {
+                await this.refreshConversations();
+                if (this.uploadConvos.size > 0) this.abortUploadsForChildConvos();
             }
             return;
         }
@@ -3381,10 +4308,66 @@ export class MatronJournalClient {
         await this.refreshConversations();
         this.abortUploadsForChildConvos();
         if (event.convo_id === this.state.selectedConversationId) {
-            await this.refreshSelectedConversation(event.convo_id);
-            if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
+            const history = this.history.get(event.convo_id);
+            const viewingHistoryWindow = history?.hasMoreNewer === true;
+            if (!viewingHistoryWindow) {
+                if (history) {
+                    history.newestSeq = Math.max(history.newestSeq ?? event.seq, event.seq);
+                    this.history.set(event.convo_id, history);
+                }
+                await this.refreshSelectedConversation(event.convo_id);
+            }
+            if (!viewingHistoryWindow && MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
                 this.scheduleRead(event.convo_id, event.seq);
             }
+        }
+    }
+
+    /**
+     * a live journal frame arrived with a `seq` that cannot serve as a cursor (NaN /
+     * non-integer / negative) or a missing convo_id. It has already been kept out of the durable
+     * store (handleJournal returns before applyJournal/scheduleAck), so the cursor is still clean.
+     * Recover by re-snapshotting through the connection's resync flow (drop socket → replaceSnapshot
+     * → reconnect), which is what actually resets the socket so the post-reconnect hello/ack carry
+     * the clean cursor — calling replaceSnapshot() in isolation would leave the old socket resuming
+     * from the poison ack cursor. Guarded by a reconnect-loop counter so a pathological server
+     * cannot drive an unbounded resync loop.
+     */
+    private handleMalformedJournalFrame(event: JournalEvent): void {
+        console.warn("matron:journal", {
+            event: "malformed_seq",
+            convo_id: typeof event.convo_id === "string" ? event.convo_id : undefined,
+            seq: event.seq,
+        });
+        const now = Date.now();
+        this.malformedSeqResyncs = this.malformedSeqResyncs.filter((ts) => now - ts < MALFORMED_SEQ_RESYNC_WINDOW_MS);
+        this.malformedSeqResyncs.push(now);
+        if (this.malformedSeqResyncs.length > MALFORMED_SEQ_RESYNC_LIMIT) {
+            // Loop guard tripped: this is a pathological server (each clean resync cursor is
+            // immediately re-poisoned). Enter a real HALT rather than looping OR leaving the socket
+            // live: mark journal processing halted (handleJournal now ignores every frame, so no
+            // later frame can silently advance the cursor past the unrecovered malformed row), stop
+            // the connection so frames stop arriving, and surface the error. Recovery is a reload,
+            // which builds a fresh session/connection and clears journalHalted. stop() fires
+            // onState("offline") which clears connectionError, so patch the halt banner AFTER it.
+            console.warn("matron:journal", { event: "malformed_seq_resync_halted" });
+            this.journalHalted = true;
+            this.connection?.stop();
+            this.patch({ connectionError: MALFORMED_SEQ_HALTED_ERROR });
+            return;
+        }
+        void this.triggerMalformedSeqResync();
+    }
+
+    private async triggerMalformedSeqResync(): Promise<void> {
+        const connection = this.connection;
+        if (!connection) return;
+        try {
+            await connection.forceResync();
+        } catch (error) {
+            this.patch({
+                connectionError: error instanceof Error ? error.message : "Could not resync after a malformed update.",
+            });
         }
     }
 
@@ -3397,35 +4380,50 @@ export class MatronJournalClient {
     }
 
     private handleEphemeral(frame: JournalEphemeralFrame): void {
+        // Host-global vitals push: host-scoped, NO convo_id. Store the one
+        // value globally and repaint every header. This MUST branch before the selected-conversation
+        // guard below — a host frame has no convo_id, so that guard would drop it (or, when nothing
+        // is selected, both sides are undefined and it would misfire refreshEphemeralState).
+        if (frame.host_vitals) {
+            this.hostVitals = frame.host_vitals;
+            this.patch({ hostVitals: this.hostVitals });
+            return;
+        }
+        // Every remaining branch is conversation-scoped; a frame without convo_id is malformed here.
+        const convoId = frame.convo_id;
+        if (convoId === undefined) return;
         if (frame.activity) {
-            if (frame.activity.state === "idle") this.activities.delete(frame.convo_id);
-            else this.activities.set(frame.convo_id, frame.activity);
+            if (frame.activity.state === "idle") this.activities.delete(convoId);
+            else this.activities.set(convoId, frame.activity);
         }
         if (frame.status) {
-            this.statuses.set(frame.convo_id, mergeSessionStatus(this.statuses.get(frame.convo_id), frame.status));
+            this.statuses.set(convoId, mergeSessionStatus(this.statuses.get(convoId), frame.status));
         }
         if (frame.tool_stream && frame.message_ref) {
-            this.applyToolStream(frame);
+            this.applyToolStream(frame, convoId);
         }
         if (frame.message_ref && (typeof frame.text === "string" || typeof frame.replace_text === "string")) {
-            const key = `${frame.convo_id}:${frame.message_ref}`;
+            const key = `${convoId}:${frame.message_ref}`;
             if (!this.retiredStreamRefs.has(key)) {
-                const streams = this.textStreams.get(frame.convo_id) ?? {};
+                const streams = this.textStreams.get(convoId) ?? {};
                 streams[frame.message_ref] =
                     typeof frame.replace_text === "string"
                         ? frame.replace_text
                         : `${streams[frame.message_ref] ?? ""}${frame.text ?? ""}`;
-                this.textStreams.set(frame.convo_id, streams);
+                this.textStreams.set(convoId, streams);
             }
         }
-        if (frame.convo_id === this.state.selectedConversationId) this.refreshEphemeralState(frame.convo_id);
+        if (convoId === this.state.selectedConversationId) this.refreshEphemeralState(convoId);
+        // A helper's gauge borrows its parent's window (statusFor): repaint it when that changes.
+        else if (frame.status && this.selectedConversation()?.parent_convo_id === convoId)
+            this.refreshEphemeralState(this.state.selectedConversationId!);
     }
 
-    private applyToolStream(frame: JournalEphemeralFrame): void {
+    private applyToolStream(frame: JournalEphemeralFrame, convoId: string): void {
         const payload = frame.tool_stream;
         const messageRef = frame.message_ref;
-        if (!payload || !messageRef || this.retiredStreamRefs.has(`${frame.convo_id}:${messageRef}`)) return;
-        const streams = this.toolStreams.get(frame.convo_id) ?? {};
+        if (!payload || !messageRef || this.retiredStreamRefs.has(`${convoId}:${messageRef}`)) return;
+        const streams = this.toolStreams.get(convoId) ?? {};
         if (payload.event === "end") {
             delete streams[messageRef];
         } else if (payload.event === "sync") {
@@ -3456,35 +4454,52 @@ export class MatronJournalClient {
                 streams[messageRef] = current;
             }
         }
-        this.toolStreams.set(frame.convo_id, streams);
+        this.toolStreams.set(convoId, streams);
+    }
+
+    /**
+     * A conversation's header status. A helper's own conversation (a Claude subagent) has its
+     * context gauge sized against the parent's window where the bridge under-reported it.
+     */
+    private statusFor(conversationId: string): SessionStatus | undefined {
+        const status = this.statuses.get(conversationId);
+        if (!status?.context) return status;
+        const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
+        const parentId = conversation?.parent_convo_id;
+        if (parentId == null || parentId === conversationId) return status;
+        return helperContextStatus(status, this.statuses.get(parentId));
     }
 
     private refreshEphemeralState(conversationId: string): void {
+        const viewingHistoricalWindow = this.isViewingHistoricalWindow(conversationId);
         this.patch({
-            activity: this.activities.get(conversationId),
-            sessionStatus: this.statuses.get(conversationId),
-            textStreams: { ...(this.textStreams.get(conversationId) ?? {}) },
-            toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
+            activity: viewingHistoricalWindow ? undefined : this.activities.get(conversationId),
+            sessionStatus: this.statusFor(conversationId),
+            textStreams: viewingHistoricalWindow ? {} : { ...(this.textStreams.get(conversationId) ?? {}) },
+            toolStreams: viewingHistoricalWindow ? {} : { ...(this.toolStreams.get(conversationId) ?? {}) },
         });
     }
 
     private async refreshConversations(): Promise<void> {
         if (!this.database) return;
         const conversations = await this.database.conversations();
-        // Reconcile the fire-and-forget tool-call cards against the durable run-state. The
-        // turn-end tool_stream 'end' frame (applyToolStream) is never replayed, so a dropped one
-        // would strand a dangling 'running' tool card in this.toolStreams. session_state is the
-        // persisted, replayed signal — a conversation no longer running has no live tool stream.
-        // Mirrors the activity-indicator reconcile so a settled turn cannot leave a pending card.
+        // Reconcile dangling tool-call cards against the durable run-state. The tool_stream 'end'
+        // frame is never replayed, so a dropped one strands a 'running'
+        // tool card in this.toolStreams until the next turn; session_state is the persisted,
+        // replayed signal. The activity indicator is deliberately NOT pruned here (upstream
+        // db04c8c): the bridge sends activity 'thinking' immediately at turn start but queues the
+        // durable 'running' row behind journalPublish, so a prune in that window deleted the live
+        // indicator and nothing re-sent it. The Timeline's sessionRunning view gate hides a stale
+        // activity instead.
         for (const conversation of conversations) {
             if (conversation.session_state !== "running") this.toolStreams.delete(conversation.id);
         }
         this.patch({ conversations });
-        // Keep the published snapshot in lockstep with the private map. Deleting the private
+        // Keep the published snapshot in lockstep with the private map (P2): deleting the private
         // entry above does NOT touch ClientState.toolStreams, so a pruned card would otherwise
-        // still sit in the snapshot and re-render on the conversation's next running turn (before
-        // any fresh ephemeral frame republishes it). Republish the selected conversation's
-        // ephemeral state whenever its streams were just pruned.
+        // still sit in the snapshot and re-render on the conversation's next running turn.
+        // Republish only when a card was just pruned out from under the snapshot, so a routine
+        // refresh cannot clobber live streams.
         const selectedId = this.state.selectedConversationId;
         if (
             selectedId !== undefined &&
@@ -3499,22 +4514,33 @@ export class MatronJournalClient {
         expectedId: string,
         db = this.database,
         gen = this.sessionGen,
+        selectionEpoch?: number,
     ): Promise<void> {
         if (!db) return;
         const refreshEpoch = (this.issuedRefreshEpochs.get(expectedId) ?? 0) + 1;
         this.issuedRefreshEpochs.set(expectedId, refreshEpoch);
-        const [events, pendingMessages] = await Promise.all([db.events(expectedId), db.outbox(expectedId)]);
+        const [persistedEvents, pendingMessages] = await Promise.all([db.events(expectedId), db.outbox(expectedId)]);
         if (
             refreshEpoch < (this.appliedRefreshEpochs.get(expectedId) ?? 0) ||
             this.sessionGen !== gen ||
             this.database !== db ||
-            this.state.selectedConversationId !== expectedId
+            this.state.selectedConversationId !== expectedId ||
+            (selectionEpoch !== undefined && !this.isCurrentSelection(expectedId, selectionEpoch))
         )
             return;
         this.appliedRefreshEpochs.set(expectedId, refreshEpoch);
-        const visiblePending = new Map(pendingMessages.map((message) => [message.localId, message]));
-        for (const message of this.transientAttachmentErrors.values()) {
-            if (message.convoId === expectedId) visiblePending.set(message.localId, message);
+        const history = this.history.get(expectedId);
+        const events = persistedEvents.filter(
+            (event) =>
+                (history?.oldestSeq === undefined || event.seq >= history.oldestSeq) &&
+                (history?.newestSeq === undefined || event.seq <= history.newestSeq),
+        );
+        const visiblePending = new Map<string, PendingMessage>();
+        if (!history?.hasMoreNewer) {
+            for (const message of pendingMessages) visiblePending.set(message.localId, message);
+            for (const message of this.transientAttachmentErrors.values()) {
+                if (message.convoId === expectedId) visiblePending.set(message.localId, message);
+            }
         }
         this.patch({
             events,
@@ -3543,7 +4569,10 @@ export class MatronJournalClient {
                 canRetry: this.pendingFiles.has(message.localId) || Boolean(message.blobRef),
             };
             this.transientAttachmentErrors.set(message.localId, storageError);
-            if (this.state.selectedConversationId === message.convoId) {
+            if (
+                this.state.selectedConversationId === message.convoId &&
+                !this.isViewingHistoricalWindow(message.convoId)
+            ) {
                 const pendingMessages = this.state.pendingMessages.filter(
                     (pending) => pending.localId !== message.localId,
                 );
@@ -3685,10 +4714,16 @@ export class MatronJournalClient {
         this.readHighWater.clear();
         this.ackTimer = undefined;
         this.pendingAck = 0;
+        // deliberately do NOT clear malformedSeqResyncs / journalHalted here. This runs on
+        // every resync (replaceSnapshot), and the reconnect-loop budget must survive resyncs (it is
+        // reset only by startSession, on a genuinely new session). The sliding window expires stale
+        // budget entries on its own.
         this.historyError = undefined;
         this.history.clear();
+        this.conversationTailFetches.clear();
         this.activities.clear();
         this.statuses.clear();
+        this.hostVitals = null;
         this.textStreams.clear();
         this.toolStreams.clear();
         this.retiredStreamRefs.clear();
@@ -3701,10 +4736,9 @@ export class MatronJournalClient {
     }
 
     private emit(): void {
-        // The desktop badge counts exactly the rows Active renders as top-level. Archived
-        // conversations are hidden from the active list and skipped by mark-all-read, so they
-        // must not inflate the badge; likewise a hidden done child (no row, no way to clear it)
-        // and a nested child both contribute zero, so the badge can never outlive its rows.
+        // the desktop badge counts exactly the rows Active renders as top-level
+        // (canonical predicate) — a hidden done child (no row, no way to clear it) and a
+        // nested child both contribute zero, so the badge can never outlive its rows.
         const index = buildSidebarIndex(
             this.state.conversations,
             this.state.archivedIds,

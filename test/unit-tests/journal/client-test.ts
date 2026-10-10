@@ -10,6 +10,8 @@ import {
     favoriteStore,
     MatronJournalClient,
     pinnedStore,
+    RPC_CREATE_STALLED_NOTICE,
+    RPC_CREATE_WATCHDOG_MS,
     unreadStore,
 } from "../../../src/journal/client";
 import { JournalApi, JournalApiError } from "../../../src/journal/api";
@@ -65,9 +67,9 @@ interface FakeDatabase {
     reset?: () => Promise<void>;
     close: () => void;
     expireToolLogs: () => Promise<void>;
-    events: (conversationId: string) => Promise<[]>;
+    events: (conversationId: string) => Promise<JournalEvent[]>;
     outbox: (conversationId?: string) => Promise<PendingMessage[]>;
-    putHistory: (events: []) => Promise<void>;
+    putHistory: (events: JournalEvent[]) => Promise<void>;
     replaceWithSnapshot: (snapshot: { seq: number; conversations: Conversation[] }) => Promise<void>;
     markLocallyRead: (conversationId: string, upToSeq: number) => Promise<void>;
     conversations: () => Promise<Conversation[]>;
@@ -86,7 +88,12 @@ interface ClientInternals {
     state: ClientState;
     database?: FakeDatabase;
     api?: {
-        messages?: () => Promise<{ events: [] }>;
+        messages?: (
+            conversationId: string,
+            beforeSeq?: number,
+            limit?: number,
+            aroundSeq?: number,
+        ) => Promise<{ events: JournalEvent[] }>;
         snapshot?: (signal?: AbortSignal) => Promise<{ seq: number; conversations: Conversation[] }>;
         uploadMedia?: (bytes: ArrayBuffer, contentType: string, signal?: AbortSignal) => Promise<{ media_id: string }>;
         media?: (mediaId: string) => Promise<Blob>;
@@ -99,7 +106,10 @@ interface ClientInternals {
         stop?: ReturnType<typeof jest.fn>;
         agentRequest?: ReturnType<typeof jest.fn>;
     };
-    history: Map<string, { initialized: boolean; hasMore: boolean; oldestSeq?: number }>;
+    history: Map<
+        string,
+        { initialized: boolean; hasMore: boolean; oldestSeq?: number; newestSeq?: number; hasMoreNewer?: boolean }
+    >;
     activities: Map<string, unknown>;
     statuses: Map<string, unknown>;
     textStreams: Map<string, Record<string, string>>;
@@ -114,6 +124,7 @@ interface ClientInternals {
     dismissedAttachments: Set<string>;
     pendingAck: number;
     sessionGen: number;
+    selectionEpoch: number;
     startSession(session: Session): Promise<void>;
     scheduleRead(conversationId: string, upToSeq: number, delay?: number): void;
     flushRead(conversationId: string): Promise<void>;
@@ -159,6 +170,95 @@ function fakeDatabase(overrides: Partial<FakeDatabase> = {}): FakeDatabase {
         reconcileOwnMessage: jest.fn().mockResolvedValue(null),
         reconcilePersistedOwnMessages: jest.fn().mockResolvedValue([]),
         ...overrides,
+    };
+}
+
+function peerUnreadDatabase(): FakeDatabase {
+    let conversations = CONVERSATIONS.map((conversation) => ({ ...conversation }));
+    const storedEvents: JournalEvent[] = [];
+    const database = fakeDatabase();
+    database.applyJournal = jest.fn(async (journalEvent: JournalEvent) => {
+        storedEvents.push(journalEvent);
+        conversations = conversations.map((conversation) =>
+            conversation.id === journalEvent.convo_id
+                ? {
+                      ...conversation,
+                      last_seq: journalEvent.seq,
+                      unread_count: conversation.unread_count + 1,
+                  }
+                : conversation,
+        );
+        return true;
+    });
+    database.conversations = jest.fn(async () => conversations.map((conversation) => ({ ...conversation })));
+    database.events = jest.fn(async (conversationId: string) =>
+        storedEvents.filter((journalEvent) => journalEvent.convo_id === conversationId),
+    ) as unknown as FakeDatabase["events"];
+    database.markLocallyRead = jest.fn(async (conversationId: string, upToSeq: number) => {
+        conversations = conversations.map((conversation) =>
+            conversation.id === conversationId
+                ? { ...conversation, unread_count: 0, read_up_to_seq: upToSeq }
+                : conversation,
+        );
+    });
+    return database;
+}
+
+function historyWindowDatabase(initialEvents: JournalEvent[] = []): FakeDatabase {
+    let conversations = CONVERSATIONS.map((conversation) => ({ ...conversation }));
+    const storedEvents = new Map(initialEvents.map((event) => [event.seq, event]));
+    const database = fakeDatabase();
+    database.events = jest.fn(async (conversationId: string) =>
+        [...storedEvents.values()].filter((event) => event.convo_id === conversationId),
+    );
+    database.putHistory = jest.fn(async (events: JournalEvent[]) => {
+        for (const event of events) storedEvents.set(event.seq, event);
+    });
+    database.applyJournal = jest.fn(async (event: JournalEvent) => {
+        storedEvents.set(event.seq, event);
+        conversations = conversations.map((conversation) =>
+            conversation.id === event.convo_id
+                ? {
+                      ...conversation,
+                      last_seq: event.seq,
+                      unread_count: event.sender.startsWith("user:")
+                          ? conversation.unread_count
+                          : conversation.unread_count + 1,
+                  }
+                : conversation,
+        );
+        return true;
+    });
+    database.conversations = jest.fn(async () => conversations.map((conversation) => ({ ...conversation })));
+    return database;
+}
+
+function peerMessage(conversationId: string, seq: number): JournalEvent {
+    return {
+        kind: "journal",
+        seq,
+        convo_id: conversationId,
+        ts: seq * 1_000,
+        sender: "agent:peer-device",
+        type: "peer_message",
+        payload: {
+            from_convo: "sender-convo",
+            from_name: "Release Agent",
+            from_kind: "codex",
+            body: "Coordinate the deploy window",
+        },
+    };
+}
+
+function textEvent(conversationId: string, seq: number, sender = "agent:test"): JournalEvent {
+    return {
+        kind: "journal",
+        seq,
+        convo_id: conversationId,
+        ts: seq * 1_000,
+        sender,
+        type: "text",
+        payload: { body: `message ${seq}` },
     };
 }
 
@@ -219,6 +319,7 @@ describe("MatronJournalClient state handling", () => {
 
     afterEach(() => {
         jest.useRealTimers();
+        delete (window as Window & { electron?: unknown }).electron;
     });
 
     it("clears pending acknowledgements and every conversation read timer on logout", async () => {
@@ -367,6 +468,97 @@ describe("MatronJournalClient state handling", () => {
         expect(database.markLocallyRead).toHaveBeenCalledWith("c1", 10);
     });
 
+    it("clears a durable peer message unread count after its read marker is sent", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = peerUnreadDatabase();
+        const send = jest.fn().mockReturnValue(true);
+        const badgeSend = jest.fn();
+        (window as Window & { electron?: { send: jest.Mock } }).electron = { send: badgeSend };
+        state.state = signedInState(client, "c1");
+        state.database = database;
+        state.connection = { send };
+
+        await state.handleJournal(peerMessage("c1", 11));
+        await jest.runAllTimersAsync();
+
+        expect(send).toHaveBeenCalledWith({ op: "read_marker", convo_id: "c1", up_to_seq: 11 });
+        expect(database.markLocallyRead).toHaveBeenCalledWith("c1", 11);
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")?.unread_count).toBe(
+            0,
+        );
+        const badgeCounts = badgeSend.mock.calls
+            .filter(([channel]) => channel === "setBadgeCount")
+            .map(([, count]) => count);
+        expect(badgeCounts.length).toBeGreaterThan(0);
+        expect(badgeCounts).toContain(1);
+        expect(badgeSend).toHaveBeenLastCalledWith("setBadgeCount", 0);
+    });
+
+    it("keeps unread durable when selection changes while journal persistence is pending", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = peerUnreadDatabase();
+        const applyStarted = deferred<void>();
+        const releaseApply = deferred<void>();
+        const applyJournal = database.applyJournal;
+        database.applyJournal = jest.fn(async (journalEvent: JournalEvent) => {
+            applyStarted.resolve();
+            await releaseApply.promise;
+            return applyJournal(journalEvent);
+        });
+        const send = jest.fn().mockReturnValue(true);
+        state.state = signedInState(client, "c1");
+        state.database = database;
+        state.connection = { send };
+
+        const handling = state.handleJournal(peerMessage("c1", 11));
+        await applyStarted.promise;
+        state.state = { ...state.state, selectedConversationId: "c2" };
+        releaseApply.resolve();
+        await handling;
+        await jest.runAllTimersAsync();
+
+        expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "read_marker", convo_id: "c1" }));
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")?.unread_count).toBe(
+            1,
+        );
+
+        await client.selectConversation("c1");
+        await jest.runAllTimersAsync();
+
+        expect(send).toHaveBeenCalledWith({ op: "read_marker", convo_id: "c1", up_to_seq: 11 });
+        expect(database.markLocallyRead).toHaveBeenCalledWith("c1", 11);
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")?.unread_count).toBe(
+            0,
+        );
+    });
+
+    it("keeps a peer message unread badge when a different conversation is actively viewed", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = peerUnreadDatabase();
+        const send = jest.fn().mockReturnValue(true);
+        const badgeSend = jest.fn();
+        (window as Window & { electron?: { send: jest.Mock } }).electron = { send: badgeSend };
+        state.state = signedInState(client, "c1");
+        state.database = database;
+        state.connection = { send };
+
+        await state.handleJournal(peerMessage("c2", 21));
+        await jest.runAllTimersAsync();
+
+        expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "read_marker", convo_id: "c2" }));
+        expect(database.markLocallyRead).not.toHaveBeenCalled();
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c2")?.unread_count).toBe(
+            1,
+        );
+        expect(badgeSend).toHaveBeenLastCalledWith("setBadgeCount", 1);
+    });
+
     it("stores the open conversation and clears it when returning to the list", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
@@ -383,6 +575,611 @@ describe("MatronJournalClient state handling", () => {
 
         client.clearSelection();
         expect(localStorage.getItem(selectionKey!)).toBeNull();
+    });
+
+    it("loads and exposes a historical window around a selected message sequence", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const windowEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const database = historyWindowDatabase();
+        const messages = jest.fn().mockResolvedValue({ events: windowEvents });
+        state.state = signedInState(client, "c2");
+        state.database = database;
+        state.api = { messages };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        await client.selectConversationAtSeq("c1", 100);
+
+        expect(messages).toHaveBeenCalledWith("c1", undefined, 80, 100);
+        expect(database.putHistory).toHaveBeenCalledWith(windowEvents);
+        expect(state.history.get("c1")).toMatchObject({
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMoreNewer: true,
+        });
+        expect(client.getSnapshot()).toMatchObject({
+            selectedConversationId: "c1",
+            events: windowEvents,
+            pendingScrollSeq: 100,
+            viewingHistoryWindow: true,
+        });
+    });
+
+    it("preserves unread through a historical deep link and reconnect until jumping to latest", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const historicalEvents = [textEvent("c1", 4), textEvent("c1", 5), textEvent("c1", 6)];
+        const tailEvents = [textEvent("c1", 8), textEvent("c1", 9), textEvent("c1", 10)];
+        let conversations = CONVERSATIONS.map((conversation) =>
+            conversation.id === "c1" ? { ...conversation, unread_count: 3, read_up_to_seq: 3 } : conversation,
+        );
+        const database = historyWindowDatabase();
+        database.conversations = jest.fn(async () => conversations.map((conversation) => ({ ...conversation })));
+        database.markLocallyRead = jest.fn(async (conversationId: string, upToSeq: number) => {
+            conversations = conversations.map((conversation) =>
+                conversation.id === conversationId
+                    ? { ...conversation, unread_count: 0, read_up_to_seq: upToSeq }
+                    : conversation,
+            );
+        });
+        const messages = jest
+            .fn()
+            .mockResolvedValueOnce({ events: historicalEvents })
+            .mockResolvedValueOnce({ events: tailEvents });
+        const send = jest.fn().mockReturnValue(true);
+        state.state = {
+            ...signedInState(client, "c2"),
+            conversations,
+            unreadOverrideIds: new Set(["c1"]),
+        };
+        state.database = database;
+        state.api = { messages };
+        state.connection = { send };
+
+        await client.selectConversationAtSeq("c1", 5);
+        await jest.runAllTimersAsync();
+
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")).toMatchObject({
+            unread_count: 3,
+            read_up_to_seq: 3,
+        });
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+        expect(state.readHighWater.has("c1")).toBe(false);
+        expect(database.markLocallyRead).not.toHaveBeenCalled();
+        expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "read_marker", convo_id: "c1" }));
+
+        await state.handleReady();
+        await jest.runAllTimersAsync();
+
+        expect(state.readHighWater.has("c1")).toBe(false);
+        expect(database.markLocallyRead).not.toHaveBeenCalled();
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")).toMatchObject({
+            unread_count: 3,
+            read_up_to_seq: 3,
+        });
+        expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ op: "read_marker", convo_id: "c1" }));
+
+        await client.jumpToLatest();
+        await jest.runAllTimersAsync();
+
+        expect(database.markLocallyRead).toHaveBeenCalledWith("c1", 10);
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")).toMatchObject({
+            unread_count: 0,
+            read_up_to_seq: 10,
+        });
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(false);
+    });
+
+    it("discards an earlier deep-link response when a later sequence selection wins", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const first = deferred<{ events: JournalEvent[] }>();
+        const second = deferred<{ events: JournalEvent[] }>();
+        const firstEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const secondEvents = [textEvent("c1", 198), textEvent("c1", 200), textEvent("c1", 202)];
+        const database = historyWindowDatabase();
+        const messages = jest.fn((_conversationId: string, _before?: number, _limit?: number, aroundSeq?: number) =>
+            aroundSeq === 100 ? first.promise : second.promise,
+        );
+        state.state = signedInState(client, "c2");
+        state.database = database;
+        state.api = { messages };
+
+        const firstSelection = client.selectConversationAtSeq("c1", 100);
+        const secondSelection = client.selectConversationAtSeq("c1", 200);
+        second.resolve({ events: secondEvents });
+        await secondSelection;
+        first.resolve({ events: firstEvents });
+        await firstSelection;
+
+        expect(database.putHistory).toHaveBeenCalledTimes(1);
+        expect(database.putHistory).toHaveBeenCalledWith(secondEvents);
+        expect(state.history.get("c1")).toMatchObject({ oldestSeq: 198, newestSeq: 202, hasMoreNewer: true });
+        expect(client.getSnapshot()).toMatchObject({ events: secondEvents, pendingScrollSeq: 200 });
+    });
+
+    it("discards an older-page response superseded by a completed deep-link selection", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const olderPage = deferred<{ events: JournalEvent[] }>();
+        const deepLinkEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const database = historyWindowDatabase([textEvent("c1", 50)]);
+        const messages = jest.fn((_conversationId: string, _before?: number, _limit?: number, aroundSeq?: number) =>
+            aroundSeq === 100 ? Promise.resolve({ events: deepLinkEvents }) : olderPage.promise,
+        );
+        state.state = { ...signedInState(client), events: [textEvent("c1", 50)] };
+        state.database = database;
+        state.api = { messages };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 50,
+            newestSeq: 50,
+            hasMore: true,
+            hasMoreNewer: false,
+        });
+
+        const stalePaging = client.loadOlderHistory();
+        await client.selectConversationAtSeq("c1", 100);
+        olderPage.resolve({ events: [textEvent("c1", 1)] });
+        await stalePaging;
+
+        expect(database.putHistory).toHaveBeenCalledTimes(1);
+        expect(database.putHistory).toHaveBeenCalledWith(deepLinkEvents);
+        expect(state.history.get("c1")).toMatchObject({
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMoreNewer: true,
+        });
+        expect(client.getSnapshot()).toMatchObject({
+            events: deepLinkEvents,
+            pendingScrollSeq: 100,
+            viewingHistoryWindow: true,
+        });
+    });
+
+    it("falls back to the live tail and shows a focused notice when an around-sequence load fails", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const tailEvents = [textEvent("c1", 198), textEvent("c1", 199), textEvent("c1", 200)];
+        const database = historyWindowDatabase();
+        const messages = jest
+            .fn()
+            .mockRejectedValueOnce(new Error("unsupported around_seq"))
+            .mockResolvedValueOnce({ events: tailEvents });
+        state.state = signedInState(client, "c2");
+        state.database = database;
+        state.api = { messages };
+
+        await client.selectConversationAtSeq("c1", 100);
+
+        expect(messages).toHaveBeenNthCalledWith(1, "c1", undefined, 80, 100);
+        expect(messages).toHaveBeenNthCalledWith(2, "c1", undefined, 80);
+        expect(client.getSnapshot()).toMatchObject({
+            selectedConversationId: "c1",
+            events: tailEvents,
+            pendingScrollSeq: undefined,
+            viewingHistoryWindow: false,
+            connectionError: "Couldn't jump to that message",
+        });
+        expect(state.history.get("c1")?.hasMoreNewer).toBe(false);
+    });
+
+    it("pages forward from the newest edge and resumes live once a page brings nothing newer", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        // Deep-link window opened at seq 102. Tail detection is response-derived: the window stays
+        // open while forward pages advance the edge and collapses only when one brings nothing new.
+        const windowEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const forwardPageA = [textEvent("c1", 104), textEvent("c1", 106), textEvent("c1", 180)];
+        // around_seq = 181 anchors past the edge; the server's forward half is empty, so only the
+        // already-held overlap comes back (max <= 180) → no forward progress → tail.
+        const forwardPageB = [textEvent("c1", 180)];
+        const database = historyWindowDatabase(windowEvents);
+        const messages = jest.fn(
+            async (_conversationId: string, _before?: number, _limit?: number, aroundSeq?: number) =>
+                aroundSeq === 103 ? { events: forwardPageA } : { events: forwardPageB },
+        );
+        state.state = {
+            ...signedInState(client, "c1"),
+            events: windowEvents,
+            viewingHistoryWindow: true,
+        };
+        state.database = database;
+        state.api = { messages };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        // First forward page advances the edge to 180; more may still exist, so the window stays open.
+        await client.loadNewerHistory();
+        await jest.runAllTimersAsync();
+
+        expect(messages).toHaveBeenNthCalledWith(1, "c1", undefined, 80, 103);
+        expect(database.putHistory).toHaveBeenNthCalledWith(1, forwardPageA);
+        expect(state.history.get("c1")).toMatchObject({ oldestSeq: 98, newestSeq: 180, hasMoreNewer: true });
+        expect(client.getSnapshot().viewingHistoryWindow).toBe(true);
+        expect(client.getSnapshot().events.map((event) => event.seq)).toEqual([98, 100, 102, 104, 106, 180]);
+
+        // Second forward page returns nothing past the edge: the window collapses and live resumes.
+        await client.loadNewerHistory();
+        await jest.runAllTimersAsync();
+
+        expect(messages).toHaveBeenNthCalledWith(2, "c1", undefined, 80, 181);
+        expect(state.history.get("c1")).toMatchObject({ oldestSeq: 98, newestSeq: 180, hasMoreNewer: false });
+        expect(client.getSnapshot().viewingHistoryWindow).toBe(false);
+        expect(client.getSnapshot().events.map((event) => event.seq)).toEqual([98, 100, 102, 104, 106, 180]);
+    });
+
+    it("keeps the window open when last_seq trails the fetched forward edge (no cached-tail collapse)", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const windowEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const database = historyWindowDatabase(windowEvents);
+        // A forward page advances the edge to 180 while the cached summary still reports last_seq
+        // 120. A cached-tail heuristic would falsely collapse here and strand rows 121-180+; the
+        // response-derived rule must keep paging.
+        const messages = jest.fn(async () => ({ events: [textEvent("c1", 140), textEvent("c1", 180)] }));
+        state.state = {
+            ...signedInState(client, "c1"),
+            events: windowEvents,
+            viewingHistoryWindow: true,
+            conversations: [{ ...CONVERSATIONS[0], id: "c1", last_seq: 120 }, ...CONVERSATIONS.slice(1)],
+        };
+        state.database = database;
+        state.api = { messages };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        await client.loadNewerHistory();
+        await jest.runAllTimersAsync();
+
+        expect(state.history.get("c1")).toMatchObject({ newestSeq: 180, hasMoreNewer: true });
+        expect(client.getSnapshot().viewingHistoryWindow).toBe(true);
+    });
+
+    it("runs the full live-entry transition when forward paging reaches the tail", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const windowEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const database = historyWindowDatabase(windowEvents);
+        // Overlap-only page → no forward progress → tail reached.
+        const messages = jest.fn(async () => ({ events: [textEvent("c1", 102)] }));
+        const send = jest.fn().mockReturnValue(true);
+        state.state = {
+            ...signedInState(client, "c1"),
+            events: windowEvents,
+            viewingHistoryWindow: true,
+            unreadOverrideIds: new Set(["c1"]),
+            conversations: [
+                { ...CONVERSATIONS[0], id: "c1", last_seq: 102, unread_count: 2 },
+                ...CONVERSATIONS.slice(1),
+            ],
+        };
+        state.database = database;
+        state.api = { messages };
+        state.connection = { send };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        await client.loadNewerHistory();
+        await jest.runAllTimersAsync();
+
+        expect(state.history.get("c1")).toMatchObject({ hasMoreNewer: false });
+        expect(client.getSnapshot().viewingHistoryWindow).toBe(false);
+        // The deep-link window never sent `viewing`; the tail transition must subscribe now
+        // (server-side ephemeral replay), clear the unread override, and flush the read marker.
+        expect(send).toHaveBeenCalledWith({ op: "viewing", convo_id: "c1" });
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(false);
+        expect(database.markLocallyRead).toHaveBeenCalledWith("c1", 102);
+    });
+
+    it("keeps a live frame that raced the final forward page from being hidden on collapse", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const windowEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const database = historyWindowDatabase(windowEvents);
+        // The final REST page is stale (predates the live frame) — overlap-only, so it reads as tail.
+        const messages = jest.fn(async () => ({ events: [textEvent("c1", 102)] }));
+        state.state = {
+            ...signedInState(client, "c1"),
+            events: windowEvents,
+            viewingHistoryWindow: true,
+        };
+        state.database = database;
+        state.api = { messages };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        // A live frame (seq 150) arrives and is persisted while the window is still open. The
+        // historical-window path deliberately does not advance newestSeq for it.
+        await state.handleJournal(textEvent("c1", 150));
+        await jest.runAllTimersAsync();
+        expect(state.history.get("c1")).toMatchObject({ newestSeq: 102, hasMoreNewer: true });
+
+        // Collapsing on the stale page must not strand the persisted live frame behind newestSeq.
+        await client.loadNewerHistory();
+        await jest.runAllTimersAsync();
+
+        expect(state.history.get("c1")).toMatchObject({ hasMoreNewer: false });
+        expect(state.history.get("c1")?.newestSeq ?? 0).toBeGreaterThanOrEqual(150);
+        expect(client.getSnapshot().events.map((event) => event.seq)).toContain(150);
+    });
+
+    it("rolls back the window and skips read side effects when the tail refresh fails", async () => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const windowEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const database = historyWindowDatabase(windowEvents);
+        const messages = jest.fn(async () => ({ events: [textEvent("c1", 102)] }));
+        // The forward page succeeds but the subsequent timeline refresh read rejects.
+        database.events = jest.fn().mockRejectedValue(new Error("db read failed"));
+        const send = jest.fn().mockReturnValue(true);
+        state.state = {
+            ...signedInState(client, "c1"),
+            events: windowEvents,
+            viewingHistoryWindow: true,
+            unreadOverrideIds: new Set(["c1"]),
+            conversations: [
+                { ...CONVERSATIONS[0], id: "c1", last_seq: 102, unread_count: 2 },
+                ...CONVERSATIONS.slice(1),
+            ],
+        };
+        state.database = database;
+        state.api = { messages };
+        state.connection = { send };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        await client.loadNewerHistory();
+        await jest.runAllTimersAsync();
+
+        // Check-act ordering: the failed refresh leaves the window intact and performs none of the
+        // irreversible live-entry effects — no `viewing` resubscribe, no unread clear, no read marker.
+        expect(state.history.get("c1")).toMatchObject({ newestSeq: 102, hasMoreNewer: true });
+        expect(client.getSnapshot().viewingHistoryWindow).toBe(true);
+        expect(send).not.toHaveBeenCalledWith({ op: "viewing", convo_id: "c1" });
+        expect(client.getSnapshot().unreadOverrideIds.has("c1")).toBe(true);
+        expect(database.markLocallyRead).not.toHaveBeenCalled();
+    });
+
+    it("discards a forward-paging response after the selection changes", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const forwardPage = deferred<{ events: JournalEvent[] }>();
+        const database = historyWindowDatabase([textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)]);
+        const messages = jest.fn(() => forwardPage.promise);
+        state.state = {
+            ...signedInState(client, "c1"),
+            viewingHistoryWindow: true,
+            conversations: [{ ...CONVERSATIONS[0], id: "c1", last_seq: 210 }, ...CONVERSATIONS.slice(1)],
+        };
+        state.database = database;
+        state.api = { messages };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        const paging = client.loadNewerHistory();
+        // A concurrent selection change bumps the epoch and takes over the selection.
+        state.selectionEpoch = (state.selectionEpoch ?? 0) + 1;
+        state.state = { ...state.state, selectedConversationId: "c2" };
+        forwardPage.resolve({ events: [textEvent("c1", 104), textEvent("c1", 106)] });
+        await paging;
+        await jest.runAllTimersAsync();
+
+        // The stale window must not be mutated by a response it no longer owns.
+        expect(state.history.get("c1")).toMatchObject({ newestSeq: 102, hasMoreNewer: true });
+    });
+
+    it("blocks prompt and agent-spawn answers in history and allows them after Jump to latest", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const tailEvents = [textEvent("c1", 198), textEvent("c1", 199), textEvent("c1", 200)];
+        const send = jest.fn().mockReturnValue(true);
+        const answerAgentSpawn = jest.fn().mockResolvedValue(undefined);
+        state.state = { ...signedInState(client), viewingHistoryWindow: true };
+        state.database = historyWindowDatabase();
+        state.api = { messages: jest.fn().mockResolvedValue({ events: tailEvents }), answerAgentSpawn };
+        state.connection = { send };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        expect(client.sendPromptReply(42, "allow")).toBe(false);
+        await expect(client.answerAgentSpawn("spawn-1", "approve")).rejects.toThrow("Jump to latest");
+        expect(send).not.toHaveBeenCalled();
+        expect(answerAgentSpawn).not.toHaveBeenCalled();
+
+        await client.jumpToLatest();
+
+        expect(client.sendPromptReply(42, "allow")).toBe(true);
+        await client.answerAgentSpawn("spawn-1", "approve");
+        expect(send).toHaveBeenCalledWith({
+            op: "prompt_reply",
+            convo_id: "c1",
+            target_seq: 42,
+            choice: "allow",
+            text: null,
+        });
+        expect(answerAgentSpawn).toHaveBeenCalledWith("spawn-1", "approve", undefined);
+    });
+
+    it("keeps a live event out of a historical window while retaining its unread update", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const historicalEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const database = historyWindowDatabase(historicalEvents);
+        state.state = {
+            ...signedInState(client),
+            events: historicalEvents,
+            viewingHistoryWindow: true,
+            pendingScrollSeq: 100,
+        };
+        state.database = database;
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        await state.handleJournal(textEvent("c1", 103));
+
+        expect(client.getSnapshot().events).toEqual(historicalEvents);
+        expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")?.unread_count).toBe(
+            1,
+        );
+        expect(state.readHighWater.has("c1")).toBe(false);
+    });
+
+    it("hides live activity, streams, and pending outbox rows until jumping to latest", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const historicalEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const tailEvents = [textEvent("c1", 198), textEvent("c1", 199), textEvent("c1", 200)];
+        const pending: PendingMessage = {
+            localId: "pending-now",
+            convoId: "c1",
+            body: "queued at the tail",
+            createdAt: 201_000,
+        };
+        const database = historyWindowDatabase();
+        database.outbox = jest.fn().mockResolvedValue([pending]);
+        const messages = jest
+            .fn()
+            .mockResolvedValueOnce({ events: historicalEvents })
+            .mockResolvedValueOnce({ events: tailEvents });
+        state.state = signedInState(client, "c2");
+        state.database = database;
+        state.api = { messages };
+        state.activities.set("c1", { state: "thinking", detail: "before selection" });
+        state.textStreams.set("c1", { response: "stream before selection" });
+
+        await client.selectConversationAtSeq("c1", 100);
+        state.handleEphemeral({
+            kind: "ephemeral",
+            convo_id: "c1",
+            message_ref: "response",
+            replace_text: "stream at the tail",
+            activity: { state: "tool", detail: "tests" },
+        });
+
+        expect(client.getSnapshot()).toMatchObject({
+            activity: undefined,
+            textStreams: {},
+            toolStreams: {},
+            pendingMessages: [],
+            viewingHistoryWindow: true,
+        });
+
+        await client.jumpToLatest();
+
+        expect(client.getSnapshot()).toMatchObject({
+            activity: { state: "tool", detail: "tests" },
+            textStreams: { response: "stream at the tail" },
+            pendingMessages: [pending],
+            viewingHistoryWindow: false,
+        });
+    });
+
+    it("jumps back to the tail and resumes appending live events", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const historicalEvents = [textEvent("c1", 98), textEvent("c1", 100), textEvent("c1", 102)];
+        const tailEvents = [textEvent("c1", 198), textEvent("c1", 199), textEvent("c1", 200)];
+        const database = historyWindowDatabase(historicalEvents);
+        const messages = jest.fn().mockResolvedValue({ events: tailEvents });
+        state.state = {
+            ...signedInState(client),
+            events: historicalEvents,
+            viewingHistoryWindow: true,
+            pendingScrollSeq: 100,
+        };
+        state.database = database;
+        state.api = { messages };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        await client.jumpToLatest();
+
+        expect(messages).toHaveBeenCalledWith("c1", undefined, 80);
+        expect(client.getSnapshot()).toMatchObject({
+            events: tailEvents,
+            pendingScrollSeq: undefined,
+            viewingHistoryWindow: false,
+        });
+        expect(state.history.get("c1")?.hasMoreNewer).toBe(false);
+
+        const live = textEvent("c1", 201, "user:2");
+        await state.handleJournal(live);
+        expect(client.getSnapshot().events).toEqual([...tailEvents, live]);
+    });
+
+    it("returns an existing historical selection to normal tail mode", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const tailEvents = [textEvent("c1", 198), textEvent("c1", 199), textEvent("c1", 200)];
+        state.state = signedInState(client);
+        state.database = historyWindowDatabase();
+        state.api = { messages: jest.fn().mockResolvedValue({ events: tailEvents }) };
+        state.history.set("c1", {
+            initialized: true,
+            oldestSeq: 98,
+            newestSeq: 102,
+            hasMore: true,
+            hasMoreNewer: true,
+        });
+
+        await client.selectConversation("c1");
+
+        expect(client.getSnapshot().viewingHistoryWindow).toBe(false);
+        expect(state.history.get("c1")?.hasMoreNewer).toBe(false);
     });
 
     it("clears a history error after a successful retry", async () => {
@@ -442,7 +1239,13 @@ describe("MatronJournalClient state handling", () => {
         await client.loadOlderHistory();
 
         expect(messages).toHaveBeenCalledTimes(2);
-        expect(state.history.get("c1")).toEqual({ initialized: false, hasMore: true, oldestSeq: undefined });
+        expect(state.history.get("c1")).toEqual({
+            initialized: false,
+            hasMore: true,
+            oldestSeq: undefined,
+            newestSeq: undefined,
+            hasMoreNewer: false,
+        });
         expect(client.getSnapshot().hasOlderHistory).toBe(true);
     });
 
@@ -532,6 +1335,124 @@ describe("MatronJournalClient state handling", () => {
         expect(controller.signal.aborted).toBe(true);
     });
 
+    describe("replaceSnapshot across a session change", () => {
+        const SNAPSHOT_A = { seq: 30, conversations: CONVERSATIONS };
+
+        // Simulates logout → login: bumps the generation and swaps in a fresh database/api, the
+        // way logout() + startSession() leave them, without driving a real login.
+        function switchSession(
+            state: ReturnType<typeof internals>,
+            client: MatronJournalClient,
+        ): { databaseB: ReturnType<typeof fakeDatabase> } {
+            const databaseB = fakeDatabase({ conversations: jest.fn().mockResolvedValue([]) });
+            state.sessionGen += 1;
+            state.database = databaseB;
+            state.api = {
+                messages: jest.fn().mockResolvedValue({ events: [] }),
+                snapshot: jest.fn().mockResolvedValue({ seq: 1, conversations: [] }),
+            };
+            state.state = { ...signedInState(client), conversations: [], selectedConversationId: undefined };
+            return { databaseB };
+        }
+
+        it("drops a snapshot that resolves after logout + login as another account", async () => {
+            const client = new MatronJournalClient();
+            const state = internals(client);
+            const databaseA = fakeDatabase();
+            const pending = deferred<typeof SNAPSHOT_A>();
+            state.state = signedInState(client);
+            state.database = databaseA;
+            state.api = {
+                messages: jest.fn().mockResolvedValue({ events: [] }),
+                snapshot: jest.fn().mockReturnValue(pending.promise),
+            };
+
+            const replacing = state.replaceSnapshot();
+            await client.logout();
+            const { databaseB } = switchSession(state, client);
+            pending.resolve(SNAPSHOT_A);
+            await replacing;
+
+            expect(databaseA.replaceWithSnapshot).not.toHaveBeenCalled();
+            expect(databaseB.replaceWithSnapshot).not.toHaveBeenCalled();
+            expect(databaseB.reconcilePersistedOwnMessages).not.toHaveBeenCalled();
+            expect(databaseB.conversations).not.toHaveBeenCalled();
+            expect(client.getSnapshot().conversations).toEqual([]);
+        });
+
+        it("ignores callbacks a stopped connection delivers after the next session started", async () => {
+            // A stopped connection keeps draining its queue: a snapshot_required, journal frame or
+            // revoke queued on A must not act on B through the client's current database/api.
+            const client = new MatronJournalClient();
+            const state = internals(client);
+            const databaseA = fakeDatabase();
+            const databaseB = fakeDatabase();
+            jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+            jest.spyOn(JournalDatabase, "open")
+                .mockResolvedValueOnce(databaseA as unknown as JournalDatabase)
+                .mockResolvedValueOnce(databaseB as unknown as JournalDatabase);
+            await state.startSession(SESSION);
+            const oldCallbacks = (
+                state.connection as unknown as { callbacks: Record<string, (...a: unknown[]) => unknown> }
+            ).callbacks;
+            await state.startSession({ ...SESSION, token: "token-b", userId: 3, username: "pat" });
+            const snapshot = jest.spyOn(JournalApi.prototype, "snapshot");
+            (databaseB.replaceWithSnapshot as jest.Mock).mockClear();
+            (databaseB.applyJournal as jest.Mock).mockClear();
+            const stateBefore = client.getSnapshot();
+
+            await oldCallbacks.onSnapshotRequired();
+            await oldCallbacks.onFrame({
+                kind: "journal",
+                seq: 99,
+                convo_id: "c1",
+                ts: 1,
+                sender: "user:dan",
+                type: "text",
+                payload: { body: "stale" },
+            });
+            oldCallbacks.onState("offline", "stale error");
+            oldCallbacks.onRevoked();
+            await Promise.resolve();
+
+            expect(snapshot).not.toHaveBeenCalled();
+            expect(databaseB.replaceWithSnapshot).not.toHaveBeenCalled();
+            expect(databaseB.applyJournal).not.toHaveBeenCalled();
+            expect(client.getSnapshot().session).toMatchObject({ username: "pat" });
+            expect(client.getSnapshot().connection).toBe(stateBefore.connection);
+            expect(client.getSnapshot().connectionError).toBe(stateBefore.connectionError);
+        });
+
+        it("stops after the database write when the session changes mid-replace (same account)", async () => {
+            const client = new MatronJournalClient();
+            const state = internals(client);
+            const writing = deferred<void>();
+            const databaseA = fakeDatabase({ replaceWithSnapshot: jest.fn().mockReturnValue(writing.promise) });
+            state.state = signedInState(client);
+            state.database = databaseA;
+            state.api = {
+                messages: jest.fn().mockResolvedValue({ events: [] }),
+                snapshot: jest.fn().mockResolvedValue(SNAPSHOT_A),
+            };
+
+            const replacing = state.replaceSnapshot();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(databaseA.replaceWithSnapshot).toHaveBeenCalledWith(SNAPSHOT_A);
+            // Same account, new generation: the new session owns its own database now.
+            const { databaseB } = switchSession(state, client);
+            writing.resolve();
+            await replacing;
+
+            expect(databaseA.reconcilePersistedOwnMessages).not.toHaveBeenCalled();
+            expect(databaseA.conversations).not.toHaveBeenCalled();
+            expect(databaseB.replaceWithSnapshot).not.toHaveBeenCalled();
+            expect(databaseB.reconcilePersistedOwnMessages).not.toHaveBeenCalled();
+            expect(databaseB.conversations).not.toHaveBeenCalled();
+            expect(client.getSnapshot().conversations).toEqual([]);
+        });
+    });
+
     it("applies every field from a combined ephemeral frame", () => {
         const client = new MatronJournalClient();
         const state = internals(client);
@@ -543,14 +1464,48 @@ describe("MatronJournalClient state handling", () => {
             message_ref: "stream-1",
             text: "partial answer",
             activity: { state: "thinking", detail: "Planning" },
-            status: { model: "claude-sonnet", email: "alice@example.com" },
+            status: { model: "claude-sonnet", email: "dan@example.com" },
         });
 
         expect(client.getSnapshot()).toMatchObject({
             activity: { state: "thinking", detail: "Planning" },
-            sessionStatus: { model: "claude-sonnet", email: "alice@example.com" },
+            sessionStatus: { model: "claude-sonnet", email: "dan@example.com" },
             textStreams: { "stream-1": "partial answer" },
         });
+    });
+
+    it("stores a host-global vitals frame globally, even with no convo_id and no selection", () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        // No selection at all: the host frame must still land, and the convo guard must not misfire.
+        state.state = { ...signedInState(client), selectedConversationId: undefined };
+
+        state.handleEphemeral({
+            kind: "ephemeral",
+            host_vitals: { cpu: 42, ram: 71, sampled_at_ms: 1_000 },
+        });
+
+        expect(client.getSnapshot().hostVitals).toEqual({ cpu: 42, ram: 71, sampled_at_ms: 1_000 });
+    });
+
+    it("does not disturb per-conversation ephemeral state when a host-vitals frame arrives", () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.state = signedInState(client);
+        state.handleEphemeral({
+            kind: "ephemeral",
+            convo_id: "c1",
+            status: { model: "claude-sonnet" },
+        });
+
+        state.handleEphemeral({
+            kind: "ephemeral",
+            host_vitals: { cpu: 12, ram: 34, sampled_at_ms: 5_000 },
+        });
+
+        // Host frame stored, and the earlier conversation status is untouched.
+        expect(client.getSnapshot().hostVitals).toEqual({ cpu: 12, ram: 34, sampled_at_ms: 5_000 });
+        expect(client.getSnapshot().sessionStatus).toMatchObject({ model: "claude-sonnet" });
     });
 
     it("mirrors the local id into the outgoing payload for exact reconciliation", async () => {
@@ -3163,22 +4118,22 @@ describe("session creation orchestration", () => {
         [
             "relay not_connected",
             { ok: false, origin: "relay", code: "not_connected" },
-            { kind: "error", message: "Still connecting — try again in a moment." },
+            { kind: "error", reach: true, message: "Still connecting — try again in a moment." },
         ],
         [
             "relay not_ready",
             { ok: false, origin: "relay", code: "not_ready" },
-            { kind: "error", message: "Still connecting — try again in a moment." },
+            { kind: "error", reach: true, message: "Still connecting — try again in a moment." },
         ],
         [
             "other relay error",
             { ok: false, origin: "relay", code: "rejected" },
-            { kind: "error", message: "Couldn't reach that box — try again." },
+            { kind: "error", reach: true, message: "Couldn't reach that box — try again." },
         ],
         [
             "bad workdir",
             { ok: false, origin: "agent", code: "bad_workdir" },
-            { kind: "error", message: "That folder doesn't exist on the box." },
+            { kind: "error", code: "bad_workdir", message: "That folder doesn’t exist on the box." },
         ],
         ["spawn failure", { ok: false, origin: "agent", code: "spawn_failed" }, { kind: "uncertain" }],
         ["unsupported mode", { ok: false, origin: "agent", code: "unsupported_mode" }, { kind: "uncertain" }],
@@ -3198,6 +4153,41 @@ describe("session creation orchestration", () => {
         expect(internals(client).connection?.agentRequest).toHaveBeenCalledWith(9, "start", {
             workdir: "/srv/project",
             browser: true,
+        });
+    });
+
+    it("sends the model and agent picks with a start (v6 options sheet)", async () => {
+        const client = withAgentReply({ ok: true, origin: "agent", result: { convo_id: "c" } });
+        await client.startSessionRpc(9, "/srv", false, { model: "sonnet", agent: "claude" });
+        expect(internals(client).connection?.agentRequest).toHaveBeenCalledWith(9, "start", {
+            workdir: "/srv",
+            model: "sonnet",
+            agent: "claude",
+        });
+    });
+
+    it("reads the box's session options from recent_folders", async () => {
+        const client = withAgentReply({
+            ok: true,
+            origin: "agent",
+            result: {
+                folders: [{ path: "/srv/a", last_used: 2 }],
+                model_options: [{ value: "opus", label: "Opus 4.5" }],
+                default_model: "opus",
+                agent_options: [
+                    { value: "claude", label: "Claude" },
+                    { value: "codex", label: "Codex" },
+                ],
+                default_agent: "claude",
+            },
+        });
+        await expect(client.sessionOptions(9)).resolves.toEqual({
+            folders: [{ path: "/srv/a", last_used: 2 }],
+            models: [{ value: "opus", label: "Opus 4.5" }],
+            defaultModel: "opus",
+            agents: ["claude", "codex"],
+            defaultAgent: "claude",
+            defaultFolder: undefined,
         });
     });
 
@@ -3233,6 +4223,7 @@ describe("session creation orchestration", () => {
         await expect(client.recentFolders(9)).resolves.toEqual([]);
         await expect(client.startSessionRpc(9, "", false)).resolves.toEqual({
             kind: "error",
+            reach: true,
             message: "Still connecting — try again in a moment.",
         });
     });
@@ -3258,9 +4249,9 @@ describe("session creation orchestration", () => {
 
         await client.selectConversation("created", { fromRpcCreate: true });
         expect(client.getSnapshot().connectionError).toBeUndefined();
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
 
-        expect(client.getSnapshot().connectionError).toBe("Session created but not syncing yet — refresh to retry.");
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
     });
 
     it("does not fire after a matching journal frame syncs the created conversation", async () => {
@@ -3276,7 +4267,7 @@ describe("session creation orchestration", () => {
             type: "text",
             payload: {},
         });
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
 
         expect(client.getSnapshot().connectionError).toBeUndefined();
     });
@@ -3298,7 +4289,7 @@ describe("session creation orchestration", () => {
         });
         await Promise.resolve();
         await Promise.resolve();
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
         expect(client.getSnapshot().connectionError).toBeUndefined();
 
         events.resolve([]);
@@ -3313,9 +4304,9 @@ describe("session creation orchestration", () => {
         await client.selectConversation("created", { fromRpcCreate: true });
         await client.selectConversation("c2");
         await client.selectConversation("created");
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
 
-        expect(client.getSnapshot().connectionError).toBe("Session created but not syncing yet — refresh to retry.");
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
     });
 
     it("suppresses the watchdog notice when another conversation is selected at expiry", async () => {
@@ -3324,7 +4315,7 @@ describe("session creation orchestration", () => {
 
         await client.selectConversation("created", { fromRpcCreate: true });
         await client.selectConversation("c2");
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
 
         expect(client.getSnapshot().connectionError).toBeUndefined();
     });
@@ -3334,7 +4325,7 @@ describe("session creation orchestration", () => {
         const first = watchdogClient();
         await first.client.selectConversation("created", { fromRpcCreate: true });
         await first.client.logout();
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
         expect(first.client.getSnapshot().connectionError).toBeUndefined();
 
         const second = watchdogClient();
@@ -3344,7 +4335,7 @@ describe("session creation orchestration", () => {
         };
         await second.client.selectConversation("created", { fromRpcCreate: true });
         await second.state.replaceSnapshot();
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
         expect(second.client.getSnapshot().connectionError).toBeUndefined();
     });
 
@@ -3355,7 +4346,155 @@ describe("session creation orchestration", () => {
         await client.selectConversation("created-1", { fromRpcCreate: true });
         await client.selectConversation("created-2", { fromRpcCreate: true });
         await client.selectConversation("created-1");
-        jest.advanceTimersByTime(10_000);
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+    });
+
+    it("gives a cold spawn at least 30s before showing the not-syncing notice", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        jest.advanceTimersByTime(29_999);
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
+    });
+
+    it("clears its own notice when the created conversation starts syncing after the watchdog fired", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
+
+        await state.handleJournal({
+            seq: 13,
+            convo_id: "created",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+    });
+
+    it("keeps the notice when a frame for a different conversation arrives", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+
+        await state.handleJournal({
+            seq: 14,
+            convo_id: "c2",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
+    });
+
+    it("never clears an unrelated connection error when the created conversation syncs", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        state.state = { ...state.state, connectionError: "Connection lost" };
+
+        await state.handleJournal({
+            seq: 15,
+            convo_id: "created",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+
+        expect(client.getSnapshot().connectionError).toBe("Connection lost");
+    });
+
+    it("does not overwrite an earlier connection error (e.g. a refused first-task send) when it fires", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        state.state = { ...state.state, connectionError: "Send refused" };
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe("Send refused");
+
+        await state.handleJournal({
+            seq: 16,
+            convo_id: "created",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+        expect(client.getSnapshot().connectionError).toBe("Send refused");
+    });
+
+    it("still warns after a transient error at expiry clears without the created conversation syncing", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        state.state = { ...state.state, connectionError: "Reconnecting" };
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe("Reconnecting");
+
+        state.state = { ...state.state, connectionError: undefined };
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
+    });
+
+    it("re-raises the notice when a reconnect clears it before the created conversation syncs", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
+
+        state.state = { ...state.state, connectionError: undefined };
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS);
+        expect(client.getSnapshot().connectionError).toBe(RPC_CREATE_STALLED_NOTICE);
+
+        await state.handleJournal({
+            seq: 17,
+            convo_id: "created",
+            ts: 1,
+            sender: "agent:9",
+            type: "text",
+            payload: {},
+        });
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS * 2);
+        expect(client.getSnapshot().connectionError).toBeUndefined();
+    });
+
+    it("never flags a created conversation whose frames synced before the watchdog was armed", async () => {
+        jest.useFakeTimers();
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { client, state } = watchdogClient();
+        state.state = { ...state.state, conversations: [...CONVERSATIONS, { ...CONVERSATIONS[0], id: "created" }] };
+
+        await client.selectConversation("created", { fromRpcCreate: true });
+        jest.advanceTimersByTime(RPC_CREATE_WATCHDOG_MS * 3);
 
         expect(client.getSnapshot().connectionError).toBeUndefined();
     });
@@ -3409,6 +4548,132 @@ describe("session creation orchestration", () => {
         expect(state.toolStreams.get("c2")).toEqual({ toolref: card }); // still running → kept
         // Published snapshot for the selected conversation must be republished empty so the stale
         // card cannot re-render on c1's next running turn (F1 — private/published divergence).
+        expect(client.getSnapshot().toolStreams).toEqual({});
+    });
+
+    it("keeps a live 'thinking' activity that lands before the durable 'running' row (upstream db04c8c)", async () => {
+        // The bridge sends activity 'thinking' immediately at turn start but queues the durable
+        // session_state 'running' behind journalPublish, so 'thinking' routinely arrives while the
+        // row still says 'waiting'. A refresh in that window must not delete the live activity:
+        // the bridge dedups activity transitions, so nothing would re-send it.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.database = fakeDatabase({
+            conversations: jest.fn().mockResolvedValue([{ ...CONVERSATIONS[0], session_state: "waiting" }]),
+        });
+        state.activities.set("c1", { state: "thinking" });
+        state.state = { ...signedInState(client), activity: { state: "thinking" }, toolStreams: {} };
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 31,
+            convo_id: "c2",
+            ts: Date.now(),
+            sender: "system",
+            type: "session_status",
+            payload: { state: "done" },
+        });
+
+        expect(state.activities.get("c1")).toEqual({ state: "thinking" });
+        expect(client.getSnapshot().activity).toEqual({ state: "thinking" });
+    });
+
+    it("does not republish ephemeral state when nothing was pruned", async () => {
+        // A running conversation keeps its activity, so refreshConversations must leave the
+        // published ephemeral state alone rather than clobbering live streams on every refresh.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.database = fakeDatabase({
+            conversations: jest.fn().mockResolvedValue([{ ...CONVERSATIONS[0], session_state: "running" }]),
+        });
+        state.activities.set("c1", { state: "thinking" });
+        state.state = {
+            ...signedInState(client),
+            activity: { state: "thinking" },
+            textStreams: { ref: "partial" },
+            toolStreams: {},
+        };
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 32,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "system",
+            type: "session_status",
+            payload: { state: "running" },
+        });
+
+        expect(state.activities.get("c1")).toEqual({ state: "thinking" });
+        expect(client.getSnapshot().activity).toEqual({ state: "thinking" });
+        // refreshEphemeralState would have wiped this (the private textStreams map is empty).
+        expect(client.getSnapshot().textStreams).toEqual({ ref: "partial" });
+    });
+
+    it("reconciles a stale pinned summary from a duplicate convo_meta a peer tab already applied", async () => {
+        // Same shared-IndexedDB race as the session_status case above, for the frame that
+        // carries the pinned digest. The peer tab wrote the new summary and
+        // advanced the shared cursor, so this tab gets applied=false; without refreshing off
+        // the durable row its pinned bar shows the superseded digest indefinitely (P48). No
+        // upload is in flight here — the refresh must not be gated on one.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.database = fakeDatabase({
+            applyJournal: jest.fn().mockResolvedValue(false), // peer tab won the cursor race
+            conversations: jest
+                .fn()
+                .mockResolvedValue([
+                    { ...CONVERSATIONS[0], summary: "\u2022 fresh", summary_updated_at: 1_700_000_000_000 },
+                ]),
+        });
+        state.state = {
+            ...signedInState(client),
+            conversations: [{ ...CONVERSATIONS[0], summary: "\u2022 stale", summary_updated_at: 1 }],
+        };
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 34,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "agent:dev",
+            type: "convo_meta",
+            payload: { summary: "\u2022 fresh", summary_updated_at: 1_700_000_000_000 },
+        });
+
+        expect(client.getSnapshot().conversations[0]).toMatchObject({
+            summary: "\u2022 fresh",
+            summary_updated_at: 1_700_000_000_000,
+        });
+    });
+
+    it("reconciles a stale tool card from a duplicate frame a peer tab already applied", async () => {
+        // Tabs sharing a server/user share one IndexedDB, so a terminal session_status applied by
+        // the peer tab advances the shared cursor and comes back applied=false here. The durable
+        // store is still authoritative (P48): reconcile against it instead of returning, or the
+        // tab that dropped the ephemeral tool_stream 'end' keeps a dangling tool card. (Activity
+        // is not pruned here — the Timeline's sessionRunning gate hides it; upstream db04c8c.)
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.database = fakeDatabase({
+            applyJournal: jest.fn().mockResolvedValue(false), // peer tab won the cursor race
+            conversations: jest.fn().mockResolvedValue([{ ...CONVERSATIONS[0], session_state: "done" }]),
+        });
+        const card = { messageRef: "toolref", content: "ls", offset: 2, headTruncated: false };
+        state.toolStreams.set("c1", { toolref: { ...card } });
+        state.state = { ...signedInState(client), toolStreams: { toolref: { ...card } } };
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 33,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "system",
+            type: "session_status",
+            payload: { state: "done" },
+        });
+
+        expect(state.toolStreams.has("c1")).toBe(false);
         expect(client.getSnapshot().toolStreams).toEqual({});
     });
 });

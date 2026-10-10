@@ -9,8 +9,10 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { MatronJournalClient } from "../../../src/journal/client";
-import { MatronApp, NewSessionSheet } from "../../../src/journal/components";
-import type { BoxStatus, ClientState, DeviceDTO, ServerFrame, Session } from "../../../src/journal/types";
+import { MatronApp } from "../../../src/journal/components";
+import { NewSessionSheet } from "../../../src/journal/new-session-ui";
+import type { BoxStatus } from "../../../src/journal/ops/model";
+import type { ClientState, DeviceDTO, ServerFrame, Session } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -30,14 +32,6 @@ const AGENT_A: DeviceDTO = {
     is_self: false,
 };
 
-const AGENT_B: DeviceDTO = {
-    device_id: 11,
-    kind: "agent",
-    name: "Box B",
-    connected: true,
-    is_self: false,
-};
-
 interface ClientInternals {
     state: ClientState;
     handleFrame(frame: ServerFrame): Promise<void>;
@@ -45,25 +39,6 @@ interface ClientInternals {
 
 function internals(client: MatronJournalClient): ClientInternals {
     return client as unknown as ClientInternals;
-}
-
-function deferred<T>(): {
-    promise: Promise<T>;
-    resolve: (value: T) => void;
-} {
-    let resolve!: (value: T) => void;
-    const promise = new Promise<T>((resolvePromise) => {
-        resolve = resolvePromise;
-    });
-    return { promise, resolve };
-}
-
-function textButton(container: HTMLElement, text: string): HTMLButtonElement {
-    const match = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-        (candidate) => candidate.textContent?.trim() === text,
-    );
-    if (!match) throw new Error(`Missing button: ${text}`);
-    return match;
 }
 
 async function render(element: React.ReactElement): Promise<{
@@ -77,12 +52,31 @@ async function render(element: React.ReactElement): Promise<{
     return { container, root };
 }
 
-describe("NewSessionSheet", () => {
+const OPTIONS = {
+    folders: [
+        { path: "/srv/project", last_used: 2 },
+        { path: "/home/user/workspace", last_used: 1 },
+    ],
+    models: [
+        { value: "opus", label: "Opus 4.5" },
+        { value: "sonnet", label: "Sonnet 4.5" },
+    ],
+    defaultModel: "opus",
+    agents: ["claude", "codex"] as Array<"claude" | "codex">,
+    defaultAgent: "claude" as const,
+};
+
+const byText = (container: HTMLElement, selector: string, text: string): HTMLElement =>
+    [...container.querySelectorAll<HTMLElement>(selector)].find((node) => node.textContent?.trim() === text)!;
+
+describe("New session options sheet", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
     beforeAll(() => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     });
+
+    beforeEach(() => localStorage.clear());
 
     afterEach(async () => {
         if (rendered) {
@@ -93,235 +87,203 @@ describe("NewSessionSheet", () => {
         jest.restoreAllMocks();
     });
 
-    it("runs agent to folder to start and selects the created conversation", async () => {
-        const client = new MatronJournalClient();
-        jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
-        jest.spyOn(client, "recentFolders").mockResolvedValue([{ path: "/srv/project", last_used: 1 }]);
-        const start = jest.spyOn(client, "startSessionRpc").mockResolvedValue({
-            kind: "created",
-            convoId: "created-1",
-        });
-        const select = jest.spyOn(client, "selectConversation").mockResolvedValue(undefined);
-        const close = jest.fn();
-
-        rendered = await render(React.createElement(NewSessionSheet, { client, onClose: close }));
-        await act(async () => textButton(rendered!.container, "Box AConnected").click());
-        await act(async () => textButton(rendered!.container, "/srv/project").click());
-
-        expect(start).toHaveBeenCalledWith(AGENT_A.device_id, "/srv/project", false);
-        expect(close).toHaveBeenCalledTimes(1);
-        expect(select).toHaveBeenCalledWith("created-1", { fromRpcCreate: true });
-    });
-
-    it("auto-skips a sole connected agent and hides Back", async () => {
-        const client = new MatronJournalClient();
+    async function openSheet(client: MatronJournalClient, onClose = jest.fn()): Promise<HTMLElement> {
         jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A]);
-        jest.spyOn(client, "recentFolders").mockResolvedValue([]);
+        jest.spyOn(client, "sessionOptions").mockResolvedValue(OPTIONS);
+        rendered = await render(React.createElement(NewSessionSheet, { client, onClose }));
+        return rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
+    }
 
-        rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
-
-        expect(rendered.container.textContent).toContain("Start on Box A");
-        expect([...rendered.container.querySelectorAll("button")].some((item) => item.textContent === "Back")).toBe(
-            false,
+    it("lays out folder · agent · model · browser · first task · remember · box, focused on the folder", async () => {
+        const dialog = await openSheet(new MatronJournalClient());
+        const labels = [...dialog.querySelectorAll(".mj_FieldLabel, .mj_SwitchLabel, .mj_CheckRow")].map((node) =>
+            node.textContent?.trim(),
         );
+        expect(labels).toEqual([
+            "Folder",
+            "Agent",
+            "Model",
+            "Browser tools",
+            "First task (optional)",
+            "Remember as my defaults",
+        ]);
+        expect(dialog.querySelector(".mj_BoxCaption")?.textContent).toBe("On Box A");
+        const radios = [...dialog.querySelectorAll('.mj_FolderList [role="radio"]')].map((node) => node.textContent);
+        expect(radios).toEqual(["/srv/project", "/home/user/workspace", "Other folder…"]);
+        expect(document.activeElement?.textContent).toBe("/srv/project");
+        const model = dialog.querySelector<HTMLSelectElement>("select")!;
+        expect(model.value).toBe("opus");
+        expect(model.selectedOptions[0].textContent).toBe("Opus 4.5 (box default)");
     });
 
-    it("shows agents-error and Retry re-runs the roster request", async () => {
-        const client = new MatronJournalClient();
-        const listAgents = jest
-            .spyOn(client, "listAgents")
-            .mockRejectedValueOnce(new Error("offline"))
-            .mockResolvedValueOnce([AGENT_A, AGENT_B]);
+    it("disables the model and browser tools for Codex", async () => {
+        const dialog = await openSheet(new MatronJournalClient());
+        await act(async () => byText(dialog, '.mj_Segmented [role="radio"]', "Codex").click());
+        expect(dialog.querySelector<HTMLSelectElement>("select")!.disabled).toBe(true);
+        expect(dialog.textContent).toContain("Codex picks its own model");
+        expect(dialog.querySelector<HTMLButtonElement>('[role="switch"]')!.disabled).toBe(true);
+        expect(dialog.textContent).toContain("Not available for Codex sessions");
+    });
 
+    it("starts with the picks, sends the first task as a message and remembers the defaults", async () => {
+        const client = new MatronJournalClient();
+        const start = jest.spyOn(client, "startSessionRpc").mockResolvedValue({ kind: "created", convoId: "new" });
+        jest.spyOn(client, "selectConversation").mockResolvedValue(undefined);
+        const send = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        // The new conversation is known to the client, so the first task goes out at once.
+        jest.spyOn(client, "getSnapshot").mockReturnValue({
+            ...new MatronJournalClient().getSnapshot(),
+            conversations: [{ id: "new" } as never],
+        });
+        const onClose = jest.fn();
+        const dialog = await openSheet(client, onClose);
+        await act(async () => byText(dialog, '.mj_FolderList [role="radio"]', "/home/user/workspace").click());
+        await act(async () => {
+            const select = dialog.querySelector<HTMLSelectElement>("select")!;
+            select.value = "sonnet";
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        await act(async () => dialog.querySelector<HTMLButtonElement>('[role="switch"]')!.click());
+        await act(async () => {
+            const task = dialog.querySelector<HTMLTextAreaElement>("textarea")!;
+            const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+            setter.call(task, "Fix the flaky test.");
+            task.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        await act(async () => dialog.querySelector<HTMLInputElement>('.mj_CheckRow input[type="checkbox"]')!.click());
+        await act(async () => byText(dialog, "button", "Start session").click());
+        expect(start).toHaveBeenCalledWith(10, "/home/user/workspace", true, {
+            model: "sonnet",
+            agent: "claude",
+            idempotencyKey: expect.any(String),
+        });
+        expect(onClose).toHaveBeenCalled();
+        await act(async () => undefined);
+        expect(send).toHaveBeenCalledWith("Fix the flaky test.", "new");
+        expect(localStorage.getItem("matron.newSessionBox")).toBe("10");
+        expect(JSON.parse(localStorage.getItem("matron.newSessionDefaults.10")!)).toEqual({
+            folder: "/home/user/workspace",
+            model: "sonnet",
+            agent: "claude",
+        });
+    });
+
+    it("shows the bridge's bad-folder error on the Other folder field", async () => {
+        const client = new MatronJournalClient();
+        jest.spyOn(client, "startSessionRpc").mockResolvedValue({
+            kind: "error",
+            code: "bad_workdir",
+            message: "That folder doesn’t exist on the box.",
+        });
+        const dialog = await openSheet(client);
+        await act(async () => byText(dialog, '.mj_FolderList [role="radio"]', "Other folder…").click());
+        const input = dialog.querySelector<HTMLInputElement>(".mj_TextInput")!;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+            setter.call(input, "/opt/matron-wbe");
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        await act(async () => byText(dialog, "button", "Start session").click());
+        const error = dialog.querySelector('.mj_FieldError[role="alert"]')!;
+        expect(error.textContent).toBe("That folder doesn’t exist on the box.");
+        expect(input.getAttribute("aria-describedby")).toBe(error.id);
+        expect(input.getAttribute("aria-invalid")).toBe("true");
+    });
+});
+
+// Box usage (ported from upstream's sheet): the v6 sheet renders the chosen box's last capacity
+// report — limits with reset times, live sessions, disk, and an "as of" caption — from the
+// roster's `status` or a newer live `box_status` frame.
+describe("New session sheet box usage", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    beforeEach(() => localStorage.clear());
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    function statusFor(now: number): BoxStatus {
+        return {
+            reported_at: now - 5 * 60_000,
+            activity: { live_sessions: 5, last_hour: [] },
+            limits: {
+                as_of: now - 5 * 60_000,
+                lines: [
+                    {
+                        id: "session",
+                        label: "Session",
+                        percent: 13,
+                        resets: "Sep 28 at 1:10am (Europe/London)",
+                        resets_at: new Date(now + 30.5 * 60_000).toISOString(),
+                    },
+                    { id: "week_all", label: "Week (all models)", percent: 22 },
+                    { id: "week_fable", label: "Week (Fable)", percent: 24, resets: "Oct 1 at 1am" },
+                ],
+            },
+            disk: { free_bytes: 56_908_316_672, total_bytes: 1_979_120_929_996 },
+            account: { email: "dan@example.com" },
+        };
+    }
+
+    async function openSheet(client: MatronJournalClient, agent: DeviceDTO): Promise<HTMLElement> {
+        jest.spyOn(client, "listAgents").mockResolvedValue([agent]);
+        jest.spyOn(client, "sessionOptions").mockResolvedValue(OPTIONS);
         rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
-        expect(rendered.container.textContent).toContain("Couldn't load agents.");
+        return rendered.container.querySelector<HTMLElement>('[role="dialog"]')!;
+    }
 
-        await act(async () => textButton(rendered!.container, "Retry").click());
+    const usageLines = (dialog: HTMLElement): Array<string | null> =>
+        [...dialog.querySelectorAll(".mj_NewSessionSheet_usageLine")].map((line) => line.textContent);
 
-        expect(listAgents).toHaveBeenCalledTimes(2);
-        expect(rendered.container.textContent).toContain("Box A");
+    it("renders limits, reset times, live sessions, disk and an as-of caption under the box", async () => {
+        const dialog = await openSheet(new MatronJournalClient(), { ...AGENT_A, status: statusFor(Date.now()) });
+        expect(usageLines(dialog)).toEqual([
+            "Session 13% · resets 30m",
+            "Week (all models) 22%",
+            "Week (Fable) 24% · resets Oct 1 at 1am",
+            "5 live sessions",
+            "53G free of 1.8T (3% free)",
+        ]);
+        expect(dialog.querySelector(".mj_NewSessionSheet_usageAsOf")?.textContent).toBe("as of 5m ago");
     });
 
-    it("does not let a late recent-folders reply replace the starting state", async () => {
-        const client = new MatronJournalClient();
-        const folders = deferred<[]>();
-        const starting = deferred<{ kind: "uncertain" }>();
-        jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A]);
-        jest.spyOn(client, "recentFolders").mockReturnValue(folders.promise);
-        jest.spyOn(client, "startSessionRpc").mockReturnValue(starting.promise);
-
-        rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
-        await act(async () => textButton(rendered!.container, "Start").click());
-        expect(rendered.container.textContent).toContain("Starting session…");
-
-        await act(async () => folders.resolve([]));
-
-        expect(rendered.container.textContent).toContain("Starting session…");
-        expect(rendered.container.textContent).not.toContain("Folder path");
-        await act(async () => starting.resolve({ kind: "uncertain" }));
+    it("shows nothing extra for a box with no status", async () => {
+        const dialog = await openSheet(new MatronJournalClient(), AGENT_A);
+        expect(dialog.querySelector(".mj_NewSessionSheet_usage")).toBeNull();
     });
 
-    it("ignores an out-of-order folder reply after re-entering the same agent", async () => {
-        const client = new MatronJournalClient();
-        const first = deferred<Array<{ path: string; last_used: number | null }>>();
-        const second = deferred<Array<{ path: string; last_used: number | null }>>();
-        jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
-        jest.spyOn(client, "recentFolders").mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-
-        rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
-        await act(async () => textButton(rendered!.container, "Box AConnected").click());
-        await act(async () => textButton(rendered!.container, "Back").click());
-        await act(async () => textButton(rendered!.container, "Box AConnected").click());
-        await act(async () => second.resolve([{ path: "/new", last_used: 2 }]));
-        await act(async () => first.resolve([{ path: "/stale", last_used: 1 }]));
-
-        expect(rendered.container.textContent).toContain("/new");
-        expect(rendered.container.textContent).not.toContain("/stale");
+    it("renders only the blocks a status carries", async () => {
+        const dialog = await openSheet(new MatronJournalClient(), {
+            ...AGENT_A,
+            status: { reported_at: Date.now() - 3 * 60 * 60_000, activity: { live_sessions: 1, last_hour: [] } },
+        });
+        expect(usageLines(dialog)).toEqual(["1 live session"]);
+        expect(dialog.querySelector(".mj_NewSessionSheet_usageAsOf")?.textContent).toBe("as of 3h ago");
     });
 
-    it("suppresses navigation when dismissed while start is pending", async () => {
+    it("updates the lines and the as-of caption when a live box_status frame lands", async () => {
         const client = new MatronJournalClient();
-        const start = deferred<{ kind: "created"; convoId: string }>();
-        jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A]);
-        jest.spyOn(client, "recentFolders").mockResolvedValue([]);
-        jest.spyOn(client, "startSessionRpc").mockReturnValue(start.promise);
-        const select = jest.spyOn(client, "selectConversation").mockResolvedValue(undefined);
-        const close = jest.fn();
-
-        rendered = await render(React.createElement(NewSessionSheet, { client, onClose: close }));
-        await act(async () => textButton(rendered!.container, "Start").click());
+        const dialog = await openSheet(client, { ...AGENT_A, status: statusFor(Date.now()) });
         await act(async () =>
-            rendered!.container.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.click(),
+            internals(client).handleFrame({
+                kind: "box_status",
+                device_id: AGENT_A.device_id,
+                reported_at: Date.now(),
+                limits: { as_of: Date.now(), lines: [{ id: "session", label: "Session", percent: 14 }] },
+            } as unknown as ServerFrame),
         );
-        await act(async () => start.resolve({ kind: "created", convoId: "created-late" }));
-
-        expect(close).toHaveBeenCalledTimes(1);
-        expect(select).not.toHaveBeenCalled();
-    });
-
-    // Box usage (protocol.md "Box status"): the sheet renders each box's last capacity report
-    // from client state — limits with reset times, live sessions, disk, and an "as of" caption.
-    describe("box usage", () => {
-        function statusFor(now: number): BoxStatus {
-            return {
-                reported_at: now - 5 * 60_000,
-                activity: { live_sessions: 5, last_hour: [] },
-                limits: {
-                    as_of: now - 5 * 60_000,
-                    lines: [
-                        {
-                            id: "session",
-                            label: "Session",
-                            percent: 13,
-                            resets: "Sep 28 at 1:10am (Europe/London)",
-                            resets_at: new Date(now + 30.5 * 60_000).toISOString(),
-                        },
-                        { id: "week_all", label: "Week (all models)", percent: 22 },
-                        { id: "week_fable", label: "Week (Fable)", percent: 24, resets: "Oct 1 at 1am" },
-                    ],
-                },
-                disk: { free_bytes: 56_908_316_672, total_bytes: 1_979_120_929_996 },
-                account: { email: "alice@example.com" },
-            };
-        }
-
-        function withStatuses(client: MatronJournalClient, boxStatuses: Record<number, BoxStatus>): void {
-            internals(client).state = { ...client.getSnapshot(), boxStatuses };
-        }
-
-        function listItem(container: HTMLElement, name: string): HTMLElement {
-            const match = [...container.querySelectorAll<HTMLElement>('[role="listitem"]')].find((item) =>
-                item.textContent?.startsWith(name),
-            );
-            if (!match) throw new Error(`Missing list item: ${name}`);
-            return match;
-        }
-
-        it("renders limits, reset times, live sessions, disk and an as-of caption under a box", async () => {
-            const client = new MatronJournalClient();
-            withStatuses(client, { [AGENT_A.device_id]: statusFor(Date.now()) });
-            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
-
-            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
-
-            const boxA = listItem(rendered.container, "Box A");
-            const lines = [...boxA.querySelectorAll(".mj_NewSessionSheet_usageLine")].map((line) => line.textContent);
-            expect(lines).toEqual([
-                "Session 13% · resets 30m",
-                "Week (all models) 22%",
-                "Week (Fable) 24% · resets Oct 1 at 1am",
-                "5 live sessions",
-                "53G free of 1.8T (3% free)",
-            ]);
-            expect(boxA.querySelector(".mj_NewSessionSheet_usageAsOf")?.textContent).toBe("as of 5m ago");
-        });
-
-        it("shows nothing extra for a box with no status", async () => {
-            const client = new MatronJournalClient();
-            withStatuses(client, { [AGENT_A.device_id]: statusFor(Date.now()) });
-            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
-
-            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
-
-            const boxB = listItem(rendered.container, "Box B");
-            expect(boxB.querySelector(".mj_NewSessionSheet_usage")).toBeNull();
-            expect(boxB.textContent).toBe("Box BConnected");
-        });
-
-        it("renders only the blocks a status carries", async () => {
-            const client = new MatronJournalClient();
-            withStatuses(client, {
-                [AGENT_A.device_id]: {
-                    reported_at: Date.now() - 3 * 60 * 60_000,
-                    activity: { live_sessions: 1, last_hour: [] },
-                },
-            });
-            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
-
-            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
-
-            const boxA = listItem(rendered.container, "Box A");
-            expect([...boxA.querySelectorAll(".mj_NewSessionSheet_usageLine")].map((line) => line.textContent)).toEqual(
-                ["1 live session"],
-            );
-            expect(boxA.querySelector(".mj_NewSessionSheet_usageAsOf")?.textContent).toBe("as of 3h ago");
-        });
-
-        it("updates the lines and the as-of caption when a live box_status frame lands", async () => {
-            const client = new MatronJournalClient();
-            withStatuses(client, { [AGENT_A.device_id]: statusFor(Date.now()) });
-            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
-
-            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
-            await act(async () =>
-                internals(client).handleFrame({
-                    kind: "box_status",
-                    device_id: AGENT_A.device_id,
-                    reported_at: Date.now(),
-                    limits: { as_of: Date.now(), lines: [{ id: "session", label: "Session", percent: 14 }] },
-                } as unknown as ServerFrame),
-            );
-
-            const boxA = listItem(rendered.container, "Box A");
-            expect([...boxA.querySelectorAll(".mj_NewSessionSheet_usageLine")].map((line) => line.textContent)).toEqual(
-                ["Session 14%"],
-            );
-            expect(boxA.querySelector(".mj_NewSessionSheet_usageAsOf")?.textContent).toBe("as of just now");
-        });
-
-        it("shows the chosen box's usage on the folder step too", async () => {
-            const client = new MatronJournalClient();
-            withStatuses(client, { [AGENT_A.device_id]: statusFor(Date.now()) });
-            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A]);
-            jest.spyOn(client, "recentFolders").mockResolvedValue([]);
-
-            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
-
-            expect(rendered.container.textContent).toContain("Start on Box A");
-            expect(rendered.container.querySelector(".mj_NewSessionSheet_usage")).not.toBeNull();
-            expect(rendered.container.textContent).toContain("Session 13% · resets 30m");
-            expect(rendered.container.textContent).toContain("as of 5m ago");
-        });
+        expect(usageLines(dialog)).toEqual(["Session 14%"]);
+        expect(dialog.querySelector(".mj_NewSessionSheet_usageAsOf")?.textContent).toBe("as of just now");
     });
 });
 

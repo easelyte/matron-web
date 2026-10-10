@@ -69,7 +69,7 @@ export function MemoriesList({
                 <p className="mj_TrackerCaption">
                     Standing rules and facts every agent can read. The Coordinator starts each session with this list.
                 </p>
-                <button type="button" className="mj_TrackerButton" onClick={onNewMemory}>
+                <button type="button" className="mj_Btn mj_Btn_primary mj_TrackerButton" onClick={onNewMemory}>
                     New memory
                 </button>
             </div>

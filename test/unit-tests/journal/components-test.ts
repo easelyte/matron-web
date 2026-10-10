@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import { resetShowTheWorkForTests, SHOW_THE_WORK_KEY } from "../../../src/journal/show-the-work";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { TextEncoder as NodeTextEncoder } from "node:util";
@@ -55,6 +56,7 @@ interface ClientInternals {
     state: ClientState;
     database?: unknown;
     pendingFiles: Map<string, File>;
+    patch(update: Partial<ClientState>): void;
 }
 
 function internals(client: MatronJournalClient): ClientInternals {
@@ -130,7 +132,13 @@ async function openMenu(container: HTMLElement): Promise<void> {
     });
 }
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+    localStorage.clear();
+    // These suites pin the per-event thread (Show the work ON = the pre-v6 rendering). The v6
+    // default (OFF: one Under-the-hood card per turn) is covered in __tests__/turn-thread.test.tsx.
+    localStorage.setItem(SHOW_THE_WORK_KEY, "true");
+    resetShowTheWorkForTests();
+});
 
 describe("session-control banners", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
@@ -160,6 +168,112 @@ describe("session-control banners", () => {
         expect(
             [...rendered.container.querySelectorAll('[role="status"]')].map((element) => element.textContent),
         ).toEqual([PREFERENCES_UNAVAILABLE_ERROR, "Couldn't save — device storage is full or unavailable."]);
+    });
+});
+
+describe("header compact + limits-reset (fork features)", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    it("compact button sends /snap-compact and shows an indeterminate in-flight pulse", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: { context: { tokens: 120_000, window: 200_000, pct: 60 } },
+        };
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+
+        rendered = await renderClient(client);
+
+        const compact = button(rendered.container, "Compact conversation");
+        expect(compact.textContent).toContain("Compact");
+        expect(compact.className).not.toContain("mj_CompactButton_compacting");
+
+        await act(async () => compact.click());
+
+        // Guided safe-compact flow, not a raw /compact.
+        expect(sendMessage).toHaveBeenCalledWith("/snap-compact");
+        // Indeterminate in-flight feedback — pulse class + busy state, no % fill. The mock
+        // resolve does not shrink context, so the pulse stays on (cleared only by a smaller
+        // post-compact context frame or the timeout backstop).
+        const busy = button(rendered.container, "Compact conversation");
+        expect(busy.className).toContain("mj_CompactButton_compacting");
+        expect(busy.getAttribute("aria-busy")).toBe("true");
+        expect(busy.disabled).toBe(true);
+        expect(busy.textContent).toContain("Compacting");
+    });
+
+    it("header shows the usage-window reset countdown instead of the workdir path", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: {
+                model: "claude-opus-4-8",
+                workdir: "/some/workspace/path",
+                limits: [
+                    {
+                        id: "session",
+                        label: "Session",
+                        percent: 20,
+                        resets_at_ms: Date.now() + 3 * 60 * 60_000,
+                    },
+                ],
+            },
+        };
+
+        rendered = await renderClient(client);
+
+        const reset = rendered.container.querySelector(".mj_HeaderLimitsReset");
+        // Only the 5-hour window is present → a single value, no "/" divider.
+        expect(reset?.textContent).toContain("resets");
+        expect(reset?.textContent).toMatch(/resets\s+\d+h\d\d/); // "resets 3h00"
+        expect(reset?.textContent).not.toContain("/");
+        // The old workdir segment is gone — path never rendered.
+        expect(rendered.container.querySelector(".mj_HeaderWorkdir")).toBeNull();
+        expect(rendered.container.textContent).not.toContain("/some/workspace/path");
+    });
+
+    it("header shows both the 5-hour and weekly reset windows when present", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: {
+                model: "claude-opus-4-8",
+                limits: [
+                    {
+                        id: "session",
+                        label: "Session",
+                        percent: 20,
+                        resets_at_ms: Date.now() + 3 * 60 * 60_000,
+                    },
+                    {
+                        id: "week_all",
+                        label: "Week (all)",
+                        percent: 40,
+                        resets_at_ms: Date.now() + 4 * 24 * 60 * 60_000,
+                    },
+                ],
+            },
+        };
+
+        rendered = await renderClient(client);
+
+        const reset = rendered.container.querySelector(".mj_HeaderLimitsReset");
+        // Both windows → "resets <5h token> / <weekly token>" (bare values, "/" divider).
+        expect(reset?.textContent).toContain("resets");
+        expect(reset?.textContent).toContain("/");
+        expect(reset?.textContent).toMatch(/resets\s+\d+h\d\d\s+\//); // 5h countdown leads
     });
 });
 
@@ -256,7 +370,24 @@ describe("usage limit accessibility", () => {
         const labels = Array.from(menu?.querySelectorAll('[role="menuitem"]') ?? []).map((item) =>
             item.textContent?.trim(),
         );
+        // No status frame with `extras` yet: the browser-tools row is hidden, never guessed.
         expect(labels).toEqual(["Pin", "Add to Favorites", "Mark as unread", "Archive"]);
+    });
+
+    it("adds the browser-tools row once the bridge reports the session's extras", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...internals(client).state,
+            sessionStatus: { model: "claude-fable-5", extras: [] },
+        };
+        const view = await renderClient(client);
+        rendered = view;
+        await act(async () => button(view.container, "Conversation actions").click());
+        const menu = view.container.querySelector('.mj_HeaderOverflow [role="menu"]');
+        const labels = Array.from(menu?.querySelectorAll('[role="menuitem"]') ?? []).map((item) =>
+            item.textContent?.trim(),
+        );
+        expect(labels).toEqual(["Pin", "Add to Favorites", "Mark as unread", "Enable browser tools", "Archive"]);
     });
 });
 
@@ -810,6 +941,68 @@ describe("markdown render-site integration", () => {
         expect(strayCard?.querySelector(".mj_Answered")).toBeNull();
         expect(strayCard?.querySelector("button")?.textContent).toBe("Send");
     });
+
+    function queuedPrompt(seq: number, itemId: string): JournalEvent {
+        return {
+            ...textEvent(seq, "unused"),
+            type: "prompt",
+            payload: {
+                kind: "queued_release",
+                items: [{ id: itemId, text: "Queued item" }],
+                actions: [
+                    { id: "send", label: "Send", intent: "primary" },
+                    { id: "cancel", label: "Cancel", intent: "neutral" },
+                ],
+            },
+        };
+    }
+    function release(seq: number, action: string, itemId: string): JournalEvent {
+        return {
+            ...textEvent(seq, "unused"),
+            type: "prompt_reply",
+            payload: { kind: "queued_release", action, released: [itemId] },
+        };
+    }
+
+    it("renders a terminal expired card (distinct label, no buttons) for an expired release (spec §6)", async () => {
+        const prompt = queuedPrompt(200, "pr_exp::0");
+        const expired = release(201, "expired", "pr_exp::0");
+        rendered = await renderClient(signedInClient({ events: [prompt, expired] }));
+
+        const card = rendered.container.querySelector(`[data-event-id="${prompt.seq}"]`);
+        expect(card?.querySelector(".mj_PromptResolved_expired")).not.toBeNull();
+        expect(card?.querySelector(".mj_Expired")?.textContent).toBe("Expired — no longer actionable");
+        // Distinct from a real resolution — no "Sent"/"Cancelled" check row.
+        expect(card?.querySelector(".mj_PromptGlyph_ok")).toBeNull();
+        // Both buttons removed (not merely disabled) — terminal, non-actionable.
+        expect(card?.querySelector("button")).toBeNull();
+        // The expired release itself does not render as a literal thread bubble.
+        expect(rendered.container.querySelector(`[data-event-id="${expired.seq}"]`)).toBeNull();
+    });
+
+    it("terminal precedence: a real resolution outranks expired in BOTH arrival orders (spec §6)", async () => {
+        // (a) send THEN expired -> Sent
+        const promptA = queuedPrompt(210, "pr_a::0");
+        rendered = await renderClient(
+            signedInClient({ events: [promptA, release(211, "send", "pr_a::0"), release(212, "expired", "pr_a::0")] }),
+        );
+        let card = rendered.container.querySelector(`[data-event-id="${promptA.seq}"]`);
+        expect(card?.querySelector(".mj_Answered")?.textContent).toBe("Sent");
+        expect(card?.querySelector(".mj_PromptResolved_expired")).toBeNull();
+        await act(async () => rendered?.root.unmount());
+        rendered.container.remove();
+
+        // (b) expired THEN cancel -> Cancelled (never downgraded to expired)
+        const promptB = queuedPrompt(213, "pr_b::0");
+        rendered = await renderClient(
+            signedInClient({
+                events: [promptB, release(214, "expired", "pr_b::0"), release(215, "cancel", "pr_b::0")],
+            }),
+        );
+        card = rendered.container.querySelector(`[data-event-id="${promptB.seq}"]`);
+        expect(card?.querySelector(".mj_Answered")?.textContent).toBe("Cancelled");
+        expect(card?.querySelector(".mj_PromptResolved_expired")).toBeNull();
+    });
 });
 
 describe("isQueuedReleaseReply (queue-prompt provenance suppression)", () => {
@@ -1059,6 +1252,194 @@ describe("message model DOM contracts", () => {
         expect(avatar?.tagName).toBe("SPAN");
         expect(avatar?.getAttribute("aria-hidden")).toBe("true");
         expect(avatar?.style.maskImage).toContain("matron-logo");
+    });
+});
+
+describe("message search deep links", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    beforeEach(() => {
+        (Element.prototype.scrollIntoView as jest.Mock).mockClear();
+    });
+
+    afterEach(async () => {
+        jest.useRealTimers();
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        jest.restoreAllMocks();
+    });
+
+    it("opens a message-search hit at its conversation and sequence", async () => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            messageSearch: {
+                query: "rollout",
+                hits: [
+                    {
+                        convo_id: "c9",
+                        title: "Deploy notes",
+                        seq: 73,
+                        ts: 1,
+                        sender: "agent",
+                        snippet: "the **rollout** window",
+                        live: false,
+                    },
+                ],
+                loading: false,
+                failed: false,
+            },
+        };
+        jest.spyOn(client, "searchMessages").mockResolvedValue(undefined);
+        const selectAtSeq = jest.spyOn(client, "selectConversationAtSeq").mockResolvedValue(undefined);
+        rendered = await renderClient(client);
+
+        const search = rendered.container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+            setter?.call(search, "rollout");
+            search.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        await act(async () => rendered?.container.querySelector<HTMLButtonElement>(".mj_SearchHit")?.click());
+
+        expect(selectAtSeq).toHaveBeenCalledWith("c9", 73);
+    });
+
+    it("scrolls to and transiently highlights the pending sequence", async () => {
+        jest.useFakeTimers();
+        const client = signedInClient({ events: [textEvent(41, "before"), textEvent(42, "match")] });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            pendingScrollSeq: 42,
+            viewingHistoryWindow: true,
+        };
+        rendered = await renderClient(client);
+
+        const target = rendered.container.querySelector<HTMLElement>('[data-event-id="42"]')!;
+        const scrollIntoView = Element.prototype.scrollIntoView as jest.Mock;
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+        expect(scrollIntoView.mock.contexts).toContain(target);
+        expect(target.classList.contains("mj_EventRow_searchHighlighted")).toBe(true);
+        expect(client.getSnapshot().pendingScrollSeq).toBeUndefined();
+
+        await act(async () => jest.advanceTimersByTime(2_000));
+        expect(target.classList.contains("mj_EventRow_searchHighlighted")).toBe(false);
+    });
+
+    it("consumes a missing pending sequence without scrolling", async () => {
+        const client = signedInClient({ events: [textEvent(42, "nearest edge")] });
+        internals(client).state = { ...client.getSnapshot(), pendingScrollSeq: 99 };
+
+        rendered = await renderClient(client);
+
+        expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+        expect(client.getSnapshot().pendingScrollSeq).toBeUndefined();
+    });
+
+    it("shows Jump to latest only in a historical window and invokes the client action", async () => {
+        const client = signedInClient();
+        internals(client).state = { ...client.getSnapshot(), viewingHistoryWindow: true };
+        const jumpToLatest = jest.spyOn(client, "jumpToLatest").mockResolvedValue(undefined);
+        rendered = await renderClient(client);
+
+        const jump = rendered.container.querySelector<HTMLButtonElement>(".mj_JumpToLatest")!;
+        expect(jump.textContent).toBe("Jump to latest ↓");
+        await act(async () => jump.click());
+        expect(jumpToLatest).toHaveBeenCalledTimes(1);
+
+        await act(async () => internals(client).patch({ viewingHistoryWindow: false }));
+        expect(rendered.container.querySelector(".mj_JumpToLatest")).toBeNull();
+    });
+
+    it("renders pending prompt and agent-spawn cards read-only until Jump to latest", async () => {
+        const prompt: JournalEvent = {
+            seq: 42,
+            convo_id: "c1",
+            ts: 1,
+            sender: "agent",
+            type: "prompt",
+            payload: { question: "Continue?", options: ["Yes"] },
+        };
+        const spawn: JournalEvent = {
+            seq: 43,
+            convo_id: "c1",
+            ts: 2,
+            sender: "agent",
+            type: "permission_request",
+            payload: {
+                kind: "agent_spawn",
+                request_id: "spawn-1",
+                task: "Run the checks",
+                target_name: "reviewer",
+            },
+        };
+        const client = signedInClient({ events: [prompt, spawn] });
+        internals(client).state = { ...client.getSnapshot(), viewingHistoryWindow: true };
+        jest.spyOn(client, "jumpToLatest").mockImplementation(async () => {
+            internals(client).patch({ viewingHistoryWindow: false });
+        });
+        rendered = await renderClient(client);
+
+        expect(
+            rendered.container.querySelector(".mj_PromptCard:not(.mj_PromptCard_spawn) .mj_PromptOptions"),
+        ).toBeNull();
+        expect(rendered.container.querySelector(".mj_PromptCard_spawn .mj_PromptOptions")).toBeNull();
+
+        await act(async () => rendered?.container.querySelector<HTMLButtonElement>(".mj_JumpToLatest")?.click());
+
+        expect(
+            rendered.container.querySelector(".mj_PromptCard:not(.mj_PromptCard_spawn) .mj_PromptOptions")?.textContent,
+        ).toContain("Yes");
+        expect(rendered.container.querySelector(".mj_PromptCard_spawn .mj_PromptOptions")?.textContent).toContain(
+            "Approve",
+        );
+    });
+
+    it("hides tail-only rows and blocks composer send until Jump to latest", async () => {
+        const pending: PendingMessage = {
+            localId: "pending-tail",
+            convoId: "c1",
+            body: "queued at the tail",
+            createdAt: 10,
+        };
+        const client = signedInClient({ pendingMessages: [pending], events: [textEvent(1, "old history")] });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            viewingHistoryWindow: true,
+            textStreams: { response: "streaming at the tail" },
+            activity: { state: "thinking", detail: "Planning" },
+        };
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        jest.spyOn(client, "jumpToLatest").mockImplementation(async () => {
+            internals(client).patch({ viewingHistoryWindow: false });
+        });
+        rendered = await renderClient(client);
+
+        expect(rendered.container.querySelector(".mj_SendingLabel")).toBeNull();
+        expect(rendered.container.querySelector(".mj_Cursor")).toBeNull();
+        expect(rendered.container.querySelector(".mj_Activity")).toBeNull();
+        await typeInComposer(rendered.container, "reply from the tail");
+        const sendButton = rendered.container.querySelector<HTMLButtonElement>(".mj_ComposerSend")!;
+        expect(sendButton.disabled).toBe(true);
+        expect(rendered.container.querySelector(".mj_ComposerHint")?.textContent).toContain("Jump to latest to send");
+        await pressEnter(rendered.container);
+        expect(sendMessage).not.toHaveBeenCalled();
+
+        await act(async () => rendered?.container.querySelector<HTMLButtonElement>(".mj_JumpToLatest")?.click());
+
+        expect(rendered.container.querySelector(".mj_SendingLabel")).not.toBeNull();
+        expect(rendered.container.querySelector(".mj_Cursor")).not.toBeNull();
+        expect(rendered.container.querySelector(".mj_Activity")?.textContent).toContain("Thinking");
+        expect(sendButton.disabled).toBe(false);
+        await pressEnter(rendered.container);
+        expect(sendMessage).toHaveBeenCalledWith("reply from the tail", "c1");
     });
 });
 
@@ -1489,7 +1870,7 @@ describe("composer drafts", () => {
         jest.useRealTimers();
     });
 
-    test("a failed draft persist surfaces the non-durable badge (render contract)", async () => {
+    test("a failed draft persist surfaces the non-durable badge", async () => {
         jest.useFakeTimers();
         const spy = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
             throw new DOMException("q", "QuotaExceededError");
@@ -1769,6 +2150,73 @@ describe("composer sends", () => {
         await pressEnter(result.container);
         expect(send).toHaveBeenCalledTimes(1);
     });
+
+    // jsdom has no layout: stand in for the content height the browser measures (24px a line).
+    function stubLineHeights(): void {
+        jest.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
+            const value = (this as HTMLTextAreaElement).value ?? "";
+            return value ? value.split("\n").length * 24 : 0;
+        });
+    }
+
+    function composerHeight(container: HTMLElement): string {
+        return container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")!.style.height;
+    }
+
+    test("a draft restored on switching back keeps its typed height, capped at the max", async () => {
+        stubLineHeights();
+        const result = await renderComposerApp(["c1", "c2"]);
+        rendered = result;
+        await typeInComposer(rendered.container, "one\ntwo\nthree\nfour");
+        expect(composerHeight(rendered.container)).toBe("96px");
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        expect(composerHeight(rendered.container)).toBe("auto");
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        expect(composerValue(rendered.container)).toBe("one\ntwo\nthree\nfour");
+        expect(composerHeight(rendered.container)).toBe("96px");
+
+        await typeInComposer(rendered.container, "x\n".repeat(20));
+        await act(async () => {
+            await result.client.selectConversation("c2");
+        });
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        expect(composerHeight(rendered.container)).toBe("160px");
+    });
+
+    test("a draft restored into a freshly mounted composer opens at its content height", async () => {
+        stubLineHeights();
+        const result = await renderComposerAppWithChild("c1", "c1-child");
+        rendered = result;
+        await typeInComposer(result.container, "alpha\nbeta\ngamma");
+        // The read-only child unmounts the composer; coming back mounts a new one from the draft.
+        await act(async () => {
+            await result.client.selectConversation("c1-child");
+        });
+        expect(result.container.querySelector(".mx_BasicMessageComposer_input")).toBeNull();
+        await act(async () => {
+            await result.client.selectConversation("c1");
+        });
+        expect(composerValue(result.container)).toBe("alpha\nbeta\ngamma");
+        expect(composerHeight(result.container)).toBe("72px");
+    });
+
+    test("a send clears the box back to its one-row height", async () => {
+        stubLineHeights();
+        const result = await renderComposerApp(["c1"]);
+        rendered = result;
+        jest.spyOn(result.client, "sendMessage").mockResolvedValue(true);
+        await typeInComposer(rendered.container, "one\ntwo");
+        expect(composerHeight(rendered.container)).toBe("48px");
+        await pressEnter(rendered.container);
+        expect(composerValue(rendered.container)).toBe("");
+        expect(composerHeight(rendered.container)).toBe("auto");
+    });
 });
 
 describe("attachment composer", () => {
@@ -1882,6 +2330,31 @@ describe("attachment composer", () => {
         expect(stageFiles).toHaveBeenCalledWith([screenshot]);
     });
 
+    it("composer paste is consumed and does not bubble to a document-level listener", async () => {
+        // Regression: a trusted paste stages once in the composer, which mounts the upload
+        // modal whose useEffect registers a document-level paste listener. React 19 flushes
+        // that effect synchronously inside the trusted event, so without stopPropagation the
+        // SAME paste reaches the new listener and stages the file a second time ("1 of 2" for a
+        // single paste). The composer must stopPropagation so the event never reaches document.
+        const client = signedInClient();
+        const stageFiles = jest.spyOn(client, "stageFiles").mockImplementation(() => undefined);
+        rendered = await renderClient(client);
+        const textarea = rendered.container.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input");
+        if (!textarea) throw new Error("Missing composer textarea");
+        const documentPaste = jest.fn();
+        document.addEventListener("paste", documentPaste);
+        try {
+            const screenshot = new File(["image"], "screenshot.png", { type: "image/png" });
+            const paste = new Event("paste", { bubbles: true, cancelable: true });
+            Object.defineProperty(paste, "clipboardData", { value: { files: [screenshot] } });
+            await act(async () => textarea.dispatchEvent(paste));
+            expect(stageFiles).toHaveBeenCalledTimes(1);
+            expect(documentPaste).not.toHaveBeenCalled();
+        } finally {
+            document.removeEventListener("paste", documentPaste);
+        }
+    });
+
     it("paste while the modal is open appends exactly once (composer handler inert)", async () => {
         const client = signedInClient();
         const stageFiles = jest.spyOn(client, "stageFiles");
@@ -1900,25 +2373,22 @@ describe("attachment composer", () => {
         expect(client.getSnapshot().stagedUploads!.total).toBe(2);
     });
 
-    it("ignores a paste the composer already consumed (defaultPrevented) instead of double-staging", async () => {
+    it("the modal's document paste listener ignores an already-consumed (defaultPrevented) paste", async () => {
+        // Root-cause guard for the double-stage: on the first paste the composer stages + calls
+        // preventDefault() (opening the modal); React 19 mounts the modal synchronously so its
+        // document paste listener is registered within the same dispatch and can receive the SAME
+        // paste. It must skip a paste whose default was already prevented, or the file stages twice.
         const client = signedInClient();
         rendered = await renderClient(client);
-        // Open the upload dialog so its document-level paste listener is mounted.
         await act(async () => client.stageFiles([new File(["a"], "a.txt", { type: "text/plain" })]));
         const stageFiles = jest.spyOn(client, "stageFiles");
-        stageFiles.mockClear();
 
-        // The bootstrap paste the composer consumed arrives at the dialog's listener with
-        // defaultPrevented already set (composer called preventDefault()). In a real browser
-        // this is the SAME event that opened the dialog, reaching a listener mounted mid-dispatch;
-        // jsdom can't reproduce that synchronous-mount race, but the guard is what prevents the
-        // second stage, so assert it directly: a defaultPrevented paste must stage nothing.
         const consumed = Object.assign(new Event("paste", { bubbles: true, cancelable: true }), {
             clipboardData: { files: [new File(["p"], "p.png", { type: "image/png" })] },
         });
         consumed.preventDefault();
+        expect(consumed.defaultPrevented).toBe(true);
         await act(async () => document.dispatchEvent(consumed));
-
         expect(stageFiles).not.toHaveBeenCalled();
     });
 
@@ -2123,68 +2593,15 @@ describe("attachment composer", () => {
         expect(frame).not.toBeNull();
         expect(frame?.classList.contains("mj_ImageFrame_sized")).toBe(true);
         // The reserved box is the inline aspect-ratio + width; this is what holds height
-        // before the blob decodes so the thread does not reflow. The width is pre-shrunk so the
+        // before the blob decodes so the thread doesn't reflow. The width is pre-shrunk so the
         // 520px max-height cap preserves the ratio (1200×800 → 780×520), since a non-replaced
         // <div> won't back-shrink its width on its own.
         expect(frame?.style.aspectRatio).toBe("1200 / 800");
         expect(frame?.style.width).toBe("780px");
+        expect(frame?.getAttribute("data-dims")).toBe("1200x800");
     });
 
-    it("reserves the box for the Matrix `{ w, h }` dims spelling the bridge actually passes", async () => {
-        const client = signedInClient({
-            events: [
-                {
-                    seq: 2,
-                    convo_id: "c1",
-                    ts: 1,
-                    sender: "user:2",
-                    type: "image",
-                    // The bridge is a pass-through of Matrix `m.image` `info`, which spells the
-                    // dims `w`/`h` — the shape the bridge's own fixtures encode. This is what
-                    // ships in production, so the sized frame MUST render for it.
-                    payload: { blob_ref: "img-wh", content_type: "image/png", dims: { w: 1200, h: 800 } },
-                },
-            ],
-        });
-        jest.spyOn(client, "mediaUrl").mockResolvedValue("data:image/png;base64,AAAA");
-        rendered = await renderClient(client);
-
-        const frame = rendered.container.querySelector<HTMLElement>(".mj_ImageFrame");
-        expect(frame).not.toBeNull();
-        expect(frame?.classList.contains("mj_ImageFrame_sized")).toBe(true);
-        // Same reserved geometry as the `{ width, height }` case: 1200×800 → 780×520.
-        expect(frame?.style.aspectRatio).toBe("1200 / 800");
-        expect(frame?.style.width).toBe("780px");
-    });
-
-    it("collapses the reserved frame when the image blob fails to decode", async () => {
-        const client = signedInClient({
-            events: [
-                {
-                    seq: 2,
-                    convo_id: "c1",
-                    ts: 1,
-                    sender: "user:2",
-                    type: "image",
-                    payload: { blob_ref: "img-broken", content_type: "image/png", dims: { width: 1200, height: 800 } },
-                },
-            ],
-        });
-        jest.spyOn(client, "mediaUrl").mockResolvedValue("data:image/png;base64,AAAA");
-        rendered = await renderClient(client);
-
-        const img = rendered.container.querySelector<HTMLImageElement>(".mj_ImageFrame img");
-        expect(img).not.toBeNull();
-        await act(async () => {
-            img!.dispatchEvent(new Event("error"));
-        });
-        // A corrupt image no longer holds the full reserved 520px box around a broken glyph:
-        // the frame is gone and the tile collapses to the error message.
-        expect(rendered.container.querySelector(".mj_ImageFrame")).toBeNull();
-        expect(rendered.container.querySelector(".mj_Error")).not.toBeNull();
-    });
-
-    it("does NOT reserve a box for an image event without dims (fluid fallback)", async () => {
+    it("does NOT reserve a box for an image event without dims (fluid fallback, §6)", async () => {
         const client = signedInClient({
             events: [
                 {
@@ -2204,9 +2621,10 @@ describe("attachment composer", () => {
         expect(frame).not.toBeNull();
         expect(frame?.classList.contains("mj_ImageFrame_sized")).toBe(false);
         expect(frame?.style.aspectRatio).toBe("");
+        expect(frame?.getAttribute("data-dims")).toBeNull();
     });
 
-    it("picks a file-tile icon from the MIME bucket, generic when absent", async () => {
+    it("picks a file-tile icon from the MIME bucket, generic when absent (§6)", async () => {
         const client = signedInClient({
             events: [
                 {

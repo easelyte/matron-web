@@ -23,6 +23,9 @@ interface FakeClient {
     openTrackerView: jest.Mock;
     openTrackerItem: jest.Mock;
     openTrackerMission: jest.Mock;
+    openTrackerLoop: jest.Mock;
+    openTrackerLink: jest.Mock;
+    work: jest.Mock;
     loadProjects: jest.Mock;
     loadProject: jest.Mock;
     openTrackerProject: jest.Mock;
@@ -40,6 +43,14 @@ function fakeClient(): FakeClient {
         openTrackerView: jest.fn(),
         openTrackerItem: jest.fn(),
         openTrackerMission: jest.fn(),
+        openTrackerLoop: jest.fn(),
+        openTrackerLink: jest.fn(),
+        work: jest.fn().mockResolvedValue({
+            schema_version: 1,
+            status: "empty",
+            group_by: "repo",
+            groups: [],
+        }),
         loadProjects: jest.fn().mockResolvedValue(undefined),
         loadProject: jest.fn().mockResolvedValue(undefined),
         openTrackerProject: jest.fn(),
@@ -62,7 +73,7 @@ async function mount(element: React.ReactElement): Promise<{ container: HTMLDivE
     return { container, root };
 }
 
-describe("TrackerPane selection/detail matching (F1)", () => {
+describe("TrackerPane", () => {
     beforeAll(() => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     });
@@ -117,6 +128,152 @@ describe("TrackerPane selection/detail matching (F1)", () => {
         // Falls through to the missions list, not the (stale #5) mission detail head.
         expect(container.querySelector(".mj_TrackerMissionHead")).toBeNull();
     });
+
+    it("renders Work as a third tracker surface", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "work" } })}
+            />,
+        );
+
+        const workTab = Array.from(container.querySelectorAll<HTMLButtonElement>(".mj_TrackerViewSwitch_tab")).find(
+            (button) => button.textContent === "Work",
+        );
+        expect(workTab?.getAttribute("aria-selected")).toBe("true");
+        expect(container.querySelector(".mj_TrackerEmpty_title")?.textContent).toBe("No open work");
+        expect(client.work).toHaveBeenCalledWith("repo", expect.any(AbortSignal));
+    });
+});
+
+describe("TrackerPane — Work loop selection", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    const payload = {
+        schema_version: 1,
+        status: "ok",
+        group_by: "repo",
+        groups: [
+            {
+                key: "matron-web",
+                loops: [
+                    {
+                        id: 31,
+                        title: "Loop detail",
+                        repo: "matron-web",
+                        domain: "infra",
+                        priority: 3,
+                        description: "Lead.",
+                        status: "active",
+                        claim: null,
+                    },
+                ],
+            },
+        ],
+    };
+
+    it("routes a row tap through the client and renders the selected loop's detail from the store", async () => {
+        const client = fakeClient();
+        client.work.mockResolvedValue(payload);
+        const { container, root } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "work" } })}
+            />,
+        );
+        await act(async () => container.querySelector<HTMLButtonElement>('[data-loop-id="31"]')!.click());
+        expect(client.openTrackerLoop).toHaveBeenCalledWith(31);
+
+        await act(async () =>
+            root.render(
+                <TrackerPane
+                    client={client as unknown as MatronJournalClient}
+                    state={paneState({ trackerView: { open: true, view: "work", selectedLoopId: 31 } })}
+                />,
+            ),
+        );
+        expect(container.querySelector("h1.mj_TrackerItemTitle")?.textContent).toBe("Loop detail");
+        // Same mounted Work view: the selection change did not refetch.
+        expect(client.work).toHaveBeenCalledTimes(1);
+
+        await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Back to work"]')!.click());
+        expect(client.openTrackerLoop).toHaveBeenCalledWith(null);
+        await act(async () => root.unmount());
+    });
+});
+
+describe("TrackerPane — Work tab isolation", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("does not prime missions or the paginated inbox while Work is the active tab", async () => {
+        // Work is served by a different endpoint and shares none of this state.
+        // Priming would fetch /missions and walk /items (up to 20 pages / 10,000
+        // items) purely as a side effect of opening a tab that never reads them.
+        const client = fakeClient();
+        await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "work" } })}
+            />,
+        );
+
+        expect(client.loadMissions).not.toHaveBeenCalled();
+        expect(client.loadInbox).not.toHaveBeenCalled();
+        expect(client.work).toHaveBeenCalled();
+    });
+
+    it("still primes both list views on the tabs that actually use them", async () => {
+        // The backpressure above must not cost the inbox/missions tabs their
+        // warm badges.
+        const client = fakeClient();
+        await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "inbox" } })}
+            />,
+        );
+
+        expect(client.loadMissions).toHaveBeenCalled();
+        expect(client.loadInbox).toHaveBeenCalled();
+    });
+
+    it("does not show a missions/inbox error banner over a healthy Work view", async () => {
+        // trackerError belongs to missions/inbox. Work fails loud inline, so this
+        // banner would attribute an unrelated tab's failure to Work and make a
+        // working pane look degraded.
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "work" },
+                    trackerError: "Could not load the inbox.",
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerErrorBanner")).toBeNull();
+    });
+
+    it("still shows the error banner on the tabs the error belongs to", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "inbox" },
+                    trackerError: "Could not load the inbox.",
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerErrorBanner")).not.toBeNull();
+    });
 });
 
 describe("TrackerPane inbox", () => {
@@ -156,6 +313,42 @@ describe("TrackerPane inbox", () => {
             status!.querySelector<HTMLButtonElement>("button")!.click();
         });
         expect(client.loadInbox).toHaveBeenCalledTimes(1);
+    });
+
+    // A failed REFRESH keeps the loaded list; its own error outlives the shared banner (which any
+    // other tracker load clears), so the pane must not present the retained list as current.
+    it("marks a loaded inbox whose refresh failed as possibly out of date, with a retry", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "inbox" }, inboxItems: [], inboxError: "offline" })}
+            />,
+        );
+
+        const notice = container.querySelector(".mj_TrackerStaleNotice");
+        expect(notice?.textContent).toContain("Couldn't refresh the inbox, so it may be out of date.");
+        client.loadInbox.mockClear();
+        await act(async () => {
+            notice!.querySelector<HTMLButtonElement>("button")!.click();
+        });
+        expect(client.loadInbox).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows no stale notice for a loaded inbox without an inbox error", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "inbox" },
+                    inboxItems: [],
+                    trackerError: "item gone",
+                })}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerStaleNotice")).toBeNull();
     });
 
     // The shared banner error can come from (and be cleared by) an item load; it must not stand in
@@ -467,6 +660,7 @@ describe("TrackerPane inbox", () => {
             view: "inbox",
             itemId: null,
             missionId: null,
+            loopId: null,
             memoryName: null,
             projectId: null,
         });
@@ -550,6 +744,7 @@ describe("TrackerPane inbox", () => {
             view: "inbox",
             itemId: null,
             missionId: null,
+            loopId: null,
             memoryName: null,
             projectId: null,
         });
@@ -618,7 +813,13 @@ describe("For you inbox origin notes", () => {
                             origin_convo_id: "c-old",
                             origin_convo_title: "Auth refactor",
                         }),
-                        trackerItem({ id: "it_d", num: 4, updated_at: 1, origin_convo_id: "c-gone" }),
+                        trackerItem({
+                            id: "it_d",
+                            num: 4,
+                            updated_at: 1,
+                            origin_convo_id: "c-gone",
+                            origin_convo_title: null,
+                        }),
                     ],
                 })}
             />,

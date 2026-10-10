@@ -83,6 +83,18 @@ describe("Codex and Claude worker pills", () => {
         expect(workerKind(conversation("room:future:agent-1", { parent_convo_id: "room" }))).toBeNull();
     });
 
+    it("classifies top-level rows from the server-recorded agent_kind", () => {
+        // Top-level (no parent) rows have bare-UUID ids with no infix — they
+        // resolve via agent_kind, not the id.
+        expect(workerKind(conversation("top-uuid", { agent_kind: "codex" }))).toBe("codex");
+        expect(workerKind(conversation("top-uuid", { agent_kind: "claude" }))).toBe("claude");
+        // Absent / unknown kind renders no marker (graceful with an older server).
+        expect(workerKind(conversation("top-uuid"))).toBeNull();
+        expect(workerKind(conversation("top-uuid", { agent_kind: "future-backend" }))).toBeNull();
+        // A sub-chat still uses its id infix and ignores agent_kind.
+        expect(workerKind(conversation("room:sub:a", { parent_convo_id: "room", agent_kind: "codex" }))).toBe("claude");
+    });
+
     it("renders the worker mark and outcome glyph for every supported state", async () => {
         const conversations = [
             conversation("room"),
@@ -166,9 +178,11 @@ describe("Codex and Claude worker pills", () => {
 
         rendered = await render(<MatronApp client={client} />);
 
+        // Sidebar child rows carry one status glyph (the v6 spinner while running) and no worker
+        // mark: the worker is named on the helper's card in the thread (2026-09-26).
         const row = rendered.container.querySelector(".mj_RoomListItem_sub");
-        expect(row?.querySelector(".mj_OpenAIMark")).not.toBeNull();
-        expect(row?.querySelector(".mj_Spinner")).not.toBeNull();
+        expect(row?.querySelector(".mj_OpenAIMark, .mj_AnthropicMark")).toBeNull();
+        expect(row?.querySelector(".mj_RoomListSubStatus_running .mj_TurnCard_spinner")).not.toBeNull();
         expect(row?.getAttribute("aria-label")).toContain(", running,");
 
         const finishedClient = signedInClient(

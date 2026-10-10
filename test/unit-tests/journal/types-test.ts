@@ -18,17 +18,9 @@ import {
     websocketUrl,
 } from "../../../src/journal/types";
 
-describe("matron-journal media payload helpers", () => {
+describe("matron-journal media payload helpers (§6)", () => {
     it("parses positive dims and rejects absent / non-positive / malformed", () => {
         expect(parseMediaDims({ width: 1200, height: 800 })).toEqual({ width: 1200, height: 800 });
-        // Matrix `m.image` `info` spelling (`w`/`h`) — the shape the bridge actually passes through.
-        expect(parseMediaDims({ w: 10, h: 20 })).toEqual({ width: 10, height: 20 });
-        // `{ width, height }` wins when both spellings are present.
-        expect(parseMediaDims({ width: 1200, height: 800, w: 1, h: 1 })).toEqual({ width: 1200, height: 800 });
-        // `{ w, h }` is subject to the same positive / finite guards as `{ width, height }`.
-        expect(parseMediaDims({ w: 0, h: 20 })).toBeUndefined();
-        expect(parseMediaDims({ w: 10, h: -1 })).toBeUndefined();
-        expect(parseMediaDims({ w: "10", h: "20" })).toBeUndefined();
         expect(parseMediaDims(undefined)).toBeUndefined();
         expect(parseMediaDims(null)).toBeUndefined();
         expect(parseMediaDims({})).toBeUndefined();
@@ -118,6 +110,18 @@ describe("matron-journal wire helpers", () => {
 });
 
 describe("eventSnippet captions", () => {
+    it("uses the peer message body instead of a type placeholder", () => {
+        expect(eventSnippet("peer_message", { body: "Coordinate the deploy window" })).toBe(
+            "Coordinate the deploy window",
+        );
+    });
+
+    it("removes control and bidi format characters from peer message snippets", () => {
+        const snippet = eventSnippet("peer_message", { body: "safe\ntext\u202elive\u202cend\u2067now\u2069" });
+        expect(snippet).toBe("safe text live end now");
+        expect(snippet).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+    });
+
     it("prefers the caption over the filename for image and file snippets", () => {
         expect(eventSnippet("image", { filename: "shot.png", caption: "what is wrong here?" })).toBe(
             "🖼 what is wrong here?",

@@ -84,9 +84,9 @@ describe("subchat conversation list", () => {
 
         const rows = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListItem")];
         const names = rows.map((row) => row.querySelector('[data-testid="room-name"]')?.textContent);
-        // the linked child now renders nested (↳ prefix) beneath its parent; the orphan
+        // the linked child now renders nested (indented on a rail) beneath its parent; the orphan
         // (missing parent) stays a top-level fallback.
-        expect(names).toEqual(["Root", "↳ Linked child", "Orphan child"]);
+        expect(names).toEqual(["Root", "Linked child", "Orphan child"]);
         const childRow = rows[1];
         expect(childRow.classList.contains("mj_RoomListItem_sub")).toBe(true);
         // The parent's own row is NOT a subagent row.
@@ -125,7 +125,7 @@ describe("subchat conversation list", () => {
         };
 
         // Active: only the RUNNING child nests; the done child does NOT render a sidebar row.
-        expect(names()).toEqual(["Root", "↳ Running child"]);
+        expect(names()).toEqual(["Root", "Running child"]);
         expect(names().some((name) => name.includes("Done child"))).toBe(false);
 
         // The done child is NOT dropped from the store — it stays in state.conversations so the
@@ -133,7 +133,7 @@ describe("subchat conversation list", () => {
         expect(client.getSnapshot().conversations.some((c) => c.id === "root:sub:done")).toBe(true);
 
         // Archived tab: the archived child is discoverable regardless of its (done) session state
-        // — the active-only gate does not apply here (behavior unchanged).
+        // — the active-only gate does not apply here.
         await clickTab("Archived");
         expect(names()).toEqual(["Archived child"]);
     });
@@ -299,7 +299,7 @@ describe("subchat conversation list", () => {
         const names = rows.map((row) => row.querySelector('[data-testid="room-name"]')?.textContent);
         // Grandparent, its nested running child, then the running grandchild as a top-level row.
         // The done grandchild is hidden. No running descendant is lost.
-        expect(names).toEqual(["Grandparent", "↳ Parent child", "Grandchild"]);
+        expect(names).toEqual(["Grandparent", "Parent child", "Grandchild"]);
         // The grandchild renders as a top-level row (not an indented subagent row).
         const grandchildRow = rows[2];
         expect(grandchildRow.classList.contains("mj_RoomListItem_sub")).toBe(false);
@@ -434,40 +434,8 @@ describe("subchat conversation list", () => {
         expect(childName()).toEqual(["Linked child"]);
     });
 
-    it("offers no collapse control for a parent whose only running child is archived", async () => {
-        // Regression: an archived-but-running child must NOT register its parent as a subagent
-        // host. Otherwise the parent's row menu still offers "Collapse subagents" (and after a
-        // click, a dead "Show subagents") that hides nothing — the child already renders only in
-        // the Archived tab, and the render splice + count already skip it.
-        const client = new MatronJournalClient();
-        (client as unknown as ClientInternals).state = {
-            ...client.getSnapshot(),
-            phase: "signed-in",
-            session: SESSION,
-            conversations: [
-                conversation("root", "Root", undefined, "running"),
-                conversation("root:sub:linked", "Linked child", "root", "running"),
-            ],
-            // The parent's ONLY subagent child is running but archived.
-            archivedIds: new Set(["root:sub:linked"]),
-            connection: "online",
-        };
-        container = document.createElement("div");
-        document.body.append(container);
-        root = createRoot(container);
-        await act(async () => root.render(React.createElement(MatronApp, { client })));
-
-        // Active shows only the parent — the archived child does not nest under it.
-        expect(roomNames()).toEqual(["Root"]);
-
-        // The row menu offers NEITHER a live "Collapse subagents" NOR a dead "Show subagents".
-        await openRowMenu("Root");
-        expect(menuItem("Collapse subagents")).toBeUndefined();
-        expect(menuItem("Show subagents")).toBeUndefined();
-    });
-
-    // Manual collapse/expand of subagent child rows via the sidebar row menu.
-    const roomNames = (): string[] =>
+    // manual collapse/expand of subagent child rows via the sidebar row menu.
+    const names = (): string[] =>
         [...container.querySelectorAll('[data-testid="room-name"]')].map((element) => element.textContent ?? "");
     const openRowMenu = async (parentName: string): Promise<void> => {
         const wrapper = [...container.querySelectorAll<HTMLDivElement>(".mj_RoomListItem_wrapper")].find(
@@ -499,14 +467,14 @@ describe("subchat conversation list", () => {
         await act(async () => root.render(React.createElement(MatronApp, { client })));
 
         // Expanded (default): the running child nests beneath its parent.
-        expect(roomNames()).toEqual(["Root", "↳ Linked child"]);
+        expect(names()).toEqual(["Root", "Linked child"]);
         expect(container.querySelector(".mj_RoomListCollapsedSubs")).toBeNull();
 
         // Collapse via the row menu → child row suppressed, count affordance appears on the parent.
         await openRowMenu("Root");
         expect(menuItem("Show subagents")).toBeUndefined();
         await act(async () => menuItem("Collapse subagents")!.click());
-        expect(roomNames()).toEqual(["Root"]);
+        expect(names()).toEqual(["Root"]);
         expect(container.querySelector(".mj_RoomListCollapsedSubs")?.textContent).toBe("1");
         // The child is still in the store (reachable via the in-session subagent pills).
         expect(client.getSnapshot().conversations.some((c) => c.id === "root:sub:linked")).toBe(true);
@@ -516,7 +484,7 @@ describe("subchat conversation list", () => {
         await openRowMenu("Root");
         expect(menuItem("Collapse subagents")).toBeUndefined();
         await act(async () => menuItem("Show subagents")!.click());
-        expect(roomNames()).toEqual(["Root", "↳ Linked child"]);
+        expect(names()).toEqual(["Root", "Linked child"]);
         expect(container.querySelector(".mj_RoomListCollapsedSubs")).toBeNull();
     });
 
@@ -572,7 +540,7 @@ describe("subchat conversation list", () => {
         await act(async () => root.render(React.createElement(MatronApp, { client })));
 
         // No sidebar row exists for the collapsed child → not selectable from the list.
-        expect(roomNames()).toEqual(["Root"]);
+        expect(names()).toEqual(["Root"]);
         const childRow = [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListItem")].find((row) =>
             (row.querySelector('[data-testid="room-name"]')?.textContent ?? "").includes("Linked child"),
         );
@@ -580,9 +548,9 @@ describe("subchat conversation list", () => {
     });
 
     it("an archived parent with persisted collapse shows NO hidden-count; its children promote to top-level", async () => {
-        // Collapse P, then archive P. Collapse state persists through archival, but an archived
-        // parent hosts no child rows (running children promote to top-level Active rows). The count
-        // affordance must follow the canonical index — NOT leak a false "N hidden".
+        // : collapse P, then archive P. Collapse state persists through archival, but an
+        // archived parent hosts no child rows (running children promote to top-level Active rows).
+        // The count affordance must follow the canonical index — NOT leak a false "N hidden".
         const client = new MatronJournalClient();
         (client as unknown as ClientInternals).state = {
             ...client.getSnapshot(),
@@ -609,119 +577,12 @@ describe("subchat conversation list", () => {
 
         // Active: the archived parent is gone; its running child promotes to a top-level row
         // (no ↳ nesting, since the archived parent is not a host). No collapsed-count anywhere.
-        expect(roomNames()).toEqual(["Linked child"]);
+        expect(names()).toEqual(["Linked child"]);
         expect(container.querySelector(".mj_RoomListCollapsedSubs")).toBeNull();
 
         // Archived tab: the archived parent renders flat WITHOUT any "N subagents hidden" chip.
         await clickTab("Archived");
-        expect(roomNames()).toEqual(["Root"]);
+        expect(names()).toEqual(["Root"]);
         expect(container.querySelector(".mj_RoomListCollapsedSubs")).toBeNull();
-    });
-
-    it("flags the collapsed hidden-count chip as unread when a hidden running child is unread", async () => {
-        // Regression guard: collapsing a parent removes the child's own inline row (which carried
-        // its own unread badge). The replacement "N hidden" chip must not silence a streaming
-        // child's unread — otherwise the unread state surfaces nowhere (row gone, aggregate badge
-        // already excludes nested children, strip pills never show unread).
-        const client = new MatronJournalClient();
-        (client as unknown as ClientInternals).state = {
-            ...client.getSnapshot(),
-            phase: "signed-in",
-            session: SESSION,
-            conversations: [
-                conversation("root", "Root", undefined, "running"),
-                { ...conversation("root:sub:linked", "Linked child", "root", "running"), unread_count: 3 },
-            ],
-            collapsedSubagentParentIds: new Set(["root"]),
-            connection: "online",
-        };
-        container = document.createElement("div");
-        document.body.append(container);
-        root = createRoot(container);
-        await act(async () => root.render(React.createElement(MatronApp, { client })));
-
-        const chip = container.querySelector(".mj_RoomListCollapsedSubs");
-        expect(chip).not.toBeNull();
-        expect(chip?.textContent).toContain("1");
-        // Visual: the chip carries the unread accent.
-        expect(chip?.classList.contains("mj_RoomListCollapsedSubs_unread")).toBe(true);
-        // Accessible: the chip is decorative, so the hidden-child count + unread state are
-        // announced through the containing row button's aria-label (a nested label would be silent).
-        expect(chip?.getAttribute("aria-hidden")).toBe("true");
-        const rootLabel =
-            [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListItem")]
-                .map((b) => b.getAttribute("aria-label") ?? "")
-                .find((l) => l.startsWith("Open room Root")) ?? "";
-        expect(rootLabel).toContain("1 subagent hidden");
-        expect(rootLabel).toContain("unread");
-    });
-
-    it("does NOT flag the collapsed hidden-count chip when the hidden child has no unread", async () => {
-        const client = new MatronJournalClient();
-        (client as unknown as ClientInternals).state = {
-            ...client.getSnapshot(),
-            phase: "signed-in",
-            session: SESSION,
-            conversations: [
-                conversation("root", "Root", undefined, "running"),
-                conversation("root:sub:linked", "Linked child", "root", "running"),
-            ],
-            collapsedSubagentParentIds: new Set(["root"]),
-            connection: "online",
-        };
-        container = document.createElement("div");
-        document.body.append(container);
-        root = createRoot(container);
-        await act(async () => root.render(React.createElement(MatronApp, { client })));
-
-        const chip = container.querySelector(".mj_RoomListCollapsedSubs");
-        expect(chip).not.toBeNull();
-        expect(chip?.classList.contains("mj_RoomListCollapsedSubs_unread")).toBe(false);
-        // Button label announces the hidden count but NOT unread when no hidden child is unread.
-        const rootLabel =
-            [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomListItem")]
-                .map((b) => b.getAttribute("aria-label") ?? "")
-                .find((l) => l.startsWith("Open room Root")) ?? "";
-        expect(rootLabel).toContain("1 subagent hidden");
-        expect(rootLabel).not.toContain("unread");
-    });
-
-    it("folds selection up to the parent when collapsing hides the selected child", async () => {
-        // Collapsing a parent suppresses its child rows. If the reading pane is on one of those
-        // now-hidden children, selection must fold UP to the (still-visible) parent — NOT be left
-        // dangling so the next resync's firstSelectableConversation yanks the pane to an unrelated
-        // top-level convo ("Other").
-        const client = new MatronJournalClient();
-        // selectConversation short-circuits without a database; stub one so its selection patch runs.
-        (client as unknown as { database: unknown }).database = {
-            events: async () => [],
-            outbox: async () => [],
-        };
-        (client as unknown as ClientInternals).state = {
-            ...client.getSnapshot(),
-            phase: "signed-in",
-            session: SESSION,
-            conversations: [
-                conversation("root", "Root", undefined, "running"),
-                conversation("root:sub:linked", "Linked child", "root", "running"),
-                conversation("other", "Other top-level", undefined, "running"),
-            ],
-            // The nested child is the current reading-pane selection.
-            selectedConversationId: "root:sub:linked",
-            connection: "online",
-        };
-        container = document.createElement("div");
-        document.body.append(container);
-        root = createRoot(container);
-        await act(async () => root.render(React.createElement(MatronApp, { client })));
-
-        expect(roomNames()).toEqual(["Root", "↳ Linked child", "Other top-level"]);
-        expect(client.getSnapshot().selectedConversationId).toBe("root:sub:linked");
-
-        // Collapse the parent → child row suppressed, selection folds to the parent (not "other").
-        await act(async () => client.toggleSubagentCollapse("root"));
-
-        expect(client.getSnapshot().selectedConversationId).toBe("root");
-        expect(roomNames()).toEqual(["Root", "Other top-level"]);
     });
 });

@@ -15,8 +15,11 @@ import {
     type PendingMessage,
     type SnapshotResponse,
 } from "./types";
+import { eventToStep } from "./turn-assembly";
 
 const DATABASE_VERSION = 1;
+// Rows per expireToolLogs transaction (see there).
+const EXPIRE_CHUNK_ROWS = 500;
 const CURSOR_KEY = "cursor";
 const BACKFILL_KEY = "subchat_backfill_v1";
 const OUTCOME_BACKFILL_KEY = "session_outcome_backfill_v1";
@@ -31,6 +34,12 @@ function hasValidSessionOutcome(value: unknown): value is Conversation["session_
 
 function validateSnapshotRows(snapshot: SnapshotResponse): void {
     if (!snapshot || !Array.isArray(snapshot.conversations)) throw new Error("malformed snapshot");
+    // the durable cursor is set to snapshot.seq (replaceWithSnapshot writes it to CURSOR_KEY),
+    // and the whole malformed-live-frame recovery depends on that cursor being clean. A snapshot
+    // whose own seq is not a usable cursor value (NaN / non-integer / negative) would re-poison the
+    // cursor at the exact boundary the resync exists to sanitize, so reject it before any
+    // destructive replace rather than write the poison and ack it to the server on reconnect.
+    if (!Number.isSafeInteger(snapshot.seq) || snapshot.seq < 0) throw new Error("malformed snapshot seq");
     for (const summary of snapshot.conversations) {
         if (!summary || typeof summary.id !== "string") throw new Error("malformed snapshot element");
         if (
@@ -89,7 +98,105 @@ function emptyConversation(id: string, timestamp: number): Conversation {
         parent_convo_id: null,
         last_ts: timestamp,
         read_up_to_seq: 0,
+        agent_kind: null,
+        summary: "",
+        summary_updated_at: 0,
     };
+}
+
+/**
+ * Folds one newly applied journal row into its conversation row (mutated in place). Shared by the
+ * single-row and batched apply paths so both derive the sidebar state identically. `eventStore`
+ * is the SAME transaction's events store, which already holds this row, so a read marker counts
+ * unread against everything applied so far — including earlier rows of the same batch.
+ */
+async function applyEventToConversation(
+    conversation: Conversation,
+    event: JournalEvent,
+    eventStore: IDBObjectStore,
+): Promise<void> {
+    conversation.last_seq = Math.max(conversation.last_seq, event.seq);
+    // last_ts (the conversation-list sort key and the "last activity" time)
+    // advances ONLY on a MESSAGE event — see the message branch below. A
+    // meta/status/read_marker frame must not resurface a conversation to the
+    // top of the list or bump its timestamp past a stale preview line, since
+    // those frames never refresh the snippet. Mirrors the server's last_ts
+    // (journal.js: ts of the newest MESSAGE_TYPES event). last_seq above is
+    // still monotonic for the merge/read-cursor invariants; only ordering
+    // drops it as the primary key.
+
+    if (event.type === "convo_meta") {
+        if (typeof event.payload.title === "string") conversation.title = event.payload.title;
+        if (typeof event.payload.auto_title === "string" || event.payload.auto_title === null) {
+            conversation.auto_title = event.payload.auto_title;
+        }
+        let incomingParent = coerceParentId(event.payload.parent_convo_id);
+        if (incomingParent === conversation.id) incomingParent = null;
+        if (conversation.parent_convo_id == null && incomingParent) {
+            conversation.parent_convo_id = incomingParent;
+        }
+        // agent_kind rides convo_meta so a live-created codex/claude row is
+        // marked immediately. Mutable last-write-wins (a
+        // claude<->codex switch re-emits it); an omitted/blank value leaves
+        // the recorded kind untouched.
+        if (typeof event.payload.agent_kind === "string" && event.payload.agent_kind) {
+            conversation.agent_kind = event.payload.agent_kind;
+        }
+        // The pinned digest rides convo_meta so the summary surface refreshes live
+        // instead of only at /snapshot. The always-both-keys guarantee holds
+        // only for bridge-originated convo_upsert frames — server-authored convo_meta
+        // variants (a membership change, a spawn room) carry just what changed — so the
+        // presence guards are load-bearing, not defensive padding.
+        if (typeof event.payload.summary === "string") {
+            // Assign on ANY string including "", so a cleared digest clears the surface.
+            const changed = event.payload.summary !== conversation.summary;
+            conversation.summary = event.payload.summary;
+            const updatedAt = event.payload.summary_updated_at;
+            if (typeof updatedAt === "number" && Number.isFinite(updatedAt)) {
+                conversation.summary_updated_at = updatedAt;
+            } else if (changed) {
+                // New text arriving with no usable time (an intermediate server that
+                // learned `summary` but not `summary_updated_at`): 0 = unknown, which
+                // renders no age label. Keeping the previous stamp would date fresh
+                // content by the digest it replaced — exactly the lie this field exists
+                // to prevent. An unchanged summary keeps the stamp it already has.
+                conversation.summary_updated_at = 0;
+            }
+        }
+    } else if (event.type === "session_status" && typeof event.payload.state === "string") {
+        conversation.session_state = event.payload.state;
+        if (hasValidSessionOutcome(event.payload.session_outcome)) {
+            conversation.session_outcome = event.payload.session_outcome;
+        }
+    } else if (MESSAGE_EVENT_TYPES.has(event.type)) {
+        // Snippet and last_ts advance together, so the displayed "last
+        // message" line can never dangle out of sync with the row's slot.
+        conversation.last_ts = Math.max(conversation.last_ts ?? 0, event.ts);
+        conversation.snippet = eventSnippet(event.type, event.payload);
+        const step = event.sender.startsWith("user:") ? null : eventToStep(event);
+        if (step) {
+            // Capped: only a sentence is ever derived from it (the last argument of a read).
+            const input = Object.fromEntries(
+                Object.entries(step.input).map(([key, value]) => [key, String(value ?? "").slice(0, 300)]),
+            );
+            conversation.last_step = { tool: step.tool, input };
+        } else delete conversation.last_step;
+        if (!event.sender.startsWith("user:")) {
+            conversation.unread_count += 1;
+        }
+    } else if (event.type === "read_marker") {
+        const upToSeq = typeof event.payload.up_to_seq === "number" ? event.payload.up_to_seq : 0;
+        conversation.read_up_to_seq = Math.max(conversation.read_up_to_seq, upToSeq);
+        const storedEvents = (await requestResult(
+            eventStore.index("byConversation").getAll(event.convo_id),
+        )) as JournalEvent[];
+        conversation.unread_count = storedEvents.filter(
+            (candidate) =>
+                candidate.seq > upToSeq &&
+                MESSAGE_EVENT_TYPES.has(candidate.type) &&
+                !candidate.sender.startsWith("user:"),
+        ).length;
+    }
 }
 
 function matchesOwnPendingMessage(event: JournalEvent, pending: PendingMessage, ownSender: string): boolean {
@@ -154,7 +261,7 @@ export class JournalDatabase {
 
         // A malformed freshness field (null/NaN/non-number last_seq) makes the terminal-state merge
         // for THAT row unassessable. We must NOT reject the whole snapshot (that would block valid
-        // parent-link repair for every other row; the "parent-link backfill
+        // parent-link repair for every other row — ship-review major 1; the "parent-link backfill
         // unchanged" contract). Instead: repair parent links for all rows, skip only the unassessable
         // session_state/session_outcome write, and DEFER sealing the completion key so the reconcile retries rather
         // than sealing a possibly-stale state (phase-1 review — P3 Fail Visible / V6 Classify Errors).
@@ -256,11 +363,20 @@ export class JournalDatabase {
         validateSnapshotRows(snapshot);
         const transaction = this.database.transaction(["meta", "conversations", "events", "outbox"], "readwrite");
         const conversations = transaction.objectStore("conversations");
+        const existingRows = (await requestResult(conversations.getAll())) as Conversation[];
         const existingParents = new Map(
-            ((await requestResult(conversations.getAll())) as Conversation[]).map((conversation) => {
+            existingRows.map((conversation) => {
                 const parentId = coerceParentId(conversation.parent_convo_id);
                 return [conversation.id, parentId === conversation.id ? null : parentId] as const;
             }),
+        );
+        // The recorded last step survives a snapshot of the very state it was recorded in (same
+        // last_seq, snippet and last_ts). Anything newer drops it: the preview then reads the
+        // snippet, behind the raw-text guard.
+        const existingSteps = new Map(
+            existingRows
+                .filter((conversation) => conversation.last_step)
+                .map((conversation) => [conversation.id, conversation] as const),
         );
         conversations.clear();
         transaction.objectStore("events").clear();
@@ -270,14 +386,23 @@ export class JournalDatabase {
         for (const message of pendingMessages) {
             if (!validConversationIds.has(message.convoId)) outbox.delete(message.localId);
         }
-        for (const summary of snapshot.conversations) {
-            let incomingParent = coerceParentId(summary.parent_convo_id);
-            if (incomingParent === summary.id) incomingParent = null;
+        // `row`, not `summary`: rows themselves now carry a `summary` field (the pinned
+        // digest), and `summary.summary` would read as a typo.
+        for (const row of snapshot.conversations) {
+            let incomingParent = coerceParentId(row.parent_convo_id);
+            if (incomingParent === row.id) incomingParent = null;
+            const previous = existingSteps.get(row.id);
+            const keepStep =
+                previous &&
+                previous.last_seq === row.last_seq &&
+                previous.snippet === row.snippet &&
+                previous.last_ts === (row.last_ts ?? row.created_at);
             conversations.put({
-                ...summary,
-                parent_convo_id: existingParents.get(summary.id) ?? incomingParent ?? null,
-                last_ts: summary.last_ts ?? summary.created_at,
-                read_up_to_seq: summary.read_up_to_seq ?? (summary.unread_count === 0 ? summary.last_seq : 0),
+                ...row,
+                ...(keepStep ? { last_step: previous.last_step } : {}),
+                parent_convo_id: existingParents.get(row.id) ?? incomingParent ?? null,
+                last_ts: row.last_ts ?? row.created_at,
+                read_up_to_seq: row.read_up_to_seq ?? (row.unread_count === 0 ? row.last_seq : 0),
             } satisfies Conversation);
         }
         transaction.objectStore("meta").put(snapshot.seq, CURSOR_KEY);
@@ -329,76 +454,61 @@ export class JournalDatabase {
         await transactionDone(transaction);
     }
 
-    /** Applies one strictly ordered replay/live row and advances the durable cursor atomically. */
+    /** Applies one strictly ordered row atomically; read markers clear durable unread state separately. */
     public async applyJournal(incomingEvent: JournalEvent): Promise<boolean> {
-        const event = enforceToolLogTtl(incomingEvent);
+        const [applied] = await this.applyJournalBatch([incomingEvent]);
+        return applied ?? false;
+    }
+
+    /**
+     * Applies a run of strictly ordered rows in ONE transaction and returns, per row, whether it
+     * was newly applied (false = at or below the durable cursor, i.e. a duplicate). Semantically
+     * identical to calling applyJournal once per row in order — a later row sees every earlier
+     * row's writes (conversation fields via the in-transaction cache, events via the store) — but
+     * a replay of thousands of rows costs one commit instead of thousands. The cursor only ever
+     * moves forward, to the highest applied seq, and the whole run commits or none of it does, so
+     * a failed transaction leaves the cursor where it was and the rows are replayed again.
+     */
+    public async applyJournalBatch(incomingEvents: JournalEvent[]): Promise<boolean[]> {
+        if (incomingEvents.length === 0) return [];
         const transaction = this.database.transaction(["meta", "conversations", "events"], "readwrite");
         const meta = transaction.objectStore("meta");
-        const currentCursor = (await requestResult(meta.get(CURSOR_KEY))) as number | undefined;
-        if (currentCursor !== undefined && event.seq <= currentCursor) {
+        const conversations = transaction.objectStore("conversations");
+        const events = transaction.objectStore("events");
+        let cursor = (await requestResult(meta.get(CURSOR_KEY))) as number | undefined;
+        const touched = new Map<string, Conversation>();
+        const results: boolean[] = [];
+        for (const incomingEvent of incomingEvents) {
+            const event = enforceToolLogTtl(incomingEvent);
+            if (cursor !== undefined && event.seq <= cursor) {
+                results.push(false);
+                continue;
+            }
+            let conversation = touched.get(event.convo_id);
+            if (!conversation) {
+                const existing = (await requestResult(conversations.get(event.convo_id))) as Conversation | undefined;
+                conversation = existing ?? emptyConversation(event.convo_id, event.ts);
+                touched.set(event.convo_id, conversation);
+            }
+            events.put(event);
+            await applyEventToConversation(conversation, event, events);
+            cursor = event.seq;
+            results.push(true);
+        }
+        if (!results.includes(true)) {
+            // Every row was a duplicate: no writes were needed, so abort instead of committing.
             transaction.abort();
             try {
                 await transactionDone(transaction);
             } catch {
-                // The abort is deliberate: no writes were needed for a duplicate frame.
+                // The abort is deliberate.
             }
-            return false;
+            return results;
         }
-
-        const conversations = transaction.objectStore("conversations");
-        const existing = (await requestResult(conversations.get(event.convo_id))) as Conversation | undefined;
-        const conversation = existing ?? emptyConversation(event.convo_id, event.ts);
-
-        transaction.objectStore("events").put(event);
-        conversation.last_seq = Math.max(conversation.last_seq, event.seq);
-        // last_ts (the conversation-list sort key and the "last activity" time)
-        // advances ONLY on a MESSAGE event — see the message branch below. A
-        // meta/status/read_marker frame must not resurface a conversation to the
-        // top of the list or bump its timestamp past a stale preview line, since
-        // those frames never refresh the snippet. Mirrors the server's last_ts
-        // (journal.js: ts of the newest MESSAGE_TYPES event). last_seq above is
-        // still monotonic for the merge/read-cursor invariants; only ordering
-        // drops it as the primary key.
-
-        if (event.type === "convo_meta") {
-            if (typeof event.payload.title === "string") conversation.title = event.payload.title;
-            if (typeof event.payload.auto_title === "string" || event.payload.auto_title === null) {
-                conversation.auto_title = event.payload.auto_title;
-            }
-            let incomingParent = coerceParentId(event.payload.parent_convo_id);
-            if (incomingParent === conversation.id) incomingParent = null;
-            if (conversation.parent_convo_id == null && incomingParent) {
-                conversation.parent_convo_id = incomingParent;
-            }
-        } else if (event.type === "session_status" && typeof event.payload.state === "string") {
-            conversation.session_state = event.payload.state;
-            if (hasValidSessionOutcome(event.payload.session_outcome)) {
-                conversation.session_outcome = event.payload.session_outcome;
-            }
-        } else if (MESSAGE_EVENT_TYPES.has(event.type)) {
-            // Snippet and last_ts advance together, so the displayed "last
-            // message" line can never dangle out of sync with the row's slot.
-            conversation.last_ts = Math.max(conversation.last_ts ?? 0, event.ts);
-            conversation.snippet = eventSnippet(event.type, event.payload);
-            if (!event.sender.startsWith("user:")) conversation.unread_count += 1;
-        } else if (event.type === "read_marker") {
-            const upToSeq = typeof event.payload.up_to_seq === "number" ? event.payload.up_to_seq : 0;
-            conversation.read_up_to_seq = Math.max(conversation.read_up_to_seq, upToSeq);
-            const storedEvents = (await requestResult(
-                transaction.objectStore("events").index("byConversation").getAll(event.convo_id),
-            )) as JournalEvent[];
-            conversation.unread_count = storedEvents.filter(
-                (candidate) =>
-                    candidate.seq > upToSeq &&
-                    MESSAGE_EVENT_TYPES.has(candidate.type) &&
-                    !candidate.sender.startsWith("user:"),
-            ).length;
-        }
-
-        conversations.put(conversation);
-        meta.put(event.seq, CURSOR_KEY);
+        for (const conversation of touched.values()) conversations.put(conversation);
+        meta.put(cursor, CURSOR_KEY);
         await transactionDone(transaction);
-        return true;
+        return results;
     }
 
     public async markLocallyRead(conversationId: string, upToSeq: number): Promise<void> {
@@ -456,33 +566,67 @@ export class JournalDatabase {
     }
 
     public async reconcilePersistedOwnMessages(): Promise<string[]> {
+        // Runs at startup and after every history page, so it must not scale with the size of the
+        // local journal: read the outbox first, and only the events of conversations that actually
+        // have a row awaiting its echo (matchesOwnPendingMessage requires the same convo_id).
         const transaction = this.database.transaction(["events", "outbox"], "readwrite");
         const outbox = transaction.objectStore("outbox");
-        const [events, pendingMessages] = await Promise.all([
-            requestResult(transaction.objectStore("events").getAll()) as Promise<JournalEvent[]>,
-            requestResult(outbox.getAll()) as Promise<PendingMessage[]>,
-        ]);
+        const pendingMessages = (await requestResult(outbox.getAll())) as PendingMessage[];
         const candidates = pendingMessages.filter(
             (message) => message.attachState === "sending" || message.errorKind === "send_failed",
         );
         const removed: string[] = [];
-        for (const pending of candidates) {
-            if (!events.some((event) => matchesOwnPendingMessage(event, pending, this.ownSender))) continue;
-            outbox.delete(pending.localId);
-            removed.push(pending.localId);
+        if (candidates.length > 0) {
+            const byConversation = transaction.objectStore("events").index("byConversation");
+            const eventsByConvo = new Map<string, JournalEvent[]>();
+            for (const convoId of new Set(candidates.map((message) => message.convoId))) {
+                eventsByConvo.set(convoId, (await requestResult(byConversation.getAll(convoId))) as JournalEvent[]);
+            }
+            for (const pending of candidates) {
+                const events = eventsByConvo.get(pending.convoId) ?? [];
+                if (!events.some((event) => matchesOwnPendingMessage(event, pending, this.ownSender))) continue;
+                outbox.delete(pending.localId);
+                removed.push(pending.localId);
+            }
         }
         await transactionDone(transaction);
         return removed;
     }
 
-    public async expireToolLogs(now = Date.now()): Promise<void> {
-        const transaction = this.database.transaction("events", "readwrite");
-        const store = transaction.objectStore("events");
-        const events = (await requestResult(store.getAll())) as JournalEvent[];
-        for (const event of events) {
-            const expired = enforceToolLogTtl(event, now);
-            if (expired !== event) store.put(expired);
+    public async expireToolLogs(now = Date.now(), chunkSize = EXPIRE_CHUNK_ROWS): Promise<void> {
+        // Walks the store in bounded chunks, each its own short transaction, and rewrites only the
+        // rows that actually expire. The store holds every row this device has received, so one
+        // transaction over all of it would hold the events lock for seconds and stall every read
+        // and write queued behind it (opening a conversation, applying live frames, sign-out).
+        // Between chunks it yields a macrotask so those transactions run first.
+        let after: IDBValidKey | undefined;
+        for (;;) {
+            const transaction = this.database.transaction("events", "readwrite");
+            const store = transaction.objectStore("events");
+            const request = store.openCursor(after === undefined ? undefined : IDBKeyRange.lowerBound(after, true));
+            let seen = 0;
+            let last: IDBValidKey | undefined;
+            await new Promise<void>((resolve, reject) => {
+                request.onsuccess = () => {
+                    const cursor = request.result;
+                    if (!cursor) {
+                        resolve();
+                        return;
+                    }
+                    const event = cursor.value as JournalEvent;
+                    const expired = enforceToolLogTtl(event, now);
+                    if (expired !== event) cursor.update(expired);
+                    last = cursor.primaryKey;
+                    seen += 1;
+                    if (seen >= chunkSize) resolve();
+                    else cursor.continue();
+                };
+                request.onerror = () => reject(request.error ?? new Error("IndexedDB cursor failed"));
+            });
+            await transactionDone(transaction);
+            if (seen < chunkSize || last === undefined) return;
+            after = last;
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
         }
-        await transactionDone(transaction);
     }
 }

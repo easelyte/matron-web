@@ -114,6 +114,15 @@ export function ChecklistIcon(props: IconProps): React.ReactElement {
     );
 }
 
+export function PulseIcon(props: IconProps): React.ReactElement {
+    // Ops entry point: a heartbeat trace, read as "how the boxes are doing".
+    return (
+        <Icon {...props}>
+            <path d="M3 12h4l2.5-6 5 12 2.5-6h4" />
+        </Icon>
+    );
+}
+
 export function MarkReadIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>
@@ -350,8 +359,8 @@ export function FileIcon(props: IconProps): React.ReactElement {
     );
 }
 
-// File-kind affordances: the file tile picks one of these from payload.content_type via
-// fileKindFromMime(). All share the folded-sheet silhouette plus a kind mark; unknown MIME
+// File-kind affordances (§6): the file tile picks one of these from payload.content_type
+// via fileKindFromMime(). All share the folded-sheet silhouette + a kind mark; unknown MIME
 // falls back to the plain FileIcon above.
 export function ImageFileIcon(props: IconProps): React.ReactElement {
     return (
@@ -410,6 +419,15 @@ export function ArchiveFileIcon(props: IconProps): React.ReactElement {
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
             <path d="M14 2v6h6" />
             <path d="M11 12v1M11 15v1M11 18v1.5a1 1 0 0 0 2 0V18M11 13h2M11 16h2" />
+        </Icon>
+    );
+}
+
+// Directory affordance for the Files pane (§6): folder rows + the header entry-point button.
+export function FolderIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
         </Icon>
     );
 }
@@ -498,6 +516,15 @@ export function ResetIcon(props: IconProps): React.ReactElement {
         <Icon {...props}>
             <path d="M4 12a8 8 0 1 1 2.34 5.66" />
             <path d="M4 20v-4h4" />
+        </Icon>
+    );
+}
+
+export function ChatsIcon(props: IconProps): React.ReactElement {
+    // Mobile nav "Chats" tab — a speech bubble, the conversation list's home.
+    return (
+        <Icon {...props}>
+            <path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.1A8 8 0 1 1 20 12Z" />
         </Icon>
     );
 }

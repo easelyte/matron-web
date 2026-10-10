@@ -290,7 +290,7 @@ describe("subagent strip integration", () => {
         expect(current?.disabled).toBe(true);
     });
 
-    it("returns to the parent on Escape when nothing else is open (§10.11.E)", async () => {
+    it("returns to the parent on Escape when nothing else is open", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),
             conversation("child", "Child", "running", "parent"),

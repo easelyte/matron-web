@@ -21,6 +21,7 @@ import {
     usageShortLabel,
     worstLimit,
 } from "../../../src/journal/status";
+import type { SessionStatus } from "../../../src/journal/types";
 
 describe("journal session status presentation", () => {
     it("matches the Apple client's compact token and limit labels", () => {
@@ -38,8 +39,6 @@ describe("journal session status presentation", () => {
     it("bakes fixed short usage labels (v5 relabel map) with a per-model fallback", () => {
         // Label-only fallback path (no id) — older/cached frames.
         expect(usageShortLabel({ label: "Session" })).toBe("5h");
-        // Post-#156 bridges label the session limit in lowercase.
-        expect(usageShortLabel({ label: "session" })).toBe("5h");
         expect(usageShortLabel({ label: "Week (all models)" })).toBe("wk");
         expect(usageShortLabel({ label: "Week" })).toBe("wk");
         expect(usageShortLabel({ label: "fable" })).toBe("fbl");
@@ -78,7 +77,7 @@ describe("journal session status presentation", () => {
     });
 
     it("ranks usage meters into the design's column-first grid order", () => {
-        // id path: cpu/ram | ctx/5h | fbl/model,wk (host vitals lead)
+        // id path: cpu/ram | ctx/5h | fbl/model,wk
         const byId = [
             { id: "host_ram", label: "Host RAM" },
             { id: "week_all", label: "Week (all models)" },
@@ -211,12 +210,34 @@ describe("journal session status presentation", () => {
         });
     });
 
-    it("carries and retains top-level vitals across partial updates", () => {
-        const vitals = { cpu_pct: 34, ram_pct: 55, sampled_at_ms: 1_000 };
-        // Update introduces vitals.
-        expect(mergeSessionStatus({ model: "m" }, { vitals }).vitals).toEqual(vitals);
-        // A later update that omits vitals retains the prior reading.
-        expect(mergeSessionStatus({ vitals }, { model: "m2" }).vitals).toEqual(vitals);
+    it("carries extras through updates that omit them, and lets [] turn them off", () => {
+        const on = mergeSessionStatus(undefined, { model: "claude-fable-5", extras: ["browser"] });
+        expect(mergeSessionStatus(on, { model: "gpt-5.6-codex" }).extras).toEqual(["browser"]);
+        expect(mergeSessionStatus(on, { extras: [] }).extras).toEqual([]);
+        expect(mergeSessionStatus(undefined, { model: "claude-fable-5" }).extras).toBeUndefined();
+    });
+
+    it("clears extras when a complete frame from a pre-extras bridge supersedes them (rollback)", () => {
+        const on = mergeSessionStatus(undefined, { model: "claude-fable-5", extras: ["browser"] });
+        // A full journalStatus frame always carries model_options; one without extras is a bridge
+        // that cannot report them, so the old "on" must not survive it.
+        const rolledBack = { model: "claude-fable-5", model_options: [{ value: "opus", label: "Opus" }] };
+        expect(mergeSessionStatus(on, rolledBack as SessionStatus).extras).toBeUndefined();
+        // ...including one whose offer list is empty (Codex).
+        expect(mergeSessionStatus(on, { model: "gpt", model_options: [] } as SessionStatus).extras).toBeUndefined();
+    });
+
+    it("carries top-level vitals through a partial status update", () => {
+        // Host CPU/RAM live on status.vitals; a limits-only repaint must not blank them.
+        const vitals = { cpu_pct: 12, ram_pct: 47, sampled_at_ms: 1_753_000_000_000 };
+        expect(
+            mergeSessionStatus({ model: "claude-fable-5", vitals }, { limits: [{ label: "Session", percent: 39 }] })
+                .vitals,
+        ).toEqual(vitals);
+
+        // A fresh reading replaces the held one.
+        const next = { cpu_pct: 80, ram_pct: 50, sampled_at_ms: 1_753_000_060_000 };
+        expect(mergeSessionStatus({ vitals }, { vitals: next }).vitals).toEqual(next);
     });
 
     it("ages and expires host-vital samples via sampled_at_ms", () => {

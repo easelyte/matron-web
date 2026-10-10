@@ -20,15 +20,39 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import "@fontsource/fira-code/latin-400.css";
 import "@fontsource/inter/latin-400.css";
+// Inter 500 (labels, menu rows, card titles): without it the browser matches 500 to 400.
 import "@fontsource/inter/latin-500.css";
 import "@fontsource/inter/latin-600.css";
 
+import { JournalApiError } from "../src/journal/api";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
-import type { ClientState, Conversation, JournalEvent, Session } from "../src/journal/types";
+import type { FileEntry, FileListing, FileMeta, FilesApiLike } from "../src/journal/files/filesApi";
+import type {
+    ClientState,
+    Conversation,
+    JournalEvent,
+    Mission,
+    MissionDetail,
+    Session,
+    SessionStatus,
+    TrackerComment,
+    TrackerItem,
+} from "../src/journal/types";
+import { SHOW_THE_WORK_KEY } from "../src/journal/show-the-work";
+import { v6Fixture, type V6Scenario } from "./v6-thread";
+import { workFixture, type WorkFixtureMode } from "./work";
+import { opsDevices, opsMetrics, opsReply, type OpsFixtureMode } from "./ops";
+import { parseBoxStatus, parseMetrics, sectionStateFromReply, type OpsSection } from "../src/journal/ops/model";
+import { REAL_STATUS, subagentFixture, type SubagentScenario } from "./subagents";
 import "../src/journal/shell.pcss";
+import "../src/journal/controls.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
+import "../src/journal/work.pcss";
+import "../src/journal/ops.pcss";
+import "../src/journal/subagents.pcss";
+import "../src/journal/mobile.pcss";
 
 const SESSION: Session = {
     serverUrl: "https://journal.example",
@@ -37,6 +61,15 @@ const SESSION: Session = {
     userId: 2,
     username: "operator@example.com",
 };
+
+// The pinned digest arrives as the bridge's raw wire text: one "\u2022 "-prefixed
+// line per pass. The last bullet is deliberately >160 chars so the fixture shows the clamp +
+// Expand affordance alongside short ones. c2/c3 carry none, which is the "renders nothing" case.
+const PINNED_SUMMARY_TEXT = [
+    "\u2022 Reskinned the journal client end to end; bubbles, sidebar and header now share one scale.",
+    "\u2022 Cut the deploy to a versioned release dir with a current-release pointer, so rollback is a repoint.",
+    "\u2022 Restarted nginx after the cert rotation and watched the error rate for ten minutes: it held at 0.02% with no 5xx spike, no upstream resets, and no change to p99 latency, so the rotation is considered clean.",
+].join("\n");
 
 const conversations: Conversation[] = [
     {
@@ -49,6 +82,8 @@ const conversations: Conversation[] = [
         snippet: "Restarted nginx; error rate steady at 0.02%",
         created_at: 1,
         read_up_to_seq: 6,
+        summary: PINNED_SUMMARY_TEXT,
+        summary_updated_at: Date.now() - 7 * 60_000,
     },
     {
         id: "c2",
@@ -267,6 +302,50 @@ const events: JournalEvent[] = [
         type: "spawn_outcome",
         payload: { request_id: "spawn-fixture-1", outcome: "started", room_id: "s1", child_convo_id: "s1" },
     },
+    {
+        // Surface B — an inline message from another AI session (durable .mj_PeerMessage block).
+        seq: 20,
+        convo_id: "c1",
+        ts: T + 820,
+        sender: "peer:design",
+        type: "peer_message",
+        payload: {
+            from_convo: "peer-design",
+            from_name: "Design Session",
+            from_kind: "claude",
+            body: "Landed the pinned-summary surface — migrating the peer block off inline styles next.",
+        },
+    },
+    {
+        // Same peer session speaking again — each peer message keeps its own full header
+        // (from_convo-aware continuation grouping is a follow-up; see journal.pcss note).
+        seq: 21,
+        convo_id: "c1",
+        ts: T + 840,
+        sender: "peer:design",
+        type: "peer_message",
+        payload: {
+            from_convo: "peer-design",
+            from_name: "Design Session",
+            from_kind: "claude",
+            body: "Continuation line: same session, tightened top, no repeated header.",
+        },
+    },
+    {
+        // Surface B priority variant — louder marker, never a focus steal.
+        seq: 22,
+        convo_id: "c1",
+        ts: T + 860,
+        sender: "peer:release",
+        type: "peer_message",
+        payload: {
+            from_convo: "peer-release",
+            from_name: "Release Bot",
+            from_kind: "codex",
+            body: "Priority: prod error rate crossed 1% — needs a look before the next deploy.",
+            priority: true,
+        },
+    },
 ];
 
 const client = new MatronJournalClient();
@@ -284,14 +363,18 @@ const state: ClientState = {
     events,
     pendingMessages: [],
     connection: "online",
+    // Needs-you badge on the header tracker button (desktop) and the mobile nav Tracker tab.
+    trackerNeedsYou: 2,
     sessionStatus: {
         model: "claude-sonnet",
+        // A current bridge reporting no MCP extras: the browser-tools row shows "Enable".
+        extras: [],
         context: { tokens: 144_000, window: 200_000, pct: 72 },
         // id-driven limits (v5+ bridge): ctx is synthesized from context; the rest carry
         // stable ids → short tags 5h/fbl/wk/cpu/ram + column-first 3×2 grid order.
         limits: [
             { id: "week_all", label: "Week (all models)", percent: 63, resets: "4d" },
-            { id: "session", label: "Session", percent: 41, resets: "3h20" },
+            { id: "session_5h", label: "Session", percent: 41, resets: "3h20" },
             // host_ram: FRESH sample (10s old) → renders normally. host_cpu: STALE (4m old,
             // past HOST_VITALS_STALE_MS=60s) → renders dimmed with "last sampled 4m ago" in the
             // accessible name. Contact sheet shows the fresh vs stale host-vital states together.
@@ -305,6 +388,77 @@ const state: ClientState = {
     favoriteIds: favoriteStore.read(SESSION).ids,
     unreadOverrideIds: unreadStore.read(SESSION).ids,
 };
+// Redesign v6: `?v6=<scenario>` swaps in the design's six-turn thread built from real journal
+// shapes; `?work=on` turns Show the work on (the pre-v6 rendering).
+const v6Params = new URLSearchParams(window.location.search);
+const v6Scenario = v6Params.get("v6") as V6Scenario | null;
+if (v6Params.get("work") === "on") localStorage.setItem(SHOW_THE_WORK_KEY, "true");
+else localStorage.removeItem(SHOW_THE_WORK_KEY);
+if (v6Scenario) {
+    const fixture = v6Fixture(v6Scenario);
+    state.events = fixture.events;
+    state.toolStreams = fixture.toolStreams;
+    state.activity = fixture.activity;
+    state.conversations = state.conversations.map((conversation) =>
+        conversation.id === "c1" ? { ...conversation, session_state: fixture.sessionState, summary: "" } : conversation,
+    );
+    // `&browser=queued|restarting|on|codex` layers a browser-tools restart onto the scenario.
+    const browser = v6Params.get("browser");
+    if (browser) {
+        const last = state.events.at(-1)!;
+        const text = (offset: number, sender: string, body: string): JournalEvent => ({
+            seq: last.seq + offset,
+            convo_id: "c1",
+            ts: last.ts + offset * 1000,
+            sender,
+            type: "text",
+            payload: { body },
+        });
+        if (browser !== "codex") state.events = [...state.events, text(1, "user:operator", "/restart --browser")];
+        if (browser === "restarting")
+            state.events = [...state.events, text(2, "agent:claude", "🔄 Restarting Claude session...")];
+        if (browser === "on")
+            state.events = [
+                ...state.events,
+                text(2, "agent:claude", "🔄 Restarting Claude session..."),
+                text(
+                    3,
+                    "agent:claude",
+                    "Claude session restarted.\nSession: 1a2b3c4d...\nWorkdir: /repo\nExtras: browser",
+                ),
+            ];
+        // On/off is read from the status frame's extras, not the restart notice above.
+        if (browser === "on" && state.sessionStatus)
+            state.sessionStatus = { ...state.sessionStatus, extras: ["browser"] };
+        state.conversations = state.conversations.map((conversation) =>
+            conversation.id === "c1"
+                ? {
+                      ...conversation,
+                      session_state: browser === "queued" ? "running" : conversation.session_state,
+                      agent_kind: browser === "codex" ? "codex" : conversation.agent_kind,
+                  }
+                : conversation,
+        );
+    }
+}
+
+// Subagent cards + sidebar child rows: `?sub=thread|child|codex` swaps in a parent session with
+// Claude subagents and a Codex exec child (fixtures/subagents.ts).
+const subScenario = v6Params.get("sub") as SubagentScenario | null;
+if (subScenario) {
+    const fixture = subagentFixture(subScenario);
+    state.conversations = fixture.conversations;
+    state.selectedConversationId = fixture.selected;
+    state.events = fixture.events;
+    state.activity = fixture.activity;
+    state.toolStreams = {};
+    (client as unknown as { conversationEvents: (id: string) => Promise<JournalEvent[]> }).conversationEvents = async (
+        id: string,
+    ) => fixture.childEvents[id] ?? [];
+    (client as unknown as { refreshConversationTail: () => Promise<boolean> }).refreshConversationTail = async () =>
+        false;
+}
+
 // ?screen=login mounts the signed-out sign-in screen instead (unify step 2); ?fixed adds a
 // config.json-style fixed server so the hidden-server-field variant can be shot too.
 const fixtureParams = new URLSearchParams(window.location.search);
@@ -677,15 +831,80 @@ if (trackerMode === "inbox" || trackerMode === "item") {
     }
 }
 
+// A real helper thread (`?sub=real-*`): the header's context gauge goes through the client's own
+// helper correction (statusFor), from the statuses a pre-#81 bridge publishes.
+if (subScenario === "real-claude" || subScenario === "real-tests") {
+    const internals = client as unknown as {
+        statuses: Map<string, SessionStatus>;
+        statusFor: (id: string) => SessionStatus | undefined;
+    };
+    internals.statuses.set("p1", REAL_STATUS.parent);
+    internals.statuses.set(state.selectedConversationId!, REAL_STATUS.child);
+    state.sessionStatus =
+        typeof internals.statusFor !== "function" || new URLSearchParams(location.search).has("rawctx")
+            ? REAL_STATUS.child
+            : internals.statusFor.call(client, state.selectedConversationId!);
+}
+
 // Stub the new-session data path so a driver click on "New session" reaches the folders
 // form (agent → recent folders) where the themed inputs / checkbox / Start live.
-(client as unknown as { listAgents: () => Promise<unknown[]> }).listAgents = async () => [
-    { device_id: "dev-local", connected: true, label: "workstation", hostname: "workstation", name: "workstation" },
-];
+// The Ops page (`openOps(mode)`) swaps in its own box roster, parsed exactly as GET /devices is.
+let opsMode: OpsFixtureMode | null = null;
+(client as unknown as { listAgents: () => Promise<unknown[]> }).listAgents = async () =>
+    opsMode
+        ? opsDevices(opsMode).map((d) => {
+              const raw = d as Record<string, unknown>;
+              const status = parseBoxStatus(raw.status);
+              return status ? { ...raw, status } : raw;
+          })
+        : [
+              {
+                  device_id: "dev-local",
+                  connected: true,
+                  label: "workstation",
+                  hostname: "workstation",
+                  name: "workstation",
+              },
+          ];
+(client as unknown as { journalMetrics: () => Promise<unknown> }).journalMetrics = async () =>
+    parseMetrics({
+        user: { head_seq: opsMetrics.head_seq, devices: opsMetrics.devices },
+        sockets_connected: opsMetrics.sockets_connected,
+        journal_row_count: opsMetrics.journal_row_count,
+        db_file_size_bytes: opsMetrics.db_file_size_bytes,
+    });
+(client as unknown as { opsSnapshot: (id: number, section: OpsSection) => Promise<unknown> }).opsSnapshot = async (
+    id,
+    section,
+) => sectionStateFromReply(section, await opsReply(opsMode ?? "ok", id, section));
 (client as unknown as { recentFolders: () => Promise<unknown[]> }).recentFolders = async () => [
     { path: "/srv/app/web" },
     { path: "/srv/app/api" },
 ];
+
+// v6 options sheet: the box's start options (bridge recent_folders reply, parsed).
+(client as unknown as { sessionOptions: () => Promise<unknown> }).sessionOptions = async () => ({
+    folders: [
+        { path: "/opt/matron/web-journal", last_used: 3 },
+        { path: "/home/user/workspace", last_used: 2 },
+        { path: "/opt/matron/journal", last_used: 1 },
+    ],
+    models: [
+        { value: "opus", label: "Opus 4.5" },
+        { value: "sonnet", label: "Sonnet 4.5" },
+        { value: "haiku", label: "Haiku 4.5" },
+    ],
+    defaultModel: "opus",
+    agents: ["claude", "codex"],
+    defaultAgent: "claude",
+});
+// One tap never resolves in the harness, so the split's "Starting…" state can be captured.
+(client as unknown as { startSessionRpc: () => Promise<unknown> }).startSessionRpc = () => new Promise(() => undefined);
+if (new URLSearchParams(window.location.search).get("remember") === "1")
+    localStorage.setItem(
+        "matron.newSessionDefaults.dev-local",
+        JSON.stringify({ folder: "/home/user/workspace", model: "opus", agent: "claude" }),
+    );
 
 const params = new URLSearchParams(window.location.search);
 document.documentElement.setAttribute("data-theme", params.get("theme") === "dark" ? "dark" : "light");
@@ -697,9 +916,486 @@ const PNG_8X8 =
 const imageFile = (name: string): File =>
     new File([Uint8Array.from(atob(PNG_8X8), (c) => c.charCodeAt(0))], name, { type: "image/png" });
 
+// Stub mediaUrl for the §6 thread media events: image tiles decode this data URL (the frame
+// reserves its box from the payload dims regardless of the decoded pixels), file tiles only
+// call mediaUrl on click so their tiles render icon-first without hitting the network.
+(client as unknown as { mediaUrl: (id: string) => Promise<string> }).mediaUrl = async (id: string) =>
+    id.startsWith("img") ? `data:image/png;base64,${PNG_8X8}` : `data:application/octet-stream;base64,`;
+
+// ── Files pane fixture (Phase 1b) ─────────────────────────────────────────────────────────────
+// A mock FilesApi returning canned data so the harness can shoot every Files state (list, each
+// preview kind, empty, error/denied, truncated) in both themes without a live backend. Mirrors
+// how mediaUrl is stubbed above.
+const FILES_ROOT = "/home/user/workspace";
+// Global write switch for the harness: `openFilesReadOnly()` flips it off to shoot the dormant
+// (MATRON_FILE_ENABLE_WRITES=0 / dry-run) deploy, where the pane must look exactly like Phase 1.
+let filesWritable = true;
+const MIME: Record<string, string> = {
+    md: "text/markdown",
+    ts: "text/plain",
+    png: "image/png",
+    pdf: "application/pdf",
+    txt: "text/plain",
+    css: "text/css",
+    zip: "application/zip",
+    mp3: "audio/mpeg",
+    mp4: "video/mp4",
+};
+const TEXT_EXT = new Set(["md", "ts", "txt", "css"]);
+const extOf = (name: string): string => name.slice(name.lastIndexOf(".") + 1).toLowerCase();
+const MINIMAL_PDF =
+    "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvUGFyZW50IDIgMCBSL01lZGlhQm94WzAgMCAyMDAgMjAwXT4+CmVuZG9iagp4cmVmCjAgNAowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCnRyYWlsZXIKPDwvU2l6ZSA0L1Jvb3QgMSAwIFI+PgpzdGFydHhyZWYKMTkwCiUlRU9GCg==";
+const ROOT_ENTRIES: FileEntry[] = [
+    { name: "src", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
+    { name: "docs", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
+    { name: "big-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
+    { name: "empty-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
+    { name: "denied-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
+    { name: "readonly-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
+    { name: ".gitignore", kind: "file", size: 84, mtime: T * 1000, mime: "text/plain" },
+    { name: "README.md", kind: "file", size: 4310, mtime: T * 1000 - 3_600_000, mime: "text/markdown" },
+    { name: "client.ts", kind: "file", size: 10_240, mtime: T * 1000 - 86_400_000, mime: "text/plain" },
+    { name: "theme.css", kind: "file", size: 2048, mtime: T * 1000 - 200_000_000, mime: "text/css" },
+    { name: "diagram.png", kind: "file", size: 18_224, mtime: T * 1000 - 5_000_000, mime: "image/png" },
+    { name: "report.pdf", kind: "file", size: 240_512, mtime: T * 1000 - 9_000_000, mime: "application/pdf" },
+    { name: "notes.txt", kind: "file", size: 512, mtime: T * 1000 - 600_000, mime: "text/plain" },
+    { name: "archive.zip", kind: "file", size: 5_242_880, mtime: T * 1000 - 400_000_000, mime: "application/zip" },
+];
+const CODE_SAMPLE = [
+    "export function greet(name: string): string {",
+    "    // A short sample so CodePreview shows real highlighting.",
+    "    const parts = [`Hello, ${name}!`, 'Welcome to Matron.'];",
+    "    return parts.join(' ');",
+    "}",
+    "",
+    "const answer = 42;",
+].join("\n");
+const README_SAMPLE = [
+    "# Matron File Explorer",
+    "",
+    "Browse the working tree from **desktop or phone**, with inline preview.",
+    "",
+    "- Markdown, code, images, PDF, media",
+    "- Path-jailed server-side; secrets never served",
+    "",
+    "```bash",
+    "curl -s /journal/files/list?path=/home/user/workspace",
+    "```",
+].join("\n");
+
+const PDF_BYTES = Uint8Array.from(atob(MINIMAL_PDF.split(",")[1]), (c) => c.charCodeAt(0));
+const mockFilesApi: FilesApiLike = {
+    listDir: async (requested: string | undefined, all?: boolean): Promise<FileListing> => {
+        // No path = the server's default folder (the mock's only read root).
+        const path = requested ?? FILES_ROOT;
+        if (path.endsWith("denied-dir")) throw new JournalApiError("denied", 403, "forbidden");
+        // `root` per the F4 contract: the read-root containing `path`. Breadcrumbs never go above it.
+        // `writable` is the Phase-2 capability flag: true everywhere EXCEPT read-only-dir, which
+        // stands in for a directory outside MATRON_FILE_WRITE_ROOTS (or a writes-off / dry-run
+        // server) so the harness can shoot the "no write affordances at all" state.
+        const base = {
+            path,
+            root: FILES_ROOT,
+            parent: path === FILES_ROOT ? null : FILES_ROOT,
+            writable: filesWritable && !path.endsWith("readonly-dir"),
+        };
+        if (path.endsWith("empty-dir")) return { ...base, entries: [], truncated: false };
+        if (path.endsWith("big-dir")) {
+            const entries: FileEntry[] = Array.from({ length: 2000 }, (_unused, index) => ({
+                name: `file-${String(index).padStart(4, "0")}.log`,
+                kind: "file" as const,
+                size: 1024 + index,
+                mtime: T * 1000 - index * 1000,
+                mime: "text/plain",
+            }));
+            return { ...base, entries, truncated: true };
+        }
+        const entries = all ? ROOT_ENTRIES : ROOT_ENTRIES.filter((entry) => !entry.name.startsWith("."));
+        return { ...base, entries, truncated: false };
+    },
+    fileMeta: async (path: string): Promise<FileMeta> => {
+        const name = path.slice(path.lastIndexOf("/") + 1);
+        const ext = extOf(name);
+        const match = ROOT_ENTRIES.find((entry) => entry.name === name);
+        return {
+            kind: "file",
+            size: match?.size ?? 1024,
+            mtime: match?.mtime ?? T * 1000,
+            mime: MIME[ext] ?? "application/octet-stream",
+            isText: TEXT_EXT.has(ext),
+        };
+    },
+    textContent: async (path: string): Promise<string> => {
+        if (path.endsWith(".md")) return README_SAMPLE;
+        if (path.endsWith(".ts")) return CODE_SAMPLE;
+        if (path.endsWith(".css")) return ":root {\n    --brand: #ffe500;\n}\n";
+        return "Plain text notes.\nSecond line.\n";
+    },
+    fileBytes: async (path: string): Promise<ArrayBuffer> => {
+        // The PDF preview wants real PDF bytes; the inline EDITOR reads through here too (strict
+        // UTF-8 decode), so a text path must return the same sample its preview shows.
+        if (TEXT_EXT.has(extOf(path))) {
+            return new TextEncoder().encode(await mockFilesApi.textContent(path)).buffer as ArrayBuffer;
+        }
+        const copy = new Uint8Array(PDF_BYTES.length);
+        copy.set(PDF_BYTES);
+        return copy.buffer;
+    },
+    contentUrl: async (path: string): Promise<string> => {
+        if (path.endsWith(".png")) return `data:image/png;base64,${PNG_8X8}`;
+        if (path.endsWith(".mp3")) return "data:audio/mpeg;base64,";
+        if (path.endsWith(".mp4")) return "data:video/mp4;base64,";
+        return "data:application/octet-stream;base64,";
+    },
+    download: async (): Promise<void> => {},
+    // Phase-2 writes. The harness never touches a real filesystem: each write resolves with the
+    // shape the server contract promises, so the confirm dialogs, the post-write refresh, and the
+    // outcome notice can all be shot without a backend.
+    upload: async (file: File, opts: { targetDir: string; name?: string }) => ({
+        path: `${opts.targetDir}/${opts.name ?? file.name}`,
+        bytes: file.size,
+        dryRun: false,
+    }),
+    mkdir: async (path: string) => ({ path, dryRun: false }),
+    move: async (from: string, to: string) => ({ from, to, dryRun: false }),
+    writeFile: async (path: string, content: string) => ({ path, bytes: content.length, dryRun: false }),
+    deleteEntry: async (path: string) => ({
+        path,
+        trashed: `${FILES_ROOT}/.matron-trash/20260821T101500Z-7f3a-${path.slice(path.lastIndexOf("/") + 1)}`,
+        alreadyMissing: false,
+        dryRun: false,
+    }),
+    dispose: (): void => {},
+};
+(client as unknown as { filesApi: () => FilesApiLike }).filesApi = () => mockFilesApi;
+const patchState = (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch.bind(client);
+
+// ── Tracker pane fixture (Phase 4) ──────────────────────────────────────────────────────────────
+// Canned missions / inbox items / a mission detail / an item detail so the harness can shoot the
+// four tracker surfaces (missions list, mission detail, inbox, item detail) in both themes without
+// a live server. The fake client has no `api`, so the pane's load* effects no-op and this
+// pre-patched store data is what renders (mirrors how the Files pane is driven above).
+const H = 3_600_000;
+const trackerMissions: Mission[] = [
+    {
+        id: "ms_5",
+        num: 5,
+        state: "open",
+        title: "Ship the tracker web port",
+        body: "Port the Missions / Milestones / Decisions-Inbox surfaces onto the journal web client.",
+        close_summary: null,
+        closed_by: null,
+        closed_over_open_items: 0,
+        origin_convo_id: "c1",
+        created_by: "agent",
+        created_at: Date.now() - 40 * H,
+        updated_at: Date.now() - 2 * H,
+        last_milestone_at: Date.now() - 2 * H,
+        closed_at: null,
+        open_items: 3,
+        needs_you: 2,
+        conversations: 2,
+        milestones: 4,
+        last_milestone: {
+            num: 11,
+            title: "Approved the visual language",
+            kind: "user_input",
+            created_at: Date.now() - 2 * H,
+        },
+    },
+    {
+        id: "ms_6",
+        num: 6,
+        state: "open",
+        title: "Backup rotation hardening",
+        body: "",
+        close_summary: null,
+        closed_by: null,
+        closed_over_open_items: 0,
+        origin_convo_id: "c2",
+        created_by: "agent",
+        created_at: Date.now() - 90 * H,
+        updated_at: Date.now() - 26 * H,
+        last_milestone_at: Date.now() - 26 * H,
+        closed_at: null,
+        open_items: 0,
+        needs_you: 0,
+        conversations: 1,
+        milestones: 2,
+        last_milestone: { num: 8, title: "Cron entry verified", kind: "progress", created_at: Date.now() - 26 * H },
+    },
+    {
+        id: "ms_4",
+        num: 4,
+        state: "closed",
+        title: "Migrate to Postgres 17",
+        body: "",
+        close_summary: "pg_upgrade completed with zero errors; rollback point retained for a week.",
+        closed_by: "user",
+        closed_over_open_items: 1,
+        origin_convo_id: "c3",
+        created_by: "agent",
+        created_at: Date.now() - 200 * H,
+        updated_at: Date.now() - 120 * H,
+        last_milestone_at: Date.now() - 130 * H,
+        closed_at: Date.now() - 120 * H,
+        open_items: 0,
+        needs_you: 0,
+        conversations: 1,
+        milestones: 3,
+        last_milestone: { num: 5, title: "Dry-run clean", kind: "progress", created_at: Date.now() - 130 * H },
+    },
+];
+
+const trackerInboxItems: TrackerItem[] = [
+    {
+        id: "it_12",
+        num: 12,
+        kind: "question",
+        state: "open",
+        resolution: null,
+        awaiting: "user",
+        rank: 0,
+        title: "Which brand colour for the tracker accent?",
+        body: "Yellow reads as the needs-you signal already — do we reuse it or introduce a second accent?",
+        labels: ["design"],
+        links: [],
+        supersedes: null,
+        origin_convo_id: "c1",
+        created_by: "agent",
+        created_at: Date.now() - 5 * H,
+        updated_at: Date.now() - 1 * H,
+        closed_at: null,
+        mission_id: "ms_5",
+        mission_num: 5,
+        comment_count: 2,
+        last_comment_at: Date.now() - 1 * H,
+        attachments: [],
+        has_image: false,
+    },
+    {
+        id: "it_13",
+        num: 13,
+        kind: "decision",
+        state: "open",
+        resolution: null,
+        awaiting: "user",
+        rank: 0,
+        title: "Fold plug revenue into the dashboard balance?",
+        body: "",
+        labels: [],
+        links: [],
+        supersedes: null,
+        origin_convo_id: "c2",
+        created_by: "agent",
+        created_at: Date.now() - 8 * H,
+        updated_at: Date.now() - 3 * H,
+        closed_at: null,
+        mission_id: null,
+        mission_num: null,
+        comment_count: 0,
+        last_comment_at: null,
+        attachments: [],
+        has_image: false,
+    },
+    {
+        id: "it_14",
+        num: 14,
+        kind: "task",
+        state: "open",
+        resolution: null,
+        awaiting: "agent",
+        rank: 0,
+        title: "Wire the WS invalidation for tracker markers",
+        body: "Refetch only the loaded surface on item/mission/milestone frames.",
+        labels: [],
+        links: [],
+        supersedes: null,
+        origin_convo_id: "c1",
+        created_by: "agent",
+        created_at: Date.now() - 10 * H,
+        updated_at: Date.now() - 6 * H,
+        closed_at: null,
+        mission_id: "ms_5",
+        mission_num: 5,
+        comment_count: 1,
+        last_comment_at: Date.now() - 6 * H,
+        attachments: [],
+        has_image: false,
+    },
+];
+
+const trackerItemDetail: { item: TrackerItem; comments: TrackerComment[] } = {
+    item: trackerInboxItems[0],
+    comments: [
+        {
+            id: "cm_1",
+            item_id: "it_12",
+            author: "agent",
+            device_id: 1,
+            kind: "comment",
+            body: "The needs-you orange is `#FFB020`. Reusing it for the accent risks diluting the urgency signal.",
+            attachments: [],
+            meta: null,
+            created_at: Date.now() - 4 * H,
+        },
+        {
+            id: "cm_2",
+            item_id: "it_12",
+            author: "user",
+            device_id: 2,
+            kind: "comment",
+            body: "Agreed — keep orange for needs-you only. Use the teal accent for the tracker chrome.",
+            attachments: [],
+            meta: null,
+            created_at: Date.now() - 1 * H,
+        },
+        {
+            id: "cm_3",
+            item_id: "it_12",
+            author: "user",
+            device_id: 2,
+            kind: "status",
+            body: "",
+            attachments: [],
+            meta: {
+                from: { state: "open", resolution: null, awaiting: "user" },
+                to: { state: "open", resolution: null, awaiting: "agent" },
+            },
+            created_at: Date.now() - 1 * H,
+        },
+    ],
+};
+
+const trackerMissionDetail: MissionDetail = {
+    mission: trackerMissions[0],
+    milestones: [
+        {
+            id: "ml_11",
+            mission_id: "ms_5",
+            num: 11,
+            kind: "user_input",
+            title: "Approved the visual language",
+            body: "Orange = needs-you only; teal for chrome; purple for decisions.",
+            convo_id: "c1",
+            seq: 42,
+            device_id: 2,
+            created_by: "user",
+            created_at: Date.now() - 2 * H,
+        },
+        {
+            id: "ml_10",
+            mission_id: "ms_5",
+            num: 10,
+            kind: "progress",
+            title: "Landed the tracker spine (types + api + client)",
+            body: "",
+            convo_id: "c1",
+            seq: 30,
+            device_id: 1,
+            created_by: "agent",
+            created_at: Date.now() - 20 * H,
+        },
+    ],
+    items: [
+        {
+            id: "it_12",
+            num: 12,
+            kind: "question",
+            state: "open",
+            awaiting: "user",
+            title: "Which brand colour for the tracker accent?",
+            origin_convo_id: "c1",
+            updated_at: Date.now() - 1 * H,
+        },
+        {
+            id: "it_14",
+            num: 14,
+            kind: "task",
+            state: "open",
+            awaiting: "agent",
+            title: "Wire the WS invalidation for tracker markers",
+            origin_convo_id: "c1",
+            updated_at: Date.now() - 6 * H,
+        },
+    ],
+    conversations: [
+        { id: "c1", title: "matron-web · deploy", state: "running", box: "vps" },
+        { id: "s1", title: "test triage", state: "running", box: "vps" },
+    ],
+};
+
 // Expose hooks so the Playwright driver can drive states (stage files → upload modal, etc.).
+// Work tab: replace the fake client's `work()` so the REAL WorkView (list, filters, detail) renders
+// a canned loop store. `openWork(mode)` picks the payload; reload between modes, since a mounted
+// Work view only refetches on its own interval.
+let workMode: WorkFixtureMode = "ok";
+(client as unknown as { work: (groupBy: "repo" | "domain") => Promise<unknown> }).work = (groupBy) =>
+    workFixture(workMode, groupBy);
+
 (window as unknown as { __matron: unknown }).__matron = {
     client,
+    openFiles: (path: string = FILES_ROOT) => {
+        filesWritable = true;
+        patchState({ filesView: { open: true, path } });
+    },
+    // The dormant/dry-run server: `writable:false` everywhere, so zero write affordances render.
+    openFilesReadOnly: (path: string = FILES_ROOT) => {
+        filesWritable = false;
+        patchState({ filesView: { open: true, path } });
+    },
+    // Stage a Files-pane upload without a real file picker (Playwright can't drive the native one).
+    stageFileUpload: () => {
+        const input = document.querySelector(".mj_FilesToolbar_file") as HTMLInputElement | null;
+        if (!input) return;
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([new Uint8Array(2048)], "contact-sheet.png", { type: "image/png" }));
+        input.files = transfer.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    closeFiles: () => patchState({ filesView: undefined }),
+    // Tracker: the four surfaces. The pane's load* effects no-op (no api), so pre-patch the store.
+    openTrackerMissions: () =>
+        patchState({
+            filesView: undefined,
+            trackerView: { open: true, view: "missions" },
+            missions: trackerMissions,
+            inboxItems: trackerInboxItems,
+        }),
+    openTrackerMission: () =>
+        patchState({
+            filesView: undefined,
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            missions: trackerMissions,
+            trackerMission: trackerMissionDetail,
+        }),
+    openTrackerInbox: () =>
+        patchState({
+            filesView: undefined,
+            trackerView: { open: true, view: "inbox" },
+            missions: trackerMissions,
+            inboxItems: trackerInboxItems,
+        }),
+    openTrackerItem: () =>
+        patchState({
+            filesView: undefined,
+            trackerView: { open: true, view: "inbox", selectedItemId: 12 },
+            inboxItems: trackerInboxItems,
+            trackerItem: trackerItemDetail,
+        }),
+    closeTracker: () => patchState({ trackerView: undefined }),
+    openWork: (mode: WorkFixtureMode = "ok") => {
+        workMode = mode;
+        patchState({ filesView: undefined, trackerView: { open: true, view: "work" } });
+    },
+    openWorkLoop: (id: number, mode: WorkFixtureMode = "ok") => {
+        workMode = mode;
+        patchState({ filesView: undefined, trackerView: { open: true, view: "work", selectedLoopId: id } });
+    },
+    openOps: (mode: OpsFixtureMode = "ok") => {
+        opsMode = mode;
+        patchState({ filesView: undefined, trackerView: undefined, opsView: { open: true } });
+    },
     stageImage: (name = "screenshot.png") => client.stageFiles([imageFile(name)]),
     // Single NON-image file → hatched "image preview" placeholder + the single-file case
     // (no thumbnail strip, no "n of N" pill).
@@ -720,6 +1416,26 @@ const imageFile = (name: string): File =>
             events: [],
             pendingMessages: [],
             sessionStatus: state.sessionStatus,
+        }),
+    // Drive the pinned summary by rewriting the selected conversation's stored
+    // digest, which is exactly how the real feed reaches it (snapshot row / convo_meta).
+    // "none" is the renders-nothing case; the empty-state box and the "updating" shimmer have
+    // no wire representation by design and are covered by unit tests instead.
+    setSummary: (kind: "full" | "short" | "none" = "full") =>
+        patchState({
+            conversations: conversations.map((conversation) =>
+                conversation.id === "c1"
+                    ? {
+                          ...conversation,
+                          summary:
+                              kind === "none"
+                                  ? ""
+                                  : kind === "short"
+                                    ? PINNED_SUMMARY_TEXT.split("\n").slice(0, 2).join("\n")
+                                    : PINNED_SUMMARY_TEXT,
+                      }
+                    : conversation,
+            ),
         }),
 };
 

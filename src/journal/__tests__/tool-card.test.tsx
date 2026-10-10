@@ -12,6 +12,7 @@ import { TextEncoder as NodeTextEncoder } from "node:util";
 import { favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../client";
 import { MatronApp } from "../components";
 import type { ClientState, Conversation, JournalEvent, Session } from "../types";
+import { resetShowTheWorkForTests, SHOW_THE_WORK_KEY } from "../show-the-work";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
@@ -74,6 +75,9 @@ describe("tool card summary", () => {
 
     beforeEach(() => {
         localStorage.clear();
+        // Tool cards render inline only with Developer view on (the fork's default is off).
+        localStorage.setItem(SHOW_THE_WORK_KEY, "true");
+        resetShowTheWorkForTests();
         container = document.createElement("div");
         document.body.append(container);
         root = createRoot(container);

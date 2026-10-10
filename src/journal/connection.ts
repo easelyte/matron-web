@@ -5,11 +5,26 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { type ConnectionState, type JournalControlFrame, type RpcReply, type ServerFrame, websocketUrl } from "./types";
+import { decodeServerFrame } from "./frame-decode";
+import {
+    type ConnectionState,
+    type JournalControlFrame,
+    type JournalEvent,
+    type RpcReply,
+    type ServerFrame,
+    websocketUrl,
+} from "./types";
 
 interface JournalConnectionCallbacks {
     cursor(): Promise<number>;
     onFrame(frame: ServerFrame): Promise<void>;
+    /**
+     * Optional batched sink for sequenced journal frames. When present, consecutive journal frames
+     * that arrive while earlier work is still being processed are coalesced (in arrival order,
+     * never across a non-journal frame) and handed over as one run, so a replay backlog costs one
+     * store transaction and one render per run instead of per frame. Absent → onFrame per frame.
+     */
+    onJournalBatch?(frames: JournalEvent[]): Promise<void>;
     /** Called once the journal welcomes the socket, with the hello_ok frame (it may carry `pins`
      *  and, on a newer journal, the user's settings). */
     onReady(hello: JournalControlFrame): Promise<void>;
@@ -19,6 +34,19 @@ interface JournalConnectionCallbacks {
 }
 
 const RETRY_DELAYS_MS = [0, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
+// A socket that upgrades but never receives hello_ok would otherwise sit in "connecting" forever
+// (no close → no retry). Past this deadline it is closed, and the normal onclose retry takes over.
+export const WELCOME_TIMEOUT_MS = 20_000;
+// Upper bound on one coalesced journal run: keeps a single IndexedDB transaction and the render
+// that follows it bounded, and lets the UI paint between runs during a long replay.
+export const MAX_JOURNAL_BATCH = 500;
+// Client-side replay valve. Replaying a large gap frame by frame is far slower than re-snapshotting
+// (the server's own valve, MATRON_MAX_REPLAY, defaults to 50000). Measured on a 3,029-conversation
+// journal: a 1,000-frame replay moves ~2.2 MB and took ~5.5 s even batched; a re-snapshot is one
+// ~250 KB gzipped GET and took ~3 s whatever the gap. The limit is sent in `hello` as
+// `max_replay` (a journal that knows the field answers snapshot_required before replaying anything);
+// a journal that ignores it is caught on hello_ok, whose `seq` is the head, and resynced the same way.
+export const MAX_CLIENT_REPLAY = 500;
 
 export class JournalConnection {
     private socket?: WebSocket;
@@ -26,8 +54,24 @@ export class JournalConnection {
     private retryAttempt = 0;
     private stopped = true;
     private welcomed = false;
+    private welcomeTimer?: number;
+    // The socket whose hello_ok has ARRIVED (recorded on receipt, before the processing queue):
+    // a welcome stuck behind earlier queued work (e.g. a slow onReady) must neither trip the
+    // welcome timeout nor make a manual reconnect replace an in-fact-welcomed socket.
+    private helloSocket?: WebSocket;
     private replacingSnapshot = false;
     private processing = Promise.resolve();
+    // The journal run still accepting frames (queued, not yet started). Closed by any non-journal
+    // frame, by the run starting, or by reaching MAX_JOURNAL_BATCH, so order is always preserved.
+    private openJournalBatch?: { socket: WebSocket; frames: JournalEvent[] };
+    // Cursor each socket said hello with, for the hello_ok gap check (old-journal fallback).
+    private helloCursor = new WeakMap<WebSocket, number>();
+    // Sockets dropped for a re-snapshot (either valve, or a client resync). Frames they already
+    // delivered are stale — the snapshot supersedes them, and a failed snapshot reconnects from the
+    // last clean cursor so nothing is lost — so they are dropped instead of applied. That covers
+    // replay frames queued behind a valve-tripping hello_ok, the server's own snapshot_required
+    // queued behind the same hello_ok (a second snapshot), and rows queued behind a malformed one.
+    private abandonedSockets = new WeakSet<WebSocket>();
     private pendingRpc = new Map<
         string,
         {
@@ -59,6 +103,7 @@ export class JournalConnection {
     public stop(): void {
         this.stopped = true;
         this.welcomed = false;
+        this.clearWelcomeTimer();
         this.replacingSnapshot = false;
         if (this.retryTimer !== undefined) window.clearTimeout(this.retryTimer);
         this.retryTimer = undefined;
@@ -83,6 +128,74 @@ export class JournalConnection {
         } catch {
             return false;
         }
+    }
+
+    /**
+     * Client-triggered full resync. Mirrors the server's `snapshot_required` control-frame
+     * handler (see handleFrame): drop the socket, re-snapshot via onSnapshotRequired (which resets
+     * the durable cursor to the snapshot's clean seq), then reconnect at delay 0. Used when the
+     * client detects an unrecoverable local hazard in a LIVE journal frame — a `seq` that is not a
+     * usable cursor value (NaN / non-integer / negative). Applying such a frame would poison the
+     * durable cursor AND the ack sent to the server, so the client halts and re-snapshots instead
+     * of a boundary drop (a drop would silently advance the cursor past the row — applyJournal has
+     * no gap detection). On reconnect the client acks the CLEAN snapshot cursor, and because the
+     * malformed frame was a live push (not part of the snapshot) a fresh snapshot does not
+     * redeliver it: one malformed frame => one resync => recovered.
+     *
+     * Idempotent: a resync already in flight (replacingSnapshot), or a stopped connection, is a
+     * no-op — so several malformed frames arriving back-to-back on one socket collapse into a
+     * single re-snapshot rather than stacking sockets.
+     */
+    public async forceResync(): Promise<void> {
+        if (this.stopped || this.replacingSnapshot) return;
+        this.replacingSnapshot = true;
+        // Drop the socket, then clear our reference deterministically. onclose also clears it (and,
+        // because replacingSnapshot is set, suppresses its own reconnect — this method owns the
+        // reconnect below), but clearing here removes the dependency on the async close event firing
+        // before scheduleReconnect's open() runs; open() early-returns while this.socket is set. The
+        // onclose `this.socket === socket` guard makes the later event a no-op. Await the re-snapshot
+        // before reconnecting so hello carries the clean cursor, exactly as snapshot_required does.
+        if (this.socket) this.abandonedSockets.add(this.socket);
+        this.socket?.close(1000, "client resync");
+        this.socket = undefined;
+        try {
+            await this.callbacks.onSnapshotRequired();
+        } catch (error) {
+            // A transient snapshot failure (offline, timeout, HTTP, storage) must NOT wedge the
+            // connection socket-less with no retry timer. Swallow it and fall through to the
+            // reconnect below, which resumes from the last good (still-clean) cursor — the client's
+            // malformed-seq guard bounds a snapshot that keeps failing, so this cannot loop forever.
+            console.warn("matron:resync", { event: "snapshot_failed" });
+        } finally {
+            this.replacingSnapshot = false;
+        }
+        // Reconnect on BOTH the success and the swallowed-failure path (unless stopped meanwhile).
+        if (!this.stopped) this.scheduleReconnect(0);
+    }
+
+    /**
+     * Operator-triggered reconnect (Settings / connection banner). Skips any pending backoff and
+     * opens a socket now, resetting the backoff ladder so a later drop starts short again. A no-op
+     * on a stopped connection, during a snapshot resync (which owns its own reconnect), or while a
+     * welcomed socket is live. A socket that has not been welcomed yet is replaced.
+     */
+    public reconnectNow(): void {
+        if (this.stopped || this.replacingSnapshot) return;
+        if (this.socket) {
+            // A welcomed socket (or one whose hello_ok is queued for processing) is healthy.
+            if (this.welcomed || this.helloSocket === this.socket) return;
+            // A socket still waiting for hello_ok may be stalled: detach and close it, then open a
+            // fresh one. Its late close event is dropped by onclose's socket-identity guard, so
+            // this never leaves two live sockets or a double-scheduled retry.
+            const stale = this.socket;
+            this.socket = undefined;
+            this.clearWelcomeTimer();
+            stale.close(1000, "manual reconnect");
+        }
+        if (this.retryTimer !== undefined) window.clearTimeout(this.retryTimer);
+        this.retryTimer = undefined;
+        this.retryAttempt = 0;
+        this.open();
     }
 
     public async agentRequest(
@@ -138,13 +251,21 @@ export class JournalConnection {
         const socket = new WebSocket(websocketUrl(this.serverUrl));
         this.socket = socket;
         this.welcomed = false;
+        this.clearWelcomeTimer();
+        this.welcomeTimer = window.setTimeout(() => {
+            this.welcomeTimer = undefined;
+            if (this.socket === socket && !this.welcomed) socket.close(4000, "welcome timeout");
+        }, WELCOME_TIMEOUT_MS);
 
         socket.onopen = () => {
             void this.callbacks
                 .cursor()
                 .then((cursor) => {
                     if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) return;
-                    socket.send(JSON.stringify({ op: "hello", token: this.token, cursor }));
+                    if (typeof cursor === "number") this.helloCursor.set(socket, cursor);
+                    socket.send(
+                        JSON.stringify({ op: "hello", token: this.token, cursor, max_replay: MAX_CLIENT_REPLAY }),
+                    );
                 })
                 .catch((error) => {
                     this.callbacks.onState(
@@ -157,21 +278,7 @@ export class JournalConnection {
 
         socket.onmessage = (message) => {
             if (typeof message.data !== "string") return;
-            let frame: ServerFrame;
-            try {
-                frame = JSON.parse(message.data) as ServerFrame;
-            } catch {
-                return;
-            }
-
-            if (this.isFastPathFrame(frame)) {
-                void this.handleFrame(frame, socket).catch((error) => this.handleProcessingError(error, socket));
-                return;
-            }
-
-            this.processing = this.processing
-                .then(() => this.handleFrame(frame, socket))
-                .catch((error) => this.handleProcessingError(error, socket));
+            this.ingestMessage(message.data, socket);
         };
 
         socket.onerror = () => {
@@ -179,8 +286,16 @@ export class JournalConnection {
         };
 
         socket.onclose = (event) => {
-            if (this.socket === socket) this.socket = undefined;
+            // guard the ENTIRE handler by socket identity. forceResync clears this.socket and
+            // reconnects at delay 0, so a superseded socket's (late) close event can fire after the
+            // replacement socket is open and welcomed. Without this guard the stale close would set
+            // the shared `welcomed` flag false and publish "connecting", disabling sends/acks on an
+            // otherwise-live socket, and its scheduled retry would no-op (open() sees the new
+            // socket). A stale close carries no state that applies to the current socket, so drop it.
+            if (this.socket !== socket) return;
+            this.socket = undefined;
             this.welcomed = false;
+            this.clearWelcomeTimer();
             if (this.stopped || this.replacingSnapshot) return;
             const reason = event.code === 1000 ? undefined : event.reason || "Connection interrupted";
             this.callbacks.onState(navigator.onLine ? "connecting" : "offline", reason);
@@ -282,23 +397,37 @@ export class JournalConnection {
             return;
         }
 
+        // RPC replies (and pending-RPC error replies) are correlated by request id and stay valid;
+        // anything else an abandoned socket delivered belongs to the sync state the snapshot is
+        // replacing.
+        if (this.abandonedSockets.has(socket) && !this.isRpcReply(frame)) return;
+
         if (frame.kind === "control") {
             if (frame.op === "hello_ok") {
+                // A welcome drained from the queue after its socket was replaced belongs to a dead
+                // socket: it must not mark the replacement online or clear its welcome deadline.
+                if (socket !== this.socket) return;
+                const helloCursor = this.helloCursor.get(socket);
+                if (
+                    helloCursor !== undefined &&
+                    typeof frame.seq === "number" &&
+                    frame.seq - helloCursor > MAX_CLIENT_REPLAY
+                ) {
+                    // A journal that ignored hello.max_replay is about to replay a gap too large to be
+                    // worth it. Abandon this socket (its queued replay frames are dropped) and take the
+                    // same path as the server's snapshot_required valve.
+                    await this.resyncFromSnapshot(socket);
+                    return;
+                }
                 this.welcomed = true;
+                this.clearWelcomeTimer();
                 this.retryAttempt = 0;
                 this.callbacks.onState("online");
                 await this.callbacks.onReady(frame);
                 return;
             }
             if (frame.op === "snapshot_required") {
-                this.replacingSnapshot = true;
-                socket.close(1000, "replacing snapshot");
-                try {
-                    await this.callbacks.onSnapshotRequired();
-                } finally {
-                    this.replacingSnapshot = false;
-                }
-                this.scheduleReconnect(0);
+                await this.resyncFromSnapshot(socket);
                 return;
             }
             if (frame.op === "error" && frame.code === "revoked") {
@@ -311,6 +440,45 @@ export class JournalConnection {
         await this.callbacks.onFrame(frame);
     }
 
+    /**
+     * Drop `socket`, re-snapshot, reconnect with the fresh cursor — the server's snapshot_required
+     * valve and the client's own replay valve share it. A failed snapshot must not wedge the
+     * connection: the socket's close event was swallowed while replacingSnapshot was set, so this
+     * method owns the reconnect on both paths. After a failure it backs off (the retry ladder)
+     * instead of reconnecting at once, since the same gap would just trip the valve again.
+     */
+    private async resyncFromSnapshot(socket: WebSocket): Promise<void> {
+        this.abandonedSockets.add(socket);
+        this.replacingSnapshot = true;
+        socket.close(1000, "replacing snapshot");
+        // Detach now rather than waiting for the close event (as forceResync does): the reconnect
+        // below must not find this socket still current, and onclose's identity guard then makes
+        // the late event a no-op.
+        if (this.socket === socket) {
+            this.socket = undefined;
+            this.welcomed = false;
+            this.clearWelcomeTimer();
+        }
+        let failed = false;
+        try {
+            await this.callbacks.onSnapshotRequired();
+        } catch (error) {
+            failed = true;
+            console.warn("matron:resync", { event: "snapshot_failed" });
+            this.callbacks.onState("connecting", error instanceof Error ? error.message : "Sync failed");
+        } finally {
+            this.replacingSnapshot = false;
+        }
+        if (this.stopped) return;
+        if (failed) this.scheduleReconnect();
+        else this.scheduleReconnect(0);
+    }
+
+    private async handleJournalBatch(frames: JournalEvent[], socket: WebSocket): Promise<void> {
+        if (this.abandonedSockets.has(socket)) return;
+        await this.callbacks.onJournalBatch!(frames);
+    }
+
     private resolveRpc(
         requestId: string,
         pending: typeof this.pendingRpc extends Map<string, infer T> ? T : never,
@@ -320,6 +488,10 @@ export class JournalConnection {
         if (pending.backoffTimer !== undefined) window.clearTimeout(pending.backoffTimer);
         this.pendingRpc.delete(requestId);
         pending.resolve(reply);
+    }
+
+    private isRpcReply(frame: unknown): boolean {
+        return this.isFastPathFrame(frame);
     }
 
     private isFastPathFrame(frame: unknown): frame is ServerFrame {
@@ -339,8 +511,71 @@ export class JournalConnection {
         socket.close();
     }
 
+    // Parse, runtime-decode, and dispatch one raw text frame. Decoding
+    // happens HERE, at the boundary, so a structurally-broken frame is dropped
+    // (the caches keep their last good value) and a malformed ephemeral sub-shape
+    // is stripped before it reaches the store — both with a diagnostic. A frame
+    // that survives decoding takes the same fast-path / serialized-queue split as
+    // before.
+    private ingestMessage(raw: string, socket: WebSocket): void {
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(raw);
+        } catch {
+            return;
+        }
+
+        const decoded = decodeServerFrame(parsed);
+        if (!decoded.ok) {
+            this.logFrameDiag(decoded.reason);
+            return;
+        }
+        if (decoded.narrowed) this.logFrameDiag(`narrowed:${decoded.narrowed.join(",")}`);
+        const frame = decoded.frame;
+
+        if (frame.kind === "control" && frame.op === "hello_ok" && socket === this.socket) {
+            this.helloSocket = socket;
+            this.clearWelcomeTimer();
+        }
+
+        if (frame.kind === "journal" && this.callbacks.onJournalBatch) {
+            const open = this.openJournalBatch;
+            if (open && open.socket === socket && open.frames.length < MAX_JOURNAL_BATCH) {
+                open.frames.push(frame);
+                return;
+            }
+            const batch = { socket, frames: [frame] };
+            this.openJournalBatch = batch;
+            this.processing = this.processing
+                .then(() => {
+                    if (this.openJournalBatch === batch) this.openJournalBatch = undefined;
+                    return this.handleJournalBatch(batch.frames, socket);
+                })
+                .catch((error) => this.handleProcessingError(error, socket));
+            return;
+        }
+        if (this.isFastPathFrame(frame)) {
+            void this.handleFrame(frame, socket).catch((error) => this.handleProcessingError(error, socket));
+            return;
+        }
+
+        this.openJournalBatch = undefined;
+        this.processing = this.processing
+            .then(() => this.handleFrame(frame, socket))
+            .catch((error) => this.handleProcessingError(error, socket));
+    }
+
+    private logFrameDiag(reason: string): void {
+        console.warn("matron:frame", { reason });
+    }
+
     private logRpcDiag(event: string, requestId?: string): void {
         console.warn("matron:rpc", { event, request_id: requestId });
+    }
+
+    private clearWelcomeTimer(): void {
+        if (this.welcomeTimer !== undefined) window.clearTimeout(this.welcomeTimer);
+        this.welcomeTimer = undefined;
     }
 
     private scheduleReconnect(delayOverride?: number): void {

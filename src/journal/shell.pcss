@@ -72,9 +72,44 @@ Please see LICENSE files in the repository root for full details.
     --mj-selection: rgb(11 110 125 / 0.2);
     --mj-scrollbar: rgb(28 24 20 / 0.22);
     --mj-scrollbar-hover: rgb(28 24 20 / 0.34);
+    /* Surface A/B design additions (2026-08): priority accent (peer-priority left edge +
+       jump chip) and the pinned-summary raised-surface alias. See design-tokens.json. */
+    --mj-priority-accent: #0d9488;
     /* Modal scrim — a fixed dark veil over content; identical in both themes so the media
        viewer / upload modal read the same regardless of canvas colour. */
     --mj-scrim-modal: rgb(18 16 14 / 55%);
+    /* Destructive surface (Files-pane delete / overwrite confirm). No --cpd token exists for a
+       critical BACKGROUND — only critical ink — so author the tint + border here, per theme, the
+       same way --mj-selection / --mj-scrollbar are authored. Deliberately a tinted+outlined
+       treatment rather than a solid red fill: the solid would need its own on-critical ink to stay
+       readable in dark, where the critical token is a light #ff6a6a. */
+    --mj-critical-tint: rgb(189 32 32 / 10%);
+    --mj-critical-tint-strong: rgb(189 32 32 / 16%);
+    --mj-critical-border: rgb(189 32 32 / 45%);
+
+    /* --- v6 (docs/design/redesign-v6): amber "went wrong along the way", accent hairline,
+       two named type roles, live-line timing, chat-pane breakpoints, layering. --- */
+    /* Amber TEXT that clears 4.5:1 on canvas + raised; --cpd-color-usage-medium is a fill (2.2:1 as text). */
+    --mj-warn-ink: #9a5700;
+    --mj-warn-tint: rgb(255 149 0 / 10%);
+    --mj-accent-border: rgb(13 148 136 / 25%);
+
+    /* --- Control scale (2026-09-26 polish). Every interactive control's box height comes from
+       here, so controls that share a row share a height. Default 32: fields, selects, segmented
+       tracks, toolbar and dialog buttons. sm 28: compact chips, in-row actions, sheet close
+       buttons. lg 40: the page's one big action (sign in) and the tracker reply composer. touch
+       44: phones, where --mj-control-h and --mj-control-h-lg both become the touch target (the
+       max-width block below). Primitives live in controls.pcss; the drift test fails on an
+       off-scale literal height. --- */
+    /* A pane's sub-header bar (Files: the list's breadcrumb and the preview's name bar). Side-by-
+       side panes share it so their hairlines run as one line across the split. */
+    /* A segmented track insets its segments by this on every side (segment = control - 2×inset). */
+    /* The selected segment's surface: raised above its track in both themes (operator call T5). */
+    --mj-seg-on: var(--cpd-color-bg-canvas-default);
+    /* Menu rows (session actions, Settings, message actions): every row is [icon · label] on one
+       grid, so the icon column and the icon-to-label gap are shared, never restated per menu. */
+    /* One focus treatment: a 2px accent outline. Standalone controls sit it 2px outside the box,
+       bordered fields 1px outside their border, full-bleed rows/menu items 2px inside. */
 
     /* --- v2 motion + focus --- */
     --cpd-focus-ring: 0 0 0 2px var(--cpd-color-bg-canvas-default), 0 0 0 4px var(--cpd-color-text-action-accent);
@@ -131,6 +166,7 @@ Please see LICENSE files in the repository root for full details.
     --cpd-font-label: 400 13px/16px var(--cpd-font-family-ui);
     --cpd-font-title: 600 13px/17px var(--cpd-font-family-ui);
     --cpd-font-heading: 600 17px/22px var(--cpd-font-family-ui);
+    --cpd-font-body-sm-semibold: 600 14px/20px var(--cpd-font-family-ui);
 
     --cpd-font-size-2xs: 10px;
     --cpd-font-size-xs: 12px;
@@ -142,6 +178,7 @@ Please see LICENSE files in the repository root for full details.
     /* --- v2 spacing: 4px base, non-linear ramp (Refactoring UI) --- */
     --cpd-space-0-5x: 2px;
     --cpd-space-1x: 4px;
+    --cpd-space-1-5x: 6px;
     --cpd-space-2x: 8px;
     --cpd-space-3x: 12px;
     --cpd-space-4x: 16px;
@@ -175,6 +212,7 @@ Please see LICENSE files in the repository root for full details.
     --cpd-color-bg-self-bubble: #123a41;
     --cpd-color-bg-subtle-primary: #2c2a26;
     --cpd-color-bg-subtle-secondary: #33302b;
+    --mj-seg-on: #353a41;
     --cpd-color-bg-usage-track: rgb(255, 255, 255, 0.12);
     --cpd-color-border-accent: rgb(110 205 220 / 0.3);
     --cpd-color-border-disabled: #33302b;
@@ -211,6 +249,19 @@ Please see LICENSE files in the repository root for full details.
     --mj-selection: rgb(110 205 220 / 0.26);
     --mj-scrollbar: rgb(255 255 255 / 0.2);
     --mj-scrollbar-hover: rgb(255 255 255 / 0.32);
+    /* Surface A/B: priority accent brightens in dark (mirrors --cpd-color-text-action-accent). */
+    --mj-priority-accent: #2dd4bf;
+
+    /* Destructive surface (dark): the critical token is light here, so the tint is built from it
+       rather than from the light-theme red — same treatment, theme-correct contrast. */
+    --mj-critical-tint: rgb(255 106 106 / 14%);
+    --mj-critical-tint-strong: rgb(255 106 106 / 22%);
+    --mj-critical-border: rgb(255 106 106 / 45%);
+
+    /* v6 (dark): amber ink + tint and the accent hairline, built from the dark accent. */
+    --mj-warn-ink: #ffb454;
+    --mj-warn-tint: rgb(255 180 84 / 12%);
+    --mj-accent-border: rgb(45 212 191 / 28%);
     /* Modal scrim is the same dark veil in both themes (declared here so the dark block is complete). */
     --mj-scrim-modal: rgb(18 16 14 / 55%);
 
@@ -220,6 +271,15 @@ Please see LICENSE files in the repository root for full details.
     --cpd-shadow-md: 0 3px 10px rgb(0 0 0 / 0.18);
     --cpd-shadow-lg: 0 16px 48px rgb(18 16 14 / 0.16);
     --cpd-shadow-float: 0 2px 4px rgb(0 0 0 / 0.15);
+}
+
+/* Phones (the same 700px line mobile.pcss uses): the default and large controls become the 44px
+   touch target, so every control built on the scale grows together and a row stays one height. */
+@media (max-width: 700px) {
+    :root {
+        --mj-control-h: var(--mj-control-h-touch);
+        --mj-control-h-lg: var(--mj-control-h-touch);
+    }
 }
 
 body {
@@ -433,8 +493,8 @@ button {
 
 .mj_IconButton {
     display: inline-flex;
-    width: 32px;
-    height: 32px;
+    width: var(--mj-control-h);
+    height: var(--mj-control-h);
     align-items: center;
     justify-content: center;
     padding: var(--cpd-space-1x);
@@ -493,16 +553,11 @@ button {
     color: var(--cpd-color-text-primary);
     /* v4 body.xs (search): 13px / 400 / 16px. */
     font-size: 13px;
-    font-weight: 400;
     line-height: 16px;
 }
-
-.mx_RoomListSearch_input::placeholder {
+.mx_RoomListSearch_field .mj_SearchField_icon,
+.mx_RoomListSearch_field .mj_SearchField_input::placeholder {
     color: var(--cpd-color-text-secondary);
-}
-
-.mx_RoomListSearch_input::-webkit-search-cancel-button {
-    display: none;
 }
 
 .mj_RoomList {
@@ -540,12 +595,8 @@ button {
     background: var(--cpd-state-selected);
 }
 
-/* subagent child row: indented under its parent, muted name, ↳ connector. The leading
-   glyph (spinner while running / idle dot) sits in the normal status column. */
-.mj_RoomListItem_sub {
-    padding-left: 26px;
-}
-
+/* subagent child row: indented under its parent with a muted name. The rail, elbow and
+   status glyph live in subagents.pcss. */
 .mj_RoomListItem_sub .mj_RoomListName {
     color: var(--cpd-color-text-secondary);
 }
@@ -576,6 +627,9 @@ button {
     flex: none;
     width: 8px;
     height: 8px;
+    /* Centred in the 14px column the pin glyph uses, so pinned and unpinned titles start at the
+       same x (they were 6px apart). */
+    margin-inline: 3px;
     border-radius: 50%;
     background: var(--cpd-color-border-strong);
 }
@@ -684,8 +738,8 @@ button {
     gap: var(--cpd-space-0-5x);
 }
 
-/* Collapsed-subagents count on a parent row — a subtle tertiary chevron+count that signals
-   hidden child rows and stays minimal (matches the meta column's muted styling). */
+/* collapsed-subagents count on a parent row — a subtle tertiary chevron+count that
+   signals hidden child rows and stays minimal (matches the meta column's muted styling). */
 .mj_RoomListCollapsedSubs {
     display: inline-flex;
     align-items: center;
@@ -699,14 +753,6 @@ button {
 .mj_RoomListCollapsedSubs svg {
     width: 12px;
     height: 12px;
-}
-
-/* A hidden subagent child under this collapsed parent is unread: lift the chip out of the muted
-   tertiary treatment onto the accent ink and append the shared unread dot, so a streaming child's
-   unread is never silent once its own row is collapsed away (loop: matron-web #13 review). */
-.mj_RoomListCollapsedSubs_unread {
-    color: var(--cpd-color-text-action-accent);
-    font-weight: 600;
 }
 
 .mj_RoomListTime {
@@ -1131,6 +1177,10 @@ button {
     border-color: var(--cpd-color-text-action-accent);
 }
 
+/* The tracker reply box is the same shell (operator call T3), with the same focus treatment. */
+.mj_TrackerComposer_row:focus-within {
+    border-color: var(--cpd-color-text-action-accent);
+}
 .mx_BasicMessageComposer {
     display: flex;
     align-items: center;
@@ -1159,7 +1209,13 @@ button {
     outline: none;
 }
 
-.mx_BasicMessageComposer_input::placeholder {
+.mj_TrackerComposer_input:focus,
+.mj_TrackerComposer_input:focus-visible {
+    outline: none;
+}
+
+.mx_BasicMessageComposer_input::placeholder,
+.mj_TrackerComposer_input::placeholder {
     color: var(--cpd-color-text-tertiary);
 }
 
@@ -1571,4 +1627,159 @@ label.mj_SettingsSheet_row {
 
 .mj_NavRail_settings {
     position: relative;
+}
+
+/* Fork-only rules. */
+/* The sidebar bar is the shared search field (controls.pcss, subtle variant); only the v4
+   body.xs search type is local. */
+.mx_RoomListSearch_field .mj_SearchField_input {
+    font-size: 13px;
+    line-height: 16px;
+}
+
+.mx_MessageComposer_row,
+.mj_TrackerComposer_row {
+    display: flex;
+    align-items: flex-end;
+    /* v5 composer.shell: the input row IS the bordered field — attach (left),
+       textarea (borderless, flex), mic + send (right) all sit inside one shell.
+       1px --m-line2, radius 12, --m-panel fill, --m-sh-sm; gap 6 between controls;
+       padding 6/8/6/6 (textarea carries no vertical margin). */
+    gap: 6px;
+    border: 1px solid var(--cpd-color-border-strong);
+    border-radius: var(--cpd-radius-lg);
+    background: var(--cpd-color-bg-canvas-default);
+    box-shadow: var(--cpd-shadow-sm);
+    padding: 6px 8px 6px 6px;
+    transition: border-color var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mx_BasicMessageComposer_input,
+.mj_TrackerComposer_input {
+    /* v5 composer.input: borderless + transparent — the bordered --m-panel shell
+       (.mx_MessageComposer_row) is the visible field; the textarea just sits inside it.
+       body.md 400 14/22 (fixed, not inherited — root is 15px). The line box is one control tall
+       with the 22px line centred in it, so the placeholder sits on the icon buttons' centre line
+       at every breakpoint (32px desktop, 44px phone). */
+    min-height: var(--mj-control-h);
+    box-sizing: border-box;
+    margin: 0;
+    padding: calc((var(--mj-control-h) - 22px) / 2) 4px;
+    border: 0;
+    background: transparent;
+    font: 400 14px/22px var(--cpd-font-family-ui);
+}
+
+.mx_MessageComposer_button,
+.mx_MessageComposer_sendMessage,
+.mj_TrackerComposer_send {
+    display: inline-flex;
+    width: var(--mj-control-h);
+    height: var(--mj-control-h);
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: var(--cpd-radius-md);
+    background: transparent;
+    color: var(--cpd-color-icon-tertiary);
+    transition:
+        background var(--cpd-dur-fast) var(--cpd-ease),
+        color var(--cpd-dur-fast) var(--cpd-ease);
+}
+
+.mx_MessageComposer_button svg,
+.mx_MessageComposer_sendMessage svg,
+.mj_TrackerComposer_send svg {
+    width: 19px;
+    height: 19px;
+}
+
+/* v4 send button: 32×32, radius 9px, filled --m-accent-deep, always present.
+   Disabled (empty composer) keeps its footprint at opacity .45; pointer-events kept. */
+.mx_MessageComposer_sendMessage,
+.mj_TrackerComposer_send {
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-accent);
+    color: var(--cpd-color-text-on-accent);
+}
+
+.mx_MessageComposer_sendMessage:hover:not(:disabled),
+.mj_TrackerComposer_send:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+
+.mx_MessageComposer_sendMessage:disabled,
+.mj_TrackerComposer_send:disabled {
+    opacity: 0.45;
+}
+
+.mx_MessageComposer_button:focus-visible,
+.mx_MessageComposer_sendMessage:focus-visible,
+.mj_TrackerComposer_send:focus-visible {
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset);
+}
+
+/* Shown under the composer while a historical window is open: sending waits for Jump to latest. */
+.mj_ComposerHint {
+    padding: 4px 12px 0;
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-meta);
+}
+
+/* Theme-independent fork tokens (control scale, focus ring, motion, z-layers). */
+:root {
+    --mj-summary-raise: var(--cpd-color-bg-canvas-raised);
+    --mj-warn-dot: var(--cpd-color-usage-medium);
+    --mj-font-label-sm: 500 12px/16px var(--cpd-font-family-ui);
+    --mj-font-mono: 400 12px/18px var(--cpd-font-family-mono);
+    --mj-live-xfade: 240ms;
+    --mj-live-min-interval: 1200ms;
+    --mj-live-elapsed-after: 10s;
+    --mj-slow-after: 300s;
+    --mj-card-expand: var(--cpd-dur-fast);
+    --mj-group-expand: var(--cpd-dur-fast);
+    --mj-deep-open: var(--cpd-dur-med);
+    --mj-resolve: var(--cpd-dur-med);
+    --mj-bp-pane-narrow: 480px;
+    --mj-bp-pane-medium: 760px;
+    --mj-bp-sidebar-min: 224px;
+    --mj-z-menu: 30;
+    --mj-z-modal: 50;
+    --mj-control-h-sm: 28px;
+    --mj-control-h: 32px;
+    --mj-control-h-lg: 40px;
+    --mj-control-h-touch: 44px;
+    --mj-control-pad-x: var(--cpd-space-3x);
+    --mj-subbar-h: 52px;
+    --mj-seg-inset: 2px;
+    --mj-menu-icon: 16px;
+    --mj-menu-icon-gap: 10px;
+    --mj-focus-ring: 2px solid var(--cpd-color-text-action-accent);
+    --mj-focus-offset: 2px;
+    --mj-focus-offset-field: 1px;
+    --mj-focus-offset-inset: -2px;
+}
+
+/* Upstream rules the fork had moved or removed. */
+.mx_RoomListSearch_input::placeholder {
+    color: var(--cpd-color-text-secondary);
+}
+
+.mx_RoomListSearch_input::-webkit-search-cancel-button {
+    display: none;
+}
+
+.mj_RoomListItem_sub {
+    padding-left: 26px;
+}
+
+.mj_RoomListCollapsedSubs_unread {
+    color: var(--cpd-color-text-action-accent);
+    font-weight: 600;
+}
+
+.mx_BasicMessageComposer_input::placeholder {
+    color: var(--cpd-color-text-tertiary);
 }

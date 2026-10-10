@@ -23,6 +23,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import type { MatronJournalClient } from "./client";
+import { useShowTheWork } from "./show-the-work";
 import { getSnapshot, setTheme, subscribe, type ThemePref } from "./theme";
 import type { BoxDefaults, BoxDefaultsState, DefaultsState, Session, UserDefaultKey } from "./types";
 
@@ -334,6 +335,7 @@ export function SettingsSheet({
     onClose: () => void;
 }): React.ReactElement {
     const preference = useSyncExternalStore(subscribe, getSnapshot);
+    const [developerView, setDeveloperView] = useShowTheWork();
     const sheetRef = useRef<HTMLDivElement>(null);
     // The latest onClose without re-running the focus effect when a caller passes a new function.
     const onCloseRef = useRef(onClose);
@@ -451,6 +453,31 @@ export function SettingsSheet({
                                 {option.label}
                             </button>
                         ))}
+                    </div>
+                </section>
+                <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-developer">
+                    <h3 id="mj-settings-developer" className="mj_SettingsSheet_groupTitle">
+                        Developer
+                    </h3>
+                    <div className="mj_SettingsSheet_rows">
+                        <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                            <span className="mj_SettingsSheet_switchText">
+                                <span id="mj-settings-developer-view">Developer view</span>
+                                <span id="mj-settings-developer-view-help" className="mj_SettingsSheet_help">
+                                    Show each turn&apos;s tool calls, commands and helper activity inline.
+                                </span>
+                            </span>
+                            <button
+                                type="button"
+                                role="switch"
+                                className="mj_SettingsSheet_switch"
+                                data-setting="developer-view"
+                                aria-checked={developerView}
+                                aria-labelledby="mj-settings-developer-view"
+                                aria-describedby="mj-settings-developer-view-help"
+                                onClick={() => setDeveloperView(!developerView)}
+                            />
+                        </div>
                     </div>
                 </section>
                 <NewChatDefaults client={client} />

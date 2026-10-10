@@ -28,7 +28,7 @@ import {
     type TrackerItem,
     type TrackerLinkHandler,
 } from "../types";
-import { humanizeSize } from "./format";
+import { humanizeSize } from "../files/format";
 import { splitInlineAttachments } from "./inline-attachments";
 
 export function isImageAttachment(attachment: TrackerAttachment): boolean {

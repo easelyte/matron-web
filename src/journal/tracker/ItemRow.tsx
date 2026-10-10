@@ -20,15 +20,7 @@ Please see LICENSE files in the repository root for full details.
 import React from "react";
 
 import type { TrackerItem } from "../types";
-import {
-    awaitsSeen,
-    isFromViewedConvo,
-    itemStatusText,
-    kindLabel,
-    needsUser,
-    oneLine,
-    resolutionLabel,
-} from "./format";
+import { awaitsSeen, itemProvenance, itemStatusText, kindLabel, needsUser, oneLine, resolutionLabel } from "./format";
 import { CommentBubbleGlyph, ImagePlaceholderGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
 import { inlineRefsToText } from "./inline-attachments";
 
@@ -44,8 +36,8 @@ export function ItemRow({
     item: TrackerItem;
     scope?: "chat" | "all";
     originTitle?: string;
-    /** The conversation being viewed. A row filed from it carries no origin note (it is "this
-     *  session"); a row from any other conversation reads "from <title>". */
+    /** Journal convo id of the session viewing this row. Drives the provenance chip: same origin →
+     *  no chip; different origin → "from «title»"; route-elsewhere label → "↪ Handle elsewhere". */
     currentConvoId?: string | null;
     onOpen: (num: number) => void;
     /** Marks an open notice seen; without it no Seen button is drawn. */
@@ -57,9 +49,17 @@ export function ItemRow({
     // A notice awaiting the user is still in "Needs you", but it is not the urgent orange state.
     const urgent = needsUser(item) && !notice;
     const showSeen = !!onSeen && awaitsSeen(item);
-    const origin = scope === "all" && originTitle && !isFromViewedConvo(item, currentConvoId) ? originTitle : null;
     // The preview shows no attachments, so an inline image ref reads as its caption.
     const body = oneLine(inlineRefsToText(item.body));
+    // Provenance relative to the viewing session. The caller-resolved originTitle (the live
+    // conversation list, which tracks renames) wins; the title carried on the item
+    // (origin_convo_title) covers origins the caller could not resolve.
+    const provenance = itemProvenance(item, currentConvoId);
+    const provTitle = originTitle ?? (provenance.kind !== "here" ? provenance.title : null) ?? null;
+    // The informational "from another session" chip stays gated to the all-conversations scope (a
+    // chat-scoped list is all one origin); the actionable route-elsewhere chip shows in any scope.
+    const showOtherChip = provenance.kind === "other" && scope === "all";
+    const showRouteChip = provenance.kind === "elsewhere";
     // ONE status token: needs-you (orange) → closed-with-resolution → with-the-agent. An open item
     // awaiting nobody-in-particular shows no token (the row itself is the "open" signal).
     const statusToken = urgent ? (
@@ -78,7 +78,11 @@ export function ItemRow({
         kindLabel(item.kind),
         `number ${item.num}`,
         item.title,
-        origin ? `from ${origin}` : "",
+        showRouteChip
+            ? `handle elsewhere${provTitle ? `, from ${provTitle}` : ""}`
+            : showOtherChip
+              ? `from ${provTitle ?? "another chat"}`
+              : "",
         itemStatusText(item),
     ]
         .filter(Boolean)
@@ -103,7 +107,13 @@ export function ItemRow({
                 </span>
                 {body ? <span className="mj_TrackerItemRow_body">{body}</span> : null}
                 <span className="mj_TrackerItemRow_meta">
-                    {origin ? <span className="mj_TrackerItemRow_origin">from {origin}</span> : null}
+                    {showRouteChip ? (
+                        <span className="mj_TrackerItemRow_origin mj_TrackerItemRow_routeElsewhere">
+                            ↪ Handle elsewhere{provTitle ? ` · ${provTitle}` : ""}
+                        </span>
+                    ) : showOtherChip ? (
+                        <span className="mj_TrackerItemRow_origin">from {provTitle ?? "another chat"}</span>
+                    ) : null}
                     {item.mission_num ? (
                         <span className="mj_TrackerItemRow_missionChip">
                             <MissionGlyph state="open" aria-hidden="true" />#{item.mission_num}

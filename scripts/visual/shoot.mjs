@@ -29,6 +29,9 @@ fs.mkdirSync(SHOTS, { recursive: true });
 const MIME = {
     ".html": "text/html",
     ".js": "text/javascript",
+    // pdf.js emits its worker as an .mjs asset; it must be served as a module script or the browser
+    // refuses to run it and the PDF preview falls back / fails.
+    ".mjs": "text/javascript",
     ".css": "text/css",
     ".svg": "image/svg+xml",
     ".png": "image/png",
@@ -116,6 +119,65 @@ const SHOTS_SPEC = [
         clip: ".mx_RoomListPanel",
         setup: async (p) => p.waitForSelector(".mj_RoomListItem_sub"),
     },
+    // manual collapse/expand of a parent's subagent child rows via the row menu.
+    {
+        comp: "sidebar",
+        state: "collapse-menu",
+        clip: ".mx_RoomListPanel",
+        setup: async (p) => {
+            await p.waitForSelector(".mj_RoomListItem_sub");
+            const parent = p.locator(".mj_RoomListItem_wrapper", {
+                has: p.locator('[data-testid="room-name"]', { hasText: "matron-web · deploy" }),
+            });
+            await parent.locator(".mj_RoomListItem").click({ button: "right" });
+            await p.locator('.mj_RoomItemMenu [role="menuitem"]', { hasText: "Collapse subagents" }).waitFor();
+        },
+    },
+    {
+        comp: "sidebar",
+        state: "collapsed",
+        clip: ".mx_RoomListPanel",
+        setup: async (p) => {
+            await p.waitForSelector(".mj_RoomListItem_sub");
+            const parent = p.locator(".mj_RoomListItem_wrapper", {
+                has: p.locator('[data-testid="room-name"]', { hasText: "matron-web · deploy" }),
+            });
+            await parent.locator(".mj_RoomListItem").click({ button: "right" });
+            await p.locator('.mj_RoomItemMenu [role="menuitem"]', { hasText: "Collapse subagents" }).click();
+            // Child rows detach; the parent gains the collapsed-count affordance.
+            await p.locator(".mj_RoomListItem_sub").waitFor({ state: "detached" });
+            await p.waitForSelector(".mj_RoomListCollapsedSubs");
+        },
+    },
+    // Pinned conversation summary. Only two states are reachable from real data —
+    // a "ready" digest and nothing at all — so those are what the sheet shows; the empty-state
+    // box and the "updating" shimmer have no wire field (design 554 §5.4) and stay unit-tested.
+    {
+        comp: "pinned-summary",
+        state: "ready",
+        clip: ".mj_PinnedSummary",
+        setup: async (p) => p.waitForSelector(".mj_PinnedSummary_item"),
+    },
+    {
+        comp: "pinned-summary",
+        state: "expanded-bullet",
+        clip: ".mj_PinnedSummary",
+        setup: async (p) => {
+            await p.waitForSelector(".mj_PinnedSummary_more");
+            await p.locator(".mj_PinnedSummary_more").first().click();
+            await p.locator(".mj_PinnedSummary_item_clamp").waitFor({ state: "detached" });
+        },
+    },
+    {
+        comp: "pinned-summary",
+        state: "collapsed",
+        clip: ".mj_PinnedSummary",
+        setup: async (p) => {
+            await p.waitForSelector(".mj_PinnedSummary_bar");
+            await p.locator(".mj_PinnedSummary_bar").click();
+            await p.waitForSelector('.mj_PinnedSummary[data-collapsed="true"]');
+        },
+    },
     {
         comp: "header",
         state: "usage-align",
@@ -166,10 +228,277 @@ const SHOTS_SPEC = [
             await p.waitForSelector(".mj_SubagentBack");
         },
     },
+    // §6 media tiles: image WITH dims (reserved aspect box), WITHOUT dims (fluid fallback),
+    // and file tiles whose icon comes from the MIME bucket (pdf vs generic).
+    {
+        comp: "media",
+        state: "image-dims",
+        clip: '[data-event-id="14"]',
+        setup: async (p) => p.locator('[data-event-id="14"] .mj_ImageFrame_sized').scrollIntoViewIfNeeded(),
+    },
+    {
+        comp: "media",
+        state: "image-nodims",
+        clip: '[data-event-id="15"]',
+        setup: async (p) => p.locator('[data-event-id="15"] .mj_Image').scrollIntoViewIfNeeded(),
+    },
+    {
+        comp: "media",
+        state: "file-pdf",
+        clip: '[data-event-id="16"]',
+        setup: async (p) => p.locator('[data-event-id="16"] .mj_File').scrollIntoViewIfNeeded(),
+    },
+    {
+        comp: "media",
+        state: "file-generic",
+        clip: '[data-event-id="17"]',
+        setup: async (p) => p.locator('[data-event-id="17"] .mj_File').scrollIntoViewIfNeeded(),
+    },
+    // Files pane (Phase 1b): list, each preview kind, and the empty / error / truncated states.
+    // Every shot opens the pane via the __matron hook, then drives selection by clicking a row.
+    {
+        comp: "files",
+        state: "list",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesList");
+        },
+    },
+    {
+        comp: "files",
+        state: "preview-markdown",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "README.md" }).click();
+            await p.waitForSelector(".mj_FilesMarkdown");
+        },
+    },
+    {
+        comp: "files",
+        state: "preview-code",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "client.ts" }).click();
+            await p.waitForSelector(".mj_FilesCode_pre");
+        },
+    },
+    {
+        comp: "files",
+        state: "preview-image",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "diagram.png" }).click();
+            await p.waitForSelector(".mj_FilesImage img");
+        },
+    },
+    {
+        comp: "files",
+        state: "preview-pdf",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "report.pdf" }).click();
+            // pdf.js paints each page to a real <canvas> (F1). The offline harness can't init pdf.js's
+            // module worker (Playwright-Chromium static-server limitation), so it shows the clean
+            // download-fallback here instead — the canvas render is proven by the unit test + prod
+            // parity with media-viewer's PdfBody. Wait for whichever state resolves.
+            await p.waitForSelector(".mj_FilesPdf_page, .mj_FilesGeneric");
+        },
+    },
+    {
+        comp: "files",
+        state: "preview-generic",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "archive.zip" }).click();
+            await p.waitForSelector(".mj_FilesGeneric");
+        },
+    },
+    {
+        comp: "files",
+        state: "empty",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "empty-dir" }).click();
+            await p.waitForSelector(".mj_FilesPreview_status_empty");
+        },
+    },
+    {
+        comp: "files",
+        state: "error",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "denied-dir" }).click();
+            await p.waitForSelector(".mj_FilesPreview_status_error");
+        },
+    },
+    // Files pane writes (Phase 2): the write affordances, each confirm dialog, and the read-only
+    // (writable:false) parity shot that proves a dormant backend renders the Phase-1 pane.
+    {
+        comp: "files",
+        state: "write-toolbar",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesToolbar");
+        },
+    },
+    {
+        comp: "files",
+        state: "write-readonly",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            // writable:false everywhere — must be visually identical to the Phase-1 pane.
+            await p.evaluate(() => window.__matron.openFilesReadOnly());
+            await p.waitForSelector(".mj_FilesList");
+        },
+    },
+    {
+        comp: "files",
+        state: "confirm-delete",
+        clip: ".mj_FileWrite",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesToolbar");
+            await p.locator('[aria-label="Delete archive.zip"]').click();
+            await p.waitForSelector(".mj_FileWrite_danger");
+        },
+    },
+    {
+        comp: "files",
+        state: "confirm-delete-folder",
+        clip: ".mj_FileWrite",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesToolbar");
+            await p.locator('[aria-label="Delete src"]').click();
+            await p.waitForSelector(".mj_FileWrite_danger");
+        },
+    },
+    {
+        comp: "files",
+        state: "confirm-new-folder",
+        clip: ".mj_FileWrite",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesToolbar_button", { hasText: "New folder" }).click();
+            await p.fill(".mj_FileWrite_input", "design-refs");
+            await p.waitForSelector(".mj_FileWrite_confirm");
+        },
+    },
+    {
+        comp: "files",
+        state: "confirm-rename",
+        clip: ".mj_FileWrite",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesToolbar");
+            await p.locator('[aria-label="Rename README.md"]').click();
+            await p.fill(".mj_FileWrite_input", "README-2026.md");
+        },
+    },
+    {
+        comp: "files",
+        state: "confirm-upload",
+        clip: ".mj_FileWrite",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesToolbar");
+            // The native file picker can't be driven from the page, so the fixture injects a File
+            // straight into the hidden input and fires its change event.
+            await p.evaluate(() => window.__matron.stageFileUpload());
+            await p.waitForSelector(".mj_FileWrite_confirm");
+        },
+    },
+    {
+        comp: "files",
+        state: "confirm-overwrite",
+        clip: ".mj_FileWrite",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "README.md" }).click();
+            await p.waitForSelector(".mj_FilesPreview_edit");
+            await p.locator(".mj_FilesPreview_edit").click();
+            await p.waitForSelector(".mj_FileWrite_textarea");
+        },
+    },
+    {
+        comp: "files",
+        state: "write-notice",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.waitForSelector(".mj_FilesToolbar");
+            await p.locator('[aria-label="Delete archive.zip"]').click();
+            await p.locator(".mj_FileWrite_danger").click();
+            await p.waitForSelector(".mj_FilesPane_notice");
+        },
+    },
+    {
+        comp: "files",
+        state: "truncated",
+        clip: ".mj_FilesPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openFiles());
+            await p.locator(".mj_FilesRow", { hasText: "big-dir" }).click();
+            await p.waitForSelector(".mj_FilesPane_truncated");
+        },
+    },
+    // Tracker pane (Phase 4): the four surfaces — missions list, mission detail, inbox, item detail.
+    // Each opens the pane via the __matron hook (the pane's load* effects no-op with the fake client,
+    // so the pre-patched store data is what renders).
+    {
+        comp: "tracker",
+        state: "missions",
+        clip: ".mj_TrackerPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openTrackerMissions());
+            await p.waitForSelector(".mj_TrackerMissionRow");
+        },
+    },
+    {
+        comp: "tracker",
+        state: "mission-detail",
+        clip: ".mj_TrackerPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openTrackerMission());
+            await p.waitForSelector(".mj_TrackerMissionHead_name");
+        },
+    },
+    {
+        comp: "tracker",
+        state: "inbox",
+        clip: ".mj_TrackerPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openTrackerInbox());
+            await p.waitForSelector(".mj_TrackerItemRow");
+        },
+    },
+    {
+        comp: "tracker",
+        state: "item-detail",
+        clip: ".mj_TrackerPane",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.openTrackerItem());
+            await p.waitForSelector(".mj_TrackerItemTitle");
+        },
+    },
 ];
 
 const THEMES = ["light", "dark"];
 const WIDTH = 1180;
+
+// VF_COMP=files (comma-separated) restricts the run to specific components — useful when iterating
+// on one surface, or when an unrelated shot is broken and would abort the whole run.
+const ONLY = process.env.VF_COMP ? new Set(process.env.VF_COMP.split(",")) : undefined;
+const ACTIVE_SPECS = ONLY ? SHOTS_SPEC.filter((spec) => ONLY.has(spec.comp)) : SHOTS_SPEC;
 
 async function run() {
     const { server, port } = await serve(DIST);
@@ -178,7 +507,7 @@ async function run() {
     const results = [];
 
     for (const theme of THEMES) {
-        for (const spec of SHOTS_SPEC) {
+        for (const spec of ACTIVE_SPECS) {
             const page = await browser.newPage({ viewport: { width: WIDTH, height: 840 }, deviceScaleFactor: 2 });
             await page.goto(`${base}?theme=${theme}`, { waitUntil: "networkidle" });
             await page.evaluate(() => document.fonts.ready);
@@ -207,8 +536,18 @@ async function labeled(file, text, theme) {
     const label = Buffer.from(
         `<svg width="${w}" height="${LABEL_H}"><rect width="100%" height="100%" fill="${theme === "dark" ? "#16181c" : "#fff"}"/><text x="6" y="18" font-family="monospace" font-size="12" fill="${theme === "dark" ? "#bbb" : "#444"}">${text}</text></svg>`,
     );
-    return sharp({ create: { width: w, height: meta.height + LABEL_H, channels: 4, background: theme === "dark" ? "#16181c" : "#fff" } })
-        .composite([{ input: label, top: 0, left: 0 }, { input: await img.toBuffer(), top: LABEL_H, left: 0 }])
+    return sharp({
+        create: {
+            width: w,
+            height: meta.height + LABEL_H,
+            channels: 4,
+            background: theme === "dark" ? "#16181c" : "#fff",
+        },
+    })
+        .composite([
+            { input: label, top: 0, left: 0 },
+            { input: await img.toBuffer(), top: LABEL_H, left: 0 },
+        ])
         .png()
         .toBuffer();
 }
@@ -223,7 +562,8 @@ async function montageComponent(comp, results) {
     const rows = [];
     for (const state of states) {
         const rowImgs = [];
-        if (hasMock && state === "queue") rowImgs.push(await labeled(mockPath, "MOCK · upload-modal-mock.png", "light"));
+        if (hasMock && state === "queue")
+            rowImgs.push(await labeled(mockPath, "MOCK · upload-modal-mock.png", "light"));
         for (const theme of THEMES) {
             const cell = cells.find((c) => c.state === state && c.theme === theme);
             if (cell) rowImgs.push(await labeled(cell.file, `app · ${comp} · ${state} · ${theme}`, theme));
@@ -262,7 +602,7 @@ async function montageComponent(comp, results) {
 
 const results = await run();
 const sheets = [];
-for (const comp of [...new Set(SHOTS_SPEC.map((s) => s.comp))]) {
+for (const comp of [...new Set(ACTIVE_SPECS.map((s) => s.comp))]) {
     sheets.push(await montageComponent(comp, results));
 }
 console.log("SHEETS", JSON.stringify(sheets));

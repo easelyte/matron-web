@@ -43,7 +43,7 @@ test("undefined session is a full no-op, read ok:true empty, durability ok", () 
     expect(s.durability("c1")).toBe("ok");
 });
 
-test("per-key writes cannot clobber another conversation's draft (the bug)", () => {
+test("per-key writes cannot clobber another conversation's draft", () => {
     // Two tabs sharing origin+user each hold their own store; persisting one convo
     // must never touch another convo's key.
     const tabA = makeDraftStore(SESSION);

@@ -35,6 +35,8 @@ import {
     type ProjectDetail,
     type UserDefaults,
 } from "./types";
+import { parseMetrics, type JournalMetrics } from "./ops/model";
+import { parseWorkViewEnvelope, type WorkViewEnvelope, type WorkViewGroupBy } from "./work-view";
 
 interface ElectronJournalResponse {
     status: number;
@@ -167,6 +169,13 @@ function parseBoxDisk(raw: unknown): BoxStatus["disk"] | undefined {
     return { free_bytes: raw.free_bytes, total_bytes: raw.total_bytes };
 }
 
+function parseBoxVitals(raw: unknown): BoxStatus["vitals"] | undefined {
+    if (!isRecord(raw)) return undefined;
+    const pct = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100;
+    if (!pct(raw.cpu_pct) || !pct(raw.ram_pct) || !Number.isSafeInteger(raw.sampled_at_ms)) return undefined;
+    return { cpu_pct: raw.cpu_pct, ram_pct: raw.ram_pct, sampled_at_ms: raw.sampled_at_ms as number };
+}
+
 function parseBoxAccount(raw: unknown): BoxStatus["account"] | undefined {
     if (!isRecord(raw) || typeof raw.email !== "string" || !raw.email) return undefined;
     return { email: raw.email };
@@ -182,12 +191,14 @@ export function parseBoxStatus(raw: unknown): BoxStatus | undefined {
     const limits = parseBoxLimits(raw.limits);
     const disk = parseBoxDisk(raw.disk);
     const account = parseBoxAccount(raw.account);
+    const vitals = parseBoxVitals(raw.vitals);
     return {
         reported_at: raw.reported_at,
         ...(activity ? { activity } : {}),
         ...(limits ? { limits } : {}),
         ...(disk ? { disk } : {}),
         ...(account ? { account } : {}),
+        ...(vitals ? { vitals } : {}),
     };
 }
 
@@ -331,6 +342,11 @@ export class JournalApi {
         });
     }
 
+    /** GET /metrics: journal health for the Ops page (head seq, per-device lag, DB size). */
+    public async metrics(): Promise<JournalMetrics | null> {
+        return parseMetrics(await this.json<unknown>("/metrics"));
+    }
+
     public snapshot(signal?: AbortSignal): Promise<SnapshotResponse> {
         return this.json<SnapshotResponse>("/snapshot", { signal });
     }
@@ -446,6 +462,26 @@ export class JournalApi {
         if (filter.cursor) query.set("cursor", filter.cursor);
         const suffix = query.toString();
         return this.json<{ items: TrackerItem[]; next_cursor: string | null }>(`/items${suffix ? `?${suffix}` : ""}`);
+    }
+
+    /** GET /work?group_by= — the live, read-only loop-store projection. */
+    public async work(groupBy: WorkViewGroupBy = "repo", signal?: AbortSignal): Promise<WorkViewEnvelope> {
+        const raw = await this.json<unknown>(`/work?group_by=${encodeURIComponent(groupBy)}`, { signal });
+        try {
+            const envelope = parseWorkViewEnvelope(raw);
+            // The parser only checks that `group_by` is a member of the enum, which is not the
+            // same as it being the grouping we ASKED for. A producer bug, a stale cache or
+            // version skew can return a structurally valid repo-grouped envelope for a domain
+            // request; the pane's tab is driven by local state, so it would render repo groups
+            // under the Domain tab with no warning. Silently showing one grouping as another is
+            // a wrong operational view, which is worse than an error.
+            if (envelope.status !== "error" && envelope.group_by !== groupBy) {
+                throw new Error(`Work response grouped by "${envelope.group_by}" but "${groupBy}" was requested.`);
+            }
+            return envelope;
+        } catch (error) {
+            throw new JournalApiError(error instanceof Error ? error.message : "Malformed Work response.", 200);
+        }
     }
 
     /** GET /items/:id — the item plus its comment thread (status rows carry `meta.from`/`meta.to`). */
@@ -647,9 +683,21 @@ export class JournalApi {
         });
     }
 
-    public messages(conversationId: string, beforeSeq?: number, limit = 80): Promise<MessagesResponse> {
+    public messages(
+        conversationId: string,
+        beforeSeq?: number,
+        limit = 80,
+        aroundSeq?: number,
+    ): Promise<MessagesResponse> {
         const query = new URLSearchParams({ limit: String(limit) });
-        if (beforeSeq !== undefined) query.set("before_seq", String(beforeSeq));
+        // The server (GET /convo/:id/messages) treats before_seq and around_seq as mutually
+        // exclusive (400 if both). around_seq returns a window centered on an arbitrary seq —
+        // the deep-link path (jump to a search hit) uses it; normal tail-paging uses before_seq.
+        if (aroundSeq !== undefined) {
+            query.set("around_seq", String(aroundSeq));
+        } else if (beforeSeq !== undefined) {
+            query.set("before_seq", String(beforeSeq));
+        }
         return this.json<MessagesResponse>(`/convo/${encodeURIComponent(conversationId)}/messages?${query.toString()}`);
     }
 

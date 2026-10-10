@@ -18,6 +18,7 @@ interface FakeClient {
     commentItem: jest.Mock;
     closeTrackerItem: jest.Mock;
     reopenTrackerItem: jest.Mock;
+    setItemLabels: jest.Mock;
     closeTrackerView: jest.Mock;
     selectConversation: jest.Mock;
     openTrackerLink: jest.Mock;
@@ -31,6 +32,7 @@ function fakeClient(): FakeClient {
         commentItem: jest.fn().mockResolvedValue(true),
         closeTrackerItem: jest.fn().mockResolvedValue(true),
         reopenTrackerItem: jest.fn().mockResolvedValue(true),
+        setItemLabels: jest.fn().mockResolvedValue(true),
         closeTrackerView: jest.fn(),
         selectConversation: jest.fn().mockResolvedValue(undefined),
         openTrackerLink: jest.fn(),
@@ -107,7 +109,7 @@ describe("ItemDetail", () => {
         );
 
         await openMenu(container);
-        expect(menuLabels(container)).toEqual(["Mark done", "Dismiss"]);
+        expect(menuLabels(container)).toEqual(["Mark done", "Dismiss", "Route elsewhere"]);
     });
 
     it("offers only Dismiss for a question until the user has replied", async () => {
@@ -122,7 +124,7 @@ describe("ItemDetail", () => {
         );
 
         await openMenu(container);
-        expect(menuLabels(container)).toEqual(["Dismiss"]);
+        expect(menuLabels(container)).toEqual(["Dismiss", "Route elsewhere"]);
     });
 
     it("unlocks Mark answered for a question once a user comment exists", async () => {
@@ -137,7 +139,7 @@ describe("ItemDetail", () => {
         );
 
         await openMenu(container);
-        expect(menuLabels(container)).toEqual(["Mark answered", "Dismiss"]);
+        expect(menuLabels(container)).toEqual(["Mark answered", "Dismiss", "Route elsewhere"]);
     });
 
     it("offers Reverse, Mark decided and Dismiss for a decision", async () => {
@@ -152,7 +154,7 @@ describe("ItemDetail", () => {
         );
 
         await openMenu(container);
-        expect(menuLabels(container)).toEqual(["Reverse", "Mark decided", "Dismiss"]);
+        expect(menuLabels(container)).toEqual(["Reverse", "Mark decided", "Dismiss", "Route elsewhere"]);
     });
 
     it("offers Reopen for a closed item", async () => {
@@ -167,7 +169,7 @@ describe("ItemDetail", () => {
         );
 
         await openMenu(container);
-        expect(menuLabels(container)).toEqual(["Reopen"]);
+        expect(menuLabels(container)).toEqual(["Reopen", "Route elsewhere"]);
     });
 
     it("routes a resolve click through client.closeTrackerItem", async () => {
@@ -557,6 +559,90 @@ describe("ItemDetail", () => {
         });
     });
 
+    describe("route-elsewhere label", () => {
+        it("sets the route-elsewhere label from the menu when unset", async () => {
+            const client = fakeClient();
+            const { container } = await mount(
+                <ItemDetail
+                    item={trackerItem({ num: 12, labels: [] })}
+                    comments={[]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+            await openMenu(container);
+            expect(menuLabels(container)).toContain("Route elsewhere");
+            await act(async () => {
+                Array.from(container.querySelectorAll<HTMLButtonElement>(".mj_TrackerMenu_item"))
+                    .find((node) => node.textContent === "Route elsewhere")!
+                    .click();
+            });
+            expect(client.setItemLabels).toHaveBeenCalledWith(12, ["route-elsewhere"]);
+        });
+
+        it("clears the label via a Handle-here toggle and renders the actionable chip, not a raw label", async () => {
+            const client = fakeClient();
+            const { container } = await mount(
+                <ItemDetail
+                    item={trackerItem({ num: 12, labels: ["urgent", "route-elsewhere"] })}
+                    comments={[]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+            // The reserved label renders as its own accented chip, and the raw "route-elsewhere"
+            // string never appears as a plain label.
+            const chip = container.querySelector(".mj_TrackerLabel_routeElsewhere");
+            expect(chip?.textContent).toContain("Handle elsewhere");
+            const rawLabels = Array.from(container.querySelectorAll(".mj_TrackerLabel"))
+                .filter((n) => !n.classList.contains("mj_TrackerLabel_routeElsewhere"))
+                .map((n) => n.textContent);
+            expect(rawLabels).toEqual(["urgent"]);
+            // The toggle now reads "Handle here" and removes the label, preserving the others.
+            await openMenu(container);
+            expect(menuLabels(container)).toContain("Handle here");
+            await act(async () => {
+                Array.from(container.querySelectorAll<HTMLButtonElement>(".mj_TrackerMenu_item"))
+                    .find((node) => node.textContent === "Handle here")!
+                    .click();
+            });
+            expect(client.setItemLabels).toHaveBeenCalledWith(12, ["urgent"]);
+        });
+    });
+    it("opens a Files deep-link chip in-app and keeps other link chips as new tabs", async () => {
+        const client = fakeClient();
+        const filesUrl = `${window.location.origin}/#files=${encodeURIComponent("/root/a/plan.md")}`;
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({
+                    links: [
+                        { url: filesUrl, title: "plan" },
+                        { url: "https://github.com/easelyte/matron-web/pull/1", title: "PR" },
+                    ],
+                })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+        const [filesChip, prChip] = Array.from(container.querySelectorAll<HTMLAnchorElement>(".mj_TrackerLinkChip"));
+        const hashes: string[] = [];
+        const onHashChange = (): void => void hashes.push(window.location.hash);
+        window.addEventListener("hashchange", onHashChange);
+        const click = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+
+        await act(async () => {
+            filesChip.dispatchEvent(click);
+        });
+        window.removeEventListener("hashchange", onHashChange);
+        window.history.replaceState(null, "", "/");
+
+        expect(filesChip.hasAttribute("target")).toBe(false);
+        expect(click.defaultPrevented).toBe(true);
+        expect(hashes).toEqual([`#files=${encodeURIComponent("/root/a/plan.md")}`]);
+        expect(prChip.getAttribute("target")).toBe("_blank");
+    });
+
     describe("origin line", () => {
         it("falls back to the journal-supplied origin title for a conversation not in the loaded list", async () => {
             const client = fakeClient();
@@ -594,7 +680,7 @@ describe("ItemDetail", () => {
             client.getSnapshot.mockReturnValue({ selectedConversationId: "c-here", conversations: [] });
             const { container } = await mount(
                 <ItemDetail
-                    item={trackerItem({ origin_convo_id: "c-old" })}
+                    item={trackerItem({ origin_convo_id: "c-old", origin_convo_title: null })}
                     comments={[]}
                     client={client as unknown as MatronJournalClient}
                     onBack={jest.fn()}
@@ -602,6 +688,83 @@ describe("ItemDetail", () => {
             );
             expect(container.querySelector(".mj_TrackerOrigin")?.textContent).toBe("Opened from Conversation");
         });
+    });
+});
+
+describe("ItemDetail reply box (operator call T3: the chat composer's shape)", () => {});
+
+describe("ItemDetail reply box keyboard (the chat composer's send key)", () => {
+    async function mountReply(): Promise<{ client: FakeClient; textarea: HTMLTextAreaElement }> {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({ num: 9 })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+        const textarea = container.querySelector<HTMLTextAreaElement>(".mj_TrackerComposer_input")!;
+        const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+        await act(async () => {
+            setValue.call(textarea, "ship it");
+            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        return { client, textarea };
+    }
+
+    async function keydown(target: HTMLElement, init: KeyboardEventInit): Promise<KeyboardEvent> {
+        const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init });
+        await act(async () => {
+            target.dispatchEvent(event);
+        });
+        return event;
+    }
+
+    it("leaves Shift+Enter to insert a newline", async () => {
+        const { client, textarea } = await mountReply();
+        const event = await keydown(textarea, { shiftKey: true });
+        expect(event.defaultPrevented).toBe(false);
+        expect(client.commentItem).not.toHaveBeenCalled();
+    });
+
+    it.each([{ metaKey: true }, { ctrlKey: true }])("still sends on %o + Enter", async (modifier) => {
+        const { client, textarea } = await mountReply();
+        const event = await keydown(textarea, modifier);
+        expect(event.defaultPrevented).toBe(true);
+        expect(client.commentItem).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not send an Enter that commits an IME composition", async () => {
+        const { client, textarea } = await mountReply();
+        const composing = await keydown(textarea, { isComposing: true });
+        const legacyComposing = await keydown(textarea, { keyCode: 229 } as KeyboardEventInit);
+        expect(composing.defaultPrevented).toBe(false);
+        expect(legacyComposing.defaultPrevented).toBe(false);
+        expect(client.commentItem).not.toHaveBeenCalled();
+    });
+
+    it("leaves the focus where the operator moved it while the reply was posting", async () => {
+        const { client, textarea } = await mountReply();
+        let settle!: (ok: boolean) => void;
+        client.commentItem.mockReturnValueOnce(new Promise<boolean>((resolve) => (settle = resolve)));
+        textarea.focus();
+        await keydown(textarea, {});
+        const elsewhere = document.createElement("button");
+        document.body.append(elsewhere);
+        elsewhere.focus();
+        await act(async () => settle(true));
+        expect(document.activeElement).toBe(elsewhere);
+        elsewhere.remove();
+    });
+
+    it("does not pull the focus into the box after a reply sent with the button", async () => {
+        const { client, textarea } = await mountReply();
+        const button = textarea.parentElement!.querySelector<HTMLButtonElement>(".mj_TrackerComposer_send")!;
+        button.focus();
+        await act(async () => button.click());
+        expect(client.commentItem).toHaveBeenCalledTimes(1);
+        expect(document.activeElement).not.toBe(textarea);
     });
 });
 

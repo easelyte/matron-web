@@ -107,32 +107,7 @@ Please see LICENSE files in the repository root for full details.
 }
 
 .mj_TrackerViewSwitch {
-    display: inline-flex;
     margin-left: auto;
-    padding: 2px;
-    gap: 2px;
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-subtle-primary);
-}
-
-.mj_TrackerViewSwitch_tab {
-    border: 0;
-    background: transparent;
-    padding: var(--cpd-space-1x) var(--cpd-space-3x);
-    border-radius: var(--cpd-radius-pill);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
-    cursor: pointer;
-}
-.mj_TrackerViewSwitch_tab_active {
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
-    font-weight: 600;
-    box-shadow: var(--cpd-shadow-sm);
-}
-.mj_TrackerViewSwitch_tab:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: 1px;
 }
 
 .mj_TrackerPane_spinner {
@@ -219,6 +194,9 @@ Please see LICENSE files in the repository root for full details.
     letter-spacing: 0.04em;
     cursor: pointer;
 }
+.mj_TrackerSection_toggle:hover {
+    color: var(--cpd-color-text-secondary);
+}
 
 .mj_TrackerSection_chevron {
     display: inline-block;
@@ -264,8 +242,8 @@ Please see LICENSE files in the repository root for full details.
 }
 .mj_TrackerItemRow:focus-visible,
 .mj_TrackerMissionRow:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
-    outline-offset: -2px;
+    outline: var(--mj-focus-ring);
+    outline-offset: var(--mj-focus-offset-inset);
 }
 .mj_TrackerItemRow_needsyou {
     box-shadow: inset 3px 0 0 var(--mj-needsyou);
@@ -349,6 +327,13 @@ Please see LICENSE files in the repository root for full details.
 
 .mj_TrackerItemRow_origin {
     color: var(--cpd-color-text-secondary);
+}
+
+/* The route-elsewhere chip is actionable, not informational — accent it so it reads apart from the
+ * muted "from «chat»" origin note. */
+.mj_TrackerItemRow_routeElsewhere {
+    color: var(--cpd-color-text-action-accent);
+    font-weight: 600;
 }
 
 .mj_TrackerItemRow_missionChip {
@@ -449,28 +434,8 @@ Please see LICENSE files in the repository root for full details.
 
 /* — Inbox filter toggle — */
 .mj_TrackerInboxToggle {
-    display: inline-flex;
     align-self: center;
     margin: var(--cpd-space-2x) 0;
-    padding: 2px;
-    gap: 2px;
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-subtle-primary);
-}
-.mj_TrackerToggleTab {
-    border: 0;
-    background: transparent;
-    padding: var(--cpd-space-1x) var(--cpd-space-4x);
-    border-radius: var(--cpd-radius-pill);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
-    cursor: pointer;
-}
-.mj_TrackerToggleTab_active {
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
-    font-weight: 600;
-    box-shadow: var(--cpd-shadow-sm);
 }
 
 /* — Detail shell — */
@@ -493,6 +458,9 @@ Please see LICENSE files in the repository root for full details.
     flex: 1 1 0;
     min-height: 0;
     overflow-y: auto;
+    /* border-box: width 100% + the horizontal padding otherwise overflows the pane by 32px, which
+       clipped titles, comment bubbles and the close-mission field on a phone. */
+    box-sizing: border-box;
     width: 100%;
     /* Mac item thread: a 640pt reading column. */
     max-width: calc(640px + 2 * var(--cpd-space-4x));
@@ -526,25 +494,13 @@ Please see LICENSE files in the repository root for full details.
     font: var(--cpd-font-body-sm-regular);
     cursor: pointer;
 }
+.mj_TrackerTextButton:hover:not(:disabled) {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
 
 .mj_TrackerButton {
     align-self: flex-start;
-    border: 0;
-    border-radius: var(--cpd-radius-md);
-    background: var(--cpd-color-bg-accent);
-    color: var(--cpd-color-text-on-accent);
-    padding: var(--cpd-space-2x) var(--cpd-space-4x);
-    font: var(--cpd-font-body-sm-regular);
-    font-weight: 600;
-    cursor: pointer;
-}
-.mj_TrackerButton:disabled {
-    opacity: 0.5;
-    cursor: default;
-}
-.mj_TrackerButton_danger {
-    background: var(--cpd-color-text-critical-primary);
-    color: #fff;
 }
 
 /* — Mission head — */
@@ -770,8 +726,7 @@ Please see LICENSE files in the repository root for full details.
     padding-left: var(--cpd-space-4x);
     padding-right: var(--cpd-space-4x);
 }
-.mj_TrackerTextarea,
-.mj_TrackerComposer_input {
+.mj_TrackerTextarea {
     width: 100%;
     box-sizing: border-box;
     resize: vertical;
@@ -783,9 +738,8 @@ Please see LICENSE files in the repository root for full details.
     padding: var(--cpd-space-2x) var(--cpd-space-3x);
     font: var(--cpd-font-body);
 }
-.mj_TrackerTextarea:focus-visible,
-.mj_TrackerComposer_input:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
+.mj_TrackerTextarea:focus-visible {
+    outline: var(--mj-focus-ring);
     outline-offset: 0;
 }
 .mj_TrackerConfirm {
@@ -938,6 +892,12 @@ Please see LICENSE files in the repository root for full details.
     background: var(--cpd-color-bg-subtle-secondary);
     color: var(--cpd-color-text-secondary);
     font: var(--cpd-font-meta);
+}
+.mj_TrackerLabel_routeElsewhere {
+    background: transparent;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    color: var(--cpd-color-text-action-accent);
+    font-weight: 600;
 }
 .mj_TrackerLinkChip {
     padding: 1px var(--cpd-space-2x);
@@ -1239,6 +1199,10 @@ Please see LICENSE files in the repository root for full details.
 .mj_TrackerComposer_attach:disabled {
     opacity: 0.5;
 }
+/* No attach button on the left here, so the textarea gets the same inset the send button has. */
+.mj_TrackerComposer_row {
+    padding-left: var(--cpd-space-2x);
+}
 .mj_TrackerComposer_input {
     /* The chat composer's field (unify step 4): white, radius 10, shadow, accent border on focus;
        one line that grows with its content up to eight. Box sizing, fill and ink come from the
@@ -1248,6 +1212,10 @@ Please see LICENSE files in the repository root for full details.
     max-height: 144px;
     field-sizing: content;
     flex: 1 1 auto;
+    min-width: 0;
+    max-height: 160px;
+    resize: none;
+    color: var(--cpd-color-text-primary);
     resize: none;
     border: 1px solid transparent;
     border-radius: var(--cpd-radius-composer);
@@ -1292,7 +1260,6 @@ Please see LICENSE files in the repository root for full details.
 }
 
 .mj_TrackerComposer_send:disabled {
-    opacity: 0.5;
     cursor: default;
 }
 
@@ -2138,4 +2105,76 @@ button.mj_TrackerCard {
     background: var(--cpd-color-bg-accent-tint, var(--cpd-color-bg-subtle-secondary));
     color: var(--cpd-color-text-action-accent);
     font: var(--cpd-font-body-xs-semibold, 600 12px/16px var(--cpd-font-family-ui));
+}
+
+/* Fork-only rules. */
+
+/* Upstream rules the fork had moved or removed. */
+.mj_TrackerViewSwitch_tab {
+    border: 0;
+    background: transparent;
+    padding: var(--cpd-space-1x) var(--cpd-space-3x);
+    border-radius: var(--cpd-radius-pill);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+    cursor: pointer;
+}
+
+.mj_TrackerViewSwitch_tab_active {
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+    box-shadow: var(--cpd-shadow-sm);
+}
+
+.mj_TrackerViewSwitch_tab:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 1px;
+}
+
+.mj_TrackerToggleTab {
+    border: 0;
+    background: transparent;
+    padding: var(--cpd-space-1x) var(--cpd-space-4x);
+    border-radius: var(--cpd-radius-pill);
+    color: var(--cpd-color-text-secondary);
+    font: var(--cpd-font-body-sm-regular);
+    cursor: pointer;
+}
+
+.mj_TrackerToggleTab_active {
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    font-weight: 600;
+    box-shadow: var(--cpd-shadow-sm);
+}
+
+.mj_TrackerButton:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.mj_TrackerButton_danger {
+    background: var(--cpd-color-text-critical-primary);
+    color: #fff;
+}
+
+.mj_TrackerTextarea,
+.mj_TrackerComposer_input {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 72px;
+    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    border-radius: var(--cpd-radius-md);
+    background: var(--cpd-color-bg-canvas-default);
+    color: var(--cpd-color-text-primary);
+    padding: var(--cpd-space-2x) var(--cpd-space-3x);
+    font: var(--cpd-font-body);
+}
+
+.mj_TrackerTextarea:focus-visible,
+.mj_TrackerComposer_input:focus-visible {
+    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline-offset: 0;
 }

@@ -31,6 +31,9 @@ import {
 } from "./client";
 import { copyText } from "./clipboard";
 import { type DraftStore, makeDraftStore } from "./composer-drafts";
+import { isImeComposing, isSendKey, useAutoGrow } from "./composer-input";
+import { type EditFileEdit, type EditFileOutcome, pathRejectMessage } from "./edit-file";
+import { type ReadFileOutcome } from "./read-file";
 import { effectiveUnread } from "./conversation-flags";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
@@ -39,6 +42,7 @@ import {
     AnthropicMark,
     ArchiveIcon,
     AttachmentIcon,
+    ComposeIcon,
     CheckIcon,
     ChevronDownIcon,
     ChevronLeftIcon,
@@ -47,12 +51,11 @@ import {
     CloseIcon,
     CodeBracketsIcon,
     CompactIcon,
-    ComposeIcon,
     ArchiveFileIcon,
     AudioFileIcon,
     FileEditIcon,
-    FailedIcon,
     FileIcon,
+    FailedIcon,
     ImageFileIcon,
     InactiveIcon,
     InterruptedIcon,
@@ -66,7 +69,6 @@ import {
     MarkUnreadIcon,
     OpenAIMark,
     PinIcon,
-    SearchIcon,
     SendIcon,
     SettingsIcon,
     SystemThemeIcon,
@@ -81,13 +83,24 @@ import {
     PlusCircleIcon,
     ArrowUpCircleIcon,
 } from "./icons";
+import { FilesPane } from "./files/FilesPane";
+import { SearchField } from "./search-field";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
 import { SettingsSheet } from "./SettingsSheet";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
 import { createLongPressController, type LongPressController } from "./longPress";
+
+// True inside the packaged Electron desktop app (its preload injects window.electron). The Files
+// pane is web/iOS-PWA only for Phase 1 — see FilesApi header + the gated entry button (F2).
+function isElectronRuntime(): boolean {
+    return typeof window !== "undefined" && Boolean((window as Window & { electron?: unknown }).electron);
+}
 import { MarkdownBody, markdownToPlainText } from "./markdown";
+import { snippetText } from "./plain-text";
+import { ConnectionBanner, mainSurfaceOpen } from "./mobile-shell";
 import { isRenderableItemMarker, MemoryNotice, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
+import { OpsPane } from "./ops/OpsPane";
 import { needsUser } from "./tracker/format";
 import {
     isPreviewableMarkdown,
@@ -118,6 +131,24 @@ import {
     makeRecentFoldersStore,
     recentFolderArgument,
 } from "./slash-palette";
+import { conversationSummary } from "./summary";
+import { useShowTheWork } from "./show-the-work";
+import { assembleTurns, type Turn, threadRows, type ThreadRow } from "./turn-assembly";
+import { noticeText, TurnCard, type TurnCardMode, TurnErrorRow } from "./turn-card";
+import { V6Icon } from "./v6-icons";
+import { applyPaneBand } from "./pane-width";
+import { NewSessionSheet } from "./new-session-ui";
+import {
+    BROWSER_RESTART_COMMAND,
+    BROWSER_RESTART_NOW_COMMAND,
+    browserRestartNoticeSeqs,
+    browserToolsState,
+    type BrowserToolsState,
+} from "./browser-tools";
+import { type Step, stepSentence, stepsOf } from "./turn-grouping";
+import { helperForStep, helpersByTurn, SubagentCard } from "./subagent-card";
+import { HeadlineList } from "./headline-list";
+import { previewLine } from "./activity-text";
 import {
     compactTokens,
     formatSampleAge,
@@ -134,9 +165,9 @@ import {
 import {
     asNumber,
     asString,
-    type BoxStatus,
     buildSidebarIndex,
     childrenOf,
+    groupChildrenByParent,
     childSidebarPlacement,
     type ClientState,
     type MessageSearchState,
@@ -146,18 +177,21 @@ import {
     type DeviceDTO,
     displaySender,
     type EventPayload,
+    hasSubagentChildRows,
     type FileKind,
     fileKindFromMime,
-    hasSubagentChildRows,
+    type HostVitals,
     IMAGE_FRAME_MAX_HEIGHT_PX,
     imageFrameStyle,
     isNearBottom,
     type MediaDims,
     parseMediaDims,
+    PEER_BODY_CAP,
+    PEER_NAME_CAP,
     type JournalEvent,
     type PendingMessage,
-    type RecentFolder,
     rendersAsTopLevelRow,
+    sanitizePeerText,
     isSubChat,
     type SessionStatus,
     spawnOutcomeKind,
@@ -177,10 +211,11 @@ import {
 } from "./voice-recorder";
 
 const NAV_VIEW = { projects: "missions", decisions: "inbox", memories: "memories" } as const;
-const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories", NavKey> = {
+const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories" | "work", NavKey> = {
     missions: "projects",
     inbox: "decisions",
     memories: "memories",
+    work: "projects",
 };
 const LEFT_PANEL_SIZE_KEY = "mx_lhs_size";
 const LEFT_PANEL_DEFAULT_WIDTH = 350;
@@ -289,30 +324,58 @@ export function ThemeToggle(): React.ReactElement {
     );
 }
 
+/** A group break inside a menu (before Archive, Sign out, View source): one full-bleed hairline. */
+export function MenuSeparator(): React.ReactElement {
+    return <div className="mj_MenuSeparator" role="separator" />;
+}
+
 function formatTime(timestamp: number): string {
     return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
+}
+
+/**
+ * A formatRelativeDay that builds each Intl.DateTimeFormat at most once. Constructing a formatter
+ * is by far the costliest part of the label, and the sidebar formats one per row on every render
+ * (thousands on an account with a long history), so ConversationList makes one of these per
+ * render and shares it across rows. Per render, not module-level: the formatters capture the
+ * time zone and locale at construction, so a long-lived cache would keep stale ones.
+ */
+export function makeRelativeDayFormatter(): (timestamp: number, now: number) => string {
+    let clock: Intl.DateTimeFormat | undefined;
+    let weekday: Intl.DateTimeFormat | undefined;
+    let dayMonth: Intl.DateTimeFormat | undefined;
+    let dayMonthYear: Intl.DateTimeFormat | undefined;
+    return (timestamp, now) => {
+        if (!Number.isFinite(timestamp)) return ""; // Non-finite → no throw, empty string.
+        const then = new Date(timestamp);
+        if (Number.isNaN(then.getTime())) return ""; // Invalid Date → Intl.format would throw; bail.
+        const today = new Date(now);
+        const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        const dayMs = 86_400_000;
+        const daysAgo = Math.round((startOf(today) - startOf(then)) / dayMs);
+        if (daysAgo === 0) {
+            // Today (including same-day minor-future skew) → clock.
+            clock ??= new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+            return clock.format(then);
+        }
+        if (daysAgo >= 1 && daysAgo <= 6) {
+            weekday ??= new Intl.DateTimeFormat(undefined, { weekday: "short" });
+            return weekday.format(then);
+        }
+        // Older than six days or a genuinely future calendar day falls through to a dated label.
+        if (then.getFullYear() === today.getFullYear()) {
+            dayMonth ??= new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+            return dayMonth.format(then);
+        }
+        dayMonthYear ??= new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
+        return dayMonthYear.format(then);
+    };
 }
 
 // EXPORTED: the render callsite uses it, and unit tests import it directly to inject `now`.
 // `formatTime` stays private; only this helper needs the test seam.
 export function formatRelativeDay(timestamp: number, now: number = Date.now()): string {
-    if (!Number.isFinite(timestamp)) return ""; // Non-finite → no throw, empty string.
-    const then = new Date(timestamp);
-    if (Number.isNaN(then.getTime())) return ""; // Invalid Date → Intl.format would throw; bail.
-    const today = new Date(now);
-    const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-    const dayMs = 86_400_000;
-    const daysAgo = Math.round((startOf(today) - startOf(then)) / dayMs);
-    if (daysAgo === 0) return formatTime(timestamp); // Today (including same-day minor-future skew) → clock.
-    if (daysAgo >= 1 && daysAgo <= 6) {
-        return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(then);
-    }
-    // Older than six days or a genuinely future calendar day falls through to a dated label.
-    const sameYear = then.getFullYear() === today.getFullYear();
-    return new Intl.DateTimeFormat(
-        undefined,
-        sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" },
-    ).format(then);
+    return makeRelativeDayFormatter()(timestamp, now);
 }
 
 // True when two epoch-ms timestamps fall on the same local calendar day.
@@ -469,22 +532,6 @@ function hostLabel(url: string): string {
         return url;
     }
 }
-
-type SheetState =
-    | { step: "loading-agents" }
-    | { step: "agents-error" }
-    | { step: "agents"; agents: DeviceDTO[] }
-    | {
-          step: "folders";
-          agent: DeviceDTO;
-          foldersRequestId: number;
-          folders?: RecentFolder[];
-          foldersError?: string;
-      }
-    | { step: "starting"; agent: DeviceDTO }
-    | { step: "uncertain" }
-    | { step: "error"; agent: DeviceDTO; message: string };
-
 function agentName(agent: DeviceDTO): string {
     return agent.name?.trim() || `Agent ${agent.device_id}`;
 }
@@ -496,129 +543,163 @@ function agentStatus(agent: DeviceDTO): string {
     return `Offline · last seen ${new Date(timestamp).toLocaleString()}`;
 }
 
-// df -h style size for the disk line: "53G", "1.8T". One decimal below 10, whole numbers above.
-function formatDiskSize(bytes: number): string {
-    const units = ["B", "K", "M", "G", "T", "P"];
-    let value = bytes;
-    let unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-        value /= 1024;
-        unit += 1;
+type EditSheetState =
+    | { step: "loading-agents" }
+    | { step: "agents-error" }
+    | { step: "agents"; agents: DeviceDTO[] }
+    | { step: "form"; agent: DeviceDTO }
+    | { step: "saving"; agent: DeviceDTO }
+    | { step: "saved"; agent: DeviceDTO; path: string; bytes: number };
+
+type EditMode = "replace" | "content";
+
+/** Copy for the non-path outcome kinds; path rejections use pathRejectMessage. */
+function editOutcomeMessage(outcome: EditFileOutcome): { message: string; stale: boolean } {
+    switch (outcome.kind) {
+        case "stale":
+            return {
+                message:
+                    "The file changed on the box since you loaded it, so nothing was written (its checksum no longer matches). Re-check the current contents and try again.",
+                stale: true,
+            };
+        case "not-found":
+            return {
+                message: "The text to replace wasn't found in the file. Copy an exact snippet and try again.",
+                stale: false,
+            };
+        case "ambiguous":
+            return {
+                message: "The text to replace appears more than once — add surrounding context so it's unique.",
+                stale: false,
+            };
+        case "too-large":
+            return { message: "The file (or the result) is too large to edit through the bridge.", stale: false };
+        case "no-scope":
+            return {
+                message: "The box hasn't pinned any editable folders, so file editing is unavailable there.",
+                stale: false,
+            };
+        case "invalid":
+            return {
+                message: outcome.detail
+                    ? `The bridge rejected the request: ${outcome.detail}`
+                    : "The bridge rejected the request.",
+                stale: false,
+            };
+        case "uncertain":
+            return {
+                message:
+                    "The box didn't confirm the edit before timing out — it MAY already have been applied. Check the file before trying again (a blind retry could apply it twice).",
+                stale: false,
+            };
+        case "unreachable":
+            return { message: outcome.message, stale: false };
+        case "path-rejected":
+            return { message: pathRejectMessage(outcome.reason), stale: false };
+        default:
+            return { message: outcome.kind === "error" ? outcome.message : "The edit failed.", stale: false };
     }
-    const text = unit > 0 && value < 10 ? value.toFixed(1).replace(/\.0$/, "") : String(Math.round(value));
-    return `${text}${units[unit]}`;
 }
 
-// The box's last capacity report under its name: one line per limit (with its reset when the
-// bridge sent one), live sessions, disk, then how old the numbers are. No status → nothing.
-function BoxUsage({ status, now }: { status: BoxStatus | undefined; now: number }): React.ReactElement | null {
-    if (!status) return null;
-    const lines: string[] = [];
-    for (const line of status.limits?.lines ?? []) {
-        const reset = resetDisplay(line.resets_at, line.resets, now);
-        const usage = `${line.label} ${Math.round(line.percent)}%`;
-        lines.push(reset ? `${usage} · resets ${reset}` : usage);
+/** Copy for a failed load; a successful load populates the form instead. */
+function readOutcomeMessage(outcome: ReadFileOutcome): string {
+    switch (outcome.kind) {
+        case "not-found":
+            return "Couldn't load that file — it may not exist yet, or isn't readable. You can type the contents below, but saving requires the file to already exist on the box.";
+        case "too-large":
+            return "That file is too large to load through the bridge.";
+        case "not-text":
+            return "That file isn't UTF-8 text (it looks binary), so the editor can't load it without risking corruption.";
+        case "no-scope":
+            return "The box hasn't pinned any editable folders, so file editing is unavailable there.";
+        case "invalid":
+            return outcome.detail
+                ? `The bridge rejected the request: ${outcome.detail}`
+                : "The bridge rejected the request.";
+        case "unreachable":
+            return outcome.message;
+        case "path-rejected":
+            return pathRejectMessage(outcome.reason);
+        default:
+            return outcome.kind === "error" ? outcome.message : "Couldn't load the file.";
     }
-    if (status.activity) {
-        const count = status.activity.live_sessions;
-        lines.push(`${count} live session${count === 1 ? "" : "s"}`);
-    }
-    if (status.disk) {
-        const { free_bytes: free, total_bytes: total } = status.disk;
-        const freePercent = Math.round((free / total) * 100);
-        lines.push(`${formatDiskSize(free)} free of ${formatDiskSize(total)} (${freePercent}% free)`);
-    }
-    return (
-        <span className="mj_NewSessionSheet_usage">
-            {lines.map((line, index) => (
-                <span key={index} className="mj_NewSessionSheet_usageLine">
-                    {line}
-                </span>
-            ))}
-            <span className="mj_NewSessionSheet_usageAsOf">
-                as of {formatSampleAge(Math.max(0, now - status.reported_at))}
-            </span>
-        </span>
-    );
 }
 
-export function NewSessionSheet({
+/**
+ * Guarded file editor. Applies a small edit to an EXISTING file on
+ * an agent's box through the bridge `edit_file` RPC — for the operator on the
+ * bridge with no SSH/VSCode (tweak a config value, flip a feature flag). The
+ * bridge refuses sensitive basenames (.env, secrets, keys, credentials, …), so
+ * those paths come back path-rejected rather than editable.
+ *
+ * Two modes match the RPC exactly: a targeted "replace this text" splice (safe
+ * without a read path — the bridge enforces the old text is present AND unique)
+ * and a full-content replace. An optional expected-checksum field threads the
+ * compare-and-swap: the edit is rejected (stale) if the file no longer hashes
+ * to it, guarding against clobbering a change made since the checksum was taken.
+ * It is NOT a full atomic guarantee — the bridge checks the hash then commits
+ * through a later rename, so a writer landing in that window is still lost (a
+ * documented bridge residual). Every RPC error code is rendered as clear,
+ * non-crashing copy, keeping the user's typed edit intact so they can retry.
+ *
+ * NOTE: the bridge exposes no read RPC yet, so this cannot pre-load the file's
+ * current contents or auto-compute the checksum — content is authored blind and
+ * the CAS is opt-in. A read_file RPC would let this offer load-then-edit.
+ */
+export function EditFileSheet({
     client,
     onClose,
 }: {
     client: MatronJournalClient;
     onClose: () => void;
 }): React.ReactElement {
-    const [sheetState, setSheetState] = useState<SheetState>({ step: "loading-agents" });
-    const boxStatuses = useSyncExternalStore(client.subscribe, () => client.getSnapshot().boxStatuses);
-    const now = useMinuteClock();
-    const [workdir, setWorkdir] = useState("");
-    const [browserTools, setBrowserTools] = useState(false);
-    const [showBack, setShowBack] = useState(false);
+    const [sheetState, setSheetState] = useState<EditSheetState>({ step: "loading-agents" });
+    const [path, setPath] = useState("");
+    const [mode, setMode] = useState<EditMode>("replace");
+    const [oldString, setOldString] = useState("");
+    const [newString, setNewString] = useState("");
+    const [content, setContent] = useState("");
+    const [expectedSha256, setExpectedSha256] = useState("");
+    const [formError, setFormError] = useState<string | undefined>(undefined);
+    const [formErrorStale, setFormErrorStale] = useState(false);
+    // Non-null once the current contents were loaded from the box: the checksum
+    // is auto-filled, so the CAS is armed by default. The FULL target identity
+    // (agent device_id + the exact path read) travels with it, so a loaded sha
+    // is never applied to a different box or path — cloned files can share a
+    // checksum, so binding to the sha alone would let a CAS pass against the
+    // wrong target (P56). Invalidated on any path/agent change.
+    const [loaded, setLoaded] = useState<{ bytes: number; agentDeviceId: number; path: string } | undefined>(undefined);
+    const [loading, setLoading] = useState(false);
+
     const sheetStateRef = useRef(sheetState);
     const agentsRef = useRef<DeviceDTO[]>([]);
     const agentsRequestIdRef = useRef(0);
-    const foldersRequestIdRef = useRef(0);
-    const startingRef = useRef(false);
+    const savingRef = useRef(false);
+    const loadingRef = useRef(false);
+    // Monotonic load-request id: a reply whose id is no longer current (the path
+    // or agent changed, or a newer load superseded it while it was in flight) is
+    // discarded rather than applied to the current target.
+    const loadSeqRef = useRef(0);
     const mountedRef = useRef(false);
     const dismissedRef = useRef(false);
 
-    const transition = useCallback((next: SheetState): void => {
+    const transition = useCallback((next: EditSheetState): void => {
         sheetStateRef.current = next;
         setSheetState(next);
     }, []);
-
-    const loadFolders = useCallback(
-        (agent: DeviceDTO, backAvailable: boolean): void => {
-            const foldersRequestId = ++foldersRequestIdRef.current;
-            setShowBack(backAvailable);
-            transition({ step: "folders", agent, foldersRequestId });
-            void client.recentFolders(agent.device_id).then(
-                (folders) => {
-                    const current = sheetStateRef.current;
-                    if (
-                        !mountedRef.current ||
-                        dismissedRef.current ||
-                        current.step !== "folders" ||
-                        current.agent.device_id !== agent.device_id ||
-                        current.foldersRequestId !== foldersRequestId
-                    ) {
-                        return;
-                    }
-                    transition({ ...current, folders });
-                },
-                () => {
-                    const current = sheetStateRef.current;
-                    if (
-                        !mountedRef.current ||
-                        dismissedRef.current ||
-                        current.step !== "folders" ||
-                        current.agent.device_id !== agent.device_id ||
-                        current.foldersRequestId !== foldersRequestId
-                    ) {
-                        return;
-                    }
-                    transition({ ...current, folders: [], foldersError: "Couldn't load recent folders." });
-                },
-            );
-        },
-        [client, transition],
-    );
 
     const loadAgents = useCallback((): void => {
         const agentsRequestId = ++agentsRequestIdRef.current;
         transition({ step: "loading-agents" });
         void client.listAgents().then(
             (agents) => {
-                if (!mountedRef.current || dismissedRef.current || agentsRequestId !== agentsRequestIdRef.current) {
+                if (!mountedRef.current || dismissedRef.current || agentsRequestId !== agentsRequestIdRef.current)
                     return;
-                }
                 agentsRef.current = agents;
-                const connectedAgents = agents.filter((agent) => agent.connected);
-                if (connectedAgents.length === 1) {
-                    loadFolders(connectedAgents[0], false);
+                const connected = agents.filter((agent) => agent.connected);
+                if (connected.length === 1) {
+                    transition({ step: "form", agent: connected[0] });
                 } else {
-                    setShowBack(true);
                     transition({ step: "agents", agents });
                 }
             },
@@ -628,7 +709,7 @@ export function NewSessionSheet({
                 }
             },
         );
-    }, [client, loadFolders, transition]);
+    }, [client, transition]);
 
     useEffect(() => {
         mountedRef.current = true;
@@ -643,34 +724,128 @@ export function NewSessionSheet({
         onClose();
     };
 
-    const start = async (agent: DeviceDTO, path = workdir, browser = browserTools): Promise<void> => {
-        if (startingRef.current || dismissedRef.current) return;
-        startingRef.current = true;
-        transition({ step: "starting", agent });
-        const outcome = await client.startSessionRpc(agent.device_id, path, browser);
-        if (!mountedRef.current || dismissedRef.current) return;
-        if (outcome.kind === "created") {
-            dismissedRef.current = true;
-            onClose();
-            void client.selectConversation(outcome.convoId, { fromRpcCreate: true });
-            return;
-        }
-        if (outcome.kind === "uncertain") {
-            transition({ step: "uncertain" });
-            return;
-        }
-        startingRef.current = false;
-        transition({ step: "error", agent, message: outcome.message });
+    // Drop the loaded checksum + its auto-filled sha, and invalidate any load
+    // still in flight (so its reply is discarded rather than applied). Called
+    // whenever the target changes — path retarget or agent switch — because a
+    // loaded sha is bound to the exact {agent, path} it was read from.
+    const clearLoaded = (): void => {
+        loadSeqRef.current += 1;
+        setLoaded(undefined);
+        setExpectedSha256("");
     };
 
-    const folderState = sheetState.step === "folders" ? sheetState : undefined;
+    // Load the file's current contents from the box: seed the whole-file
+    // textarea and auto-fill the checksum, turning edit_file's opt-in CAS into
+    // an on-by-default compare-and-swap. A read has no side effects, so a failed
+    // load is always safe to retry.
+    const loadFromBox = async (agent: DeviceDTO): Promise<void> => {
+        if (loadingRef.current || savingRef.current || dismissedRef.current) return;
+        // Same trim-to-detect-blank rule as submit: a trailing space is a legal,
+        // distinct Linux filename, so send exactly what the operator typed.
+        if (path.trim().length === 0) {
+            setFormError("Enter the absolute path of the file to load.");
+            setFormErrorStale(false);
+            return;
+        }
+        // Capture the target this reply must still match on arrival.
+        const seq = ++loadSeqRef.current;
+        const requestedPath = path;
+        const requestedAgentId = agent.device_id;
+        loadingRef.current = true;
+        setLoading(true);
+        setFormError(undefined);
+        setFormErrorStale(false);
+        const outcome = await client.readFile(requestedAgentId, { path: requestedPath });
+        loadingRef.current = false;
+        setLoading(false);
+        // Discard a reply for a target the operator has since moved off of (path
+        // edited or agent switched while it was in flight, or a newer load
+        // superseded it) — applying it would arm a CAS for the wrong file/box.
+        if (!mountedRef.current || dismissedRef.current || seq !== loadSeqRef.current) return;
+        if (outcome.kind === "loaded") {
+            // Switch to whole-file mode with the live content + its checksum,
+            // so a subsequent Save sends content + the armed expected_sha256.
+            setMode("content");
+            setContent(outcome.content);
+            setExpectedSha256(outcome.sha256);
+            setLoaded({ bytes: outcome.bytes, agentDeviceId: requestedAgentId, path: requestedPath });
+            return;
+        }
+        setLoaded(undefined);
+        setFormError(readOutcomeMessage(outcome));
+        setFormErrorStale(false);
+    };
+
+    const submit = async (agent: DeviceDTO): Promise<void> => {
+        if (savingRef.current || loadingRef.current || dismissedRef.current) return;
+        // Trim ONLY to detect a blank field — a trailing space is a legal,
+        // distinct Linux filename, so silently trimming could retarget the
+        // edit to a different file. Send exactly what the operator typed.
+        if (path.trim().length === 0) {
+            setFormError("Enter the absolute path of the file to edit.");
+            setFormErrorStale(false);
+            return;
+        }
+        let edit: EditFileEdit;
+        if (mode === "replace") {
+            if (oldString.length === 0) {
+                setFormError("Enter the exact text to replace.");
+                setFormErrorStale(false);
+                return;
+            }
+            edit = { mode: "replace", oldString, newString };
+        } else {
+            edit = { mode: "content", content };
+        }
+        const sha = expectedSha256.trim();
+        if (sha.length > 0 && !/^[0-9a-f]{64}$/i.test(sha)) {
+            setFormError("The expected checksum must be a 64-character hex sha256 (or leave it blank).");
+            setFormErrorStale(false);
+            return;
+        }
+        // Refuse to send an AUTO-LOADED checksum to a different target than it
+        // was read from (P56). Cloned files across boxes can share a checksum,
+        // so a CAS could pass and clobber the wrong box/path. This backstops the
+        // on-change invalidation: if the loaded {agent, path} no longer matches
+        // the submit target, clear it and make the operator reload.
+        if (loaded && (loaded.agentDeviceId !== agent.device_id || loaded.path !== path)) {
+            clearLoaded();
+            setFormError(
+                "This checksum was loaded from a different box or path — reload the current file before saving.",
+            );
+            setFormErrorStale(false);
+            return;
+        }
+
+        savingRef.current = true;
+        setFormError(undefined);
+        setFormErrorStale(false);
+        transition({ step: "saving", agent });
+        const outcome = await client.editFile(agent.device_id, {
+            path,
+            edit,
+            expectedSha256: sha.length > 0 ? sha : undefined,
+        });
+        savingRef.current = false;
+        if (!mountedRef.current || dismissedRef.current) return;
+        if (outcome.kind === "saved") {
+            transition({ step: "saved", agent, path: outcome.path, bytes: outcome.bytes });
+            return;
+        }
+        const { message, stale } = editOutcomeMessage(outcome);
+        setFormError(message);
+        setFormErrorStale(stale);
+        transition({ step: "form", agent });
+    };
+
+    const formAgent = sheetState.step === "form" ? sheetState.agent : undefined;
 
     return (
-        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-new-session-title">
+        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-edit-file-title">
             <div className="mj_UploadConfirm mj_NewSessionSheet">
                 <div className="mj_NewSessionSheet_head">
-                    <h2 className="mj_UploadConfirm_title" id="mj-new-session-title">
-                        New session
+                    <h2 className="mj_UploadConfirm_title" id="mj-edit-file-title">
+                        Edit a file
                     </h2>
                     <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={dismiss}>
                         <svg
@@ -718,11 +893,15 @@ export function NewSessionSheet({
                                         type="button"
                                         role="listitem"
                                         disabled={!agent.connected}
-                                        onClick={() => loadFolders(agent, true)}
+                                        onClick={() => {
+                                            // Switching boxes invalidates any loaded
+                                            // checksum — it was read from another box.
+                                            if (loaded) clearLoaded();
+                                            transition({ step: "form", agent });
+                                        }}
                                     >
                                         <strong>{agentName(agent)}</strong>
                                         <span>{agentStatus(agent)}</span>
-                                        <BoxUsage status={boxStatuses[agent.device_id]} now={now} />
                                     </button>
                                 ))}
                             </div>
@@ -730,57 +909,128 @@ export function NewSessionSheet({
                     </>
                 )}
 
-                {folderState && (
+                {formAgent && (
                     <>
-                        <p>Start on {agentName(folderState.agent)}</p>
-                        <BoxUsage status={boxStatuses[folderState.agent.device_id]} now={now} />
-                        {folderState.folders === undefined ? (
-                            <div role="status">
-                                <span className="mj_Spinner" aria-hidden="true" /> Loading recent folders…
-                            </div>
-                        ) : (
-                            folderState.folders.length > 0 && (
-                                <div role="list" aria-label="Recent folders">
-                                    {folderState.folders.map((folder) => (
-                                        <button
-                                            key={folder.path}
-                                            type="button"
-                                            role="listitem"
-                                            onClick={() => {
-                                                setWorkdir(folder.path);
-                                                void start(folderState.agent, folder.path, browserTools);
-                                            }}
-                                        >
-                                            {folder.path}
-                                        </button>
-                                    ))}
-                                </div>
-                            )
-                        )}
-                        {folderState.foldersError && (
-                            <p className="mj_UploadConfirm_error">{folderState.foldersError}</p>
-                        )}
-                        <label htmlFor="mj-new-session-workdir">Folder path</label>
+                        <p>Edit a file on {agentName(formAgent)}</p>
+                        <label htmlFor="mj-edit-file-path">File path</label>
                         <input
-                            id="mj-new-session-workdir"
+                            id="mj-edit-file-path"
                             type="text"
-                            value={workdir}
-                            onChange={(event) => setWorkdir(event.target.value)}
-                            placeholder="Agent default"
+                            value={path}
+                            onChange={(event) => {
+                                setPath(event.target.value);
+                                // A loaded checksum is bound to the file it was
+                                // read from — retargeting the path must not carry
+                                // a stale auto-filled sha onto a different file,
+                                // and any load in flight for the old path must be
+                                // discarded when it returns.
+                                loadSeqRef.current += 1;
+                                if (loaded) {
+                                    setLoaded(undefined);
+                                    setExpectedSha256("");
+                                }
+                            }}
+                            placeholder="/absolute/path/on/the/box"
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            spellCheck={false}
                         />
-                        <label>
-                            <input
-                                type="checkbox"
-                                checked={browserTools}
-                                onChange={(event) => setBrowserTools(event.target.checked)}
-                            />{" "}
-                            Browser tools
-                        </label>
                         <div className="mj_UploadConfirm_actions">
-                            {showBack && (
+                            <button type="button" onClick={() => void loadFromBox(formAgent)} disabled={loading}>
+                                {loading ? "Loading…" : "Load current contents"}
+                            </button>
+                        </div>
+                        {loaded && (
+                            <p role="status" className="mj_EditFile_loaded">
+                                Loaded {loaded.bytes} {loaded.bytes === 1 ? "byte" : "bytes"} — the checksum is filled,
+                                so your save is protected against clobbering a change made since.
+                            </p>
+                        )}
+
+                        <div role="radiogroup" aria-label="Edit mode" className="mj_EditFile_modes">
+                            <label>
+                                <input
+                                    type="radio"
+                                    name="mj-edit-file-mode"
+                                    checked={mode === "replace"}
+                                    onChange={() => setMode("replace")}
+                                />{" "}
+                                Replace text
+                            </label>
+                            <label>
+                                <input
+                                    type="radio"
+                                    name="mj-edit-file-mode"
+                                    checked={mode === "content"}
+                                    onChange={() => setMode("content")}
+                                />{" "}
+                                Replace whole file
+                            </label>
+                        </div>
+
+                        {mode === "replace" ? (
+                            <>
+                                <label htmlFor="mj-edit-file-old">Text to replace (must appear exactly once)</label>
+                                <textarea
+                                    id="mj-edit-file-old"
+                                    value={oldString}
+                                    onChange={(event) => setOldString(event.target.value)}
+                                    rows={3}
+                                    spellCheck={false}
+                                />
+                                <label htmlFor="mj-edit-file-new">Replacement text</label>
+                                <textarea
+                                    id="mj-edit-file-new"
+                                    value={newString}
+                                    onChange={(event) => setNewString(event.target.value)}
+                                    rows={3}
+                                    spellCheck={false}
+                                />
+                            </>
+                        ) : (
+                            <>
+                                <label htmlFor="mj-edit-file-content">New file contents</label>
+                                <textarea
+                                    id="mj-edit-file-content"
+                                    value={content}
+                                    onChange={(event) => setContent(event.target.value)}
+                                    rows={8}
+                                    spellCheck={false}
+                                />
+                            </>
+                        )}
+
+                        <label htmlFor="mj-edit-file-sha">Expected checksum (sha256 — auto-filled by Load)</label>
+                        <input
+                            id="mj-edit-file-sha"
+                            type="text"
+                            value={expectedSha256}
+                            onChange={(event) => setExpectedSha256(event.target.value)}
+                            placeholder="Leave blank to skip the safety check"
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            spellCheck={false}
+                        />
+
+                        {formError && (
+                            <p
+                                className={`mj_UploadConfirm_error${formErrorStale ? " mj_EditFile_stale" : ""}`}
+                                role="alert"
+                            >
+                                {formError}
+                            </p>
+                        )}
+
+                        <div className="mj_UploadConfirm_actions">
+                            {agentsRef.current.filter((agent) => agent.connected).length !== 1 && (
                                 <button
                                     type="button"
-                                    onClick={() => transition({ step: "agents", agents: agentsRef.current })}
+                                    onClick={() => {
+                                        // Leaving the form to pick another box drops the
+                                        // loaded checksum (bound to this box + path).
+                                        if (loaded) clearLoaded();
+                                        transition({ step: "agents", agents: agentsRef.current });
+                                    }}
                                 >
                                     Back
                                 </button>
@@ -788,41 +1038,41 @@ export function NewSessionSheet({
                             <button
                                 type="button"
                                 className="mj_UploadConfirm_send"
-                                onClick={() => void start(folderState.agent)}
+                                onClick={() => void submit(formAgent)}
+                                disabled={loading}
                             >
-                                Start
+                                Save edit
                             </button>
                         </div>
                     </>
                 )}
 
-                {sheetState.step === "starting" && (
+                {sheetState.step === "saving" && (
                     <div role="status">
-                        <span className="mj_Spinner" aria-hidden="true" /> Starting session…
+                        <span className="mj_Spinner" aria-hidden="true" /> Saving edit…
                     </div>
                 )}
 
-                {sheetState.step === "uncertain" && (
+                {sheetState.step === "saved" && (
                     <>
-                        <p>The session may have started. Check your conversations before trying again.</p>
-                        <div className="mj_UploadConfirm_actions">
-                            <button type="button" onClick={dismiss}>
-                                Close
-                            </button>
-                        </div>
-                    </>
-                )}
-
-                {sheetState.step === "error" && (
-                    <>
-                        <p className="mj_UploadConfirm_error">{sheetState.message}</p>
+                        <p>
+                            Saved {sheetState.bytes} {sheetState.bytes === 1 ? "byte" : "bytes"} to{" "}
+                            <code>{sheetState.path}</code>.
+                        </p>
                         <div className="mj_UploadConfirm_actions">
                             <button
                                 type="button"
-                                className="mj_UploadConfirm_send"
-                                onClick={() => void start(sheetState.agent)}
+                                onClick={() => {
+                                    // Fresh edit: drop the just-saved file's stale
+                                    // loaded checksum so the next save re-loads.
+                                    if (loaded) clearLoaded();
+                                    transition({ step: "form", agent: sheetState.agent });
+                                }}
                             >
-                                Retry
+                                Edit another
+                            </button>
+                            <button type="button" className="mj_UploadConfirm_send" onClick={dismiss}>
+                                Done
                             </button>
                         </div>
                     </>
@@ -832,6 +1082,13 @@ export function NewSessionSheet({
     );
 }
 
+export function markForKind(kind: string | null | undefined, className?: string): React.ReactElement | null {
+    const classes = [className, kind === "codex" ? "mj_OpenAIMark" : "mj_AnthropicMark"].filter(Boolean).join(" ");
+    if (kind === "codex") return <OpenAIMark className={classes} />;
+    if (kind === "claude") return <AnthropicMark className={classes} />;
+    return null;
+}
+
 function WorkerMark({
     conversation,
     className,
@@ -839,10 +1096,7 @@ function WorkerMark({
     conversation: Conversation;
     className: string;
 }): React.ReactElement | null {
-    const kind = workerKind(conversation);
-    if (kind === "codex") return <OpenAIMark className={`${className} mj_OpenAIMark`} />;
-    if (kind === "claude") return <AnthropicMark className={`${className} mj_AnthropicMark`} />;
-    return null;
+    return markForKind(workerKind(conversation), className);
 }
 
 type OutcomeClassification = "running" | "completed" | "interrupted" | "failed" | "inactive";
@@ -885,6 +1139,28 @@ function OutcomeGlyph({
     return <InactiveIcon className={`${className} mj_InactiveOutcomeGlyph`} />;
 }
 
+/**
+ * A subagent row's status glyph, one per state in the v6 language: the turn card's spinner while
+ * running, a check once completed, a cross when it failed, an amber dot when interrupted, a
+ * muted dot when the state is unknown.
+ */
+function SubRowStatus({ conversation }: { conversation: Conversation }): React.ReactElement {
+    const classification = classifyOutcome(conversation);
+    return (
+        <span className={`mj_RoomListSubStatus mj_RoomListSubStatus_${classification}`} aria-hidden="true">
+            {classification === "running" ? (
+                <span className="mj_TurnCard_spinner" />
+            ) : classification === "completed" ? (
+                <V6Icon name="check" />
+            ) : classification === "failed" ? (
+                <V6Icon name="x" />
+            ) : (
+                <span className="mj_RoomListSubStatus_dot" />
+            )}
+        </span>
+    );
+}
+
 // Debounce keystrokes before firing a message-content search request.
 const MESSAGE_SEARCH_DEBOUNCE_MS = 200;
 
@@ -917,7 +1193,7 @@ export function MessageSearchResults({
     query: string;
     search: MessageSearchState | undefined;
     now: number;
-    onSelect: (conversationId: string) => void;
+    onSelect: (conversationId: string, seq: number) => void;
 }): React.ReactElement | null {
     // Only surface the section for a live query. `search` can lag the box by a debounce interval
     // or a stale query, so gate on the current box being non-empty AND the results being for it.
@@ -952,7 +1228,7 @@ export function MessageSearchResults({
                             <button
                                 type="button"
                                 className="mj_SearchHit"
-                                onClick={() => onSelect(hit.convo_id)}
+                                onClick={() => onSelect(hit.convo_id, hit.seq)}
                                 aria-label={`Open conversation ${hit.title || "Untitled"}`}
                             >
                                 <span className="mj_SearchHit_top">
@@ -978,6 +1254,7 @@ function ConversationList({
     state: ClientState;
     width: number;
 }): React.ReactElement {
+    const [developerView] = useShowTheWork();
     const [query, setQuery] = useState("");
     const [tab, setTab] = useState<"active" | "favorites" | "archived">("active");
     const [accountOpen, setAccountOpen] = useState(false);
@@ -987,9 +1264,11 @@ function ConversationList({
     const roomMenuRef = useRef(roomMenu);
     const roomMenuElementRef = useRef<HTMLDivElement>(null);
     const roomMenuOpenerRef = useRef<HTMLElement | null>(null);
-    // Pending rAF id for the post-menu-action focus restore; cancelled before re-scheduling
-    // and on unmount so a stale callback can never steal focus (see restoreFocusAfterMenuAction).
-    const restoreFocusFrameRef = useRef<number | undefined>(undefined);
+    // Handle for the deferred post-action focus-restore rAF (below). Tracked so
+    // it can be cancelled when it becomes stale — on unmount, and when a new
+    // menu opens — so a prior action's restore can never steal focus from a
+    // freshly opened menu (or fire after unmount into a later render's DOM).
+    const menuActionFocusRafRef = useRef<number | undefined>(undefined);
     const menuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
     const longPressTargetRef = useRef<{ conversationId: string; row: HTMLButtonElement } | undefined>(undefined);
     const longPressFiredRef = useRef(false);
@@ -1055,6 +1334,12 @@ function ConversationList({
     openRoomMenuRef.current = (conversationId, left, top, opener): void => {
         setAccountOpen(false);
         setNewSessionOpen(false);
+        // A pending focus-restore from a just-actioned menu would otherwise fire
+        // after this menu's item[0] focus and yank focus to the search input.
+        if (menuActionFocusRafRef.current !== undefined) {
+            cancelAnimationFrame(menuActionFocusRafRef.current);
+            menuActionFocusRafRef.current = undefined;
+        }
         roomMenuOpenerRef.current = opener;
         setRoomMenu({ conversationId, left, top });
     };
@@ -1085,25 +1370,13 @@ function ConversationList({
     // through to document.body.
     const restoreFocusAfterMenuAction = useCallback((): void => {
         const opener = roomMenuOpenerRef.current;
-        // Cancel any still-pending restore before scheduling a new one. Without this the
-        // leaked callback fires on a LATER tick (or in a later test), finds its opener
-        // disconnected, and yanks focus to the search input — a real focus-steal, and the
-        // source of the flaky keyboard-focus test.
-        if (restoreFocusFrameRef.current != null) cancelAnimationFrame(restoreFocusFrameRef.current);
-        restoreFocusFrameRef.current = requestAnimationFrame(() => {
-            restoreFocusFrameRef.current = undefined;
+        if (menuActionFocusRafRef.current !== undefined) cancelAnimationFrame(menuActionFocusRafRef.current);
+        menuActionFocusRafRef.current = requestAnimationFrame(() => {
+            menuActionFocusRafRef.current = undefined;
             if (opener && opener.isConnected) opener.focus();
             else document.getElementById("room-list-search-input")?.focus();
         });
     }, []);
-
-    // Cancel a pending focus-restore rAF on unmount so it can't fire against a torn-down tree.
-    useEffect(
-        () => () => {
-            if (restoreFocusFrameRef.current != null) cancelAnimationFrame(restoreFocusFrameRef.current);
-        },
-        [],
-    );
 
     const cancelLongPress = useCallback((): void => {
         longPressControllerRef.current?.onPointerCancel();
@@ -1126,6 +1399,7 @@ function ConversationList({
         () => () => {
             longPressControllerRef.current?.onPointerCancel();
             longPressScrollCleanupRef.current();
+            if (menuActionFocusRafRef.current !== undefined) cancelAnimationFrame(menuActionFocusRafRef.current);
         },
         [],
     );
@@ -1172,6 +1446,9 @@ function ConversationList({
     // renders top-level; a child renders top-level only when childSidebarPlacement says so
     // (orphan → always; parent exists → running-only, and then only when it can't nest).
     const sidebarIndex = buildSidebarIndex(state.conversations, state.archivedIds, state.collapsedSubagentParentIds);
+    // Every row asks for its children; grouping once keeps a render linear in the conversation
+    // count instead of quadratic (childrenOf scans the whole list per call).
+    const childrenByParent = useMemo(() => groupChildrenByParent(state.conversations), [state.conversations]);
     const isTopLevelRow = (conversation: Conversation): boolean => rendersAsTopLevelRow(conversation, sidebarIndex);
     const conversations = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
@@ -1255,7 +1532,11 @@ function ConversationList({
     // a row marked unread by hand counts once, like its own badge dot).
     const navActive: NavKey = state.trackerView?.open
         ? NAV_KEY_FOR_VIEW[state.trackerView.view ?? "inbox"]
-        : "conversations";
+        : state.opsView?.open
+          ? "ops"
+          : state.filesView?.open && !isElectronRuntime()
+            ? "files"
+            : "conversations";
     const unreadTotal = state.conversations.reduce((total, conversation) => {
         if (state.archivedIds.has(conversation.id)) return total;
         if (conversation.unread_count > 0) return total + conversation.unread_count;
@@ -1265,6 +1546,7 @@ function ConversationList({
     const needsYouTotal = (state.inboxItems ?? []).filter(needsUser).length;
     const closeSettings = useCallback(() => setAccountOpen(false), []);
     const renderNow = Date.now();
+    const relativeDay = makeRelativeDayFormatter();
     const pinnedRows = journalPins ? [] : visibleRows.filter((conversation) => state.pinnedIds.has(conversation.id));
     const unpinnedRows = journalPins
         ? visibleRows.filter((conversation) => tab !== "active" || !journalPinnedIds.has(conversation.id))
@@ -1314,10 +1596,11 @@ function ConversationList({
                           !journalPinnedIds.has(child.id) &&
                           childSidebarPlacement(child, sidebarIndex) === "nested",
                   )
-                  .map((child) => renderConversation(child, true));
+                  .map((child, index, list) => renderConversation(child, true, index === list.length - 1));
     const renderConversation = (
         conversation: ClientState["conversations"][number],
         isSubagent = false,
+        isLastSubagent = false,
         // A journal pin row: the pin's glyph + label lead, the conversation's title goes secondary.
         pin?: ConvoPin,
     ): React.ReactElement => {
@@ -1326,19 +1609,26 @@ function ConversationList({
         const unread = effectiveUnread(conversation, state.unreadOverrideIds);
         const name = pin ? pin.label : conversationTitle(conversation);
         const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
-        const relativeTimestamp = formatRelativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
-        // When this parent's subagent rows are collapsed, surface a subtle count of the hidden
-        // child rows so the collapse stays discoverable on the row itself. Gate on the CANONICAL
-        // index (hasSubagentChildRows) — NOT an independent running-child count — so it agrees with
-        // the menu and the placement derivation. An archived parent hosts no child rows (its running
-        // children are promoted to top-level), so it is absent from that set → no count, no false
-        // "N hidden" even if its collapse state persisted through archival. The set is only populated
-        // for real hosts, so the running-child count below always measures exactly what collapse hides.
+        const relativeTimestamp = relativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
+        // Developer view off: the preview never shows a command line or markdown source — a tool
+        // call reads as its activity ("Reading paths.py…"), anything else as one line of prose.
+        // Developer view on keeps the snippet's words, with only the markdown dropped.
+        const preview = developerView
+            ? snippetText(conversation.snippet)
+            : previewLine({ ...conversation, worker: workerKind(conversation) });
+        // when this parent's subagent rows are collapsed, surface a subtle count of the
+        // hidden child rows so the collapse is discoverable on the row itself. Gate on the
+        // CANONICAL index (hasSubagentChildRows = parentsWithChildRows) — NOT an independent
+        // running-child count — so it agrees with the menu and the placement derivation. An
+        // archived parent hosts no child rows (its running children are promoted to top-level),
+        // so it is absent from that set → no count, no false "N hidden" even if its collapse
+        // state persisted through archival. The set is only populated for real hosts, so the
+        // running-child count below always measures exactly the rows collapse is suppressing.
         const collapsedSubagentChildren =
             !isSubagent &&
             state.collapsedSubagentParentIds.has(conversation.id) &&
             hasSubagentChildRows(conversation, sidebarIndex)
-                ? childrenOf(state.conversations, conversation.id).filter(
+                ? (childrenByParent.get(conversation.id) ?? []).filter(
                       (child) =>
                           !state.archivedIds.has(child.id) &&
                           // A pinned sub-chat stays in the Pinned section; collapse never hides it.
@@ -1357,14 +1647,12 @@ function ConversationList({
         return (
             <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
                 <button
-                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${isSubagent ? " mj_RoomListItem_sub" : ""}`}
+                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${
+                        isSubagent ? ` mj_RoomListItem_sub${isLastSubagent ? " mj_RoomListItem_subLast" : ""}` : ""
+                    }`}
                     type="button"
                     aria-current={selected ? "page" : undefined}
-                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}${
-                        collapsedSubagentCount > 0
-                            ? `, ${collapsedSubagentCount} subagent${collapsedSubagentCount === 1 ? "" : "s"} hidden${collapsedSubagentUnread ? " (unread)" : ""}`
-                            : ""
-                    }`}
+                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}`}
                     onClick={(event) => {
                         if (longPressFiredRef.current) {
                             longPressFiredRef.current = false;
@@ -1408,18 +1696,12 @@ function ConversationList({
                         if (event.pointerType === "touch") cancelLongPress();
                     }}
                 >
-                    {/* §118 leading-glyph precedence. Subagent rows identify the worker and its
-                        live/terminal outcome. Parent rows keep the shipped pin-or-status behaviour
-                        (star renders separately before the meta). */}
+                    {/* §118 leading-glyph precedence. Subagent rows show one status glyph (the v6
+                        spinner while running, a check once done) on a tree connector from the
+                        parent. Parent rows keep the shipped pin-or-status behaviour (star renders
+                        separately before the meta). */}
                     {isSubagent ? (
-                        <span className="mj_RoomListWorkerGlyphs" aria-hidden="true">
-                            <WorkerMark conversation={conversation} className="mj_WorkerMark mj_RoomListWorkerMark" />
-                            <OutcomeGlyph
-                                conversation={conversation}
-                                className="mj_RoomListOutcomeGlyph"
-                                spinnerClassName="mj_RoomListSubSpinner"
-                            />
-                        </span>
+                        <SubRowStatus conversation={conversation} />
                     ) : pin ? (
                         <span className="mj_RoomListPinGlyph mj_PinGlyph" aria-hidden="true">
                             {pinGlyph(pin)}
@@ -1438,17 +1720,9 @@ function ConversationList({
                     )}
                     <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
                         <span className="mj_RoomListName" title={name} data-testid="room-name">
-                            {isSubagent && (
-                                <span className="mj_RoomListSubArrow" aria-hidden="true">
-                                    ↳{" "}
-                                </span>
-                            )}
                             {pin ? pin.label : <TaggedTitle conversation={conversation} agents={state.agents} />}
                         </span>
-                        <span
-                            className="mj_RoomListMeta"
-                            title={pin ? displayTitle(conversation) : conversation.snippet}
-                        >
+                        <span className="mj_RoomListMeta" title={pin ? displayTitle(conversation) : preview}>
                             {pin ? (
                                 <>
                                     <span className="mj_RoomListSnippet">
@@ -1457,9 +1731,13 @@ function ConversationList({
                                     <span className="mj_RoomListDot"> · </span>
                                 </>
                             ) : (
-                                conversation.snippet && (
+                                preview && (
                                     <>
-                                        <span className="mj_RoomListSnippet">{conversation.snippet}</span>
+                                        <span
+                                            className={`mj_RoomListSnippet${isSubagent ? " mj_RoomListPreview" : ""}`}
+                                        >
+                                            {preview}
+                                        </span>
                                         <span className="mj_RoomListDot"> · </span>
                                     </>
                                 )
@@ -1474,13 +1752,13 @@ function ConversationList({
                     )}
                     <span className="mj_RoomListTrailing">
                         {collapsedSubagentCount > 0 && (
-                            // Decorative: the hidden-child count + unread state are announced via the
-                            // containing row button's aria-label (a nested label here would be silent to AT).
                             <span
                                 className={`mj_RoomListCollapsedSubs${
                                     collapsedSubagentUnread ? " mj_RoomListCollapsedSubs_unread" : ""
                                 }`}
-                                aria-hidden="true"
+                                aria-label={`${collapsedSubagentCount} subagent${
+                                    collapsedSubagentCount === 1 ? "" : "s"
+                                } hidden${collapsedSubagentUnread ? " (unread)" : ""}`}
                             >
                                 <ChevronLeftIcon aria-hidden />
                                 {collapsedSubagentCount}
@@ -1562,21 +1840,25 @@ function ConversationList({
 
     return (
         <div
-            className={`mx_LeftPanel_outerWrapper ${
-                // At the phone breakpoint the main region owns the whole width whenever it has a
-                // surface to show: a selected conversation OR the open tracker pane (mirrors the
-                // mj_Chat_mobileHidden test on the main region, so the two never both render).
-                state.trackerView?.open || state.selectedConversationId ? "mj_Sidebar_mobileHidden" : ""
-            }`}
+            className={`mx_LeftPanel_outerWrapper ${mainSurfaceOpen(state, !isElectronRuntime()) ? "mj_Sidebar_mobileHidden" : ""}`}
             style={{ "--mj-left-panel-width": `${width}px` } as React.CSSProperties}
         >
             <NavRail
                 active={navActive}
+                filesAvailable={!isElectronRuntime()}
                 counts={{ conversations: unreadTotal, decisions: needsYouTotal }}
                 onSelect={(key) => {
                     setAccountOpen(false);
                     closeRoomMenu();
-                    if (key === "conversations") client.closeTrackerView();
+                    if (key === "conversations") {
+                        client.closeTrackerView();
+                        client.closeOpsView();
+                        client.closeFilesView();
+                    } else if (key === "ops") {
+                        if (!state.opsView?.open) client.openOpsView();
+                    } else if (key === "files") {
+                        if (!state.filesView?.open) client.openFilesView();
+                    }
                     // A rail tap always lands on the section's home, not a page left open inside it.
                     else
                         client.openTrackerView({
@@ -1644,7 +1926,7 @@ function ConversationList({
                                         )}
                                         {/* Mac: New Chat is the toolbar's square.and.pencil glyph, not a button row. */}
                                         <button
-                                            className="mj_IconButton"
+                                            className="mj_IconButton mj_HeaderNavButton mj_IconButton_badged"
                                             type="button"
                                             aria-label="New session"
                                             title="New session — runs /start"
@@ -1670,7 +1952,7 @@ function ConversationList({
                                             key={key}
                                             type="button"
                                             data-tab={key}
-                                            className={`mj_RoomListTab${tab === key ? " mj_RoomListTab_active" : ""}`}
+                                            className={`mj_Seg_item mj_RoomListTab${tab === key ? " mj_Seg_item_on mj_RoomListTab_active" : ""}`}
                                             aria-pressed={tab === key}
                                             aria-label={key === "favorites" ? "Favorites" : undefined}
                                             onClick={(event) => {
@@ -1683,25 +1965,17 @@ function ConversationList({
                                     ))}
                                 </div>
                                 <div data-testid="room-list-search" className="mx_RoomListSearch" role="search">
-                                    <label
-                                        className="mx_RoomListSearch_inputWrapper mx_no_textinput"
-                                        htmlFor="room-list-search-input"
-                                    >
-                                        <SearchIcon aria-hidden />
-                                        <input
-                                            id="room-list-search-input"
-                                            className="mx_RoomListSearch_input"
-                                            type="search"
-                                            value={query}
-                                            onChange={(event) => setQuery(event.target.value)}
-                                            placeholder="Search"
-                                            aria-label="Search"
-                                            autoComplete="off"
-                                            // Server rejects message-search queries over 256 chars; cap the shared
-                                            // box so a giant paste can't produce a misleading "unavailable" state.
-                                            maxLength={256}
-                                        />
-                                    </label>
+                                    <SearchField
+                                        id="room-list-search-input"
+                                        className="mj_SearchField_subtle mx_RoomListSearch_field"
+                                        value={query}
+                                        onChange={setQuery}
+                                        placeholder="Search"
+                                        label="Search"
+                                        // Server rejects message-search queries over 256 chars; cap the shared
+                                        // box so a giant paste can't produce a misleading "unavailable" state.
+                                        maxLength={256}
+                                    />
                                 </div>
                                 {state.preferencesUnavailable && (
                                     <div className="mj_ConnectionError" role="status">
@@ -1752,7 +2026,7 @@ function ConversationList({
                                                 {pinSection.flatMap(({ pin, conversation }) =>
                                                     conversation
                                                         ? [
-                                                              renderConversation(conversation, false, pin),
+                                                              renderConversation(conversation, false, false, pin),
                                                               renderSuccessorHint(pin),
                                                               ...nestedChildRows(conversation),
                                                           ].filter((row): row is React.ReactElement => row !== null)
@@ -1807,7 +2081,9 @@ function ConversationList({
                                         query={query}
                                         search={state.messageSearch}
                                         now={renderNow}
-                                        onSelect={(conversationId) => void client.selectConversation(conversationId)}
+                                        onSelect={(conversationId, seq) =>
+                                            void client.selectConversationAtSeq(conversationId, seq)
+                                        }
                                     />
                                 </div>
                             </nav>
@@ -2047,8 +2323,8 @@ function ConversationList({
                                     Mark as read
                                 </button>
                             )}
-                        {/* Manual collapse/expand of this conversation's subagent child rows —
-                            shown ONLY when it currently hosts child rows (hasSubagentChildRows
+                        {/* manual collapse/expand of this conversation's subagent child
+                            rows — shown ONLY when it currently hosts child rows (hasSubagentChildRows
                             stays true while collapsed, so "Show subagents" remains reachable). */}
                         {hasSubagentChildRows(menuConversation, sidebarIndex) && (
                             <button
@@ -2067,6 +2343,7 @@ function ConversationList({
                                     : "Collapse subagents"}
                             </button>
                         )}
+                        <MenuSeparator />
                         {state.archivedIds.has(menuConversation.id) ? (
                             <button
                                 className="mj_RoomItemMenu_item"
@@ -2101,6 +2378,37 @@ function ConversationList({
             </div>
         </div>
     );
+}
+
+/**
+ * Click-to-toggle for a popover trigger that also works for touch. On iOS a tap on the trigger of
+ * an open popover first moves focus out of the panel (the blur handler closes it) and only then
+ * clicks, so a plain `setOpen(!open)` read "closed" and reopened it. The open state is captured at
+ * press time instead and the click toggles from that. Keyboard activation has no press, so it
+ * toggles from the current state.
+ */
+export function usePressToggle(
+    open: boolean,
+    setOpen: (next: boolean) => void,
+): {
+    onPointerDown: () => void;
+    onKeyDown: () => void;
+    onClick: () => void;
+} {
+    const openAtPress = useRef<boolean | null>(null);
+    return {
+        onPointerDown: () => {
+            openAtPress.current = open;
+        },
+        onKeyDown: () => {
+            openAtPress.current = null;
+        },
+        onClick: () => {
+            const wasOpen = openAtPress.current ?? open;
+            openAtPress.current = null;
+            setOpen(!wasOpen);
+        },
+    };
 }
 
 export function useDismissablePopover(
@@ -2174,6 +2482,8 @@ export function useAdaptiveHeader(
         const observer = new ResizeObserver((entries) => {
             const entry = entries[0];
             latestWidth = entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
+            // v6: the same observer drives the chat-pane breakpoints (data-pane).
+            applyPaneBand(bodyEl, latestWidth);
             if (frame != null) return;
             frame = requestAnimationFrame(() => {
                 frame = null;
@@ -2210,11 +2520,54 @@ function useMinuteClock(now?: number): number {
     return now ?? clockNow;
 }
 
+// Pick the newest of several readings for the same meter. An unstamped candidate (a legacy
+// limits[] entry from a bridge that predates `sampled_at_ms`) has no freshness to compare, so it
+// ranks below any stamped one but still wins when it is all we have. Ties go to the later
+// candidate, which keeps the callers' source order as the tiebreak: legacy < status.vitals < the
+// live push, i.e. the fastest-cadence source wins a same-millisecond stamp.
+// Upper bound on a believable epoch-millisecond sample stamp. A garbled or wrongly-scaled wire
+// value (1e308, say) is finite, so it would otherwise win every freshness comparison forever
+// AND clamp to age zero, pinning the meter to a bogus reading no later sample could displace.
+//
+// Deliberately an ABSOLUTE plausibility bound, not a distance from the client clock: the two
+// clocks here are the browser's and the bridge's, and a browser running minutes behind is
+// ordinary. Rejecting stamps relative to local time would make that skew reject every real
+// bridge timestamp, freezing the meters on the first reading and ignoring the 5s pushes that
+// should replace it. Comparisons between candidates stay purely relative, so any shared offset
+// cancels out and only a value that is not a plausible timestamp at all is discarded.
+const MAX_PLAUSIBLE_STAMP_MS = Date.UTC(2100, 0, 1);
+
+function usableStamp(sampledAtMs: number | undefined): number | null {
+    if (typeof sampledAtMs !== "number" || !Number.isFinite(sampledAtMs)) return null;
+    if (sampledAtMs <= 0 || sampledAtMs > MAX_PLAUSIBLE_STAMP_MS) return null;
+    return sampledAtMs;
+}
+
+function freshestSample<T extends { sampled_at_ms?: number }>(candidates: T[]): T | undefined {
+    let best: T | undefined;
+    let bestStamp: number | null = null;
+    for (const candidate of candidates) {
+        const stamp = usableStamp(candidate.sampled_at_ms);
+        if (best === undefined) {
+            best = candidate;
+            bestStamp = stamp;
+            continue;
+        }
+        if (stamp === null) continue;
+        if (bestStamp === null || stamp >= bestStamp) {
+            best = candidate;
+            bestStamp = stamp;
+        }
+    }
+    return best;
+}
+
 // The usage meter leads with a synthetic "ctx" bar (context-window %), matching
 // the v3/v4 mock where ctx is the first, emphasised meter; the rate limits follow.
 export function buildUsageMeters(
     status: SessionStatus | undefined,
     limits: SessionStatus["limits"] | undefined,
+    hostVitals?: HostVitals | null,
 ): NonNullable<SessionStatus["limits"]> {
     const meters: NonNullable<SessionStatus["limits"]> = [];
     // Synthetic ctx meter carries id "context" (drives short tag / rank / a11y name) plus
@@ -2228,24 +2581,64 @@ export function buildUsageMeters(
             limit: status.context.window,
         });
     }
-    if (limits?.length) meters.push(...limits);
-    // Host CPU/RAM ride a TOP-LEVEL `status.vitals` object on the status frame (never a
-    // limits[] entry). Synthesize them into the meter row here, carrying `sampled_at_ms` so
-    // the shared staleness muting expires an idle conversation's replayed reading. Absent
-    // `status.vitals` → no host meters, no crash (graceful degradation). Non-finite readings
-    // are skipped individually so a partial vitals object still renders what it can.
-    if (status?.vitals) {
-        const { cpu_pct, ram_pct, sampled_at_ms } = status.vitals;
-        if (Number.isFinite(cpu_pct)) {
-            meters.push({ id: "host_cpu", label: "host CPU", percent: cpu_pct, sampled_at_ms });
-        }
-        if (Number.isFinite(ram_pct)) {
-            meters.push({ id: "host_ram", label: "host RAM", percent: ram_pct, sampled_at_ms });
+    // Account subscription quotas only. Legacy host_cpu/host_ram entries (a bridge still
+    // injecting synthetic host meters into limits[]) are held back here rather than pushed
+    // through: they are folded into the host-meter resolution below so they compete on
+    // FRESHNESS instead of double-rendering next to the vitals-derived pair.
+    const legacyHostMeters = new Map<string, NonNullable<SessionStatus["limits"]>[number]>();
+    if (limits?.length) {
+        for (const limit of limits) {
+            if (limit.id === "host_cpu" || limit.id === "host_ram") legacyHostMeters.set(limit.id, limit);
+            else meters.push(limit);
         }
     }
+    // Host CPU/RAM reach us from up to three places, and the right reading is the FRESHEST one,
+    // never "whichever is present":
+    //   1. legacy limits[] entries      — a pre-#156 or synthetic-injecting bridge
+    // 2. status.vitals (top level) — the, shared with upstream + matron-apple
+    // 3. the host_vitals push — fork-side, ~5s cadence, host-scoped across all convos
+    // Presence is the wrong test for any of them, because none is ever cleared once seen:
+    // mergeSessionStatus carries `vitals` across updates that omit it, and client.ts never drops
+    // a cached push. So a bridge rollback that resumes sending newer limits[] host entries would,
+    // under a presence test, be permanently masked by the retained older `vitals` — the header
+    // would show stale telemetry on exactly the compatibility path this is meant to preserve.
+    // Ranking every candidate by `sampled_at_ms` collapses that whole class: the newest sample
+    // wins regardless of which source produced it, in either deploy direction.
+    for (const id of ["host_cpu", "host_ram"] as const) {
+        const candidates: NonNullable<SessionStatus["limits"]> = [];
+        const legacy = legacyHostMeters.get(id);
+        // A legacy entry is a full meter already (label, resets, the lot) — take it verbatim so
+        // nothing a pre-#156 bridge sent is dropped in translation.
+        if (legacy) candidates.push(legacy);
+        const label = id === "host_cpu" ? "host CPU" : "host RAM";
+        // Each half is narrowed on its own: the bridge sends `cpu_pct: null` until its sampler
+        // has two ticks, and omits `cpu` from the push for the same reason, so a partial object
+        // must still contribute the half it does have.
+        const vitalsPercent = id === "host_cpu" ? status?.vitals?.cpu_pct : status?.vitals?.ram_pct;
+        if (typeof vitalsPercent === "number" && Number.isFinite(vitalsPercent)) {
+            candidates.push({ id, label, percent: vitalsPercent, sampled_at_ms: status?.vitals?.sampled_at_ms });
+        }
+        // The host-vitals push REFRESHES a host meter; it never creates one. A status source is what
+        // establishes that this conversation shows host bars at all — the push is host-scoped,
+        // carries no convo_id, and is deliberately not enough on its own.
+        //
+        // The gate is that source's PRESENCE (a `vitals` object, or a legacy limits[] entry),
+        // not whether it produced a finite value for this particular half. The bridge sends
+        // `cpu_pct: null` until its sampler has two ticks, and status only republishes at turn
+        // end — so gating per-half would let a conversation that opened during warm-up sit
+        // without a CPU bar indefinitely while valid pushes streamed past it.
+        const hostMetersEnabled = candidates.length > 0 || Boolean(status?.vitals);
+        const pushPercent = id === "host_cpu" ? hostVitals?.cpu : hostVitals?.ram;
+        if (hostMetersEnabled && typeof pushPercent === "number" && Number.isFinite(pushPercent)) {
+            candidates.push({ id, label, percent: pushPercent, sampled_at_ms: hostVitals?.sampled_at_ms });
+        }
+        const winner = freshestSample(candidates);
+        if (winner) meters.push(winner);
+    }
+    const merged = meters;
     // Normalise to the design's column-first grid order (ctx/5h, fbl/model/wk, cpu/ram);
     // stable so any extra limits keep their relative order after the known ones.
-    return meters
+    return merged
         .map((meter, index) => ({ meter, index }))
         .sort((a, b) => usageOrderRank(a.meter) - usageOrderRank(b.meter) || a.index - b.index)
         .map((entry) => entry.meter);
@@ -2303,11 +2696,7 @@ export function UsageCluster({
                     return (
                         <div
                             className={`mj_UsageRow${stale ? " mj_UsageRow_stale" : ""}`}
-                            // Stable machine id (`session`, `host_cpu`, …) keeps a row bound to
-                            // its meter across reorders and staleness re-renders. Fall back to
-                            // label:index for id-less frames (older bridge / cached), which stays
-                            // duplicate-safe when two meters share a label.
-                            key={limit.id ?? `${limit.label}:${index}`}
+                            key={index}
                             title={title || undefined}
                         >
                             {/* Visible label is the short tag; the accessible name keeps the
@@ -2377,6 +2766,22 @@ function HeaderDisclosure({
         setPinned(false);
     }, []);
     useDismissablePopover(open, close, { openerRef, panelRef });
+    // Tapping the trigger again closes it (and focus returns to the trigger, not <body>).
+    const toggle = usePressToggle(pinned, (next) => {
+        if (next) {
+            setPinned(true);
+        } else {
+            close();
+            openerRef.current?.focus();
+        }
+    });
+    // Hover-open is for a mouse only. A touch tap also fires compatibility mouse events, which
+    // hover-opened the panel underneath the pinned one, so a second tap unpinned it and it stayed
+    // open. The pointer type is known (pointerenter / pointerdown) before those mouse events fire.
+    const lastPointerRef = useRef<string | null>(null);
+    const notePointer = (event: React.PointerEvent): void => {
+        lastPointerRef.current = event.pointerType;
+    };
     // Move focus into the panel ONLY for click/keyboard activation — never on hover.
     useLayoutEffect(() => {
         if (pinned) panelRef.current?.focus();
@@ -2394,7 +2799,11 @@ function HeaderDisclosure({
     return (
         <div
             className={className}
-            onMouseEnter={() => setHoverOpen(true)}
+            onPointerEnter={notePointer}
+            onPointerDown={notePointer}
+            onMouseEnter={() => {
+                if (lastPointerRef.current === null || lastPointerRef.current === "mouse") setHoverOpen(true);
+            }}
             onMouseLeave={() => setHoverOpen(false)}
             onBlur={(event) => {
                 // Focus left the whole disclosure (tabbed away) → unpin + close.
@@ -2409,7 +2818,9 @@ function HeaderDisclosure({
                 aria-label={label}
                 aria-expanded={open}
                 aria-controls={popoverId}
-                onClick={() => setPinned((value) => !value)}
+                onPointerDown={toggle.onPointerDown}
+                onKeyDown={toggle.onKeyDown}
+                onClick={toggle.onClick}
             >
                 {trigger}
             </button>
@@ -2475,7 +2886,7 @@ export function HeaderShell({
     // Collapsed usage keeps two rows — ctx + the 5h (Session) limit — since the header
     // band has the height for two and one bar reads as too little (operator's call).
     // Pin BOTH by stable id, NOT by grid position: host cpu/ram now sort to limits[0]
-    // (host-vitals-first), so a positional pick would collapse to cpu/ram. Match the
+    // so a positional pick would collapse to cpu/ram. Match the
     // short-tag heuristic as a fallback for older/cached frames that lack ids.
     const ctxMeter = limits?.find((meter) => meter.id === "context" || (!meter.id && usageShortLabel(meter) === "ctx"));
     const sessionMeter = limits?.find(
@@ -2585,6 +2996,176 @@ export function HeaderShell({
     );
 }
 
+/**
+ * "Enable browser tools" confirm (redesign v6 surface B) on the upload-confirm shell. One
+ * primary ("Restart with browser tools"); "Restart now" appears only while the agent is
+ * mid-task and stops the current step instead of waiting. Focus lands on the primary; Escape
+ * and Cancel return focus to the header ⋯.
+ */
+function BrowserToolsConfirm({
+    busy,
+    onConfirm,
+    onClose,
+}: {
+    busy: boolean;
+    /** Resolves false when the command couldn't be queued; the dialog stays open and says so. */
+    onConfirm: (now: boolean) => Promise<boolean>;
+    onClose: () => void;
+}): React.ReactElement {
+    const primaryRef = useRef<HTMLButtonElement>(null);
+    const dialogRef = useRef<HTMLDivElement>(null);
+    const [error, setError] = useState<string>();
+    const [sending, setSending] = useState(false);
+    // Focus lands on the primary, and returns there if "Restart now" disappears under it.
+    useLayoutEffect(() => {
+        if (!dialogRef.current?.contains(document.activeElement)) primaryRef.current?.focus();
+    }, [busy]);
+    const confirm = (now: boolean): void => {
+        if (sending) return;
+        setSending(true);
+        setError(undefined);
+        void onConfirm(now).then(
+            (sent) => {
+                setSending(false);
+                if (!sent) setError("Couldn’t send the restart. Try again.");
+            },
+            () => {
+                setSending(false);
+                setError("Couldn’t send the restart. Try again.");
+            },
+        );
+    };
+    return (
+        <div
+            className="mj_UploadConfirm_scrim"
+            onClick={(event) => {
+                if (event.target === event.currentTarget) onClose();
+            }}
+            onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                event.stopPropagation();
+                onClose();
+            }}
+        >
+            <div
+                ref={dialogRef}
+                className="mj_UploadConfirm mj_UploadConfirm_queue mj_BrowserToolsConfirm"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="mj-browser-tools-title"
+            >
+                <header className="mj_UploadConfirm_header">
+                    <V6Icon name="globe" className="mj_UploadConfirm_uploadIcon" />
+                    <h2 className="mj_UploadConfirm_title" id="mj-browser-tools-title">
+                        Enable browser tools
+                    </h2>
+                    <span className="mj_UploadConfirm_headerSpacer" />
+                    <button type="button" className="mj_UploadConfirm_close" aria-label="Close" onClick={onClose}>
+                        <CloseIcon />
+                    </button>
+                </header>
+                <div className="mj_UploadConfirm_body">
+                    <p>
+                        Matron restarts this session with browser tools, so the agent can take screenshots and use web
+                        pages.
+                    </p>
+                    <ul className="mj_ConfirmList">
+                        <li>
+                            <V6Icon name="chat" />
+                            <span>The conversation is kept.</span>
+                        </li>
+                        <li>
+                            <V6Icon name="memory" />
+                            <span>Browser tools use about 400 MB of memory while on.</span>
+                        </li>
+                    </ul>
+                    {busy && (
+                        <div className="mj_ConfirmBusy">
+                            <span className="mj_LiveDot" aria-hidden="true" />
+                            <span>
+                                The agent is in the middle of a task. The restart waits until it finishes.{" "}
+                                <b>Restart now</b> stops the current step instead.
+                            </span>
+                        </div>
+                    )}
+                    {error && (
+                        <p className="mj_UploadConfirm_error" role="alert">
+                            {error}
+                        </p>
+                    )}
+                </div>
+                <footer className="mj_UploadConfirm_footer">
+                    <div className="mj_UploadConfirm_actions">
+                        <button type="button" onClick={onClose}>
+                            Cancel
+                        </button>
+                        {busy && (
+                            <button
+                                type="button"
+                                className="mj_UploadConfirm_skip"
+                                disabled={sending}
+                                onClick={() => confirm(true)}
+                            >
+                                Restart now
+                            </button>
+                        )}
+                        <button
+                            ref={primaryRef}
+                            type="button"
+                            className="mj_UploadConfirm_send"
+                            disabled={sending}
+                            onClick={() => confirm(false)}
+                        >
+                            Restart with browser tools
+                        </button>
+                    </div>
+                </footer>
+            </div>
+        </div>
+    );
+}
+
+/** The session-menu row for browser tools, in its five states (v6 component-map). */
+function BrowserToolsItem({
+    state,
+    codex,
+    onEnable,
+}: {
+    state: BrowserToolsState;
+    codex: boolean;
+    onEnable: () => void;
+}): React.ReactElement {
+    const on = !codex && state === "on";
+    // Round 2: no descriptive hint; a hint only when it gives the reason an item is disabled.
+    const hint = codex
+        ? "Not available for Codex sessions"
+        : state === "queued"
+          ? "Restarting after this step"
+          : state === "restarting"
+            ? "Restarting…"
+            : undefined;
+    const disabled = codex || state !== "idle";
+    return (
+        <button
+            className={`mj_RoomItemMenu_item${hint ? " mj_RoomItemMenu_item_hinted" : ""}`}
+            type="button"
+            role={on ? "menuitemcheckbox" : "menuitem"}
+            aria-checked={on ? true : undefined}
+            aria-disabled={disabled || undefined}
+            onClick={() => {
+                if (!disabled) onEnable();
+            }}
+        >
+            <V6Icon name={on ? "check" : "globe"} />
+            <span className="mj_MenuText">
+                <span className="mj_MenuLabel">{on ? "Browser tools on" : "Enable browser tools"}</span>
+                {hint && <span className="mj_MenuHint">{hint}</span>}
+            </span>
+        </button>
+    );
+}
+
 // Header "⋯" overflow: the selected conversation's actions (same set as the sidebar
 // row menu), opened by click only (never hover — these mutate state).
 function HeaderOverflowMenu({
@@ -2597,17 +3178,27 @@ function HeaderOverflowMenu({
     state: ClientState;
 }): React.ReactElement {
     const [open, setOpen] = useState(false);
+    const [confirmBrowser, setConfirmBrowser] = useState(false);
     const openerRef = useRef<HTMLButtonElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
-    // Pending rAF id for the post-action focus restore; cancelled before re-scheduling and on
-    // unmount so a stale callback can never fire against a torn-down tree (mirrors the sidebar
-    // menu's restoreFocusAfterMenuAction).
     const restoreFrameRef = useRef<number | undefined>(undefined);
+    const busy = conversation.session_state === "running";
+    const codex = conversation.agent_kind === "codex";
+    const extras = state.sessionStatus?.extras;
+    const browserState = useMemo(() => browserToolsState(state.events, busy, extras), [state.events, busy, extras]);
     const close = useCallback(() => setOpen(false), []);
     useDismissablePopover(open, close, { openerRef, panelRef });
+    const toggle = usePressToggle(open, (next) => {
+        setOpen(next);
+        if (!next) openerRef.current?.focus();
+    });
     useLayoutEffect(() => {
-        if (open) panelRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+        if (open) panelRef.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus();
     }, [open]);
+    // Cancel any pending focus-restore frame on unmount so a leaked callback
+    // can't fire after this menu is gone and steal focus (upstream's guard,
+    // lost on a prior fork-sync — the act() rAF below had regressed to a bare,
+    // uncancellable frame).
     useEffect(
         () => () => {
             if (restoreFrameRef.current != null) cancelAnimationFrame(restoreFrameRef.current);
@@ -2629,7 +3220,8 @@ function HeaderOverflowMenu({
         // Defer past the re-render: a non-navigating action (pin/favorite/read) keeps the
         // opener mounted → restore focus to it; archiving the selected conversation clears
         // selection and unmounts this whole header, so skip rather than focus a dead node.
-        // Cancel any still-pending restore first so a leaked callback can't fire on a later tick.
+        // Cancel any in-flight frame before scheduling a new one and clear the ref when it
+        // runs, so rapid actions can't leave a stale callback to fire after unmount.
         if (restoreFrameRef.current != null) cancelAnimationFrame(restoreFrameRef.current);
         restoreFrameRef.current = requestAnimationFrame(() => {
             restoreFrameRef.current = undefined;
@@ -2658,7 +3250,9 @@ function HeaderOverflowMenu({
                 aria-label="Conversation actions"
                 aria-haspopup="menu"
                 aria-expanded={open}
-                onClick={() => setOpen((current) => !current)}
+                onPointerDown={toggle.onPointerDown}
+                onKeyDown={toggle.onKeyDown}
+                onClick={toggle.onClick}
             >
                 <KebabIcon aria-hidden />
             </button>
@@ -2669,7 +3263,7 @@ function HeaderOverflowMenu({
                     ref={panelRef}
                     onKeyDown={(event) => {
                         const items = Array.from(
-                            event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+                            event.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
                         );
                         const currentIndex = items.findIndex((item) => item === document.activeElement);
                         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -2773,6 +3367,18 @@ function HeaderOverflowMenu({
                             {isUnread ? "Mark as read" : "Mark as unread"}
                         </button>
                     )}
+                    {/* Hidden, never guessed, until the bridge reports the session's extras. */}
+                    {extras !== undefined && (
+                        <BrowserToolsItem
+                            state={browserState}
+                            codex={codex}
+                            onEnable={() => {
+                                close();
+                                setConfirmBrowser(true);
+                            }}
+                        />
+                    )}
+                    <MenuSeparator />
                     <button
                         className="mj_RoomItemMenu_item"
                         type="button"
@@ -2786,10 +3392,167 @@ function HeaderOverflowMenu({
                     </button>
                 </div>
             )}
+            {confirmBrowser && (
+                <BrowserToolsConfirm
+                    busy={busy}
+                    onClose={() => {
+                        setConfirmBrowser(false);
+                        openerRef.current?.focus();
+                    }}
+                    onConfirm={async (now) => {
+                        const sent = await client.sendMessage(
+                            now ? BROWSER_RESTART_NOW_COMMAND : BROWSER_RESTART_COMMAND,
+                            id,
+                        );
+                        if (sent) {
+                            setConfirmBrowser(false);
+                            openerRef.current?.focus();
+                        }
+                        return sent;
+                    }}
+                />
+            )}
             {pinDialog && (
                 <PinDialog client={client} state={state} target={pinDialog} onClose={() => setPinDialog(undefined)} />
             )}
         </div>
+    );
+}
+
+// Backstop for the compact in-flight pulse. Compaction emits no incremental
+// progress signal, so the pulse is cleared by the post-compact status frame (context
+// tokens drop below the pre-send baseline). This timeout is the fallback for when that
+// never arrives — e.g. snap-compact declines because pressure is <50%, or already
+// compacted this session — so the indeterminate state can never stick on forever.
+const COMPACT_PULSE_TIMEOUT_MS = 180_000;
+
+// The header Compact pill. Sends /snap-compact — the guided safe-compact flow that
+// pre-checks pressure and assembles preserve instructions — rather than a raw /compact,
+// and shows an INDETERMINATE "Compacting…" pulse while the compaction is in flight (NOT a
+// percentage fill; /compact reports no incremental progress). The pulse clears when the
+// next status frame reports fewer context tokens than the pre-send baseline, or on the
+// timeout backstop above.
+function CompactButton({
+    client,
+    contextTokens,
+}: {
+    client: MatronJournalClient;
+    contextTokens: number;
+}): React.ReactElement {
+    const [compacting, setCompacting] = useState(false);
+    const baselineRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        if (!compacting) return;
+        // Compaction landed: the fresh status frame reports a smaller context than the
+        // token count captured at send time → clear the pulse.
+        if (baselineRef.current != null && contextTokens < baselineRef.current) {
+            setCompacting(false);
+            return;
+        }
+        const timeout = window.setTimeout(() => setCompacting(false), COMPACT_PULSE_TIMEOUT_MS);
+        return () => window.clearTimeout(timeout);
+    }, [compacting, contextTokens]);
+
+    const onClick = useCallback(() => {
+        baselineRef.current = contextTokens;
+        setCompacting(true);
+        void client.sendMessage("/snap-compact").catch((error) => {
+            console.warn("Snap-compact command failed to send:", error);
+            setCompacting(false);
+        });
+    }, [client, contextTokens]);
+
+    return (
+        <button
+            className={`mj_CompactButton${compacting ? " mj_CompactButton_compacting" : ""}`}
+            type="button"
+            aria-label="Compact conversation"
+            aria-busy={compacting}
+            title="Compact the conversation — sends /snap-compact"
+            disabled={compacting}
+            onClick={onClick}
+        >
+            <CompactIcon />
+            <span>{compacting ? "Compacting…" : "Compact"}</span>
+        </button>
+    );
+}
+
+// True when a limit carries any reset timestamp the countdown can render.
+function hasResetTime(limit: NonNullable<SessionStatus["limits"]>[number]): boolean {
+    return limit.resets_at_ms != null || limit.resets_at != null || Boolean(limit.resets);
+}
+
+// The usage-window limit whose reset time the header countdown tracks: the
+// 5-hour session window first, falling back to the soonest listed rate limit that carries
+// a reset (excluding the synthetic context bar and the host cpu/ram meters, which have no
+// meaningful reset). Reuses the reset data already flowing to the pressure bars — no new
+// data source or request.
+function pickResetLimit(
+    limits: NonNullable<SessionStatus["limits"]>,
+): NonNullable<SessionStatus["limits"]>[number] | undefined {
+    const session = limits.find((limit) => limit.id === "session" && hasResetTime(limit));
+    if (session) return session;
+    return limits.find(
+        (limit) => limit.id !== "context" && limit.id !== "host_cpu" && limit.id !== "host_ram" && hasResetTime(limit),
+    );
+}
+
+// The weekly usage-window limit whose reset the header shows alongside the 5-hour one:
+// week_all ("weekly, all models") first, else the soonest listed week_<slug> that carries a
+// reset. Same data as the pressure bars — no new source or request.
+function pickWeekResetLimit(
+    limits: NonNullable<SessionStatus["limits"]>,
+): NonNullable<SessionStatus["limits"]>[number] | undefined {
+    const all = limits.find((limit) => limit.id === "week_all" && hasResetTime(limit));
+    if (all) return all;
+    return limits.find((limit) => typeof limit.id === "string" && /^week_/.test(limit.id) && hasResetTime(limit));
+}
+
+// The 5-hour session limit specifically (strict — no fallback), so its countdown is never
+// mislabelled as "5h" when the frame only carries other windows.
+function pick5hResetLimit(
+    limits: NonNullable<SessionStatus["limits"]>,
+): NonNullable<SessionStatus["limits"]>[number] | undefined {
+    return limits.find((limit) => limit.id === "session" && hasResetTime(limit));
+}
+
+// Header subtitle countdown that replaces the workdir path: shows BOTH usage
+// windows when present — "resets 5h 3h05 / wk Wed 5pm" — the 5-hour session limit and the
+// weekly (all-models) limit. Shows a single segment when only one window carries a reset,
+// and falls back to the prior soonest-reset chip for frames with neither (a bare rate
+// limit). Renders nothing when no usage-window reset is available. Same reset data as the
+// pressure bars — no new source.
+function LimitsResetIndicator({ limits }: { limits: SessionStatus["limits"] }): React.ReactElement | null {
+    const now = useMinuteClock();
+    const fiveHLimit = limits ? pick5hResetLimit(limits) : undefined;
+    const weekLimit = limits ? pickWeekResetLimit(limits) : undefined;
+    const fiveH = fiveHLimit ? resetDisplay(fiveHLimit.resets_at, fiveHLimit.resets, now, fiveHLimit.resets_at_ms) : "";
+    const week = weekLimit ? resetDisplay(weekLimit.resets_at, weekLimit.resets, now, weekLimit.resets_at_ms) : "";
+    if (fiveH || week) {
+        // Compact: bare values, no inline "5h"/"wk" labels — the short countdown reads as the
+        // 5-hour window and the weekday/absolute token as the weekly one. The tooltip carries
+        // the semantics. Order is always 5h then weekly.
+        const value = [fiveH, week].filter(Boolean).join(" / ");
+        return (
+            <span className="mj_HeaderLimitsReset" title="Usage-window limits reset — 5-hour / weekly">
+                {`resets ${value}`}
+            </span>
+        );
+    }
+    // Neither the 5h nor a weekly window is in this frame — preserve the prior single chip
+    // (the soonest listed reset, e.g. a bare model/fbl rate limit).
+    const fallback = limits ? pickResetLimit(limits) : undefined;
+    const value = fallback ? resetDisplay(fallback.resets_at, fallback.resets, now, fallback.resets_at_ms) : "";
+    if (!value) return null;
+    // resetDisplay yields a relative token ("3h05", "45m") or an absolute one ("Wed 5pm",
+    // "now"); only the relative digit-leading form reads well with the "in" preposition.
+    const label = /^\d/.test(value) ? `limits reset in ${value}` : `limits reset ${value}`;
+    return (
+        <span className="mj_HeaderLimitsReset" title="Usage-window limits reset">
+            {label}
+        </span>
     );
 }
 
@@ -2807,9 +3570,15 @@ function ChatHeader({
     const status = state.sessionStatus;
     const runState = conversation?.session_state;
     const limits = status?.limits?.filter((limit) => limit.label.trim());
-    const meters = buildUsageMeters(status, limits);
+    const meters = buildUsageMeters(status, limits, state.hostVitals);
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
     const hasSubtitle = Boolean(status?.model || runState);
+    const browserQueued = useMemo(
+        () =>
+            conversation?.agent_kind !== "codex" &&
+            browserToolsState(state.events, runState === "running", status?.extras) === "queued",
+        [conversation?.agent_kind, state.events, runState, status?.extras],
+    );
     return (
         <HeaderShell
             mode="parent"
@@ -2820,7 +3589,7 @@ function ChatHeader({
             subtitle={
                 <>
                     {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
-                    {status?.workdir && <span className="mj_HeaderWorkdir">{status.workdir}</span>}
+                    <LimitsResetIndicator limits={limits} />
                     {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runState}</span>}
                 </>
             }
@@ -2836,34 +3605,25 @@ function ChatHeader({
                 )
             }
             hasSubtitle={hasSubtitle}
-            rightControls={
-                status?.context && (
-                    <button
-                        className="mj_CompactButton"
-                        type="button"
-                        aria-label="Compact conversation"
-                        title="Compact the conversation — sends /compact"
-                        onClick={() =>
-                            void client
-                                .sendMessage("/compact")
-                                .catch((error) => console.warn("Compact command failed to send:", error))
-                        }
-                    >
-                        <CompactIcon />
-                        <span>Compact</span>
-                    </button>
-                )
-            }
+            rightControls={status?.context && <CompactButton client={client} contextTokens={status.context.tokens} />}
             persistentControls={
                 // Keyed by conversation id so a selection change while the menu is open
                 // remounts (and closes) it, instead of silently retargeting the actions.
                 conversation && (
-                    <HeaderOverflowMenu
-                        key={conversation.id}
-                        client={client}
-                        conversation={conversation}
-                        state={state}
-                    />
+                    <>
+                        {browserQueued && (
+                            <span className="mj_HeaderChip" role="status">
+                                <span className="mj_Spinner" aria-hidden="true" />
+                                Restarting after this step
+                            </span>
+                        )}
+                        <HeaderOverflowMenu
+                            key={conversation.id}
+                            client={client}
+                            conversation={conversation}
+                            state={state}
+                        />
+                    </>
                 )
             }
             hideControlsWhenCompact
@@ -2885,7 +3645,7 @@ function SubChatHeader({
     const selected = client.selectedConversation();
     const status = state.sessionStatus;
     const limits = status?.limits?.filter((limit) => limit.label.trim());
-    const meters = buildUsageMeters(status, limits);
+    const meters = buildUsageMeters(status, limits, state.hostVitals);
     const runState = selected?.session_state;
     const running = runState === "running";
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
@@ -2963,7 +3723,7 @@ export function QueuedReleaseCard({
     client: MatronJournalClient;
     event: JournalEvent;
     isReadOnly?: boolean;
-    resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
+    resolvedAction?: (itemId: string) => "send" | "cancel" | "expired" | undefined;
 }): React.ReactElement {
     const items = (Array.isArray(event.payload.items) ? event.payload.items : []).flatMap((item) => {
         if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
@@ -3074,12 +3834,22 @@ export function QueuedReleaseCard({
                     })}
                 </div>
             )}
-            {resolution !== undefined && (
+            {resolution !== undefined && resolution !== "expired" && (
                 <div className="mj_PromptResolved">
                     <span className="mj_PromptGlyph mj_PromptGlyph_ok" aria-hidden="true">
                         <PromptCheckGlyph />
                     </span>
                     <span className="mj_Answered">{resolution === "send" ? "Sent" : "Cancelled"}</span>
+                </div>
+            )}
+            {resolution === "expired" && (
+                // Terminal abandoned state: the bridge has
+                // authoritatively expired this card (restart/crash abandoned the
+                // live queue). Both buttons are already removed (gated on
+                // `resolution === undefined` above); render a muted terminal
+                // note distinct from the Sent/Cancelled resolution.
+                <div className="mj_PromptResolved mj_PromptResolved_expired">
+                    <span className="mj_Answered mj_Expired">Expired — no longer actionable</span>
                 </div>
             )}
         </div>
@@ -3596,7 +4366,11 @@ function AgentSpawnCard({
                     <span className="mj_PromptGlyph" aria-hidden="true" />
                     <span className="mj_Answered">{spawnOutcomeCardLabel(outcome)}</span>
                     {kind === "started" && roomId && (
-                        <button type="button" className="mj_SpawnOpenButton" onClick={() => onOpen(roomId)}>
+                        <button
+                            type="button"
+                            className="mj_Btn mj_Btn_primary mj_SpawnOpenButton"
+                            onClick={() => onOpen(roomId)}
+                        >
                             Open
                         </button>
                     )}
@@ -3612,13 +4386,31 @@ function AgentSpawnCard({
 function SpawnOutcomeRow({ client, event }: { client: MatronJournalClient; event: JournalEvent }): React.ReactElement {
     const kind = spawnOutcomeKind(event.payload);
     const roomId = asString(event.payload.room_id);
+    // Surface C (design 2026-08): read as a STRUCTURAL event, not a normal message — a coloured
+    // kind-rail + an uppercase "Subagent" eyebrow + the child's worker mark when known. The
+    // emoji-prefixed snippet stays as the accessible row text (byte-exact with the server).
+    // Worker kind is derived from the CHILD conversation (where agent_kind actually lands via
+    // convo_meta), not from the spawn_outcome payload — that contract carries no agent_kind, so
+    // reading it there would render no mark for every real event.
+    const childId = asString(event.payload.child_convo_id) || roomId;
+    const childConversation = childId
+        ? client.getSnapshot().conversations.find((conversation) => conversation.id === childId)
+        : undefined;
+    const childKind = childConversation ? workerKind(childConversation) : null;
+    const workerMark = markForKind(childKind, "mj_SpawnOutcomeRow_kindMark");
+    const eyebrow = childKind === "claude" || childKind === "codex" ? `Subagent · ${childKind}` : "Subagent";
     return (
         <div className={`mj_SpawnOutcomeRow mj_SpawnOutcomeRow_${kind}`}>
-            <span className="mj_SpawnOutcomeStatus">{spawnOutcomeSnippet(event.payload)}</span>
+            <span className="mj_SpawnOutcomeRow_rail" aria-hidden />
+            {workerMark}
+            <div className="mj_SpawnOutcomeRow_text">
+                <span className="mj_SpawnOutcomeRow_eyebrow">{eyebrow}</span>
+                <span className="mj_SpawnOutcomeStatus">{spawnOutcomeSnippet(event.payload)}</span>
+            </div>
             {kind === "started" && roomId && (
                 <button
                     type="button"
-                    className="mj_SpawnOpenButton"
+                    className="mj_Btn mj_Btn_primary mj_SpawnOpenButton"
                     onClick={() => void client.selectConversation(roomId, { suppressNotFound: true })}
                 >
                     Open
@@ -3628,7 +4420,16 @@ function SpawnOutcomeRow({ client, event }: { client: MatronJournalClient; event
     );
 }
 
-function ToolOutput({ client, event }: { client: MatronJournalClient; event: JournalEvent }): React.ReactElement {
+function ToolOutput({
+    client,
+    event,
+    defaultOpen = false,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+    /** Deep detail inside the turn card opens the card expanded. */
+    defaultOpen?: boolean;
+}): React.ReactElement {
     const payload = event.payload;
     const command = asString(payload.command).trim() || asString(payload.tool_name).trim() || "Tool output";
     const exitCode = typeof payload.exit_code === "number" ? payload.exit_code : undefined;
@@ -3660,7 +4461,7 @@ function ToolOutput({ client, event }: { client: MatronJournalClient; event: Jou
     };
 
     return (
-        <details className={`mj_ToolCard ${failed ? "mj_ToolCard_failed" : ""}`}>
+        <details className={`mj_ToolCard ${failed ? "mj_ToolCard_failed" : ""}`} open={defaultOpen || undefined}>
             <summary title={command} aria-label={`${command}, ${failed ? `failed, ${outcome}` : outcome}`}>
                 <ChevronDownIcon className="mj_ToolCard_chevron" aria-hidden="true" />
                 {/* Mac: a green check or a red octagon says how it went; no exit badge, no time here. */}
@@ -3699,7 +4500,7 @@ function ToolOutput({ client, event }: { client: MatronJournalClient; event: Jou
     );
 }
 
-// Pick a file-tile glyph from the coarse MIME bucket. Generic sheet is the fallback.
+// §6: pick a file-tile glyph from the coarse MIME bucket. Generic sheet is the fallback.
 const FILE_KIND_ICON: Record<FileKind, (props: React.SVGProps<SVGSVGElement>) => React.ReactElement> = {
     image: ImageFileIcon,
     pdf: PdfFileIcon,
@@ -3763,11 +4564,12 @@ function AuthenticatedMedia({
         const figureStyle = { "--mj-image-frame-max-height": `${IMAGE_FRAME_MAX_HEIGHT_PX}px` } as React.CSSProperties;
         return (
             <figure className="mj_Image" style={figureStyle}>
-                <div className={`mj_ImageFrame${dims ? " mj_ImageFrame_sized" : ""}`} style={frameStyle}>
+                <div
+                    className={`mj_ImageFrame${dims ? " mj_ImageFrame_sized" : ""}`}
+                    style={frameStyle}
+                    data-dims={dims ? `${dims.width}x${dims.height}` : undefined}
+                >
                     {url ? (
-                        // onError collapses the reserved frame (figure → mj_Error) when the blob decodes
-                        // to a broken image, so a corrupt image doesn't hold the full reserved box around
-                        // a broken glyph — matching the pre-reserve fluid behaviour.
                         <img
                             src={url}
                             alt={caption || "Shared image"}
@@ -3870,7 +4672,7 @@ let _viewerExpDecodeWarned = false;
 // The bound is applied to the RAW viewerUrl string FIRST — before new URL() — so an
 // oversized durable event is rejected pre-parse (P8 Guard Boundary Inputs). Note the
 // residual: parseDiffPayload's own new URL(payload.viewer_url) at components.tsx:1305
-// (pre-existing code, unchanged here) already parses the full string before this
+// already parses the full string before this
 // runs, so this bound protects only the work THIS function adds, not that prior parse.
 const MAX_VIEWER_TOKEN_LEN = 16384;
 
@@ -4002,6 +4804,7 @@ export function DiffCard({ data }: { data: DiffCardData }): React.ReactElement {
                 {expandable && (
                     <button
                         type="button"
+                        className="mj_DiffCard_chevron"
                         aria-expanded={expanded}
                         aria-label={expanded ? "Collapse diff" : "Expand diff"}
                         onClick={toggleExpanded}
@@ -4098,6 +4901,19 @@ export function isQueuedReleaseReply(
     return legacyQueuePromptSeqs.has(targetSeq) && (choice === "interrupt" || /^cancel:\d+$/.test(choice));
 }
 
+// A permission-decision reply is a prompt_reply targeting a permission_request
+// card. The card already renders the decision inline (answered/allowed/denied
+// via answeredPromptReplies), so its reply must NOT also render as a standalone
+// chat bubble — that duplicate reads as if the operator typed "Allow"/"Deny"
+// into the thread. Identified by target-seq provenance, mirroring
+// isQueuedReleaseReply: prompt_reply carries no self-identifying kind, so a
+// permission reply is only distinguishable by the permission_request it targets.
+export function isPermissionDecisionReply(event: JournalEvent, permissionRequestSeqs: ReadonlySet<number>): boolean {
+    if (event.type !== "prompt_reply") return false;
+    const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
+    return permissionRequestSeqs.has(targetSeq);
+}
+
 /**
  * Tracker events that EventContent renders as null and so must not occupy a timeline row at all —
  * otherwise EventRow still wraps the null content in an avatar + sender bubble (a ghost message).
@@ -4113,20 +4929,45 @@ function isSuppressedTrackerEvent(event: JournalEvent): boolean {
     return false;
 }
 
-const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
+function PeerMessage({ event }: { event: JournalEvent }): React.ReactElement {
+    const rawFromKind = asString(event.payload.from_kind);
+    const fromKind = rawFromKind === "claude" || rawFromKind === "codex" ? rawFromKind : null;
+    const fromName = sanitizePeerText(event.payload.from_name, PEER_NAME_CAP) || "peer agent";
+    const body = sanitizePeerText(event.payload.body, PEER_BODY_CAP);
+    // Priority is a net-new, not-yet-produced payload key — read defensively so
+    // the louder variant lights up the moment a producer sets it, and stays dormant until then.
+    const priority = event.payload.priority === true || asString(event.payload.priority) === "true";
+    const mark = markForKind(fromKind, "mj_PeerMessage_mark");
 
-// A permission-decision reply is a prompt_reply targeting a permission_request
-// card. The card already renders the decision inline (answered/allowed/denied
-// via answeredPromptReplies), so its reply must NOT also render as a standalone
-// chat bubble — that duplicate reads as if the operator typed "Allow"/"Deny"
-// into the thread. Identified by target-seq provenance, mirroring
-// isQueuedReleaseReply: prompt_reply carries no self-identifying kind, so a
-// permission reply is only distinguishable by the permission_request it targets.
-export function isPermissionDecisionReply(event: JournalEvent, permissionRequestSeqs: ReadonlySet<number>): boolean {
-    if (event.type !== "prompt_reply") return false;
-    const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
-    return permissionRequestSeqs.has(targetSeq);
+    // Surface B (design 2026-08): a durable left-edged card — worker mark, session name, and a
+    // muted `peer` tag — reads as "another AI is speaking into your thread" without masquerading
+    // as your own (right, teal) or the primary agent (left, no card). The full header (name +
+    // priority badge) always renders; from_convo-aware continuation grouping is a follow-up (see
+    // journal.pcss note — the timeline's sender-only continuation predicate would misattribute).
+    return (
+        <div
+            className={`mj_PeerMessage${priority ? " mj_PeerMessage_priority" : ""}`}
+            aria-label={fromKind === null ? `Peer agent from ${fromName}` : `Peer message from ${fromName}`}
+        >
+            <div className="mj_PeerMessage_head">
+                {mark ?? <InactiveIcon className="mj_PeerMessage_mark mj_PeerMessage_mark_neutral" />}
+                <span className="mj_PeerMessage_name">
+                    <bdi>{fromName}</bdi>
+                </span>
+                {priority ? (
+                    <span className="mj_PeerMessage_priorityBadge">Priority</span>
+                ) : (
+                    <span className="mj_PeerMessage_tag">{fromKind === null ? "peer agent" : "peer"}</span>
+                )}
+            </div>
+            <div className="mj_PeerMessage_body">
+                <bdi>{body}</bdi>
+            </div>
+        </div>
+    );
 }
+
+const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
 
 export function EventContent({
     client,
@@ -4141,7 +4982,7 @@ export function EventContent({
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
     isReadOnly?: boolean;
-    resolvedAction?: (itemId: string) => "send" | "cancel" | undefined;
+    resolvedAction?: (itemId: string) => "send" | "cancel" | "expired" | undefined;
 }): React.ReactElement | null {
     const answer = answeredPromptReplies.get(`${event.convo_id}:${event.seq}`);
     switch (event.type) {
@@ -4169,6 +5010,8 @@ export function EventContent({
             return <MilestoneCard client={client} event={event} />;
         case "mission":
             return <MissionNotice client={client} event={event} />;
+        case "peer_message":
+            return <PeerMessage event={event} />;
         case "memory":
             return <MemoryNotice client={client} event={event} />;
         case "prompt":
@@ -4248,6 +5091,7 @@ export function EventContent({
                     image
                     caption={asString(event.payload.caption)}
                     dims={parseMediaDims(event.payload.dims)}
+                    contentType={asString(event.payload.content_type) || undefined}
                 />
             ) : (
                 <div className="mj_Muted">Image unavailable</div>
@@ -4301,6 +5145,7 @@ function EventRow({
     resolvedAction,
     continuation = false,
     lastInSection = true,
+    searchHighlighted = false,
     rowHandlers,
 }: {
     client: MatronJournalClient;
@@ -4308,18 +5153,28 @@ function EventRow({
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
     isReadOnly?: boolean;
-    resolvedAction: (itemId: string) => "send" | "cancel" | undefined;
+    resolvedAction: (itemId: string) => "send" | "cancel" | "expired" | undefined;
     continuation?: boolean;
     lastInSection?: boolean;
+    searchHighlighted?: boolean;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
-    const own = event.sender.startsWith("user:");
+    const peer = event.type === "peer_message";
+    const own = !peer && event.sender.startsWith("user:");
     const liRef = useRef<HTMLLIElement>(null);
     const handlers = rowHandlers(event, () => liRef.current);
     return (
         <li
             ref={liRef}
-            className={`mx_EventTile${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}`}
+            className={`mx_EventTile${peer ? " mx_EventTile_peer" : ""}${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}${searchHighlighted ? " mj_EventRow_searchHighlighted" : ""}`}
+            style={
+                peer
+                    ? {
+                          borderInlineStart: "3px solid var(--cpd-color-text-action-accent)",
+                          paddingInlineStart: "var(--cpd-space-3x)",
+                      }
+                    : undefined
+            }
             tabIndex={-1}
             aria-live="polite"
             aria-atomic="true"
@@ -4371,6 +5226,387 @@ function EventRow({
                     </div>
                 </div>
             </div>
+        </li>
+    );
+}
+
+/**
+ * The step an activity detail names (the bridge's ephemeral "tool" activity): a Bash command
+ * from Claude, or one of Codex's tool indicators. Drives the live line when no tool stream is
+ * open for the running step.
+ */
+export function activityStep(detail: string, id = "activity"): Step | null {
+    const text = detail.trim();
+    if (!text) return null;
+    const make = (tool: string, input: Step["input"]): Step => ({ kind: "step", id, tool, input, status: "running" });
+    let match: RegExpExecArray | null;
+    if ((match = /^🔧\s*`?([\s\S]*?)`?$/u.exec(text))) return make("Bash", { command: match[1] });
+    if ((match = /^📖\s*(.+)$/u.exec(text))) return make("Read", { path: match[1] });
+    if ((match = /^✏️?\s*(?:(?:Editing|Writing|Creating)\s+)?(.+)$/u.exec(text)))
+        return make("apply_patch", { path: match[1].split(", ")[0] });
+    if ((match = /^🔍\s*(.+)$/u.exec(text))) return make("Grep", { pattern: match[1] });
+    if ((match = /^🌐\s*(.+)$/u.exec(text)))
+        return make(/^https?:/.test(match[1]) ? "WebFetch" : "WebSearch", { url: match[1] });
+    if ((match = /^🔀\s*Subtask:\s*(.+)$/u.exec(text))) return make("Task", { description: match[1] });
+    if (/^\p{Extended_Pictographic}/u.test(text)) return make("tool", {});
+    return make("Bash", { command: text });
+}
+
+/** First sentence of the agent's narration, trimmed to 90 characters (GENERATIVE-SYSTEM §2). */
+export function narrationLiveLine(text: string): string {
+    const flat = text.replace(/\s+/g, " ").trim();
+    const sentence = /^(.+?[.!?…])(\s|$)/.exec(flat)?.[1] ?? flat;
+    return sentence.length > 90 ? `${sentence.slice(0, 89).trimEnd()}…` : sentence;
+}
+
+/** Is this prompt / permission request still waiting on the operator? */
+function isUnansweredAsk(
+    event: JournalEvent,
+    answeredPromptReplies: ReadonlyMap<string, { choice?: string }>,
+    spawnOutcomes: ReadonlyMap<string, EventPayload>,
+): boolean {
+    if (event.type !== "prompt" && event.type !== "permission_request") return false;
+    if (asString(event.payload.kind) === "queued_release") return false;
+    if (answeredPromptReplies.has(`${event.convo_id}:${event.seq}`)) return false;
+    if (asString(event.payload.kind) === "agent_spawn") {
+        const requestId = asString(event.payload.request_id);
+        return Boolean(requestId) && !spawnOutcomes.has(requestId);
+    }
+    return true;
+}
+
+/** A turn block that keeps the per-event row menu (Copy / View source) and search anchor. */
+function TurnBlock({
+    event,
+    rowHandlers,
+    highlighted,
+    live = true,
+    children,
+}: {
+    event: JournalEvent;
+    rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
+    highlighted: boolean;
+    /** Announce new content politely; off where the child is already an alert. */
+    live?: boolean;
+    children: React.ReactNode;
+}): React.ReactElement {
+    const ref = useRef<HTMLDivElement>(null);
+    const handlers = rowHandlers(event, () => ref.current);
+    return (
+        <div
+            ref={ref}
+            className={`mj_TurnBlock${highlighted ? " mj_EventRow_searchHighlighted" : ""}`}
+            data-event-id={event.seq}
+            aria-live={live ? "polite" : undefined}
+            aria-atomic={live ? "true" : undefined}
+            {...handlers}
+        >
+            {children}
+        </div>
+    );
+}
+
+export interface TurnLive {
+    mode: TurnCardMode;
+    running?: Step | null;
+    liveText?: string;
+    runningSince?: number;
+}
+
+const NO_HELPERS: readonly Conversation[] = [];
+
+/** A helper thread's newest turns (with steps) whose headlines open expanded. */
+export const EXPANDED_HELPER_TURNS = 3;
+
+/** Developer view: a helper's card in the flat timeline, after the event it started at. */
+function DevHelperRow({ client, child }: { client: MatronJournalClient; child: Conversation }): React.ReactElement {
+    return (
+        <li className="mx_EventTile mx_EventTile_lastInSection mj_HelperTile" data-layout="bubble" data-self="false">
+            <div className="mx_EventTile_line">
+                <div className="mx_MTextBody mx_EventTile_content">
+                    <SubagentCard
+                        child={child}
+                        kind={workerKind(child)}
+                        source={client}
+                        onOpen={(id) => void client.selectConversation(id, { suppressNotFound: true })}
+                        renderDetail={() => null}
+                        renderMarkdown={(text, key) => (
+                            <MarkdownBody
+                                text={text}
+                                label={key}
+                                onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                            />
+                        )}
+                        developerView
+                    />
+                </div>
+            </div>
+        </li>
+    );
+}
+
+/**
+ * Deep detail of a step the bridge reported as a text line (a subagent's Read / Grep / Bash
+ * indicator, a Codex generic item): its sentence, then — as for every deep detail in the v6
+ * card, the one place monospace appears — the command, path or pattern it ran on.
+ */
+function StepSentenceDetail({ step }: { step: Step }): React.ReactElement {
+    const target =
+        step.input.command ||
+        step.input.path ||
+        step.input.pattern ||
+        step.input.url ||
+        // A narration line that read as machine text (headlines.ts): its text, one click deep.
+        (step.id.startsWith("raw-") ? step.input.description : undefined);
+    return (
+        <div className="mj_TurnCard_detailText mj_StepDetail">
+            <p>{stepSentence(step)}</p>
+            {target && (
+                <div className="mj_StepDetail_target">
+                    <code>{target}</code>
+                </div>
+            )}
+        </div>
+    );
+}
+
+/**
+ * One agent tile per operator turn (Show the work OFF): the turn card when the turn
+ * has at least one step, then its break-throughs in the order they happened, then a
+ * turn-ending error, then the answer prose.
+ */
+function AgentTurnRow({
+    client,
+    turn,
+    live,
+    answeredPromptReplies,
+    spawnOutcomes,
+    isReadOnly,
+    resolvedAction,
+    highlightedSeq,
+    rowHandlers,
+    helpers = NO_HELPERS,
+    helperThread = null,
+    expandHeadlines = false,
+}: {
+    client: MatronJournalClient;
+    turn: Turn;
+    live: TurnLive;
+    /**
+     * Set inside a helper's own thread (a Claude subagent or a Codex run): the steps read as a
+     * list of headlines instead of one collapsed turn card. The value is the helper's worker.
+     */
+    helperThread?: { worker: "claude" | "codex" | null } | null;
+    /** In a helper thread: open the headlines with the work in view (the newest turns). */
+    expandHeadlines?: boolean;
+    /** Child conversations (subagents, Codex runs) this turn started — one card each. */
+    helpers?: readonly Conversation[];
+    answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
+    spawnOutcomes: ReadonlyMap<string, EventPayload>;
+    isReadOnly: boolean;
+    resolvedAction: (itemId: string) => "send" | "cancel" | "expired" | undefined;
+    highlightedSeq?: number;
+    rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
+}): React.ReactElement {
+    const first = turn.events[0];
+    const openHelper = useCallback(
+        (id: string) => void client.selectConversation(id, { suppressNotFound: true }),
+        [client],
+    );
+    const hasCard = stepsOf(turn.items).length > 0 || Boolean(live.running);
+    // A reply the prompt card already shows (a picked option) is not repeated; a free-text
+    // reply the card cannot show stays visible, in order among the break-throughs.
+    const shownReplies = turn.replies.filter(
+        (event) => !asString(event.payload.choice) && !asString(event.payload.label) && asString(event.payload.text),
+    );
+    const breaks = [...turn.breaks, ...shownReplies].sort((left, right) => left.seq - right.seq);
+    const renderStepDetail = useCallback(
+        (step: Step): React.ReactNode => {
+            const source = step.source as JournalEvent | undefined;
+            // A narration line the headlines took for a command (headlines.ts): its own text.
+            if (!source) return step.id.startsWith("raw-") ? <StepSentenceDetail step={step} /> : null;
+            if (source.type === "tool_output") return <ToolOutput client={client} event={source} defaultOpen />;
+            if (source.type === "diff") return <DiffCard data={parseDiffPayload(source.payload)} />;
+            return <StepSentenceDetail step={step} />;
+        },
+        [client],
+    );
+    const renderMarkdown = useCallback(
+        (text: string, key: string) => (
+            <MarkdownBody text={text} label={key} onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)} />
+        ),
+        [client],
+    );
+    const renderDetail = useCallback(
+        (step: Step): React.ReactNode => {
+            // A helper step opens onto its helper: the same body as the helper's own card.
+            if (step.tool === "Task" || step.tool === "Agent") {
+                const helper = helperForStep(step, helpers);
+                if (helper) {
+                    return (
+                        <SubagentCard
+                            bodyOnly
+                            child={helper}
+                            kind={workerKind(helper)}
+                            source={client}
+                            onOpen={openHelper}
+                            renderDetail={renderStepDetail}
+                            renderMarkdown={renderMarkdown}
+                            developerView={false}
+                        />
+                    );
+                }
+            }
+            return renderStepDetail(step);
+        },
+        [client, helpers, openHelper, renderStepDetail, renderMarkdown],
+    );
+    const block = (event: JournalEvent): React.ReactElement => (
+        <TurnBlock key={event.seq} event={event} rowHandlers={rowHandlers} highlighted={highlightedSeq === event.seq}>
+            <EventContent
+                client={client}
+                event={event}
+                answeredPromptReplies={answeredPromptReplies}
+                spawnOutcomes={spawnOutcomes}
+                isReadOnly={isReadOnly}
+                resolvedAction={resolvedAction}
+            />
+        </TurnBlock>
+    );
+    // A helper's own thread: a Claude helper publishes each call when it starts, so while it runs
+    // a trailing step (no answer after it) is the one running now. Codex publishes on completion.
+    const headlineRunning = useMemo((): Step | null => {
+        if (!helperThread || live.mode !== "running") return null;
+        if (live.running) return live.running;
+        const last = turn.items.at(-1);
+        if (helperThread.worker === "codex" || turn.answer.length || last?.kind !== "step") return null;
+        return { ...last, status: "running" };
+    }, [helperThread, live.mode, live.running, turn.items, turn.answer.length]);
+    const headlineItems = useMemo(
+        () =>
+            headlineRunning && !live.running && turn.items.at(-1)?.kind === "step"
+                ? turn.items.slice(0, -1)
+                : turn.items,
+        [headlineRunning, live.running, turn.items],
+    );
+    return (
+        <li
+            className={`mx_EventTile mx_EventTile_lastInSection mj_AgentTurn${helperThread ? " mj_AgentTurn_helper" : ""}${
+                highlightedSeq !== undefined &&
+                turn.events.some((event) => event.seq === highlightedSeq) &&
+                ![...turn.breaks, ...turn.answer, ...turn.errors].some((event) => event.seq === highlightedSeq)
+                    ? " mj_EventRow_searchHighlighted"
+                    : ""
+            }`}
+            tabIndex={-1}
+            data-layout="bubble"
+            data-self="false"
+            data-turn={turn.key}
+        >
+            {first && (
+                <span className="mx_DisambiguatedProfile">
+                    <MsgAvatar />
+                    <span className="mx_DisambiguatedProfile_displayName">{displaySender(first.sender)}</span>
+                    <a href={`#event-${first.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
+                        <time className="mx_MessageTimestamp" dateTime={new Date(first.ts).toISOString()}>
+                            {formatTime(first.ts)}
+                        </time>
+                    </a>
+                </span>
+            )}
+            <div className="mx_EventTile_line">
+                <div className="mx_MTextBody mx_EventTile_content">
+                    <div className="markdown-body mj_AgentTurn_blocks">
+                        {helperThread && (hasCard || live.mode === "running") ? (
+                            <HeadlineList
+                                items={headlineItems}
+                                running={headlineRunning}
+                                active={live.mode === "running"}
+                                liveText={live.liveText}
+                                runningSince={live.runningSince}
+                                renderDetail={renderDetail}
+                                expanded={expandHeadlines}
+                                persistKey={first?.convo_id}
+                                turnKey={turn.key}
+                            />
+                        ) : (
+                            hasCard && (
+                                <TurnCard
+                                    turnKey={turn.key}
+                                    items={turn.items}
+                                    mode={live.mode}
+                                    running={live.running}
+                                    liveText={live.liveText}
+                                    runningSince={live.runningSince}
+                                    durationMs={turn.endTs - turn.startTs}
+                                    renderDetail={renderDetail}
+                                    renderNarration={(text) => (
+                                        <MarkdownBody
+                                            text={text}
+                                            label={`narration-${turn.key}`}
+                                            onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                                        />
+                                    )}
+                                />
+                            )
+                        )}
+                        {helpers.map((helper) => (
+                            <SubagentCard
+                                key={helper.id}
+                                child={helper}
+                                kind={workerKind(helper)}
+                                source={client}
+                                onOpen={openHelper}
+                                renderDetail={renderStepDetail}
+                                renderMarkdown={renderMarkdown}
+                                developerView={false}
+                            />
+                        ))}
+                        {breaks.map(block)}
+                        {turn.errors.map((event) => (
+                            <TurnBlock
+                                key={event.seq}
+                                event={event}
+                                rowHandlers={rowHandlers}
+                                highlighted={highlightedSeq === event.seq}
+                                live={false}
+                            >
+                                <TurnErrorRow
+                                    text={asString(event.payload.body)
+                                        .trim()
+                                        .replace(/^⚠️?\s*/u, "")
+                                        .replace(/^\[(.*)\]$/, "$1")}
+                                />
+                            </TurnBlock>
+                        ))}
+                        {turn.answer.map(block)}
+                    </div>
+                </div>
+            </div>
+        </li>
+    );
+}
+
+/** A bridge system notice (`.mj_SystemNotice`): one tertiary meta line, no avatar. */
+function SystemNoticeRow({
+    event,
+    highlighted,
+    text,
+}: {
+    event: JournalEvent;
+    highlighted: boolean;
+    /** Display copy override (e.g. "Restarting with browser tools…"). */
+    text?: string;
+}): React.ReactElement {
+    const body = asString(event.payload.body);
+    return (
+        <li
+            className={`mj_SystemNotice${highlighted ? " mj_EventRow_searchHighlighted" : ""}`}
+            data-event-id={event.seq}
+            aria-live="polite"
+            title={body}
+        >
+            {text ?? noticeText(body)}
         </li>
     );
 }
@@ -4515,6 +5751,22 @@ function PendingAttachment({
     );
 }
 
+/** The operator message nearest the top of the scroll pane, and its offset from the top. */
+function operatorAnchor(node: HTMLElement | null): { seq: string; offset: number } | undefined {
+    if (!node) return undefined;
+    const paneTop = node.getBoundingClientRect().top;
+    let best: { seq: string; offset: number } | undefined;
+    for (const row of node.querySelectorAll<HTMLElement>('li[data-self="true"][data-event-id]')) {
+        const offset = row.getBoundingClientRect().top - paneTop;
+        const seq = row.dataset.eventId;
+        if (!seq) continue;
+        // The first row at or below the top edge wins; otherwise the last one above it.
+        if (offset >= 0) return { seq, offset };
+        best = { seq, offset };
+    }
+    return best;
+}
+
 function Timeline({
     client,
     state,
@@ -4526,9 +5778,25 @@ function Timeline({
 }): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
     const pendingScrollFrame = useRef<number | undefined>(undefined);
+    const searchHighlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const selectedConversationId = useRef(state.selectedConversationId);
     const [isFollowingTail, setFollow] = useState(true);
+    const [highlightedSearchTarget, setHighlightedSearchTarget] = useState<{
+        conversationId?: string;
+        seq: number;
+    }>();
     const [sourceEvent, setSourceEvent] = useState<JournalEvent>();
+    const [showTheWork] = useShowTheWork();
+    const turnsRef = useRef<Turn[]>([]);
+    // Show the work toggled: re-render instantly, keeping the operator message nearest the top
+    // where it was (GENERATIVE-SYSTEM §7). Captured during render, while the DOM still shows the
+    // previous rendering; restored in the layout effect below.
+    const shownWorkRef = useRef(showTheWork);
+    const toggleAnchorRef = useRef<{ seq: string; offset: number } | undefined>(undefined);
+    if (shownWorkRef.current !== showTheWork) {
+        shownWorkRef.current = showTheWork;
+        toggleAnchorRef.current = operatorAnchor(scrollRef.current);
+    }
     const menu = useRowContextMenu<JournalEvent>();
     const sourceOpenerRef = useRef<HTMLElement | null>(null);
     // Media viewer: the corpus is every image/file event in this conversation;
@@ -4559,6 +5827,7 @@ function Timeline({
         | undefined
     >(undefined);
     const historyScrollRestored = useRef(false);
+    const wasViewingHistoryWindow = useRef(state.viewingHistoryWindow);
     const { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs } = useMemo(() => {
         const queuedReleasePromptSeqs = new Set<number>();
         const legacyQueuePromptSeqs = new Set<number>();
@@ -4580,8 +5849,8 @@ function Timeline({
                 (event) =>
                     !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
                     !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs) &&
-                    !isSuppressedTrackerEvent(event) &&
-                    !isPermissionDecisionReply(event, permissionRequestSeqs),
+                    !isPermissionDecisionReply(event, permissionRequestSeqs) &&
+                    !isSuppressedTrackerEvent(event),
             ),
         [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs],
     );
@@ -4589,13 +5858,15 @@ function Timeline({
         () =>
             [
                 ...visibleEvents.map((event) => ({ kind: "event" as const, timestamp: event.ts, event })),
-                ...state.pendingMessages.map((message) => ({
-                    kind: "pending" as const,
-                    timestamp: message.createdAt,
-                    message,
-                })),
+                ...(state.viewingHistoryWindow
+                    ? []
+                    : state.pendingMessages.map((message) => ({
+                          kind: "pending" as const,
+                          timestamp: message.createdAt,
+                          message,
+                      }))),
             ].sort((left, right) => left.timestamp - right.timestamp),
-        [visibleEvents, state.pendingMessages],
+        [visibleEvents, state.pendingMessages, state.viewingHistoryWindow],
     );
     const answeredPromptReplies = useMemo(() => {
         const replies = new Map<string, { choice?: string }>();
@@ -4625,7 +5896,7 @@ function Timeline({
         return outcomes;
     }, [state.events]);
     const releasedActions = useMemo(() => {
-        const actions = new Map<string, "send" | "cancel">();
+        const actions = new Map<string, "send" | "cancel" | "expired">();
         for (const event of state.events) {
             if (
                 event.type !== "prompt_reply" ||
@@ -4634,16 +5905,28 @@ function Timeline({
             )
                 continue;
             const action = asString(event.payload.action);
-            if (action !== "send" && action !== "cancel") continue;
+            if (action !== "send" && action !== "cancel" && action !== "expired") continue;
             for (const releasedId of event.payload.released) {
                 const itemId = asString(releasedId);
-                if (itemId) actions.set(itemId, action);
+                if (!itemId) continue;
+                // Terminal precedence: a real resolution (send/cancel) is FINAL
+                // and outranks a later — or earlier — `expired` release for the
+                // same item. This neutralizes the bridge's
+                // narrow disk-fail-then-restart re-expiry: even if the bridge
+                // re-emits `expired` for a release it already committed as
+                // sent/cancelled, the card keeps showing the true result.
+                // Precedence: send = cancel > expired. Order-independent.
+                if (action === "expired") {
+                    const prev = actions.get(itemId);
+                    if (prev === "send" || prev === "cancel") continue; // never downgrade
+                }
+                actions.set(itemId, action);
             }
         }
         return actions;
     }, [state.events]);
     const resolvedAction = useCallback(
-        (itemId: string): "send" | "cancel" | undefined => releasedActions.get(itemId),
+        (itemId: string): "send" | "cancel" | "expired" | undefined => releasedActions.get(itemId),
         [releasedActions],
     );
     const scrollToBottom = useCallback((): void => {
@@ -4663,7 +5946,19 @@ function Timeline({
         pendingScrollFrame.current = requestAnimationFrame(() => {
             pendingScrollFrame.current = undefined;
             if (selectedConversationId.current !== queuedConversationId) return;
-            setFollow(isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight));
+            const nearBottom = isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight);
+            // While a historical window is open we are browsing, not tailing live: keep follow off
+            // so the layout effect never snaps to the bottom mid-forward-page. Scrolling down to
+            // the loaded newest edge pages FORWARD (loads newer) instead of demanding "Jump to
+            // latest". The client guards on loadingHistory + hasMoreNewer, so a burst of scroll
+            // frames self-debounces and stops at the true tail (which collapses the window back to
+            // live, after which normal follow resumes).
+            if (state.viewingHistoryWindow) {
+                setFollow(false);
+                if (nearBottom && !state.loadingHistory) void client.loadNewerHistory();
+            } else {
+                setFollow(nearBottom);
+            }
         });
     };
 
@@ -4671,6 +5966,13 @@ function Timeline({
         setFollow(true);
         return cancelPendingScrollFrame;
     }, [state.selectedConversationId, cancelPendingScrollFrame]);
+
+    useEffect(
+        () => () => {
+            if (searchHighlightTimer.current !== undefined) clearTimeout(searchHighlightTimer.current);
+        },
+        [],
+    );
 
     useEffect(() => {
         cancelPendingScrollFrame();
@@ -4708,16 +6010,80 @@ function Timeline({
             return;
         }
 
-        if (isFollowingTail) node.scrollTop = node.scrollHeight;
+        // never snap to the bottom while a historical window is open. Forward-paging
+        // appends newer rows below the viewport; the browser keeps scrollTop stable, preserving
+        // the reader's position. Snapping here would jump past the freshly fetched page — the
+        // exact reading-position loss this feature exists to avoid. Once the window collapses at
+        // the true tail, normal live-tail following resumes.
+        if (isFollowingTail && !state.viewingHistoryWindow) node.scrollTop = node.scrollHeight;
     }, [
         state.selectedConversationId,
+        state.viewingHistoryWindow,
         visibleEvents,
         state.pendingMessages.length,
         state.textStreams,
         state.toolStreams,
         state.loadingHistory,
         isFollowingTail,
+        showTheWork,
     ]);
+
+    useLayoutEffect(() => {
+        const anchor = toggleAnchorRef.current;
+        toggleAnchorRef.current = undefined;
+        const node = scrollRef.current;
+        if (!anchor || !node || isFollowingTail) return;
+        const row = node.querySelector<HTMLElement>(`[data-event-id="${anchor.seq}"]`);
+        if (!row) return;
+        node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top - anchor.offset;
+    }, [showTheWork]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
+        const wasOpen = wasViewingHistoryWindow.current;
+        wasViewingHistoryWindow.current = state.viewingHistoryWindow;
+        // forward-paging just collapsed the historical window to live (true → false). While
+        // the window was open onScroll forced follow off, so it will not resume on its own. If the
+        // reader is at the loaded bottom edge (the scroll-to-newest path that reached the tail),
+        // re-arm tail-following and snap to the newest so live messages stay visible. If they are
+        // not at the edge (collapsed via the Load-newer button mid-scroll) leave their position —
+        // Jump-to-bottom surfaces instead.
+        if (!wasOpen || state.viewingHistoryWindow) return;
+        const node = scrollRef.current;
+        if (node && isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight)) {
+            setFollow(true);
+            scrollToBottom();
+        }
+    }, [state.viewingHistoryWindow, scrollToBottom]);
+
+    useLayoutEffect(() => {
+        const targetSeq = state.pendingScrollSeq;
+        if (targetSeq === undefined) return;
+        let target = [...(scrollRef.current?.querySelectorAll<HTMLElement>("[data-event-id]") ?? [])].find(
+            (row) => row.dataset.eventId === String(targetSeq),
+        );
+        // Show the work OFF: steps and narration live inside a turn's card, so a hit on one of
+        // them lands on its turn tile.
+        if (!target) {
+            const turn = turnsRef.current.find((candidate) =>
+                candidate.events.some((event) => event.seq === targetSeq),
+            );
+            if (turn) {
+                target = [...(scrollRef.current?.querySelectorAll<HTMLElement>("[data-turn]") ?? [])].find(
+                    (row) => row.tagName === "LI" && row.dataset.turn === turn.key,
+                );
+            }
+        }
+        if (target) {
+            target.scrollIntoView({ block: "nearest" });
+            setHighlightedSearchTarget({ conversationId: state.selectedConversationId, seq: targetSeq });
+            if (searchHighlightTimer.current !== undefined) clearTimeout(searchHighlightTimer.current);
+            searchHighlightTimer.current = setTimeout(() => {
+                setHighlightedSearchTarget(undefined);
+                searchHighlightTimer.current = undefined;
+            }, 2_000);
+        }
+        client.clearPendingScrollSeq(targetSeq);
+    }, [client, state.pendingScrollSeq, state.selectedConversationId]);
 
     const loadEarlierMessages = (): void => {
         const node = scrollRef.current;
@@ -4732,13 +6098,244 @@ function Timeline({
         void client.loadOlderHistory();
     };
 
-    // The activity indicator ('Thinking' / 'Running …') and the fire-and-forget tool-call cards
-    // both ride ephemeral frames whose turn-end 'idle'/'end' frame is never replayed
-    // (lib/journal-publisher.js publishActivity), so a dropped final frame would otherwise strand
-    // a stale "Thinking" or a dangling 'running' tool card until the next turn. Gate both
-    // on the durable, replayed run-state: only render while the session is actually running; the
-    // model reconcile (refreshConversations) prunes any tool card that lingers in the map.
+    // Gate the fire-and-forget ephemerals on the durable, replayed run-state: neither the turn-end
+    // tool_stream 'end' frame nor the activity 'idle' frame (bridge lib/journal-publisher.js
+    // publishActivity) is ever replayed, so a dropped one would otherwise strand a dangling
+    // 'running' tool card or a stale "Thinking" until the next turn. Only render live tool streams
+    // and the activity indicator while the session is actually running; the model reconcile
+    // (refreshConversations) prunes lingering tool streams (not activity — see there).
     const sessionRunning = client.selectedConversation()?.session_state === "running";
+    // Inside a helper's own thread the turn's steps read as headlines (AgentTurnRow).
+    const selectedForHeadlines = client.selectedConversation();
+    const helperWorker =
+        selectedForHeadlines && isSubChat(selectedForHeadlines) ? workerKind(selectedForHeadlines) : undefined;
+    const helperThread = useMemo(() => (helperWorker === undefined ? null : { worker: helperWorker }), [helperWorker]);
+    const sessionState = client.selectedConversation()?.session_state;
+
+    // ---- v6: "Show the work" OFF — one agent tile per operator turn with an Under-the-hood card.
+    const turns = useMemo(() => (showTheWork ? [] : assembleTurns(visibleEvents)), [showTheWork, visibleEvents]);
+    turnsRef.current = turns;
+    // Helpers (subagents, Codex runs) this conversation started: one card each, anchored to the
+    // turn — or, with Developer view on, the event — they were started in.
+    const helperChildren = useMemo(
+        () => childrenOf(state.conversations, state.selectedConversationId),
+        [state.conversations, state.selectedConversationId],
+    );
+    const turnHelpers = useMemo(
+        () =>
+            showTheWork
+                ? new Map<string, Conversation[]>()
+                : helpersByTurn(turns, helperChildren, state.hasOlderHistory),
+        [showTheWork, turns, helperChildren, state.hasOlderHistory],
+    );
+    const eventHelpers = useMemo(() => {
+        const map = new Map<number, Conversation[]>();
+        if (!showTheWork || visibleEvents.length === 0) return map;
+        for (const child of helperChildren) {
+            let anchor: JournalEvent | undefined;
+            for (const event of visibleEvents) if (event.ts <= child.created_at) anchor = event;
+            if (!anchor) {
+                if (state.hasOlderHistory) continue;
+                anchor = visibleEvents[0];
+            }
+            map.set(anchor.seq, [...(map.get(anchor.seq) ?? []), child]);
+        }
+        return map;
+    }, [showTheWork, visibleEvents, helperChildren, state.hasOlderHistory]);
+    const browserNoticeSeqs = useMemo(
+        () => (showTheWork ? new Set<number>() : browserRestartNoticeSeqs(visibleEvents)),
+        [showTheWork, visibleEvents],
+    );
+    const lastTurn = turns[turns.length - 1];
+    // Inside a helper's thread the newest turns open with their work in view; older ones keep
+    // the compact list, which bounds the DOM on a long thread (EXPANDED_HELPER_TURNS).
+    const expandedHelperTurns = useMemo(
+        () =>
+            new Set(
+                helperThread
+                    ? turns
+                          .filter((turn) => stepsOf(turn.items).length > 0)
+                          .slice(-EXPANDED_HELPER_TURNS)
+                          .map((turn) => turn.key)
+                    : [],
+            ),
+        [helperThread, turns],
+    );
+    // First-seen time of each live step, so the elapsed counter and slow state survive re-renders.
+    const liveSeenRef = useRef(new Map<string, number>());
+    const liveStreams = useMemo(
+        () => (sessionRunning && !state.viewingHistoryWindow ? Object.values(state.toolStreams) : []),
+        [sessionRunning, state.viewingHistoryWindow, state.toolStreams],
+    );
+    const activityDetail =
+        sessionRunning && !state.viewingHistoryWindow && state.activity?.state === "tool"
+            ? state.activity.detail || ""
+            : "";
+    // The running step, stable across stream chunks (keyed on the stream, not its content).
+    const lastStream = liveStreams.at(-1);
+    const streamKey = lastStream
+        ? `${lastStream.messageRef}\u0000${lastStream.command ?? ""}\u0000${lastStream.tool ?? ""}`
+        : "";
+    const streamStep = useMemo((): Step | null => {
+        if (!streamKey) return null;
+        const [messageRef, command, tool] = streamKey.split("\u0000");
+        return {
+            kind: "step",
+            id: `live-${messageRef}`,
+            tool: tool && tool !== "Bash" && !command ? tool : "Bash",
+            input: { command: command || tool },
+            status: "running",
+        };
+    }, [streamKey]);
+    const activityRunning = useMemo(
+        () => (activityDetail ? activityStep(activityDetail, "live-activity") : null),
+        [activityDetail],
+    );
+    const lastTurnLive = useMemo((): TurnLive => {
+        if (!lastTurn) return { mode: "done" };
+        const lastStep = stepsOf(lastTurn.items).at(-1);
+        const waiting =
+            (sessionState === "running" || sessionState === "waiting") &&
+            lastTurn.breaks.some((event) => isUnansweredAsk(event, answeredPromptReplies, spawnOutcomes));
+        if (waiting) return { mode: "waiting" };
+        if (!sessionRunning || state.viewingHistoryWindow)
+            return { mode: lastStep?.status === "stopped" ? "stopped" : "done" };
+        const seen = liveSeenRef.current;
+        // Only the step running NOW keeps a clock: a repeat of the same command later starts fresh.
+        const since = (key: string): number => {
+            for (const known of [...seen.keys()]) if (known !== key) seen.delete(known);
+            const known = seen.get(key);
+            if (known !== undefined) return known;
+            const now = Date.now();
+            seen.set(key, now);
+            return now;
+        };
+        if (streamStep) {
+            return { mode: "running", running: streamStep, runningSince: since(`stream:${streamStep.id}`) };
+        }
+        if (activityRunning) {
+            return { mode: "running", running: activityRunning, runningSince: since(`activity:${activityDetail}`) };
+        }
+        seen.clear();
+        const thinking =
+            state.activity?.state === "thinking" && state.activity.detail
+                ? narrationLiveLine(state.activity.detail)
+                : undefined;
+        return { mode: "running", liveText: thinking ?? "Thinking…" };
+    }, [
+        lastTurn,
+        sessionState,
+        sessionRunning,
+        state.viewingHistoryWindow,
+        state.activity,
+        streamStep,
+        activityRunning,
+        activityDetail,
+        answeredPromptReplies,
+        spawnOutcomes,
+    ]);
+    const rows = useMemo(
+        () => threadRows(turns, { liveLastTurn: lastTurnLive.mode === "running" && Boolean(lastTurnLive.running) }),
+        [turns, lastTurnLive],
+    );
+    // Forget first-seen stamps once nothing is running, so a later step starts its own clock.
+    useEffect(() => {
+        if (!sessionRunning) liveSeenRef.current.clear();
+    }, [sessionRunning]);
+    // With Show the work OFF the card's live line replaces the typing indicator — except while
+    // the turn has no card yet (the agent is thinking before its first step).
+    const lastTurnHasCard = Boolean(lastTurn) && (stepsOf(lastTurn.items).length > 0 || Boolean(lastTurnLive.running));
+    const showActivityIndicator = showTheWork || !lastTurnHasCard;
+    const highlightedSeq =
+        highlightedSearchTarget?.conversationId === state.selectedConversationId
+            ? highlightedSearchTarget?.seq
+            : undefined;
+
+    const pendingTimeline = useMemo(() => timeline.filter((item) => item.kind === "pending"), [timeline]);
+    const lastRowTs = useMemo(() => {
+        const last = rows.at(-1);
+        if (!last) return undefined;
+        return last.kind === "turn" ? (last.turn.events.at(-1)?.ts ?? last.turn.endTs) : last.event.ts;
+    }, [rows]);
+
+    const renderOffRow = (row: ThreadRow, index: number): React.ReactElement => {
+        const previous = rows[index - 1];
+        const rowTs = (candidate: ThreadRow | undefined): number | undefined =>
+            candidate === undefined
+                ? undefined
+                : candidate.kind === "turn"
+                  ? (candidate.turn.events[0]?.ts ?? candidate.turn.startTs)
+                  : candidate.event.ts;
+        const ts = rowTs(row)!;
+        const previousTs = rowTs(previous);
+        const divider =
+            previousTs === undefined || !sameCalendarDay(ts, previousTs) ? (
+                <li className="mj_DateDivider" role="separator">
+                    <span className="mj_DateDivider_rule" aria-hidden="true" />
+                    <span className="mj_DateDivider_label">{formatDayDivider(ts)}</span>
+                    <span className="mj_DateDivider_rule" aria-hidden="true" />
+                </li>
+            ) : null;
+        if (row.kind === "turn") {
+            return (
+                <React.Fragment key={`t-${row.turn.key}`}>
+                    {divider}
+                    <AgentTurnRow
+                        client={client}
+                        turn={row.turn}
+                        live={
+                            row.turn === lastTurn
+                                ? lastTurnLive
+                                : { mode: stepsOf(row.turn.items).at(-1)?.status === "stopped" ? "stopped" : "done" }
+                        }
+                        answeredPromptReplies={answeredPromptReplies}
+                        spawnOutcomes={spawnOutcomes}
+                        isReadOnly={isReadOnly || state.viewingHistoryWindow}
+                        resolvedAction={resolvedAction}
+                        highlightedSeq={highlightedSeq}
+                        rowHandlers={menu.rowHandlers}
+                        helpers={turnHelpers.get(row.turn.key)}
+                        helperThread={helperThread}
+                        expandHeadlines={expandedHelperTurns.has(row.turn.key)}
+                    />
+                </React.Fragment>
+            );
+        }
+        if (row.kind === "notice") {
+            return (
+                <React.Fragment key={`n-${row.event.seq}`}>
+                    {divider}
+                    <SystemNoticeRow
+                        event={row.event}
+                        highlighted={highlightedSeq === row.event.seq}
+                        text={browserNoticeSeqs.has(row.event.seq) ? "Restarting with browser tools…" : undefined}
+                    />
+                </React.Fragment>
+            );
+        }
+        const next = rows[index + 1];
+        const sameSenderAs = (candidate: ThreadRow | undefined): boolean =>
+            candidate !== undefined &&
+            (candidate.kind === "operator" || candidate.kind === "peer") &&
+            candidate.event.sender === row.event.sender;
+        return (
+            <React.Fragment key={`e-${row.event.seq}`}>
+                {divider}
+                <EventRow
+                    client={client}
+                    event={row.event}
+                    answeredPromptReplies={answeredPromptReplies}
+                    spawnOutcomes={spawnOutcomes}
+                    isReadOnly={isReadOnly || state.viewingHistoryWindow}
+                    resolvedAction={resolvedAction}
+                    continuation={sameSenderAs(previous) && !divider}
+                    lastInSection={!sameSenderAs(next)}
+                    searchHighlighted={highlightedSeq === row.event.seq}
+                    rowHandlers={menu.rowHandlers}
+                />
+            </React.Fragment>
+        );
+    };
 
     const timelineMain = (
         <main className="mx_RoomView_timeline" data-testid="timeline">
@@ -4756,12 +6353,17 @@ function Timeline({
                                 </button>
                             </li>
                         )}
-                        {timeline.map((item, index) => {
-                            const previous = timeline[index - 1];
+                        {!showTheWork && rows.map(renderOffRow)}
+                        {(showTheWork ? timeline : pendingTimeline).map((item, index, list) => {
+                            const previous = list[index - 1];
+                            // With Show the work OFF the event rows render above; the first pending
+                            // row compares against the last of them.
+                            const previousTimestamp = previous?.timestamp ?? (showTheWork ? undefined : lastRowTs);
                             // A day divider precedes the first row of each new calendar day (§ upload-first
                             // ref): a centred dated label flanked by hairline rules.
                             const divider =
-                                !previous || !sameCalendarDay(item.timestamp, previous.timestamp) ? (
+                                previousTimestamp === undefined ||
+                                !sameCalendarDay(item.timestamp, previousTimestamp) ? (
                                     <li className="mj_DateDivider" role="separator">
                                         <span className="mj_DateDivider_rule" aria-hidden="true" />
                                         <span className="mj_DateDivider_label">{formatDayDivider(item.timestamp)}</span>
@@ -4769,7 +6371,7 @@ function Timeline({
                                     </li>
                                 ) : null;
                             if (item.kind === "event") {
-                                const next = timeline[index + 1];
+                                const next = list[index + 1];
                                 return (
                                     <React.Fragment key={`e-${item.event.seq}`}>
                                         {divider}
@@ -4778,7 +6380,7 @@ function Timeline({
                                             event={item.event}
                                             answeredPromptReplies={answeredPromptReplies}
                                             spawnOutcomes={spawnOutcomes}
-                                            isReadOnly={isReadOnly}
+                                            isReadOnly={isReadOnly || state.viewingHistoryWindow}
                                             resolvedAction={resolvedAction}
                                             continuation={
                                                 previous?.kind === "event" &&
@@ -4788,8 +6390,16 @@ function Timeline({
                                             lastInSection={
                                                 next?.kind !== "event" || next.event.sender !== item.event.sender
                                             }
+                                            searchHighlighted={
+                                                highlightedSearchTarget?.conversationId ===
+                                                    state.selectedConversationId &&
+                                                highlightedSearchTarget?.seq === item.event.seq
+                                            }
                                             rowHandlers={menu.rowHandlers}
                                         />
+                                        {eventHelpers.get(item.event.seq)?.map((child) => (
+                                            <DevHelperRow key={`h-${child.id}`} client={client} child={child} />
+                                        ))}
                                     </React.Fragment>
                                 );
                             }
@@ -4818,7 +6428,7 @@ function Timeline({
                                 </React.Fragment>
                             );
                         })}
-                        {Object.values(state.textStreams).map((text, index) => (
+                        {Object.values(state.viewingHistoryWindow ? {} : state.textStreams).map((text, index) => (
                             <li
                                 className="mx_EventTile mx_EventTile_lastInSection"
                                 key={`text-stream-${index}`}
@@ -4840,17 +6450,33 @@ function Timeline({
                             </li>
                         ))}
                         {sessionRunning &&
-                            Object.values(state.toolStreams).map((stream) => (
+                            showTheWork &&
+                            Object.values(state.viewingHistoryWindow ? {} : state.toolStreams).map((stream) => (
                                 <ToolStream key={stream.messageRef} stream={stream} />
                             ))}
-                        {state.activity && state.activity.state !== "idle" && sessionRunning && (
-                            <li className="mx_WhoIsTypingTile mj_Activity">
-                                <span />
-                                <span />
-                                <span />
-                                {state.activity.state === "thinking"
-                                    ? "Thinking"
-                                    : `Running ${state.activity.detail || "a tool"}`}
+                        {!state.viewingHistoryWindow &&
+                            showActivityIndicator &&
+                            state.activity &&
+                            state.activity.state !== "idle" &&
+                            sessionRunning && (
+                                <li className="mx_WhoIsTypingTile mj_Activity">
+                                    <span />
+                                    <span />
+                                    <span />
+                                    {state.activity.state === "thinking"
+                                        ? "Thinking"
+                                        : `Running ${state.activity.detail || "a tool"}`}
+                                </li>
+                            )}
+                        {state.viewingHistoryWindow && (
+                            <li className="mj_HistoryRow">
+                                <button
+                                    className="mj_LoadHistory"
+                                    onClick={() => void client.loadNewerHistory()}
+                                    disabled={state.loadingHistory}
+                                >
+                                    {state.loadingHistory ? "Loading…" : "Load newer messages"}
+                                </button>
                             </li>
                         )}
                     </ol>
@@ -4866,6 +6492,11 @@ function Timeline({
                     }}
                 >
                     ↓
+                </button>
+            )}
+            {state.viewingHistoryWindow && (
+                <button className="mj_JumpToLatest" type="button" onClick={() => void client.jumpToLatest()}>
+                    Jump to latest ↓
                 </button>
             )}
             {menu.state && (
@@ -4905,6 +6536,7 @@ function Timeline({
                                 <MarkdownIcon aria-hidden />
                                 <span>Copy as Markdown</span>
                             </button>
+                            <MenuSeparator />
                         </>
                     )}
                     <button
@@ -5038,6 +6670,9 @@ function Composer({
     const store = useMemo(() => makeRecentFoldersStore(state.session), [state.session]);
     const [dismissedSeq, setDismissedSeq] = useState(0);
     const textarea = useRef<HTMLTextAreaElement>(null);
+    // Sized from the value, not from input events: a draft restored on a conversation switch (or
+    // on mount) opens at its full height, the same as it was while being typed.
+    useAutoGrow(textarea, body);
     const fileInput = useRef<HTMLInputElement>(null);
     const convoId = state.selectedConversationId;
     const convoIdRef = useRef(convoId);
@@ -5157,7 +6792,6 @@ function Composer({
         // Sync the badge FROM the store for the newly-selected convo — never a blind reset, so a
         // still-non-durable convo keeps its warning across switch-away/back (and a clear-failure flag surfaces).
         setNonDurable(convoId ? drafts.durability(convoId) === "non-durable" : false);
-        if (textarea.current) textarea.current.style.height = "auto";
         prevConvoIdRef.current = convoId;
     }, [convoId, draftReloadTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -5210,7 +6844,7 @@ function Composer({
     const send = async (): Promise<void> => {
         const cid = convoIdRef.current;
         const submitted = body;
-        if (!cid || !submitted.trim() || sendingConvos.current.has(cid)) return;
+        if (state.viewingHistoryWindow || !cid || !submitted.trim() || sendingConvos.current.has(cid)) return;
         const submittedRevision = draftRevisions.current.get(cid) ?? 0;
         sendingConvos.current.add(cid);
         try {
@@ -5265,8 +6899,9 @@ function Composer({
                         {/* Mac composer: attach outside the field on the left; mic and the send glyph on the right. */}
                         <button
                             className="mj_ComposerControl mj_ComposerAttach"
-                            title="Attach a file"
+                            title={state.viewingHistoryWindow ? "Jump to latest to send" : "Attach a file"}
                             aria-label="Attach a file"
+                            disabled={state.viewingHistoryWindow}
                             onClick={() => fileInput.current?.click()}
                         >
                             <PlusCircleIcon />
@@ -5299,7 +6934,7 @@ function Composer({
                                         event.target.style.height = `${Math.min(event.target.scrollHeight, 144)}px`;
                                     }}
                                     onKeyDown={(event) => {
-                                        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                                        if (isImeComposing(event)) return;
                                         if (open) {
                                             const count = folders.length || commands.length;
                                             if (event.key === "ArrowDown") {
@@ -5336,7 +6971,7 @@ function Composer({
                                                 return;
                                             }
                                         }
-                                        if (event.key === "Enter" && !event.shiftKey) {
+                                        if (isSendKey(event)) {
                                             event.preventDefault();
                                             void send();
                                         }
@@ -5345,7 +6980,15 @@ function Composer({
                                         if (state.stagedUploads) return;
                                         const files = [...event.clipboardData.files];
                                         if (files.length > 0) {
+                                            // preventDefault() marks this paste as consumed; the upload
+                                            // modal's document-level paste listener (mounted synchronously by
+                                            // stageFiles under React 19's discrete flush) checks
+                                            // event.defaultPrevented and skips it, so the file stages once.
+                                            // stopPropagation() is kept as defense-in-depth but is not the
+                                            // load-bearing guard (it does not reliably stop a listener that is
+                                            // registered mid-dispatch at document).
                                             event.preventDefault();
+                                            event.stopPropagation();
                                             client.stageFiles(files);
                                         }
                                     }}
@@ -5370,7 +7013,9 @@ function Composer({
                                 className="mj_ComposerSend"
                                 type="button"
                                 onClick={() => void send()}
+                                disabled={state.viewingHistoryWindow || !body.trim()}
                                 aria-label="Send message"
+                                title={state.viewingHistoryWindow ? "Jump to latest to send" : undefined}
                             >
                                 <ArrowUpCircleIcon />
                             </button>
@@ -5379,8 +7024,13 @@ function Composer({
                 )}
                 {/* The old hint row's instructions, kept for assistive tech only (the Mac shows none). */}
                 <span id="mj-composer-hint" className="mj_ScreenReaderOnly">
-                    / commands · shift+enter for newline
+                    {state.viewingHistoryWindow ? "Jump to latest to send" : "/ commands · shift+enter for newline"}
                 </span>
+                {state.viewingHistoryWindow && (
+                    <div className="mj_ComposerHint" role="status">
+                        <span className="mj_ComposerHint_keys">Jump to latest to send</span>
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -5492,12 +7142,12 @@ function EventSourceSheet({
                 </div>
                 <div className="mj_EventSource_footer">
                     <span className="mj_EventSource_note">Read-only · {byteSize} bytes</span>
-                    <button type="button" className="mj_EventSource_secondary" onClick={onClose}>
+                    <button type="button" className="mj_Btn mj_EventSource_secondary" onClick={onClose}>
                         Close
                     </button>
                     <button
                         type="button"
-                        className="mj_EventSource_copy"
+                        className="mj_Btn mj_Btn_primary mj_EventSource_copy"
                         ref={doneRef}
                         onClick={() => void copyText(json)}
                     >
@@ -5529,14 +7179,13 @@ function UploadConfirmDialog({
 }): React.ReactElement {
     useEffect(() => {
         const onPaste = (event: ClipboardEvent): void => {
-            // Ignore the bootstrap paste the composer already consumed. On the first
-            // paste (modal closed) the composer stages + calls preventDefault(), which
-            // opens this dialog; React 19 flushes that mount synchronously, so this
-            // document listener registers WITHIN the same paste dispatch and would stage
-            // the file a second time ("1 of 2"). defaultPrevented is set by the composer's
-            // preventDefault() and is propagation-order-independent, so it holds even
-            // though the listener was added mid-dispatch. Once the dialog is open the
-            // composer is inert (no preventDefault), so subsequent pastes append here.
+            // Ignore the bootstrap paste the composer already consumed. On the first paste
+            // (modal closed) the composer stages + calls preventDefault(), which opens this
+            // modal; React 19 flushes that mount synchronously, so this document listener is
+            // registered WITHIN the same paste dispatch and would stage the file a second time
+            // ("1 of 2"). defaultPrevented is set by the composer's preventDefault() and is
+            // timing-independent — it holds regardless of propagation order. Once the modal is
+            // open the composer is inert (no preventDefault), so subsequent pastes append here.
             if (event.defaultPrevented) return;
             const files = [...(event.clipboardData?.files ?? [])];
             if (files.length > 0) {
@@ -5699,8 +7348,8 @@ function UploadConfirmPage({
                     value={caption}
                     onChange={(event) => setCaption(event.target.value)}
                     onKeyDown={(event) => {
-                        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                        if (event.key === "Enter" && !event.shiftKey) {
+                        if (isImeComposing(event)) return;
+                        if (isSendKey(event)) {
                             event.preventDefault();
                             send();
                         } else if (event.key === "Escape" && !staged.confirming) {
@@ -5824,17 +7473,142 @@ export function SubagentStrip({
     );
 }
 
+/**
+ * Surface A — the pinned conversation summary (design 2026-08). A running,
+ * server-generated digest rendered as a bullet list, pinned between the SubagentStrip
+ * and the Timeline. The bar IS the expand control; the body is aria-live="polite" so a
+ * server refresh is announced without stealing the operator's focus. The feed landed in
+ * Pinned summary: the owning bridge publishes its rolling digest to conversations.summary and
+ * the call site in SignedInApp parses it via `conversationSummary()`. A conversation with
+ * no digest passes null and this renders nothing at all.
+ *
+ * Reachable-state note: the app only ever passes null or a "ready" summary with at least
+ * one bullet. The empty-state box and the "updating" shimmer have no data source on the
+ * wire (design §5.4) and are exercised by unit tests only.
+ */
+export type ConversationSummary = {
+    /** Condensed bullet lines (each rendered with a • marker). Server-clamped to 20. */
+    bullets: string[];
+    /** "ready" shows the list; "updating" dims it under a refresh shimmer. */
+    state?: "ready" | "updating";
+    /** Epoch-ms of the last server refresh. The relative label is derived client-side
+        (repo wire convention: timestamps are epoch-ms, relative text is recomputed on the
+        client — a server-formatted "Nm ago" string would freeze when the feed does not
+        republish an unchanged summary every minute). */
+    updatedAtMs?: number;
+};
+
+/** Bullets longer than this clamp to 2 lines with an in-place Expand control. */
+const PINNED_SUMMARY_CLAMP_CHARS = 160;
+
+export function PinnedSummary({ summary }: { summary: ConversationSummary | null }): React.ReactElement | null {
+    const bodyId = useId();
+    const [collapsed, setCollapsed] = useState(false);
+    const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set<number>());
+    // Ticks once a minute so the "updated Nm ago" label advances on an idle page instead of
+    // freezing at render time (the label is derived client-side from updatedAtMs).
+    const now = useMinuteClock();
+    // Per-bullet Expand is keyed by array index, so a refresh that reorders bullets must clear
+    // it, or an unrelated new bullet inherits the old expansion. The call site additionally keys
+    // <PinnedSummary> by conversation id, so collapsed/expanded reset on a conversation switch.
+    const bulletsKey = JSON.stringify(summary?.bullets ?? []);
+    useEffect(() => {
+        setExpanded(new Set<number>());
+    }, [bulletsKey]);
+    if (!summary) {
+        return null;
+    }
+    const bullets = summary.bullets;
+    const isEmpty = bullets.length === 0;
+    const isUpdating = summary.state === "updating";
+    const lead = bullets[0] ?? "";
+    const toggleExpanded = (index: number): void => {
+        setExpanded((prev) => {
+            const next = new Set(prev);
+            if (next.has(index)) next.delete(index);
+            else next.add(index);
+            return next;
+        });
+    };
+    return (
+        <div className="mj_PinnedSummary" data-collapsed={collapsed ? "true" : "false"}>
+            <button
+                type="button"
+                className="mj_PinnedSummary_bar"
+                aria-expanded={!collapsed}
+                aria-controls={bodyId}
+                onClick={() => setCollapsed((value) => !value)}
+            >
+                <PinIcon className="mj_PinnedSummary_pin" aria-hidden />
+                <span className="mj_PinnedSummary_label">Summary</span>
+                <span className="mj_PinnedSummary_lead">{collapsed ? lead : ""}</span>
+                {summary.updatedAtMs !== undefined ? (
+                    <span className="mj_PinnedSummary_meta">updated {formatSampleAge(now - summary.updatedAtMs)}</span>
+                ) : null}
+                <ChevronDownIcon className="mj_PinnedSummary_chev" aria-hidden />
+            </button>
+            {!collapsed && (
+                <div className="mj_PinnedSummary_body" id={bodyId} aria-live="polite">
+                    {isEmpty ? (
+                        <div className="mj_PinnedSummary_empty">
+                            No summary yet. It appears once the conversation has enough to digest.
+                        </div>
+                    ) : (
+                        <>
+                            {isUpdating && <div className="mj_PinnedSummary_shimmer" aria-hidden />}
+                            <div className={`mj_PinnedSummary_scroll${isUpdating ? " mj_PinnedSummary_updating" : ""}`}>
+                                <ul className="mj_PinnedSummary_list">
+                                    {bullets.map((text, index) => {
+                                        const clampable = text.length > PINNED_SUMMARY_CLAMP_CHARS;
+                                        const open = expanded.has(index);
+                                        return (
+                                            <li key={index} className="mj_PinnedSummary_item">
+                                                <span
+                                                    className={
+                                                        clampable && !open ? "mj_PinnedSummary_item_clamp" : undefined
+                                                    }
+                                                >
+                                                    {text}
+                                                </span>
+                                                {clampable && (
+                                                    <button
+                                                        type="button"
+                                                        className="mj_PinnedSummary_more"
+                                                        onClick={() => toggleExpanded(index)}
+                                                    >
+                                                        {open ? "Show less" : "Expand"}
+                                                    </button>
+                                                )}
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            </div>
+                        </>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const leftPanel = useLeftPanelResize();
     const [dragActive, setDragActive] = useState(state.dragActive);
     const [draftReloadTicks, setDraftReloadTicks] = useState<Record<string, number>>({});
     const [bodyEl, setBodyEl] = useState<HTMLElement | null>(null);
-    // Meter count drives the usage collapse threshold: the synthetic ctx bar + each
-    // non-blank limit. >4 (host cpu/ram present) needs the wider pane before the 3-column
-    // grid renders inline instead of collapsing to the popover.
-    const meterCount =
-        (state.sessionStatus?.context ? 1 : 0) +
-        (state.sessionStatus?.limits?.filter((limit) => limit.label.trim()).length ?? 0);
+    // Meter count drives the usage collapse threshold: the synthetic ctx bar, each non-blank
+    // account limit, and the host cpu/ram meters. >4 (host cpu/ram present) needs the wider
+    // pane before the 3-column grid renders inline instead of collapsing to the popover.
+    // Derived from the SAME builder the headers render, and filtered by the same non-blank
+    // label rule UsageCluster applies, so the count cannot disagree with what is on screen —
+    // counting status.limits alone undercounts by two now that the host meters are
+    // synthesized from status.vitals rather than carried inside limits[].
+    const meterCount = buildUsageMeters(
+        state.sessionStatus,
+        state.sessionStatus?.limits?.filter((limit) => limit.label.trim()),
+        state.hostVitals,
+    ).filter((meter) => meter.label.trim()).length;
     const collapse = useAdaptiveHeader(bodyEl, meterCount);
     const appContent = useRef<HTMLDivElement>(null);
     const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
@@ -5900,6 +7674,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     return (
         <MarkdownPreviewContext.Provider value={markdownPreview.context}>
             <div className="mx_MatrixChat_wrapper">
+                <ConnectionBanner client={client} state={state} />
                 <div ref={appContent} className="mx_MatrixChat" inert={state.stagedUploads ? true : undefined}>
                     <ConversationList client={client} state={state} width={leftPanel.width} />
                     <div
@@ -5910,10 +7685,14 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                         <div />
                     </div>
                     <div
-                        className={`mx_RoomView_wrapper ${state.trackerView?.open || state.selectedConversationId ? "" : "mj_Chat_mobileHidden"}`}
+                        className={`mx_RoomView_wrapper ${mainSurfaceOpen(state, !isElectronRuntime()) ? "" : "mj_Chat_mobileHidden"}`}
                     >
                         {state.trackerView?.open ? (
                             <TrackerPane client={client} state={state} />
+                        ) : state.opsView?.open ? (
+                            <OpsPane client={client} state={state} />
+                        ) : state.filesView?.open && !isElectronRuntime() ? (
+                            <FilesPane client={client} state={state} />
                         ) : state.selectedConversationId ? (
                             <div
                                 className={`mx_RoomView${dragActive ? " mj_RoomView_dragActive" : ""}`}
@@ -5957,6 +7736,17 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                         client={client}
                                         state={state}
                                         mode={childMode ? "child" : "parent"}
+                                    />
+                                    {/* Pinned conversation summary, fed by the bridge's rolling digest. Renders
+                                        nothing when the conversation has no digest. The conversation-id key
+                                        remounts on a room switch so disclosure state never carries across. */}
+                                    <PinnedSummary
+                                        key={state.selectedConversationId ?? "no-convo"}
+                                        summary={conversationSummary(
+                                            state.conversations.find(
+                                                (conversation) => conversation.id === state.selectedConversationId,
+                                            ),
+                                        )}
                                     />
                                     <Timeline client={client} state={state} isReadOnly={childMode} />
                                     {childMode ? (

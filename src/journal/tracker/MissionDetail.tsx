@@ -183,7 +183,8 @@ export function MissionDetail({
 
     const jump = (milestone: Milestone): void => {
         client.closeTrackerView();
-        void client.selectConversation(milestone.convo_id);
+        if (milestone.seq > 0) void client.selectConversationAtSeq(milestone.convo_id, milestone.seq);
+        else void client.selectConversation(milestone.convo_id);
     };
 
     // matron://item / matron://mission deep links inside the mission body + close summary open the
@@ -331,7 +332,7 @@ export function MissionDetail({
                                     </button>
                                     <button
                                         type="button"
-                                        className="mj_TrackerButton mj_TrackerButton_danger"
+                                        className="mj_Btn mj_Btn_danger mj_TrackerButton"
                                         disabled={busy}
                                         onClick={() => void doClose()}
                                     >
@@ -342,7 +343,7 @@ export function MissionDetail({
                         ) : (
                             <button
                                 type="button"
-                                className="mj_TrackerButton"
+                                className="mj_Btn mj_Btn_primary mj_TrackerButton"
                                 disabled={!summary.trim() || busy}
                                 onClick={() => setConfirming(true)}
                             >

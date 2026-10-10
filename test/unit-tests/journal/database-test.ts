@@ -50,6 +50,125 @@ describe("JournalDatabase", () => {
         database.close();
     });
 
+    it("records the last message's tool call for the plain-English sidebar preview", async () => {
+        const database = await JournalDatabase.open("https://last-step.example", 12, "dan");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+        await database.applyJournal(
+            event(1, "agent:dev", "tool_output", { command: "pnpm tsc --noEmit", snippet: "error TS2322" }),
+        );
+        expect((await database.conversations())[0]).toMatchObject({
+            snippet: "error TS2322",
+            last_step: { tool: "Bash", input: { command: "pnpm tsc --noEmit" } },
+        });
+        await database.applyJournal(event(2, "agent:dev", "text", { body: "📖 /repo/a.ts" }));
+        expect((await database.conversations())[0].last_step).toEqual({ tool: "Read", input: { path: "/repo/a.ts" } });
+        await database.applyJournal(event(3, "agent:dev", "text", { body: "All done." }));
+        expect((await database.conversations())[0].last_step).toBeUndefined();
+        database.close();
+    });
+
+    it("keeps the recorded last step across a snapshot of the same state, and only then", async () => {
+        const database = await JournalDatabase.open("https://last-step-snapshot.example", 12, "dan");
+        const row = (last_seq: number, snippet: string, last_ts: number) => ({
+            id: "c1",
+            title: "Agent",
+            session_state: "running",
+            last_seq,
+            unread_count: 0,
+            snippet,
+            created_at: 1,
+            last_ts,
+        });
+        await database.replaceWithSnapshot({ seq: 0, conversations: [row(0, "", 1)] });
+        await database.applyJournal(event(1, "agent:dev", "text", { body: "📖 /repo/a.ts" }));
+        await database.replaceWithSnapshot({ seq: 1, conversations: [row(1, "📖 /repo/a.ts", 1_000)] });
+        expect((await database.conversations())[0].last_step).toEqual({ tool: "Read", input: { path: "/repo/a.ts" } });
+        // A newer message with the same snippet and time: the step is not carried over.
+        await database.replaceWithSnapshot({ seq: 2, conversations: [row(2, "📖 /repo/a.ts", 1_000)] });
+        expect((await database.conversations())[0].last_step).toBeUndefined();
+        database.close();
+    });
+
+    it("hydrates peer message payloads intact and counts them unread in an inactive conversation", async () => {
+        const serverUrl = "https://peer-hydration.example";
+        const database = await JournalDatabase.open(serverUrl, 11, "dan");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+        const payload = {
+            from_convo: "sender-convo",
+            from_name: "Release Agent",
+            from_kind: "codex",
+            body: "Coordinate the deploy window",
+        };
+
+        await database.applyJournal(event(1, "agent:peer-device", "peer_message", payload));
+
+        expect((await database.conversations())[0]).toMatchObject({
+            unread_count: 1,
+            snippet: payload.body,
+        });
+        database.close();
+
+        const hydrated = await JournalDatabase.open(serverUrl, 11, "dan");
+        expect(await hydrated.events("c1")).toEqual([expect.objectContaining({ type: "peer_message", payload })]);
+        hydrated.close();
+    });
+
+    it("keeps peer message unread durable until it is locally marked read", async () => {
+        const database = await JournalDatabase.open("https://peer-active.example", 12, "dan");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+
+        await database.applyJournal(
+            event(1, "agent:peer-device", "peer_message", { body: "Coordinate the deploy window" }),
+        );
+
+        expect((await database.conversations())[0]).toMatchObject({
+            unread_count: 1,
+            snippet: "Coordinate the deploy window",
+        });
+        await database.markLocallyRead("c1", 1);
+        expect((await database.conversations())[0]).toMatchObject({ unread_count: 0, read_up_to_seq: 1 });
+        database.close();
+    });
+
     it("counts a journaled spawn_outcome as a message event — bumps unread and sets the snippet", async () => {
         const database = await JournalDatabase.open("https://journal.example", 10, "alice");
         await database.replaceWithSnapshot({
@@ -284,6 +403,105 @@ describe("JournalDatabase", () => {
         const ordered = (await database.conversations()).map((conversation) => conversation.id);
         // newest last_ts first; the two 2_000 rows tie-break on higher last_seq (8 before 7)
         expect(ordered).toEqual(["newest", "mid-tie", "mid", "old"]);
+        database.close();
+    });
+    it("carries the pinned digest and its change time from the snapshot into storage", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 20, "dan");
+        const base = { session_state: "running", unread_count: 0, snippet: "", created_at: 1, last_seq: 0 };
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    ...base,
+                    id: "c1",
+                    title: "Digested",
+                    summary: "\u2022 a\n\u2022 b",
+                    summary_updated_at: 1_700_000_000_000,
+                },
+                // An older/upstream server sends neither field; the row must still validate.
+                { ...base, id: "c2", title: "Legacy" },
+            ],
+        });
+
+        const stored = await database.conversations();
+        expect(stored.find((conversation) => conversation.id === "c1")).toMatchObject({
+            summary: "\u2022 a\n\u2022 b",
+            summary_updated_at: 1_700_000_000_000,
+        });
+        const legacy = stored.find((conversation) => conversation.id === "c2")!;
+        expect(legacy.summary).toBeUndefined();
+        expect(legacy.summary_updated_at).toBeUndefined();
+        database.close();
+    });
+
+    it("applies, preserves and clears the pinned digest through convo_meta", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 21, "dan");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+        const meta = (seq: number, payload: Record<string, unknown>): JournalEvent => ({
+            kind: "journal",
+            seq,
+            convo_id: "c1",
+            ts: seq * 1_000,
+            sender: "agent:dev",
+            type: "convo_meta",
+            payload,
+        });
+
+        await database.applyJournal(meta(1, { summary: "\u2022 first", summary_updated_at: 1_700_000_000_000 }));
+        expect((await database.conversations())[0]).toMatchObject({
+            summary: "\u2022 first",
+            summary_updated_at: 1_700_000_000_000,
+        });
+
+        // A summary-less variant (a membership change, a spawn room) must not erase it.
+        await database.applyJournal(meta(2, { title: "Renamed" }));
+        expect((await database.conversations())[0]).toMatchObject({
+            title: "Renamed",
+            summary: "\u2022 first",
+            summary_updated_at: 1_700_000_000_000,
+        });
+
+        // New text with no usable timestamp drops the age to unknown rather than dating the
+        // new digest by the one it replaced.
+        await database.applyJournal(meta(3, { summary: "\u2022 first\n\u2022 second" }));
+        expect((await database.conversations())[0]).toMatchObject({
+            summary: "\u2022 first\n\u2022 second",
+            summary_updated_at: 0,
+        });
+
+        // A re-send of the SAME text with no timestamp keeps whatever age is recorded.
+        await database.applyJournal(
+            meta(4, { summary: "\u2022 first\n\u2022 second", summary_updated_at: 1_700_000_050_000 }),
+        );
+        await database.applyJournal(meta(5, { summary: "\u2022 first\n\u2022 second" }));
+        expect((await database.conversations())[0]).toMatchObject({ summary_updated_at: 1_700_000_050_000 });
+
+        // A non-finite timestamp is not a timestamp; the text still applies.
+        await database.applyJournal(meta(6, { summary: "\u2022 third", summary_updated_at: Number.NaN }));
+        expect((await database.conversations())[0]).toMatchObject({
+            summary: "\u2022 third",
+            summary_updated_at: 0,
+        });
+
+        // An explicit empty string clears the surface.
+        await database.applyJournal(meta(7, { summary: "", summary_updated_at: 1_700_000_100_000 }));
+        expect((await database.conversations())[0]).toMatchObject({
+            summary: "",
+            summary_updated_at: 1_700_000_100_000,
+        });
         database.close();
     });
 });

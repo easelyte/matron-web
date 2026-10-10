@@ -102,6 +102,57 @@ describe("ItemRow", () => {
         expect(onOpen).toHaveBeenCalledWith(77);
     });
 
+    describe("provenance chip", () => {
+        it("names the origin session for a cross-session row in the all scope", async () => {
+            const { container } = await mount(
+                <ItemRow
+                    item={trackerItem({ origin_convo_id: "c-other", origin_convo_title: "MATRON wave" })}
+                    scope="all"
+                    currentConvoId="c-here"
+                    onOpen={jest.fn()}
+                />,
+            );
+            const origin = container.querySelector(".mj_TrackerItemRow_origin");
+            expect(origin?.textContent).toBe("from MATRON wave");
+            expect(container.querySelector(".mj_TrackerItemRow_routeElsewhere")).toBeNull();
+        });
+
+        it("shows no origin chip when the row is from the viewing session", async () => {
+            const { container } = await mount(
+                <ItemRow
+                    item={trackerItem({ origin_convo_id: "c-here", origin_convo_title: "here" })}
+                    scope="all"
+                    currentConvoId="c-here"
+                    onOpen={jest.fn()}
+                />,
+            );
+            expect(container.querySelector(".mj_TrackerItemRow_origin")).toBeNull();
+        });
+
+        it("renders the actionable Handle-elsewhere chip in any scope, even from the origin session", async () => {
+            const { container } = await mount(
+                <ItemRow
+                    item={trackerItem({
+                        origin_convo_id: "c-here",
+                        origin_convo_title: "here",
+                        labels: ["route-elsewhere"],
+                    })}
+                    currentConvoId="c-here"
+                    onOpen={jest.fn()}
+                />,
+            );
+            const chip = container.querySelector(".mj_TrackerItemRow_routeElsewhere");
+            expect(chip?.textContent).toContain("Handle elsewhere");
+        });
+
+        it("adds no origin chip in the default (chat) scope without a viewer id", async () => {
+            const { container } = await mount(
+                <ItemRow item={trackerItem({ origin_convo_id: "c-other" })} onOpen={jest.fn()} />,
+            );
+            expect(container.querySelector(".mj_TrackerItemRow_origin")).toBeNull();
+        });
+    });
+
     describe("origin note", () => {
         it("names the origin conversation for a row from another conversation", async () => {
             const { container } = await mount(

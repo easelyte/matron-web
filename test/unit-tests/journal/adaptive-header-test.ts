@@ -424,33 +424,39 @@ describe("useAdaptiveHeader", () => {
         document.body.append(container);
         const root = createRoot(container);
         mountedProbes.push({ container, root });
+        // The full app mounts other ResizeObservers too (the composer's auto-grow watches its
+        // textarea); this test is about the header's observer on the timeline body.
+        const bodyObservers = (): ObserverRecord[] =>
+            observers.filter(
+                (observer) => !observer.observe.mock.calls.some(([target]) => target instanceof HTMLTextAreaElement),
+            );
 
         await act(async () => root.render(React.createElement(MatronApp, { client })));
         expect(container.querySelector(".mx_RoomView_body")).toBeNull();
-        expect(observers).toHaveLength(0);
+        expect(bodyObservers()).toHaveLength(0);
 
         await act(async () => client.selectConversation(PARENT.id));
         const firstBody = container.querySelector<HTMLElement>(".mx_RoomView_body")!;
         expect(firstBody).not.toBeNull();
-        expect(observers).toHaveLength(1);
-        expect(observers[0].observe).toHaveBeenCalledWith(firstBody);
+        expect(bodyObservers()).toHaveLength(1);
+        expect(bodyObservers()[0].observe).toHaveBeenCalledWith(firstBody);
         expect(container.textContent).toContain("Finished child");
 
-        resize(observers[0], firstBody, 560);
+        resize(bodyObservers()[0], firstBody, 560);
         await flushFrames();
         expect(container.querySelector(".mj_UsageCluster_collapsed")).not.toBeNull();
 
         await act(async () => client.clearSelection());
         expect(container.querySelector(".mx_RoomView_body")).toBeNull();
-        expect(observers[0].disconnect).toHaveBeenCalledTimes(1);
+        expect(bodyObservers()[0].disconnect).toHaveBeenCalledTimes(1);
 
         await act(async () => client.selectConversation(PARENT.id));
         const secondBody = container.querySelector<HTMLElement>(".mx_RoomView_body")!;
         expect(secondBody).not.toBe(firstBody);
-        expect(observers).toHaveLength(2);
-        expect(observers[1].observe).toHaveBeenCalledWith(secondBody);
+        expect(bodyObservers()).toHaveLength(2);
+        expect(bodyObservers()[1].observe).toHaveBeenCalledWith(secondBody);
 
-        resize(observers[1], secondBody, 560);
+        resize(bodyObservers()[1], secondBody, 560);
         await flushFrames();
         expect(container.querySelector(".mj_UsageCluster_collapsed")).not.toBeNull();
     });
@@ -510,7 +516,7 @@ describe("HeaderShell", () => {
     });
 
     it("pins the collapsed stack to ctx + 5h by id, not by grid position", async () => {
-        // Host cpu/ram sort to the front of the grid (host-vitals-first), so the
+        // Host cpu/ram sort to the front of the grid, so the
         // collapsed pair must be chosen by id — a positional limits[0]/limits[1] pick would
         // wrongly collapse to cpu/ram. Order here mirrors the reordered grid output.
         const { container } = await mountHeader({
@@ -626,6 +632,91 @@ describe("HeaderShell", () => {
         expect(header?.tabIndex).toBe(-1);
         expect(document.activeElement).toBe(header);
         expect(document.activeElement).not.toBe(document.body);
+    });
+
+    describe("usage popover toggle (tapping the bars)", () => {
+        const LIMITS = [
+            { label: "ctx", percent: 22 },
+            { label: "Session", percent: 36 },
+        ];
+        const collapsed = { usageCollapsed: true, titleCollapsed: false };
+        const popover = (m: MountedProbe): HTMLElement | null => m.container.querySelector(".mj_UsagePopover");
+        const triggerOf = (m: MountedProbe): HTMLButtonElement =>
+            m.container.querySelector<HTMLButtonElement>(".mj_UsageCluster_collapsed")!;
+        // React reads pointerType off the native event; jsdom has no PointerEvent, so tag a MouseEvent.
+        const pointer = (type: string, pointerType: string): MouseEvent => {
+            const event = new MouseEvent(type, { bubbles: true });
+            Object.defineProperty(event, "pointerType", { value: pointerType });
+            return event;
+        };
+
+        it("closes on a second click and returns focus to the trigger", async () => {
+            const m = await mountHeader({ limits: LIMITS, collapse: collapsed });
+            await act(async () => triggerOf(m).click());
+            expect(popover(m)).not.toBeNull();
+            expect(triggerOf(m).getAttribute("aria-expanded")).toBe("true");
+
+            await act(async () => triggerOf(m).click());
+            expect(popover(m)).toBeNull();
+            expect(triggerOf(m).getAttribute("aria-expanded")).toBe("false");
+            expect(document.activeElement).toBe(triggerOf(m));
+        });
+
+        it("closes on a second TAP: the tap blurs the panel before it clicks, and must not reopen", async () => {
+            const m = await mountHeader({ limits: LIMITS, collapse: collapsed });
+            const disclosure = m.container.querySelector<HTMLElement>(".mj_HeaderUsageDisclosure")!;
+            const tap = async (): Promise<void> => {
+                // iOS order: pointerenter/pointerdown (touch), compat mouseover, focus leaves the
+                // panel (the trigger does not take focus on iOS), then click.
+                await act(async () => {
+                    triggerOf(m).dispatchEvent(pointer("pointerover", "touch"));
+                    triggerOf(m).dispatchEvent(pointer("pointerdown", "touch"));
+                    disclosure.dispatchEvent(
+                        new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }),
+                    );
+                });
+                await act(async () => {
+                    (document.activeElement as HTMLElement | null)?.blur();
+                });
+                await act(async () => triggerOf(m).click());
+            };
+
+            await tap();
+            expect(popover(m)).not.toBeNull();
+            await tap();
+            expect(popover(m)).toBeNull();
+            // And a third tap opens it again: the toggle has no stuck state.
+            await tap();
+            expect(popover(m)).not.toBeNull();
+        });
+
+        it("a touch never hover-opens it", async () => {
+            const m = await mountHeader({ limits: LIMITS, collapse: collapsed });
+            const disclosure = m.container.querySelector<HTMLElement>(".mj_HeaderUsageDisclosure")!;
+            await act(async () => {
+                disclosure.dispatchEvent(pointer("pointerover", "touch"));
+                disclosure.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: document.body }));
+            });
+            expect(popover(m)).toBeNull();
+        });
+
+        it("closes on Escape and on an outside tap; Escape returns focus to the trigger", async () => {
+            const m = await mountHeader({ limits: LIMITS, collapse: collapsed });
+            await act(async () => triggerOf(m).click());
+            expect(document.activeElement).toBe(popover(m));
+            await act(async () => {
+                document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+            });
+            expect(popover(m)).toBeNull();
+            expect(document.activeElement).toBe(triggerOf(m));
+
+            await act(async () => triggerOf(m).click());
+            expect(popover(m)).not.toBeNull();
+            await act(async () => {
+                document.body.dispatchEvent(pointer("pointerdown", "touch"));
+            });
+            expect(popover(m)).toBeNull();
+        });
     });
 
     it("hover-opens the collapsed usage disclosure without stealing focus, and closes on mouse-leave", async () => {

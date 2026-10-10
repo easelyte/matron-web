@@ -994,7 +994,7 @@ function DownloadLink({ client, item }: { client: MatronJournalClient; item: Med
         return (
             <button
                 type="button"
-                className="mj_MediaViewer_download"
+                className="mj_Btn mj_MediaViewer_download"
                 disabled
                 aria-label="Preparing download"
                 title="Download"
@@ -1006,7 +1006,7 @@ function DownloadLink({ client, item }: { client: MatronJournalClient; item: Med
     }
     return (
         <a
-            className="mj_MediaViewer_download"
+            className="mj_Btn mj_MediaViewer_download"
             href={url}
             download={item.filename || "attachment"}
             aria-label={`Download ${item.filename || "attachment"}`}

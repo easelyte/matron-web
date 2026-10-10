@@ -20,6 +20,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { type MatronJournalClient, voiceNoteFile } from "../client";
+import { humanizeSize } from "../files/format";
+import { filesDeepLinkHash, handleFilesLinkClick } from "../files-link";
 import { ChevronLeftIcon, CloseIcon, KebabIcon, PlusCircleIcon, SendIcon } from "../icons";
 import { parseTrackerHref } from "../markdown";
 import { MediaViewer, MediaViewerContext, type MediaViewerContextValue } from "../media-viewer";
@@ -37,11 +39,12 @@ import {
     awaitsSeen,
     availableResolutions,
     formatRelativeTime,
-    humanizeSize,
+    isRouteElsewhere,
     itemStatusText,
     kindLabel,
     needsUser,
     resolveActionLabel,
+    ROUTE_ELSEWHERE_LABEL,
     statusRowText,
 } from "./format";
 import { CommentBubbleGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
@@ -196,9 +199,10 @@ function CommentRow({
 /**
  * One `item.links[]` chip. The protocol lets a link carry any URL, including the in-app
  * `matron://` scheme, so this applies the SAME guard the markdown renderer does (parseTrackerHref):
- * a valid `matron://item/<N>` opens that item in-app; http(s) opens in a new tab; anything else
- * (an unknown scheme, a malformed item link, javascript:) renders as inert text — a custom or
- * unsafe scheme is never handed to the browser as a live href.
+ * a valid `matron://item/<N>` / `matron://mission/<N>` opens it in-app; a Files deep link opens the
+ * pane in this window; http(s) opens in a new tab; anything else (an unknown scheme, a malformed
+ * tracker link, javascript:) renders as inert text — a custom or unsafe scheme is never handed to
+ * the browser as a live href.
  */
 function LinkChip({
     link,
@@ -218,6 +222,18 @@ function LinkChip({
                     event.preventDefault();
                     onTrackerLink(tracker.kind, tracker.num);
                 }}
+            >
+                {label}
+            </a>
+        );
+    }
+    const filesHash = filesDeepLinkHash(link.url);
+    if (filesHash) {
+        return (
+            <a
+                className="mj_TrackerLinkChip"
+                href={link.url}
+                onClick={(clickEvent) => handleFilesLinkClick(clickEvent, filesHash)}
             >
                 {label}
             </a>
@@ -605,7 +621,26 @@ export function ItemDetail({
     };
     const missionText = missionNum ? itemMissionText(missionNum, mission) : "";
 
-    const showMenu = item.state === "closed" || resolutions.length > 0;
+    // Set / clear the explicit "handle elsewhere" routing label. Distinct from the
+    // informational "opened from another chat" line: this is the operator saying the item belongs in
+    // a different session's context, not just noting where it came from.
+    const toggleRouteElsewhere = async (): Promise<void> => {
+        if (busy) return;
+        setMenuOpen(false);
+        setBusy(true);
+        try {
+            const labels = isRouteElsewhere(item)
+                ? item.labels.filter((label) => label !== ROUTE_ELSEWHERE_LABEL)
+                : [...item.labels, ROUTE_ELSEWHERE_LABEL];
+            await client.setItemLabels(item.num, labels);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    // Always show the kebab now: even an item with no close/reopen action can toggle the
+    // route-elsewhere routing label.
+    const showMenu = true;
 
     // matron://item / matron://mission deep links inside the item body + comment threads open the
     // target tracker surface in-app (F6) — same handler the timeline uses.
@@ -685,6 +720,14 @@ export function ItemDetail({
                                         </button>
                                     ))
                                 )}
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="mj_TrackerMenu_item"
+                                    onClick={() => void toggleRouteElsewhere()}
+                                >
+                                    {isRouteElsewhere(item) ? "Handle here" : "Route elsewhere"}
+                                </button>
                             </div>
                         ) : null}
                     </div>
@@ -727,13 +770,21 @@ export function ItemDetail({
 
                 <h1 className="mj_TrackerItemTitle">{item.title}</h1>
 
-                {item.labels.length > 0 ? (
+                {/* The route-elsewhere flag renders as its own actionable chip, not a raw label. */}
+                {isRouteElsewhere(item) ? (
                     <div className="mj_TrackerLabels">
-                        {item.labels.map((label) => (
-                            <span key={label} className="mj_TrackerLabel">
-                                {label}
-                            </span>
-                        ))}
+                        <span className="mj_TrackerLabel mj_TrackerLabel_routeElsewhere">↪ Handle elsewhere</span>
+                    </div>
+                ) : null}
+                {item.labels.some((label) => label !== ROUTE_ELSEWHERE_LABEL) ? (
+                    <div className="mj_TrackerLabels">
+                        {item.labels
+                            .filter((label) => label !== ROUTE_ELSEWHERE_LABEL)
+                            .map((label) => (
+                                <span key={label} className="mj_TrackerLabel">
+                                    {label}
+                                </span>
+                            ))}
                     </div>
                 ) : null}
 

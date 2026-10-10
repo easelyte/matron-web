@@ -16,9 +16,9 @@ Please see LICENSE files in the repository root for full details.
 
 import React from "react";
 
-import { ConversationsIcon, DecisionsIcon, MemoriesIcon, ProjectsIcon } from "./icons";
+import { ConversationsIcon, DecisionsIcon, FolderIcon, MemoriesIcon, ProjectsIcon, PulseIcon } from "./icons";
 
-export type NavKey = "projects" | "decisions" | "conversations" | "memories";
+export type NavKey = "projects" | "decisions" | "conversations" | "memories" | "files" | "ops";
 
 /** Width of the rail in CSS px; the list panel's resizer subtracts it. */
 export const NAV_RAIL_WIDTH = 72;
@@ -35,6 +35,9 @@ const ENTRIES: ReadonlyArray<{
     { key: "decisions", label: "For you", Icon: DecisionsIcon, countNoun: "need you" },
     { key: "conversations", label: "Conversations", Icon: ConversationsIcon, countNoun: "unread" },
     { key: "memories", label: "Memories", Icon: MemoriesIcon, countNoun: "need you" },
+    // Fork additions: the file explorer and the ops page (boxes, quotas, host, alerts, timers).
+    { key: "files", label: "Files", Icon: FolderIcon, countNoun: "" },
+    { key: "ops", label: "Ops", Icon: PulseIcon, countNoun: "" },
 ];
 
 export function NavRail({
@@ -42,38 +45,43 @@ export function NavRail({
     counts,
     onSelect,
     footer,
+    filesAvailable = true,
 }: {
     active: NavKey;
     counts: Partial<Record<NavKey, number>>;
     onSelect: (key: NavKey) => void;
     footer?: React.ReactNode;
+    /** The Files entry is hidden where the file pane cannot run (the packaged desktop app). */
+    filesAvailable?: boolean;
 }): React.ReactElement {
     return (
         <nav className="mj_NavRail" aria-label="Sections" data-testid="nav-rail">
-            {ENTRIES.map(({ key, label, Icon, countNoun }) => {
-                const count = counts[key] ?? 0;
-                const selected = key === active;
-                return (
-                    <button
-                        key={key}
-                        type="button"
-                        className="mj_NavRail_entry"
-                        data-nav={key}
-                        aria-current={selected ? "page" : undefined}
-                        aria-label={count > 0 ? `${label}, ${count} ${countNoun}` : label}
-                        title={label}
-                        onClick={() => onSelect(key)}
-                    >
-                        <span className="mj_NavRail_icon" aria-hidden="true">
-                            <Icon />
-                            {count > 0 && <span className="mj_NavRail_badge">{count > 99 ? "99+" : count}</span>}
-                        </span>
-                        <span className="mj_NavRail_label" aria-hidden="true">
-                            {label}
-                        </span>
-                    </button>
-                );
-            })}
+            {ENTRIES.filter((entry) => entry.key !== "files" || filesAvailable).map(
+                ({ key, label, Icon, countNoun }) => {
+                    const count = counts[key] ?? 0;
+                    const selected = key === active;
+                    return (
+                        <button
+                            key={key}
+                            type="button"
+                            className="mj_NavRail_entry"
+                            data-nav={key}
+                            aria-current={selected ? "page" : undefined}
+                            aria-label={count > 0 ? `${label}, ${count} ${countNoun}` : label}
+                            title={label}
+                            onClick={() => onSelect(key)}
+                        >
+                            <span className="mj_NavRail_icon" aria-hidden="true">
+                                <Icon />
+                                {count > 0 && <span className="mj_NavRail_badge">{count > 99 ? "99+" : count}</span>}
+                            </span>
+                            <span className="mj_NavRail_label" aria-hidden="true">
+                                {label}
+                            </span>
+                        </button>
+                    );
+                },
+            )}
             {footer && <div className="mj_NavRail_footer">{footer}</div>}
         </nav>
     );
