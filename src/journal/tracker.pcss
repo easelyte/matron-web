@@ -606,6 +606,16 @@ button.mj_TrackerCrumb:hover {
 .mj_TrackerProse > :last-child {
     margin-bottom: 0;
 }
+
+/* Links in item bodies, comments and notes take the accent, not the browser default blue
+   (.mj_Markdown a only covers prose that also carries mj_Markdown). */
+.mj_TrackerProse a {
+    color: var(--mj-color-text-action-accent);
+}
+
+.mj_TrackerProse a:hover {
+    text-decoration: underline;
+}
 .mj_TrackerCloseSummary {
     display: flex;
     flex-direction: column;

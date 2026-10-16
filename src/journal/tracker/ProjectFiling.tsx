@@ -12,6 +12,7 @@ Please see LICENSE files in the repository root for full details.
  */
 
 import React, { useRef, useState } from "react";
+import { useFocusTrap } from "../use-focus-trap";
 import { createPortal } from "react-dom";
 
 import { useRowContextMenu } from "../context-menu";
@@ -63,8 +64,16 @@ export function NewProjectSheet({
         else onClose();
     };
 
+    const trapRef = useRef<HTMLDivElement>(null);
+    useFocusTrap(trapRef);
     return createPortal(
-        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-new-project-title">
+        <div
+            ref={trapRef}
+            className="mj_UploadConfirm_scrim"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mj-new-project-title"
+        >
             <form
                 className="mj_UploadConfirm mj_NewSessionSheet mj_ProjectSheet"
                 onSubmit={(event) => {
@@ -151,8 +160,16 @@ export function MoveToProjectSheet({
         else onClose();
     };
 
+    const trapRef = useRef<HTMLDivElement>(null);
+    useFocusTrap(trapRef);
     return createPortal(
-        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-move-project-title">
+        <div
+            ref={trapRef}
+            className="mj_UploadConfirm_scrim"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mj-move-project-title"
+        >
             <div className="mj_UploadConfirm mj_NewSessionSheet mj_ProjectSheet">
                 <SheetHead id="mj-move-project-title" title="Move to project" onClose={onClose} />
                 <p>File {missionLabel} in another project.</p>
@@ -239,8 +256,11 @@ export function MergeProjectSheet({
         </p>
     ) : null;
 
+    const trapRef = useRef<HTMLDivElement>(null);
+    useFocusTrap(trapRef);
     return createPortal(
         <div
+            ref={trapRef}
             className="mj_UploadConfirm_scrim"
             role="dialog"
             aria-modal="true"
