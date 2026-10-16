@@ -3315,15 +3315,23 @@ export class MatronJournalClient {
         }
     }
 
-    /** PATCH /settings {notices}. Shows the new value at once and puts the old one back on failure. */
-    public async setNoticesSetting(notices: boolean): Promise<boolean> {
+    public setNoticesSetting(notices: boolean): Promise<boolean> {
+        return this.saveUserSettings({ notices });
+    }
+
+    public setAutoApproveCoordinatorSpawnsSetting(enabled: boolean): Promise<boolean> {
+        return this.saveUserSettings({ auto_approve_coordinator_spawns: enabled });
+    }
+
+    /** Save a subset, preserving the other switches until the full journal view arrives. */
+    private async saveUserSettings(patch: Partial<UserSettings>): Promise<boolean> {
         const api = this.api;
         if (!api) return false;
         const previous = this.state.userSettings;
         const gen = ++this.settingsGen;
-        this.patch({ userSettings: { notices }, userSettingsError: undefined });
+        this.patch({ userSettings: { ...previous, ...patch }, userSettingsError: undefined });
         try {
-            const settings = parseUserSettings(await api.patchSettings({ notices }));
+            const settings = parseUserSettings(await api.patchSettings(patch));
             if (this.api === api && this.settingsGen === gen && settings) this.patch({ userSettings: settings });
             return true;
         } catch (error) {
@@ -6927,10 +6935,14 @@ function inDoneOrder(rows: TrackerItem[]): TrackerItem[] {
 /** The label of a notice's one-tap answer; the journal closes the notice when it is tapped. */
 const SEEN_ACTION = "Seen";
 
-/** `{notices}` from GET/PATCH /settings or a settings frame, or null when it does not carry a
- *  boolean `notices` (a malformed or future shape must not flip the switch). */
+/** Validate each supported setting independently; absent values keep older journals compatible. */
 function parseUserSettings(raw: unknown): UserSettings | null {
     if (typeof raw !== "object" || raw === null) return null;
-    const notices = (raw as { notices?: unknown }).notices;
-    return typeof notices === "boolean" ? { notices } : null;
+    const view = raw as Record<string, unknown>;
+    const settings: UserSettings = {};
+    if (typeof view.notices === "boolean") settings.notices = view.notices;
+    if (typeof view.auto_approve_coordinator_spawns === "boolean") {
+        settings.auto_approve_coordinator_spawns = view.auto_approve_coordinator_spawns;
+    }
+    return Object.keys(settings).length ? settings : null;
 }

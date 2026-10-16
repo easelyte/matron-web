@@ -888,7 +888,9 @@ export interface BoxDefaultsState {
 
 /** Per-user journal settings. `notices`: agents file things to read as notice items. */
 export interface UserSettings {
-    notices: boolean;
+    notices?: boolean;
+    /** False by default; absent on journals that do not support spawn auto-approval. */
+    auto_approve_coordinator_spawns?: boolean;
 }
 
 /**
