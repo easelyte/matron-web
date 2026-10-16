@@ -18,7 +18,7 @@ export function useFocusTrap(rootRef: RefObject<HTMLElement | null>): void {
             const top = modals[modals.length - 1];
             // aria-modal may sit on the root or on a child of it.
             if (top && top !== root && !root.contains(top)) return;
-            const focusable = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)];
+            const focusable = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.tabIndex >= 0);
             if (focusable.length === 0) {
                 event.preventDefault();
                 if (!root.hasAttribute("tabindex")) root.setAttribute("tabindex", "-1");

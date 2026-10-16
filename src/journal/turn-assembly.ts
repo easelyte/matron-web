@@ -299,10 +299,13 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
  * A slash command the bridge handles itself (`/status`, `/restart`…) opens a turn with no agent
  * work of its own. While the agent is still busy, the work belongs to the turn before it.
  */
+/** Slash commands the bridge answers itself; anything else (a skill) starts agent work. */
+const BRIDGE_COMMAND = /^\/(restart|status|compact|stop|start|resume|workdir|help|logout|queue)(\s|$)/;
+
 export function isCommandOnlyTurn(turn: Turn): boolean {
     const body = turn.operator ? asString(turn.operator.payload.body).trim() : "";
     return (
-        body.startsWith("/") &&
+        BRIDGE_COMMAND.test(body) &&
         !turn.items.length &&
         !turn.breaks.length &&
         !turn.replies.length &&

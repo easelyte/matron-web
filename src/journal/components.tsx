@@ -3415,10 +3415,13 @@ export function HeaderShell({
  */
 function BrowserToolsConfirm({
     busy,
+    queued,
     onConfirm,
     onClose,
 }: {
     busy: boolean;
+    /** A restart is already waiting for the turn to end: only "Restart now" applies. */
+    queued: boolean;
     /** Resolves false when the command couldn't be queued; the dialog stays open and says so. */
     onConfirm: (now: boolean) => Promise<boolean>;
     onClose: () => void;
@@ -3498,7 +3501,9 @@ function BrowserToolsConfirm({
                         <div className="mj_ConfirmBusy">
                             <span className="mj_LiveDot" aria-hidden="true" />
                             <span>
-                                The agent is in the middle of a task. The restart waits until it finishes.{" "}
+                                {queued
+                                    ? "A restart is already waiting for the agent to finish."
+                                    : "The agent is in the middle of a task. The restart waits until it finishes."}{" "}
                                 <b>Restart now</b> stops the current step instead.
                             </span>
                         </div>
@@ -3524,15 +3529,17 @@ function BrowserToolsConfirm({
                                 Restart now
                             </button>
                         )}
-                        <button
-                            ref={primaryRef}
-                            type="button"
-                            className="mj_UploadConfirm_send"
-                            disabled={sending}
-                            onClick={() => confirm(false)}
-                        >
-                            Restart with browser tools
-                        </button>
+                        {!queued && (
+                            <button
+                                ref={primaryRef}
+                                type="button"
+                                className="mj_UploadConfirm_send"
+                                disabled={sending}
+                                onClick={() => confirm(false)}
+                            >
+                                Restart with browser tools
+                            </button>
+                        )}
                     </div>
                 </footer>
             </div>
@@ -3823,6 +3830,7 @@ function HeaderOverflowMenu({
             {confirmBrowser && (
                 <BrowserToolsConfirm
                     busy={busy}
+                    queued={browserState === "queued"}
                     onClose={() => {
                         setConfirmBrowser(false);
                         openerRef.current?.focus();

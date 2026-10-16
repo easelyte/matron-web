@@ -143,6 +143,11 @@ describe("liveTurnOf", () => {
         expect(liveTurnOf(skill)).toBe(skill[1]);
     });
 
+    it("treats a skill slash command as its own live turn before it has any events", () => {
+        const turns = assembleTurns([user("fix it"), cmd("ls"), user("/doc-review")]);
+        expect(liveTurnOf(turns)).toBe(turns[1]);
+    });
+
     it("returns the only turn when it is a slash command", () => {
         const turns = assembleTurns([user("/status")]);
         expect(liveTurnOf(turns)).toBe(turns[0]);

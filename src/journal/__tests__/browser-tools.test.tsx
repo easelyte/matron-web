@@ -277,6 +277,10 @@ describe("Enable browser tools in the session menu", () => {
         expect(item().querySelector(".mj_MenuHint")?.textContent).toBe("Restarting after this step");
         await act(async () => item().click());
         const dialog = container.querySelector('[role="dialog"]')!;
+        expect([...dialog.querySelectorAll(".mj_UploadConfirm_actions button")].map((b) => b.textContent)).toEqual([
+            "Cancel",
+            "Restart now",
+        ]);
         await act(async () => dialog.querySelector<HTMLButtonElement>(".mj_UploadConfirm_skip")!.click());
         expect(send).toHaveBeenCalledWith("/restart --browser --force", "c1");
     });
