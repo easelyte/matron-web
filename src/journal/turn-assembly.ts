@@ -296,6 +296,33 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
 }
 
 /**
+ * A slash command the bridge handles itself (`/status`, `/restart`…) opens a turn with no agent
+ * work of its own. While the agent is still busy, the work belongs to the turn before it.
+ */
+/** Slash commands the bridge answers itself; anything else (a skill) starts agent work. */
+const BRIDGE_COMMAND = /^\/(restart|status|compact|stop|start|resume|workdir|help|logout|queue)(\s|$)/;
+
+export function isCommandOnlyTurn(turn: Turn): boolean {
+    const body = turn.operator ? asString(turn.operator.payload.body).trim() : "";
+    return (
+        BRIDGE_COMMAND.test(body) &&
+        !turn.items.length &&
+        !turn.breaks.length &&
+        !turn.replies.length &&
+        !turn.answer.length &&
+        !turn.errors.length
+    );
+}
+
+/** The turn live state belongs to: the last one, skipping trailing command-only turns. */
+export function liveTurnOf(turns: readonly Turn[]): Turn | undefined {
+    for (let index = turns.length - 1; index >= 0; index -= 1) {
+        if (index === 0 || !isCommandOnlyTurn(turns[index])) return turns[index];
+    }
+    return undefined;
+}
+
+/**
  * The thread as rows: each turn's operator bubble, then its agent tile (only when it has
  * anything to show), then its notices and peer messages in the order they happened.
  */
@@ -306,7 +333,7 @@ export function threadRows(turns: readonly Turn[], options: { liveLastTurn?: boo
         if (
             // A live last turn gets its tile before anything is journaled: the running step
             // (a command publishes only when it completes) shows as the card's live line.
-            (options.liveLastTurn && turn === turns[turns.length - 1]) ||
+            (options.liveLastTurn && turn === liveTurnOf(turns)) ||
             turn.items.length ||
             turn.breaks.length ||
             turn.replies.length ||

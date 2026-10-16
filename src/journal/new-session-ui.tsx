@@ -12,6 +12,7 @@ Please see LICENSE files in the repository root for full details.
  * agent, model, browser tools, a first task and "Remember as my defaults".
  */
 
+import { useFocusTrap } from "./use-focus-trap";
 import React, {
     useCallback,
     useEffect,
@@ -345,6 +346,8 @@ export function NewSessionSheet({
     const mountedRef = useRef(true);
     const requestRef = useRef(0);
     const dialogRef = useRef<HTMLDivElement>(null);
+    const scrimRef = useRef<HTMLDivElement>(null);
+    useFocusTrap(scrimRef);
     const otherRef = useRef<HTMLInputElement>(null);
     const ids = useId();
     const intentRef = useRef(crypto.randomUUID());
@@ -489,6 +492,7 @@ export function NewSessionSheet({
     const errorId = `${ids}-folder-error`;
     return (
         <div
+            ref={scrimRef}
             className="mj_UploadConfirm_scrim"
             onClick={(event) => {
                 if (event.target === event.currentTarget) onClose();

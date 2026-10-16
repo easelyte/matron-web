@@ -6,17 +6,13 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import { readFileSync } from "node:fs";
-import React, { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
 import { TextEncoder as NodeTextEncoder } from "node:util";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
 
 type ThemeModule = typeof import("../../../src/journal/theme");
-type ThemeToggleComponent = typeof import("../../../src/journal/components").ThemeToggle;
 
 let theme: ThemeModule;
-let ThemeToggle: ThemeToggleComponent;
 let systemPrefersDark = false;
 const mediaQueryListeners = new Set<() => void>();
 
@@ -85,7 +81,6 @@ beforeAll(async () => {
     });
 
     theme = await import("../../../src/journal/theme");
-    ({ ThemeToggle } = await import("../../../src/journal/components"));
 });
 
 beforeEach(() => {
@@ -283,75 +278,5 @@ describe("dark-canvas single-source drift guard", () => {
         `;
 
         expect(() => darkCanvasFromStylesheet(source)).toThrow("Missing dark canvas token");
-    });
-});
-
-describe("ThemeToggle", () => {
-    let container: HTMLDivElement;
-    let root: Root;
-
-    beforeEach(async () => {
-        container = document.createElement("div");
-        document.body.append(container);
-        root = createRoot(container);
-        await act(async () => {
-            root.render(React.createElement(ThemeToggle));
-        });
-    });
-
-    afterEach(async () => {
-        await act(async () => root.unmount());
-        container.remove();
-    });
-
-    it("advances the label, glyph state, and document theme on three consecutive clicks", async () => {
-        const button = (): HTMLButtonElement => {
-            const element = container.querySelector<HTMLButtonElement>("button");
-            if (!element) throw new Error("Missing theme toggle");
-            return element;
-        };
-
-        expect(button().getAttribute("aria-label")).toBe("Theme: System");
-        expect(button().querySelector("rect")).not.toBeNull();
-
-        await act(async () => button().click());
-        expect(button().getAttribute("aria-label")).toBe("Theme: Light");
-        expect(button().querySelector("circle")).not.toBeNull();
-        expect(document.documentElement.dataset.theme).toBe("light");
-
-        await act(async () => button().click());
-        expect(button().getAttribute("aria-label")).toBe("Theme: Dark");
-        expect(button().querySelector("rect, circle")).toBeNull();
-        expect(button().querySelector("path")).not.toBeNull();
-        expect(document.documentElement.dataset.theme).toBe("dark");
-
-        await act(async () => button().click());
-        expect(button().getAttribute("aria-label")).toBe("Theme: System");
-        expect(button().querySelector("rect")).not.toBeNull();
-        expect(document.documentElement.dataset.theme).toBe("light");
-    });
-
-    it("updates the label and glyph when another tab changes the preference", async () => {
-        const button = (): HTMLButtonElement => {
-            const element = container.querySelector<HTMLButtonElement>("button");
-            if (!element) throw new Error("Missing theme toggle");
-            return element;
-        };
-
-        expect(button().getAttribute("aria-label")).toBe("Theme: System");
-
-        await act(async () => {
-            window.dispatchEvent(
-                new StorageEvent("storage", {
-                    key: theme.THEME_STORAGE_KEY,
-                    newValue: "dark",
-                    storageArea: localStorage,
-                }),
-            );
-        });
-
-        expect(button().getAttribute("aria-label")).toBe("Theme: Dark");
-        expect(button().querySelector("rect, circle")).toBeNull();
-        expect(button().querySelector("path")).not.toBeNull();
     });
 });

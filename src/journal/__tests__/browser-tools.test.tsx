@@ -267,14 +267,32 @@ describe("Enable browser tools in the session menu", () => {
         expect(send).toHaveBeenCalledWith("/restart --browser --force", "c1");
     });
 
-    it("shows the queued chip and a disabled row with its reason", async () => {
-        await act(async () =>
-            root.render(<MatronApp client={client([op("/restart --browser")], { session_state: "running" })} />),
-        );
+    it("keeps the row enabled while queued mid-turn, so Restart now stays reachable", async () => {
+        const instance = client([op("/restart --browser")], { session_state: "running" });
+        const send = jest.spyOn(instance, "sendMessage").mockResolvedValue(true);
+        await act(async () => root.render(<MatronApp client={instance} />));
         expect(container.querySelector(".mj_HeaderChip")?.textContent).toBe("Restarting after this step");
         await openMenu();
-        expect(item().getAttribute("aria-disabled")).toBe("true");
+        expect(item().getAttribute("aria-disabled")).toBeNull();
         expect(item().querySelector(".mj_MenuHint")?.textContent).toBe("Restarting after this step");
+        await act(async () => item().click());
+        const dialog = container.querySelector('[role="dialog"]')!;
+        expect([...dialog.querySelectorAll(".mj_UploadConfirm_actions button")].map((b) => b.textContent)).toEqual([
+            "Cancel",
+            "Restart now",
+        ]);
+        await act(async () => dialog.querySelector<HTMLButtonElement>(".mj_UploadConfirm_skip")!.click());
+        expect(send).toHaveBeenCalledWith("/restart --browser --force", "c1");
+    });
+
+    it("disables the row once the forced restart is under way", async () => {
+        await act(async () =>
+            root.render(
+                <MatronApp client={client([op("/restart --browser --force")], { session_state: "running" })} />,
+            ),
+        );
+        await openMenu();
+        expect(item().getAttribute("aria-disabled")).toBe("true");
     });
 
     it("shows 'Browser tools on' as a checked, disabled item, from the status frame's extras", async () => {

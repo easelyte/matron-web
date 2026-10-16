@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { assembleTurns, bridgeTextKind, eventToStep, threadRows } from "../turn-assembly";
+import { assembleTurns, bridgeTextKind, eventToStep, liveTurnOf, threadRows } from "../turn-assembly";
 import { groupRowText, groupTurn, stepsOf } from "../turn-grouping";
 import { type JournalEvent } from "../types";
 
@@ -121,6 +121,37 @@ describe("assembleTurns", () => {
     it("omits the agent tile when a turn holds only notices", () => {
         const rows = threadRows(assembleTurns([user("/restart --browser"), say("🔄 Restarting Claude session...")]));
         expect(rows.map((row) => row.kind)).toEqual(["operator", "notice"]);
+    });
+});
+
+describe("liveTurnOf", () => {
+    it("skips a trailing slash command so the working turn stays live", () => {
+        const turns = assembleTurns([
+            user("fix it"),
+            cmd("ls"),
+            user("/restart --browser"),
+            say("🔄 Restarting Claude session..."),
+        ]);
+        expect(turns).toHaveLength(2);
+        expect(liveTurnOf(turns)).toBe(turns[0]);
+    });
+
+    it("keeps a normal message, or a slash command that started work, as the live turn", () => {
+        const normal = assembleTurns([user("fix it"), cmd("ls"), user("also the docs")]);
+        expect(liveTurnOf(normal)).toBe(normal[1]);
+        const skill = assembleTurns([user("fix it"), cmd("ls"), user("/doc-review"), cmd("cat spec.md")]);
+        expect(liveTurnOf(skill)).toBe(skill[1]);
+    });
+
+    it("treats a skill slash command as its own live turn before it has any events", () => {
+        const turns = assembleTurns([user("fix it"), cmd("ls"), user("/doc-review")]);
+        expect(liveTurnOf(turns)).toBe(turns[1]);
+    });
+
+    it("returns the only turn when it is a slash command", () => {
+        const turns = assembleTurns([user("/status")]);
+        expect(liveTurnOf(turns)).toBe(turns[0]);
+        expect(liveTurnOf([])).toBeUndefined();
     });
 });
 

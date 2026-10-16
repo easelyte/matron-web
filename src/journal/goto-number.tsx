@@ -3,7 +3,8 @@
 // (client.lookupNumber) before anything opens. The same lookup puts an exact match at the top of
 // the sidebar search when the query is just a number.
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { useFocusTrap } from "./use-focus-trap";
 import { createPortal } from "react-dom";
 
 import type { MatronJournalClient } from "./client";
@@ -171,8 +172,16 @@ export function GoToNumberDialog({ client }: { client: MatronJournalClient }): R
         );
     }
 
+    const trapRef = useRef<HTMLDivElement>(null);
+    useFocusTrap(trapRef);
     return createPortal(
-        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-goto-title">
+        <div
+            ref={trapRef}
+            className="mj_UploadConfirm_scrim"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mj-goto-title"
+        >
             <form
                 className="mj_UploadConfirm mj_NewSessionSheet mj_GoToSheet"
                 onSubmit={(event) => {
