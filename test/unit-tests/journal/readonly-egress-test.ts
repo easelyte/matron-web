@@ -94,59 +94,32 @@ describe("read-only subagent transcript egress", () => {
         expect(send).not.toHaveBeenCalled();
     });
 
-    it("blocks new and appended staging for a child conversation", () => {
-        const client = new MatronJournalClient();
-        const state = internals(client);
-        const first = { name: "first.txt" } as File;
-        const second = { name: "second.txt" } as File;
-        state.state = childState(client);
-
-        client.stageFiles([first]);
-        expect(state.state.stagedUploads).toBeUndefined();
-
-        state.state = {
-            ...state.state,
-            stagedUploads: {
-                convoId: CHILD.id,
-                items: [{ id: "staged-child", file: first }],
-                total: 1,
-                confirming: false,
-            },
-        };
-        client.stageFiles([second]);
-
-        expect(state.state.stagedUploads).toEqual({
-            convoId: CHILD.id,
-            items: [{ id: "staged-child", file: first }],
-            total: 1,
-            confirming: false,
-        });
-    });
-
-    it("blocks confirmation when the staged conversation is a child", async () => {
+    it("refuses to stage files into, or send a tray to, a child conversation", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
         const { database } = fakeDatabase();
         const file = { name: "notes.txt", type: "text/plain", size: 1 } as File;
-        state.state = {
-            ...childState(client),
-            stagedUploads: {
-                convoId: CHILD.id,
-                items: [{ id: "staged-child", file }],
-                total: 1,
-                confirming: false,
-            },
-        };
-        state.api = { uploadMedia: jest.fn() };
+        const uploadMedia = jest.fn();
+        state.state = childState(client);
+        state.api = { uploadMedia };
         state.database = database;
 
-        await client.confirmStagedFile("staged-child");
+        client.stageFiles([file]);
+        expect(state.state.composerAttachments).toEqual({});
 
+        state.state = {
+            ...state.state,
+            composerAttachments: { [CHILD.id]: [{ id: "staged-child", file, state: "staged" }] },
+        };
+        await expect(client.sendStagedFiles(CHILD.id, "caption")).resolves.toEqual({
+            outcome: "skipped",
+            captionDelivered: false,
+        });
+        expect(uploadMedia).not.toHaveBeenCalled();
         expect(database.addToOutbox).not.toHaveBeenCalled();
-        expect(state.state.stagedUploads?.confirming).toBe(false);
     });
 
-    it("confirms a staged parent file after selection changes to a child", async () => {
+    it("sends a parent's tray after selection changes to a child", async () => {
         const client = new MatronJournalClient();
         const state = internals(client);
         const { database } = fakeDatabase();
@@ -158,21 +131,16 @@ describe("read-only subagent transcript egress", () => {
         } as unknown as File;
         state.state = {
             ...childState(client),
-            stagedUploads: {
-                convoId: PARENT.id,
-                items: [{ id: "staged-parent", file }],
-                total: 1,
-                confirming: false,
-            },
+            composerAttachments: { [PARENT.id]: [{ id: "staged-parent", file, state: "staged" }] },
         };
         state.api = { uploadMedia: jest.fn().mockResolvedValue({ media_id: "media-1" }) };
         state.database = database;
         state.connection = { send: jest.fn().mockReturnValue(true) };
 
-        await client.confirmStagedFile("staged-parent");
+        await client.sendStagedFiles(PARENT.id, "");
 
         expect(database.addToOutbox).toHaveBeenCalledWith(expect.objectContaining({ convoId: PARENT.id }));
-        expect(state.state.stagedUploads).toBeUndefined();
+        expect(state.state.composerAttachments).toEqual({});
     });
 
     it("blocks a fresh child attachment before upload or outbox staging", async () => {

@@ -85,8 +85,13 @@ function internals(client: MatronJournalClient): ClientInternals {
     return client as unknown as ClientInternals;
 }
 
-class MockTrack {
+class MockTrack extends EventTarget {
     public readonly stop = jest.fn();
+
+    /** The device went away (unplugged, permission withdrawn). */
+    public end(): void {
+        this.dispatchEvent(new Event("ended"));
+    }
 }
 
 class MockStream {
@@ -283,6 +288,21 @@ async function startRecording(container: HTMLElement): Promise<MockRecorder> {
     return harness.latest;
 }
 
+async function select(client: MatronJournalClient, conversationId: string | undefined): Promise<void> {
+    await act(async () => {
+        if (conversationId) await client.selectConversation(conversationId);
+        else patch(client, { selectedConversationId: undefined });
+    });
+}
+
+function patch(client: MatronJournalClient, update: Partial<ClientState>): void {
+    (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch(update);
+}
+
+function indicatorText(container: HTMLElement): string | null {
+    return container.querySelector(".mj_VoiceNoteBar")?.textContent ?? null;
+}
+
 async function unmount(): Promise<void> {
     if (!rendered) return;
     const current = rendered;
@@ -453,6 +473,51 @@ describe("Composer voice recording", () => {
         await advance(300);
         const stored = Object.keys(localStorage).map((key) => localStorage.getItem(key) ?? "");
         expect(stored.join("\n")).not.toContain("example.com");
+    });
+
+    it("records a sent caption for Up recall as it goes, and a note sent mid-walk ends the walk", async () => {
+        const client = makeClient();
+        const upload = deferred<"sent">();
+        jest.spyOn(client, "sendVoiceNote").mockReturnValue(upload.promise);
+        jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        const { container } = await renderComposer(false, client);
+        const up = async (): Promise<void> => {
+            await act(async () => {
+                composerTextarea(container).dispatchEvent(
+                    new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }),
+                );
+            });
+        };
+        await typeDraft(container, "older");
+        await act(async () => {
+            composerTextarea(container).dispatchEvent(
+                new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+            );
+        });
+        await typeDraft(container, "newer");
+        await act(async () => {
+            composerTextarea(container).dispatchEvent(
+                new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+            );
+        });
+
+        // Walk back to "older" and send it as the caption of a voice note.
+        await up();
+        await up();
+        expect(composerTextarea(container).value).toBe("older");
+        await startRecording(container);
+        await click(container, "Stop and send voice message");
+        await advance(0);
+        expect(composerTextarea(container).value).toBe("");
+
+        // The walk is over, so Up starts afresh from the newest line: the caption, recallable
+        // while the upload is still running.
+        await up();
+        expect(composerTextarea(container).value).toBe("older");
+        // The upload finishing doesn't disturb a walk under way.
+        await act(async () => upload.resolve("sent"));
+        await up();
+        expect(composerTextarea(container).value).toBe("newer");
     });
 
     it("clears the draft as the send starts, not when the upload finishes", async () => {
@@ -769,24 +834,29 @@ describe("Composer voice recording", () => {
         expect(voiceError(container)).toBeNull();
     });
 
-    it("exits requesting on conversation switch and stops a stale late permission stream", async () => {
+    it("keeps a microphone request across a conversation switch and records for the conversation it came from", async () => {
         const request = deferred<MediaStream>();
-        const staleStream = harness.stream() as unknown as MockStream;
+        const stream = harness.stream() as unknown as MockStream;
         harness.getUserMedia.mockReturnValueOnce(request.promise);
         const client = makeClient();
+        const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
         const { container } = await renderComposer(false, client);
 
         await click(container, "Record voice message");
-        expect(button(container, "Requesting microphone access").disabled).toBe(true);
-        await act(async () => {
-            await client.selectConversation("B");
-        });
+        await select(client, "B");
+        // B's composer is free; A's request is still out.
         expect(button(container, "Record voice message").disabled).toBe(false);
-        await act(async () => request.resolve(staleStream as unknown as MediaStream));
+        await act(async () => request.resolve(stream as unknown as MediaStream));
 
-        expect(staleStream.track.stop).toHaveBeenCalledTimes(1);
-        expect(harness.instances).toHaveLength(0);
-        expect(button(container, "Record voice message").disabled).toBe(false);
+        expect(stream.track.stop).not.toHaveBeenCalled();
+        expect(harness.latest.state).toBe("recording");
+        expect(container.querySelector(".mj_VoiceRecording")).toBeNull();
+        expect(indicatorText(container)).toContain("For A");
+        await click(container, "Send voice note");
+        await advance(0);
+
+        expect(sendVoiceNote).toHaveBeenCalledTimes(1);
+        expect(sendVoiceNote.mock.calls[0][1]).toBe("A");
     });
 
     it("times out acquisition, stops a stale resolve, and does not let it clear the next request timer", async () => {
@@ -911,5 +981,273 @@ describe("Composer voice recording", () => {
 
         expect(lateStream.track.stop).toHaveBeenCalledTimes(1);
         expect(harness.instances).toHaveLength(0);
+    });
+});
+
+describe("Voice note across conversations", () => {
+    it("keeps recording when the user switches conversation, with an indicator for where it is going", async () => {
+        const { client, container } = await renderComposer();
+        const recorder = await startRecording(container);
+        expect(indicatorText(container)).toBeNull();
+
+        await select(client, "B");
+
+        expect(recorder.state).toBe("recording");
+        expect(harness.streams[0].track.stop).not.toHaveBeenCalled();
+        // B's composer is its own: the normal row, not A's recording bar.
+        expect(container.querySelector(".mj_VoiceRecording")).toBeNull();
+        expect(composerTextarea(container)).not.toBeNull();
+        expect(indicatorText(container)).toContain("Recording");
+        expect(indicatorText(container)).toContain("For A");
+        await advance(2000);
+        expect(container.querySelector(".mj_VoiceNoteIndicator_time")?.textContent).toBe("0:02");
+
+        await select(client, "A");
+
+        expect(container.querySelector(".mj_VoiceRecording")).not.toBeNull();
+        expect(indicatorText(container)).toBeNull();
+    });
+
+    it("sends a note stopped from another conversation to the one it was recorded in, leaving drafts alone", async () => {
+        const client = makeClient();
+        const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        const { container } = await renderComposer(false, client);
+        await startRecording(container);
+        await select(client, "B");
+        await typeDraft(container, "for B only");
+
+        await click(container, "Send voice note");
+        await advance(0);
+
+        expect(sendVoiceNote).toHaveBeenCalledTimes(1);
+        expect(sendVoiceNote.mock.calls[0][1]).toBe("A");
+        expect(sendVoiceNote.mock.calls[0][3]).toBeUndefined();
+        expect(composerTextarea(container).value).toBe("for B only");
+        expect(indicatorText(container)).toBeNull();
+        expect(harness.streams[0].track.stop).toHaveBeenCalledTimes(1);
+    });
+
+    it("never takes a draft for a note sent from the indicator, even if its conversation opens before it finishes", async () => {
+        harness.queue({ autoStopEvents: false, finalChunk: "NOTE" });
+        const client = makeClient();
+        const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        const { container } = await renderComposer(false, client);
+        await typeDraft(container, "still a draft");
+        const recorder = await startRecording(container);
+        await select(client, "B");
+
+        await click(container, "Send voice note");
+        await select(client, "A");
+        await act(async () => recorder.dispatchFinalEvents());
+        await advance(0);
+
+        expect(sendVoiceNote).toHaveBeenCalledTimes(1);
+        expect(sendVoiceNote.mock.calls[0][1]).toBe("A");
+        expect(sendVoiceNote.mock.calls[0][3]).toBeUndefined();
+        expect(composerTextarea(container).value).toBe("still a draft");
+    });
+
+    it("reports a failed send from the indicator in the indicator, not in the composer on screen", async () => {
+        const client = makeClient();
+        jest.spyOn(client, "sendVoiceNote").mockResolvedValue("persist-failed");
+        const { container } = await renderComposer(false, client);
+        await startRecording(container);
+        await select(client, "B");
+
+        await click(container, "Send voice note");
+        await advance(0);
+
+        expect(voiceError(container)).toBeNull();
+        expect(indicatorText(container)).toContain("Voice note didn't send");
+    });
+
+    it("cancels from the indicator: nothing is sent and the microphone is released", async () => {
+        const client = makeClient();
+        const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        const { container } = await renderComposer(false, client);
+        await startRecording(container);
+        await select(client, "B");
+
+        await click(container, "Cancel voice note");
+        await advance(0);
+
+        expect(sendVoiceNote).not.toHaveBeenCalled();
+        expect(harness.streams[0].track.stop).toHaveBeenCalledTimes(1);
+        expect(indicatorText(container)).toBeNull();
+    });
+
+    it("refuses a second note for another conversation, naming where the live one is going", async () => {
+        const { client, container } = await renderComposer();
+        await startRecording(container);
+        await select(client, "B");
+
+        await click(container, "Record voice message");
+
+        expect(harness.getUserMedia).toHaveBeenCalledTimes(1);
+        expect(voiceError(container)).toBe(
+            "Already recording a voice note for \u201CA\u201D. Send or cancel it first.",
+        );
+        expect(harness.latest.state).toBe("recording");
+    });
+
+    it("keeps recording with no composer on screen and sends from the indicator on its own", async () => {
+        const client = makeClient();
+        const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        const { container } = await renderComposer(false, client);
+        await typeDraft(container, "kept as the draft");
+        await startRecording(container);
+
+        await select(client, undefined);
+        expect(container.querySelector('textarea[aria-label="Message your agent"]')).toBeNull();
+        expect(harness.latest.state).toBe("recording");
+        expect(indicatorText(container)).toContain("For A");
+
+        await click(container, "Send voice note");
+        await advance(0);
+
+        expect(sendVoiceNote).toHaveBeenCalledTimes(1);
+        expect(sendVoiceNote.mock.calls[0][1]).toBe("A");
+        expect(sendVoiceNote.mock.calls[0][3]).toBeUndefined();
+        await select(client, "A");
+        expect(composerTextarea(container).value).toBe("kept as the draft");
+    });
+
+    it("keeps a note that didn't send from the indicator for Retry or Discard", async () => {
+        const client = makeClient();
+        const sendVoiceNote = jest
+            .spyOn(client, "sendVoiceNote")
+            .mockResolvedValueOnce("persist-failed")
+            .mockResolvedValueOnce("sent");
+        const { container } = await renderComposer(false, client);
+        harness.queue({ finalChunk: "NOTE" });
+        await startRecording(container);
+        await select(client, undefined);
+
+        await click(container, "Send voice note");
+        await advance(0);
+
+        expect(indicatorText(container)).toContain("Voice note didn't send");
+        expect(indicatorText(container)).toContain("A: Couldn't save the recording.");
+        await act(async () => {
+            [...container.querySelectorAll<HTMLButtonElement>(".mj_VoiceNoteIndicator_textAction")]
+                .find((candidate) => candidate.textContent === "Retry")
+                ?.click();
+        });
+        await advance(0);
+
+        expect(sendVoiceNote).toHaveBeenCalledTimes(2);
+        expect(sendVoiceNote.mock.calls[1][1]).toBe("A");
+        expect(sendVoiceNote.mock.calls[1][0].size).toBe("NOTE".length);
+        expect(indicatorText(container)).toBeNull();
+    });
+
+    it("goes back to the note's conversation from the indicator", async () => {
+        const { client, container } = await renderComposer();
+        await startRecording(container);
+        await select(client, "B");
+
+        await act(async () => container.querySelector<HTMLButtonElement>(".mj_VoiceNoteIndicator_open")?.click());
+        await advance(0);
+
+        expect(client.getSnapshot().selectedConversationId).toBe("A");
+        expect(container.querySelector(".mj_VoiceRecording")).not.toBeNull();
+    });
+
+    it("releases the microphone and drops the note on sign-out", async () => {
+        const client = makeClient();
+        const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        Object.assign(internals(client).database ?? {}, { reset: jest.fn(async () => undefined), close: jest.fn() });
+        const { container } = await renderComposer(false, client);
+        await startRecording(container);
+        await select(client, "B");
+
+        await act(async () => client.logout());
+        await advance(3000);
+
+        expect(harness.streams[0].track.stop).toHaveBeenCalled();
+        expect(harness.latest.state).toBe("inactive");
+        expect(sendVoiceNote).not.toHaveBeenCalled();
+        expect(indicatorText(container)).toBeNull();
+    });
+
+    it("keeps a note whose microphone went away for Retry or Discard, sending nothing unasked", async () => {
+        const client = makeClient();
+        const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        const { container } = await renderComposer(false, client);
+        harness.queue({ finalChunk: "PART" });
+        await advance(0);
+        const appTimers = jest.getTimerCount();
+        const recorder = await startRecording(container);
+        await select(client, "B");
+
+        await act(async () => harness.streams[0].track.end());
+        await advance(0);
+
+        expect(recorder.state).toBe("inactive");
+        expect(harness.streams[0].track.stop).toHaveBeenCalled();
+        expect(sendVoiceNote).not.toHaveBeenCalled();
+        expect(indicatorText(container)).toContain("A: The microphone stopped before it was sent.");
+        // No recorder, tick, cap or watchdog timer left behind.
+        expect(jest.getTimerCount()).toBe(appTimers);
+
+        await act(async () => {
+            [...container.querySelectorAll<HTMLButtonElement>(".mj_VoiceNoteIndicator_textAction")]
+                .find((candidate) => candidate.textContent === "Retry")
+                ?.click();
+        });
+        await advance(0);
+
+        expect(sendVoiceNote).toHaveBeenCalledTimes(1);
+        expect(sendVoiceNote.mock.calls[0][1]).toBe("A");
+        expect(sendVoiceNote.mock.calls[0][0].size).toBe("PART".length);
+    });
+
+    it("keeps a note for Retry when its composer moved on before the recorder finished and the send failed", async () => {
+        harness.queue({ autoStopEvents: false, finalChunk: "NOTE" });
+        const client = makeClient();
+        jest.spyOn(client, "sendVoiceNote").mockResolvedValue("persist-failed");
+        const { container } = await renderComposer(false, client);
+        const recorder = await startRecording(container);
+
+        await click(container, "Stop and send voice message");
+        await select(client, "B");
+        await act(async () => recorder.dispatchFinalEvents());
+        await advance(0);
+
+        // Not B's composer error, which would offer nothing to retry.
+        expect(voiceError(container)).toBeNull();
+        expect(indicatorText(container)).toContain("Voice note didn't send");
+    });
+
+    it("announces the recording time once a minute, not every second", async () => {
+        const { client, container } = await renderComposer();
+        await startRecording(container);
+        const live = (): string | undefined =>
+            [...container.querySelectorAll('[aria-live="polite"]')]
+                .map((region) => region.textContent ?? "")
+                .find((text) => text.includes("Recording") || text.includes("recording"));
+
+        await advance(5000);
+        expect(live()).toBe("Recording");
+        await advance(60_000);
+        expect(live()).toBe("Recording, 1 minute");
+
+        await select(client, "B");
+        expect(live()).toBe("Voice note recording for A, 1 minute");
+    });
+
+    it("releases the microphone when the page goes away", async () => {
+        const client = makeClient();
+        const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        const { container } = await renderComposer(false, client);
+        await startRecording(container);
+        await select(client, "B");
+
+        await act(async () => window.dispatchEvent(new Event("pagehide")));
+        await advance(0);
+
+        expect(harness.streams[0].track.stop).toHaveBeenCalledTimes(1);
+        expect(harness.latest.state).toBe("inactive");
+        expect(sendVoiceNote).not.toHaveBeenCalled();
     });
 });

@@ -6,28 +6,33 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * The voice-note recorder shared by the chat composer and the tracker item reply box: microphone
- * acquisition (with its timeout and session binding), the MediaRecorder lifecycle (a 5-minute cap,
- * an onstop watchdog, late-error guards), the live waveform, and the controls drawn while recording.
- * The hook only records; what a finished recording is FOR belongs to the caller's `onRecorded`.
+ * The voice-note controls shared by the chat composer and the tracker item reply box: the hook
+ * that binds a surface to the app's one recording (`VoiceNoteSession`), the live waveform, the
+ * controls drawn while recording, and the app-wide indicator for a note recording off screen.
+ * The recording itself lives in the session, so it outlives the surface that started it; what a
+ * finished recording is FOR belongs to the caller's `onRecorded`.
  */
 
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
-import { CloseIcon, MicOnIcon, StopIcon, TrashIcon } from "./icons";
+import { ArrowUpCircleIcon, CloseIcon, MicOnIcon, StopIcon, TrashIcon, WarningTriangleIcon } from "./icons";
+import {
+    type VoiceNoteDeliver,
+    type VoiceNoteSnapshot,
+    type VoiceRecordingContext,
+    type VoiceSessionClient,
+    type VoiceState,
+    voiceNoteSessionFor,
+} from "./voice-note-session";
 
-export type VoiceState = "idle" | "requesting" | "recording" | "error";
-
-/** Where a finished recording was made: the caller's context at mic time, and the session then. */
-export interface VoiceRecordingContext {
-    contextKey: string;
-    sessionGen: number;
-}
+export type { VoiceRecordingContext, VoiceState } from "./voice-note-session";
 
 export interface VoiceRecorder {
     voiceState: VoiceState;
     voiceSupported: boolean;
     elapsedLabel: string;
+    /** The elapsed time for the live region: whole minutes, empty in the first minute. */
+    spokenElapsed: string;
     waveformActive: boolean;
     /** The error to show while `voiceState` is "error". */
     errorMessage: string | null;
@@ -44,192 +49,120 @@ export interface VoiceRecorder {
     waveformCanvasRef: React.RefObject<HTMLCanvasElement | null>;
 }
 
+function elapsedLabelOf(elapsedMs: number): string {
+    const minutes = Math.floor(elapsedMs / 60_000);
+    const seconds = Math.floor((elapsedMs % 60_000) / 1000);
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+/**
+ * The recording time as a screen reader hears it: whole minutes only, so a live region speaks once
+ * a minute rather than every second.
+ */
+function spokenElapsedOf(elapsedMs: number): string {
+    const minutes = Math.floor(elapsedMs / 60_000);
+    return minutes === 0 ? "" : `, ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+}
+
+/** What `snapshot` means for the surface showing `key`: its own note's state, or its own error. */
+function stateFor(snapshot: VoiceNoteSnapshot, key: string | undefined, localError: string | null): VoiceState {
+    if (key !== undefined && snapshot.target?.key === key) return snapshot.state;
+    return localError ? "error" : "idle";
+}
+
 export function useVoiceRecorder({
     contextKey,
     client,
     onRecorded,
+    kind,
+    title,
+    deliverAway,
 }: {
-    /** The surface the mic serves (a conversation id, an item number). A change tears a recording down. */
+    /** The place the mic serves (a conversation id, an item number). */
     contextKey: string | undefined;
     /** The session generation binds a recording to the session it began in. */
-    client: { readonly sessionGeneration: number };
+    client: VoiceSessionClient;
     /** A recording committed with "send" that holds audio, made in the still-current session. */
     onRecorded: (blob: Blob, context: VoiceRecordingContext) => void;
+    /** What the place is: "conversation" or "item". Names the surface to the session. */
+    kind: string;
+    /** What the place is called, for the app-wide indicator and a refused second note. */
+    title: string;
+    /**
+     * Makes the note outlive this surface: it keeps recording when the surface switches place or
+     * unmounts, and goes out through this when no surface of its kind is mounted to send it.
+     * Without it, leaving the place ends its note, as before.
+     */
+    deliverAway?: VoiceNoteDeliver;
 }): VoiceRecorder {
-    const contextKeyRef = useRef(contextKey);
-    contextKeyRef.current = contextKey;
+    const session = voiceNoteSessionFor(client);
+    const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot);
+    const key = contextKey === undefined ? undefined : `${kind}:${contextKey}`;
+    const keyRef = useRef(key);
+    keyRef.current = key;
     const onRecordedRef = useRef(onRecorded);
     onRecordedRef.current = onRecorded;
-    const [voiceState, reactSetVoiceState] = useState<VoiceState>("idle");
-    const [elapsedMs, setElapsedMs] = useState(0);
-    const [waveformActive, setWaveformActive] = useState(false);
-    const genRef = useRef(0);
-    const mediaRecorder = useRef<MediaRecorder | null>(null);
-    const mediaStream = useRef<MediaStream | null>(null);
-    const audioContext = useRef<AudioContext | null>(null);
-    const analyser = useRef<AnalyserNode | null>(null);
-    const rafId = useRef<number | null>(null);
-    const chunksRef = useRef<Blob[]>([]);
-    const recMimeRef = useRef<string | undefined>(undefined);
-    const recordingStartMs = useRef(0);
-    const deadlineTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const tickTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-    const watchdogTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const acquireTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const errorMsg = useRef<string | null>(null);
-    const mountedRef = useRef(false);
-    const voiceStateRef = useRef<VoiceState>("idle");
-    const dispositionRef = useRef<"send" | "discard">("discard");
-    const sendInFlightRef = useRef(false);
-    const stopInFlightRef = useRef(false);
-    const finalizedRef = useRef(false);
-    const recordingIdRef = useRef(0);
-    const capContextRef = useRef<string | undefined>(undefined);
-    const recordingSessionGenRef = useRef(0);
-    const visibilityHandlerRef = useRef<(() => void) | null>(null);
-    const voiceContextRef = useRef(contextKey);
+    const deliverAwayRef = useRef(deliverAway);
+    deliverAwayRef.current = deliverAway;
+    const persistent = deliverAway !== undefined;
+    const [surfaceId] = useState(() => ({}));
+    const [localError, reactSetLocalError] = useState<string | null>(null);
+    const localErrorRef = useRef<string | null>(null);
+    const setLocalError = useCallback((message: string | null): void => {
+        localErrorRef.current = message;
+        reactSetLocalError(message);
+    }, []);
     const containerRef = useRef<HTMLDivElement>(null);
     const micButtonRef = useRef<HTMLButtonElement>(null);
     const stopButtonRef = useRef<HTMLButtonElement>(null);
     const restoreVoiceFocusRef = useRef(false);
+    const focusStopRef = useRef(false);
     const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
-    const voiceSupported = Boolean(navigator.mediaDevices?.getUserMedia) && typeof window.MediaRecorder !== "undefined";
-    const elapsedMinutes = Math.floor(elapsedMs / 60_000);
-    const elapsedSeconds = Math.floor((elapsedMs % 60_000) / 1000);
-    const elapsedLabel = `${elapsedMinutes}:${String(elapsedSeconds).padStart(2, "0")}`;
+    const mine = key !== undefined && snapshot.target?.key === key;
+    const voiceState = stateFor(snapshot, key, localError);
+    const waveformActive = mine && snapshot.waveformActive;
 
-    const setVoiceState = useCallback((next: VoiceState): void => {
-        voiceStateRef.current = next;
-        reactSetVoiceState(next);
-    }, []);
+    // Register as a surface for this place: the app-wide indicator hides while it is on screen, and
+    // a persistent note of this kind is sent through it. Leaving a place ends its note unless the
+    // note is persistent.
+    useLayoutEffect(() => {
+        session.registerSurface(surfaceId, {
+            kind,
+            key,
+            deliver: (blob, context) => onRecordedRef.current(blob, context),
+        });
+        return () => {
+            session.unregisterSurface(surfaceId);
+            if (!persistent && key !== undefined) session.cancelIfTargeting(key);
+        };
+    }, [session, surfaceId, kind, key, persistent]);
 
-    const releaseMedia = useCallback((): void => {
-        if (deadlineTimer.current !== null) {
-            clearTimeout(deadlineTimer.current);
-            deadlineTimer.current = null;
-        }
-        if (tickTimer.current !== null) {
-            clearInterval(tickTimer.current);
-            tickTimer.current = null;
-        }
-        if (rafId.current !== null) {
-            cancelAnimationFrame(rafId.current);
-            rafId.current = null;
-        }
-        mediaStream.current?.getTracks().forEach((track) => track.stop());
-        mediaStream.current = null;
-        const context = audioContext.current;
-        audioContext.current = null;
-        analyser.current = null;
-        if (context && context.state !== "closed") void context.close().catch(() => undefined);
-        if (visibilityHandlerRef.current) {
-            document.removeEventListener("visibilitychange", visibilityHandlerRef.current);
-            visibilityHandlerRef.current = null;
-        }
-    }, []);
-
-    const releaseResources = useCallback((): void => {
-        releaseMedia();
-        if (watchdogTimer.current !== null) {
-            clearTimeout(watchdogTimer.current);
-            watchdogTimer.current = null;
-        }
-        // Detach handlers on final release: after finalize the recorder object
-        // can still emit a late onerror (e.g. during track teardown), which
-        // would otherwise flip a finalized/sent note to a false error state.
-        // finalizedRef guards the onerror body too; detaching is
-        // belt-and-suspenders and also drops the reference for GC.
-        const recorder = mediaRecorder.current;
-        if (recorder) {
-            recorder.ondataavailable = null;
-            recorder.onstop = null;
-            recorder.onerror = null;
-        }
-        mediaRecorder.current = null;
-    }, [releaseMedia]);
-
-    const finalizeVoice = useCallback(
-        (rid: number, localChunks: Blob[]): void => {
-            if (rid !== recordingIdRef.current) return;
-            if (finalizedRef.current) return;
-            finalizedRef.current = true;
-
-            const mime = recMimeRef.current || "audio/webm";
-            const blob = localChunks.length ? new Blob(localChunks, { type: mime }) : null;
-            const wantSend = dispositionRef.current === "send";
-            const capturedContext = capContextRef.current;
-            const capturedSessionGen = recordingSessionGenRef.current;
-            releaseResources();
-
-            if (wantSend && !blob) {
-                if (mountedRef.current) {
-                    errorMsg.current = "Recording failed to save.";
-                    setVoiceState("error");
-                }
-                console.warn("voice: committed recording contained no audio", {
-                    rid,
-                    disposition: dispositionRef.current,
-                    chunks: localChunks.length,
-                    elapsedMs: Date.now() - recordingStartMs.current,
-                });
-                sendInFlightRef.current = false;
-                stopInFlightRef.current = false;
-                return;
-            }
-
-            if (mountedRef.current && voiceStateRef.current !== "error") {
+    // Focus goes back to the mic after this surface's own note finishes, if it was in the bar. The
+    // check runs as the session changes, before the bar unmounts and takes the focus with it.
+    useEffect(() => {
+        let recordingKey: string | undefined;
+        const check = (): void => {
+            const next = session.getSnapshot();
+            const recording = next.target?.key === keyRef.current && next.state === "recording";
+            if (recordingKey !== undefined && recordingKey === keyRef.current && !recording && next.state !== "error") {
                 restoreVoiceFocusRef.current = Boolean(containerRef.current?.contains(document.activeElement));
-                setVoiceState("idle");
-                setElapsedMs(0);
             }
+            recordingKey = recording ? keyRef.current : undefined;
+        };
+        check();
+        return session.subscribe(check);
+    }, [session]);
 
-            if (wantSend && blob && capturedContext && client.sessionGeneration !== capturedSessionGen) {
-                console.warn("voice: session changed before finalize — recording not sent", { rid });
-            }
-
-            if (wantSend && blob && capturedContext && client.sessionGeneration === capturedSessionGen) {
-                onRecordedRef.current(blob, { contextKey: capturedContext, sessionGen: capturedSessionGen });
-            }
-            sendInFlightRef.current = false;
-            stopInFlightRef.current = false;
-        },
-        [client, releaseResources, setVoiceState],
-    );
-
-    const stopRecorder = useCallback(
-        (disposition: "send" | "discard"): void => {
-            const recorder = mediaRecorder.current;
-            if (!recorder || recorder.state === "inactive") return;
-            if (disposition === "send") {
-                dispositionRef.current = "send";
-                sendInFlightRef.current = true;
-            } else if (!sendInFlightRef.current) {
-                dispositionRef.current = "discard";
-            }
-            stopInFlightRef.current = true;
-            const rid = recordingIdRef.current;
-            const localChunks = chunksRef.current;
-            watchdogTimer.current = setTimeout(() => {
-                if (rid !== recordingIdRef.current || finalizedRef.current) return;
-                console.warn("voice: onstop absent — watchdog finalizing", {
-                    rid,
-                    chunks: localChunks.length,
-                    elapsedMs: Date.now() - recordingStartMs.current,
-                });
-                finalizeVoice(rid, localChunks);
-            }, 3000);
-            recorder.stop();
-        },
-        [finalizeVoice],
-    );
-
-    const startWaveform = useCallback((): void => {
-        const values = new Uint8Array(analyser.current?.frequencyBinCount ?? 0);
+    // The live waveform, drawn from the session's analyser while this surface shows its note.
+    useEffect(() => {
+        if (voiceState !== "recording" || !waveformActive) return;
+        const values = new Uint8Array(session.analyser?.frequencyBinCount ?? 0);
         const reducedMotion =
             typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        let rafId: number | null = null;
         const draw = (): void => {
             const canvas = waveformCanvasRef.current;
-            const currentAnalyser = analyser.current;
+            const currentAnalyser = session.analyser;
             if (canvas && currentAnalyser) {
                 const context = canvas.getContext("2d");
                 if (context) {
@@ -241,7 +174,7 @@ export function useVoiceRecorder({
                     context.clearRect(0, 0, width, height);
                     const computed = getComputedStyle(canvas);
                     context.strokeStyle =
-                        computed.getPropertyValue("--cpd-color-icon-accent-primary").trim() || computed.color;
+                        computed.getPropertyValue("--mj-color-icon-accent-primary").trim() || computed.color;
                     context.lineWidth = Math.max(1, window.devicePixelRatio);
                     context.beginPath();
                     for (let index = 0; index < values.length; index += 1) {
@@ -253,234 +186,82 @@ export function useVoiceRecorder({
                     context.stroke();
                 }
             }
-            rafId.current = requestAnimationFrame(draw);
+            rafId = requestAnimationFrame(draw);
         };
         draw();
-    }, []);
-
-    const startRecording = useCallback(
-        (stream: MediaStream): void => {
-            const rid = ++recordingIdRef.current;
-            const localChunks: Blob[] = [];
-            chunksRef.current = localChunks;
-            recMimeRef.current = undefined;
-            mediaStream.current = stream;
-            recordingSessionGenRef.current = client.sessionGeneration;
-            setWaveformActive(false);
-            try {
-                const mimeType = ["audio/webm;codecs=opus", "audio/webm"].find((candidate) =>
-                    window.MediaRecorder.isTypeSupported(candidate),
-                );
-                const recorder = mimeType
-                    ? new window.MediaRecorder(stream, { mimeType })
-                    : new window.MediaRecorder(stream);
-                mediaRecorder.current = recorder;
-                recorder.onstart = () => {
-                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current) return;
-                    recMimeRef.current ||= recorder.mimeType || undefined;
-                };
-                recorder.ondataavailable = (event) => {
-                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current) return;
-                    recMimeRef.current ||= event.data.type || undefined;
-                    if (event.data.size) localChunks.push(event.data);
-                };
-                recorder.onstop = () => {
-                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current) return;
-                    finalizeVoice(rid, localChunks);
-                };
-                recorder.onerror = () => {
-                    // finalizedRef: a late error after the note was already
-                    // finalized+sent (notably via the onstop-absent watchdog)
-                    // must not overwrite the sent/idle state with a false error.
-                    if (rid !== recordingIdRef.current || localChunks !== chunksRef.current || finalizedRef.current)
-                        return;
-                    releaseMedia();
-                    errorMsg.current = "Recording stopped unexpectedly.";
-                    setVoiceState("error");
-                    stopRecorder("discard");
-                };
-
-                try {
-                    const context = new window.AudioContext();
-                    audioContext.current = context;
-                    const currentAnalyser = context.createAnalyser();
-                    currentAnalyser.fftSize = 256;
-                    analyser.current = currentAnalyser;
-                    context.createMediaStreamSource(stream).connect(currentAnalyser);
-                    startWaveform();
-                    setWaveformActive(true);
-                } catch {
-                    if (rafId.current !== null) {
-                        cancelAnimationFrame(rafId.current);
-                        rafId.current = null;
-                    }
-                    const context = audioContext.current;
-                    audioContext.current = null;
-                    analyser.current = null;
-                    if (context && context.state !== "closed") void context.close().catch(() => undefined);
-                }
-
-                dispositionRef.current = "discard";
-                sendInFlightRef.current = false;
-                stopInFlightRef.current = false;
-                finalizedRef.current = false;
-                recordingStartMs.current = Date.now();
-                setElapsedMs(0);
-                tickTimer.current = setInterval(() => {
-                    setElapsedMs(Date.now() - recordingStartMs.current);
-                }, 500);
-                const capMs = 5 * 60 * 1000;
-                deadlineTimer.current = setTimeout(() => {
-                    if (Date.now() - recordingStartMs.current >= capMs) stopRecorder("send");
-                }, capMs);
-                const reconcileDurationCap = (): void => {
-                    if (document.visibilityState === "visible" && Date.now() - recordingStartMs.current >= capMs) {
-                        stopRecorder("send");
-                    }
-                };
-                visibilityHandlerRef.current = reconcileDurationCap;
-                document.addEventListener("visibilitychange", reconcileDurationCap);
-
-                recorder.start(1000);
-                setVoiceState("recording");
-            } catch {
-                stream.getTracks().forEach((track) => track.stop());
-                releaseResources();
-                errorMsg.current = "Couldn't start recording.";
-                setVoiceState("error");
-            }
-        },
-        [client, finalizeVoice, releaseMedia, releaseResources, setVoiceState, startWaveform, stopRecorder],
-    );
+        return () => {
+            if (rafId !== null) cancelAnimationFrame(rafId);
+        };
+    }, [session, voiceState, waveformActive]);
 
     const acquireVoice = useCallback((): void => {
-        if (!navigator.mediaDevices?.getUserMedia || typeof window.MediaRecorder === "undefined") return;
-        const gen = ++genRef.current;
-        // Bind mic acquisition to the session generation at REQUEST time
-        // (finalize/send are already session-bound via recordingSessionGenRef).
-        // A getUserMedia pending across a logout / session replacement must not
-        // be adopted by the replacement session: recordingSessionGenRef
-        // is set at resolve time inside startRecording, so without this guard a
-        // request that resolves after the session changed would bind to the NEW
-        // gen and let the note send under the wrong session.
-        const acquireSessionGen = client.sessionGeneration;
-        setVoiceState("requesting");
-        capContextRef.current = contextKeyRef.current;
-        errorMsg.current = null;
-        const localTimer = setTimeout(() => {
-            if (gen === genRef.current && voiceStateRef.current === "requesting") {
-                if (acquireTimer.current === localTimer) acquireTimer.current = null;
-                ++genRef.current;
-                errorMsg.current = "Microphone request timed out — try again.";
-                setVoiceState("error");
-            }
-        }, 20_000);
-        acquireTimer.current = localTimer;
-        void navigator.mediaDevices.getUserMedia({ audio: true }).then(
-            (stream) => {
-                clearTimeout(localTimer);
-                if (acquireTimer.current === localTimer) acquireTimer.current = null;
-                if (gen !== genRef.current || !mountedRef.current || client.sessionGeneration !== acquireSessionGen) {
-                    stream.getTracks().forEach((track) => track.stop());
-                    // A session-replaced request is cancelled, not hung: the 20 s timeout was just
-                    // cleared, so without this the button would stay locked in "requesting".
-                    if (gen === genRef.current && mountedRef.current) setVoiceState("idle");
-                    return;
-                }
-                startRecording(stream);
-            },
-            (error: unknown) => {
-                clearTimeout(localTimer);
-                if (acquireTimer.current === localTimer) acquireTimer.current = null;
-                if (gen !== genRef.current) return;
-                const name =
-                    typeof error === "object" && error !== null && "name" in error
-                        ? String((error as { name: unknown }).name)
-                        : "";
-                errorMsg.current =
-                    name === "NotAllowedError" || name === "SecurityError"
-                        ? "Microphone access denied."
-                        : name === "NotFoundError"
-                          ? "No microphone found."
-                          : "Couldn't access the microphone.";
-                setVoiceState("error");
-            },
-        );
-    }, [client, setVoiceState, startRecording]);
+        const currentKey = keyRef.current;
+        if (currentKey === undefined || contextKey === undefined) return;
+        setLocalError(null);
+        focusStopRef.current = true;
+        const refused = session.start({
+            key: currentKey,
+            kind,
+            contextKey,
+            title,
+            persistent,
+            deliver: (blob, context) => onRecordedRef.current(blob, context),
+            deliverAway: persistent
+                ? (blob, context) => deliverAwayRef.current?.(blob, context) ?? Promise.resolve(null)
+                : undefined,
+        });
+        if (refused) {
+            focusStopRef.current = false;
+            setLocalError(refused);
+        }
+    }, [session, kind, contextKey, title, persistent, setLocalError]);
 
     const commitVoiceStop = useCallback(
         (disposition: "send" | "discard"): void => {
-            stopRecorder(disposition);
+            session.stop(disposition);
+            const inert = session.getSnapshot().stopInFlight;
             containerRef.current?.querySelectorAll<HTMLButtonElement>(".mj_VoiceRecording_action").forEach((button) => {
-                button.disabled = stopInFlightRef.current;
+                button.disabled = inert;
             });
         },
-        [stopRecorder],
+        [session],
     );
 
-    const teardownVoice = useCallback((): void => {
-        ++genRef.current;
-        if (acquireTimer.current !== null) {
-            clearTimeout(acquireTimer.current);
-            acquireTimer.current = null;
-        }
-        if (voiceStateRef.current === "requesting") {
-            if (mountedRef.current) setVoiceState("idle");
-            return;
-        }
-        if (mediaRecorder.current && mediaRecorder.current.state !== "inactive") stopRecorder("discard");
-        releaseMedia();
-    }, [releaseMedia, setVoiceState, stopRecorder]);
-
     const dismissError = useCallback((): void => {
-        errorMsg.current = null;
-        setVoiceState("idle");
-    }, [setVoiceState]);
+        setLocalError(null);
+        if (keyRef.current !== undefined) session.dismissError(keyRef.current);
+    }, [session, setLocalError]);
 
     const reportSendFailure = useCallback(
         (message: string): void => {
-            if (mountedRef.current && voiceStateRef.current === "idle") {
-                errorMsg.current = message;
-                setVoiceState("error");
+            if (stateFor(session.getSnapshot(), keyRef.current, localErrorRef.current) === "idle") {
+                setLocalError(message);
             }
         },
-        [setVoiceState],
+        [session, setLocalError],
     );
 
-    useEffect(() => {
-        mountedRef.current = true;
-        return () => {
-            mountedRef.current = false;
-            teardownVoice();
-        };
-    }, [teardownVoice]);
-
-    useLayoutEffect(() => {
-        if (voiceContextRef.current !== contextKey) {
-            teardownVoice();
-            voiceContextRef.current = contextKey;
-        }
-    }, [contextKey, teardownVoice]);
-
+    // The stop button takes focus as a note this surface asked for starts; coming back to a place
+    // whose note is already recording leaves focus where the user put it.
     useLayoutEffect(() => {
         if (voiceState === "recording") {
-            stopButtonRef.current?.focus();
+            if (focusStopRef.current) stopButtonRef.current?.focus();
+            focusStopRef.current = false;
         } else if (voiceState === "idle") {
             const shouldRestoreFocus = restoreVoiceFocusRef.current;
             restoreVoiceFocusRef.current = false;
-            if (shouldRestoreFocus && capContextRef.current === contextKeyRef.current) {
-                micButtonRef.current?.focus();
-            }
+            if (shouldRestoreFocus) micButtonRef.current?.focus();
         }
     }, [voiceState]);
 
     return {
         voiceState,
-        voiceSupported,
-        elapsedLabel,
+        voiceSupported: session.supported,
+        elapsedLabel: elapsedLabelOf(mine ? snapshot.elapsedMs : 0),
+        spokenElapsed: spokenElapsedOf(mine ? snapshot.elapsedMs : 0),
         waveformActive,
-        errorMessage: errorMsg.current,
-        stopInFlight: stopInFlightRef.current,
+        errorMessage: mine ? snapshot.errorMessage : localError,
+        stopInFlight: mine && snapshot.stopInFlight,
         acquireVoice,
         commitVoiceStop,
         dismissError,
@@ -512,7 +293,7 @@ export function VoiceRecordingBar({
                 {recorder.elapsedLabel}
             </span>
             <span className="mj_ScreenReaderOnly" aria-live="polite">
-                Recording, {recorder.elapsedLabel}
+                Recording{recorder.spokenElapsed}
             </span>
             <button
                 className="mj_VoiceRecording_action"
@@ -591,6 +372,134 @@ export function VoiceErrorBanner({ recorder }: { recorder: VoiceRecorder }): Rea
             >
                 <CloseIcon />
             </button>
+        </div>
+    );
+}
+
+/** Whether the app-wide voice-note bar has anything to show, for the layout that makes room for it. */
+export function useVoiceNoteBarVisible(client: VoiceSessionClient): boolean {
+    const session = voiceNoteSessionFor(client);
+    return useSyncExternalStore(session.subscribe, () => {
+        const snapshot = session.getSnapshot();
+        return snapshot.showsIndicator || snapshot.sending !== null || snapshot.failures.length > 0;
+    });
+}
+
+/**
+ * The app-wide voice-note bar, along the bottom of the main column: while a conversation's note
+ * records and its composer isn't on screen, a pill says where the note is going with the running
+ * time, Cancel and Send, and the rest of it goes back there. A note finished from here that didn't
+ * send becomes a Retry / Discard row, so a note for a conversation that has since gone away is never
+ * silently lost.
+ */
+export function VoiceNoteBar({
+    client,
+    onOpen,
+}: {
+    client: VoiceSessionClient;
+    /** Goes back to the place a note is for: its target's kind and the caller's own id. */
+    onOpen: (kind: string, contextKey: string) => void;
+}): React.ReactElement | null {
+    const session = voiceNoteSessionFor(client);
+    const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot);
+    const live = snapshot.showsIndicator ? snapshot.target : null;
+    const sending = live ? null : snapshot.sending;
+    if (!live && !sending && snapshot.failures.length === 0) return null;
+    return (
+        <div className="mj_VoiceNoteBar" role="region" aria-label="Voice note">
+            {live && (
+                <div className="mj_VoiceNoteIndicator">
+                    <button
+                        className="mj_VoiceNoteIndicator_open"
+                        type="button"
+                        title="Open the conversation this voice note is for"
+                        onClick={() => onOpen(live.kind, live.contextKey)}
+                    >
+                        <span className="mj_VoiceRecording_dot" aria-hidden="true" />
+                        <span className="mj_VoiceNoteIndicator_text">
+                            <span className="mj_VoiceNoteIndicator_headline">
+                                Recording{" "}
+                                <span className="mj_VoiceNoteIndicator_time">{elapsedLabelOf(snapshot.elapsedMs)}</span>
+                            </span>
+                            <span className="mj_VoiceNoteIndicator_subtitle">For {live.title}</span>
+                        </span>
+                    </button>
+                    <span className="mj_ScreenReaderOnly" aria-live="polite">
+                        Voice note recording for {live.title}
+                        {spokenElapsedOf(snapshot.elapsedMs)}
+                    </span>
+                    <button
+                        className="mj_VoiceNoteIndicator_action"
+                        type="button"
+                        aria-label="Cancel voice note"
+                        title="Cancel voice note"
+                        disabled={snapshot.stopInFlight}
+                        onClick={() => session.stop("discard")}
+                    >
+                        <CloseIcon />
+                    </button>
+                    <button
+                        className="mj_VoiceNoteIndicator_action mj_VoiceNoteIndicator_send"
+                        type="button"
+                        aria-label="Send voice note"
+                        title="Send voice note"
+                        disabled={snapshot.stopInFlight}
+                        onClick={() => session.stop("send")}
+                    >
+                        <ArrowUpCircleIcon />
+                    </button>
+                </div>
+            )}
+            {sending && (
+                <div className="mj_VoiceNoteIndicator" role="status">
+                    <button
+                        className="mj_VoiceNoteIndicator_open"
+                        type="button"
+                        title="Open the conversation this voice note is for"
+                        onClick={() => onOpen(sending.kind, sending.contextKey)}
+                    >
+                        <span className="mj_Spinner" aria-hidden="true" />
+                        <span className="mj_VoiceNoteIndicator_text">
+                            <span className="mj_VoiceNoteIndicator_headline">Sending voice note…</span>
+                            <span className="mj_VoiceNoteIndicator_subtitle">For {sending.title}</span>
+                        </span>
+                    </button>
+                </div>
+            )}
+            {snapshot.failures.map((failure) => (
+                <div key={failure.id} className="mj_VoiceNoteIndicator mj_VoiceNoteIndicator_failed">
+                    <button
+                        className="mj_VoiceNoteIndicator_open"
+                        type="button"
+                        title="Open the conversation this voice note is for"
+                        onClick={() => onOpen(failure.target.kind, failure.target.contextKey)}
+                    >
+                        <WarningTriangleIcon className="mj_VoiceNoteIndicator_warning" aria-hidden="true" />
+                        <span className="mj_VoiceNoteIndicator_text">
+                            <span className="mj_VoiceNoteIndicator_headline" role="status">
+                                Voice note didn't send
+                            </span>
+                            <span className="mj_VoiceNoteIndicator_subtitle">
+                                {failure.target.title}: {failure.message}
+                            </span>
+                        </span>
+                    </button>
+                    <button
+                        className="mj_VoiceNoteIndicator_textAction"
+                        type="button"
+                        onClick={() => session.discard(failure.id)}
+                    >
+                        Discard
+                    </button>
+                    <button
+                        className="mj_VoiceNoteIndicator_textAction mj_VoiceNoteIndicator_retry"
+                        type="button"
+                        onClick={() => session.retry(failure.id)}
+                    >
+                        Retry
+                    </button>
+                </div>
+            ))}
         </div>
     );
 }

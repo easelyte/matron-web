@@ -9,7 +9,8 @@ import React, { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { MatronJournalClient } from "../../../src/journal/client";
-import { HeaderShell, MatronApp, useAdaptiveHeader, useDismissablePopover } from "../../../src/journal/components";
+import { HeaderShell, MatronApp, useAdaptiveHeader } from "../../../src/journal/components";
+import { useDismissablePopover } from "../../../src/journal/use-dismissable-popover";
 import type { ClientState, Conversation, Session } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
@@ -153,7 +154,9 @@ function AdaptiveProbe({
     meterCount?: number;
 }): React.ReactElement {
     onRender?.();
-    return React.createElement("output", null, JSON.stringify(useAdaptiveHeader(el, meterCount)));
+    // The usage and title bands; the controls fold has its own test.
+    const { usageCollapsed, titleCollapsed } = useAdaptiveHeader(el, meterCount);
+    return React.createElement("output", null, JSON.stringify({ usageCollapsed, titleCollapsed }));
 }
 
 async function mountAdaptiveProbe(
@@ -336,34 +339,75 @@ describe("useAdaptiveHeader", () => {
 
     it("uses a wider usage-collapse threshold when >4 meters add a 3rd column", async () => {
         // 6 meters (ctx+5h+fbl+wk+cpu+ram) → the 3-column grid needs a wider pane, so the
-        // usage collapses below 760 instead of 640; the title band still flips at 560.
+        // usage collapses below 960 instead of 720; the title band still flips at 560.
         const el = document.createElement("div");
         const probe = await mountAdaptiveProbe(el, undefined, 6);
         const observer = observers[0];
 
+        resize(observer, el, 1000);
+        await flushFrames();
+        expect(probe.container.textContent).toBe('{"usageCollapsed":false,"titleCollapsed":false}');
+
+        // 800 clears the 4-bar 720 threshold but NOT the 6-bar 960 one → usage collapses.
+        resize(observer, el, 800);
+        await flushFrames();
+        expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
+    });
+
+    it("keeps the 720 usage-collapse threshold for the 4-bar grid", async () => {
+        const el = document.createElement("div");
+        const probe = await mountAdaptiveProbe(el, undefined, 4);
+        const observer = observers[0];
+
+        // 800 > 720 → the 4-bar grid stays expanded where the 6-bar grid would collapse.
         resize(observer, el, 800);
         await flushFrames();
         expect(probe.container.textContent).toBe('{"usageCollapsed":false,"titleCollapsed":false}');
 
-        // 700 clears the 4-bar 640 threshold but NOT the 6-bar 760 one → usage collapses.
         resize(observer, el, 700);
         await flushFrames();
         expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
     });
 
-    it("keeps the 640 usage-collapse threshold for the 4-bar grid", async () => {
+    it("folds the controls beside the title below the width the usage form leaves room for", async () => {
+        function FoldProbe({ el, meterCount }: { el: HTMLElement; meterCount: number }): React.ReactElement {
+            return React.createElement("output", null, String(useAdaptiveHeader(el, meterCount).controlsFolded));
+        }
+        const mountFold = async (meterCount: number): Promise<MountedProbe> => {
+            const container = document.createElement("div");
+            document.body.append(container);
+            const root = createRoot(container);
+            const mounted = { container, root };
+            mountedProbes.push(mounted);
+            await act(async () => root.render(React.createElement(FoldProbe, { el, meterCount })));
+            return mounted;
+        };
         const el = document.createElement("div");
-        const probe = await mountAdaptiveProbe(el, undefined, 4);
-        const observer = observers[0];
 
-        // 700 > 640 → the 4-bar grid stays expanded where the 6-bar grid would collapse.
-        resize(observer, el, 700);
+        const four = await mountFold(4);
+        const fourObserver = observers[observers.length - 1];
+        resize(fourObserver, el, 1100);
         await flushFrames();
-        expect(probe.container.textContent).toBe('{"usageCollapsed":false,"titleCollapsed":false}');
+        expect(four.container.textContent).toBe("false");
+        resize(fourObserver, el, 858);
+        await flushFrames();
+        expect(four.container.textContent).toBe("true");
 
-        resize(observer, el, 600);
+        const six = await mountFold(6);
+        const sixObserver = observers[observers.length - 1];
+        resize(sixObserver, el, 1100);
         await flushFrames();
-        expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
+        expect(six.container.textContent).toBe("true");
+        resize(sixObserver, el, 1250);
+        await flushFrames();
+        expect(six.container.textContent).toBe("false");
+        // Below 960 the six-meter grid collapses to two bars, which leaves room again until 840.
+        resize(sixObserver, el, 900);
+        await flushFrames();
+        expect(six.container.textContent).toBe("false");
+        resize(sixObserver, el, 800);
+        await flushFrames();
+        expect(six.container.textContent).toBe("true");
     });
 
     it("coalesces resize callbacks into one frame and renders only when flags flip", async () => {
@@ -372,8 +416,9 @@ describe("useAdaptiveHeader", () => {
         await mountAdaptiveProbe(el, onRender);
         const observer = observers[0];
 
-        resize(observer, el, 900);
-        resize(observer, el, 850);
+        // Both wide enough for every band to stay expanded (above the 1060 controls fold).
+        resize(observer, el, 1200);
+        resize(observer, el, 1150);
         expect(frames.size).toBe(1);
         await flushFrames();
         expect(onRender).toHaveBeenCalledTimes(1);
@@ -424,39 +469,40 @@ describe("useAdaptiveHeader", () => {
         document.body.append(container);
         const root = createRoot(container);
         mountedProbes.push({ container, root });
-        // The full app mounts other ResizeObservers too (the composer's auto-grow watches its
-        // textarea); this test is about the header's observer on the timeline body.
-        const bodyObservers = (): ObserverRecord[] =>
-            observers.filter(
-                (observer) => !observer.observe.mock.calls.some(([target]) => target instanceof HTMLTextAreaElement),
+        // The transcript watches its own size too; count only the header's observers.
+        const headerObservers = (): ObserverRecord[] =>
+            observers.filter((observer) =>
+                observer.observe.mock.calls.some(([target]) =>
+                    (target as Element).classList.contains("mj_ChatView_body"),
+                ),
             );
 
         await act(async () => root.render(React.createElement(MatronApp, { client })));
-        expect(container.querySelector(".mx_RoomView_body")).toBeNull();
-        expect(bodyObservers()).toHaveLength(0);
+        expect(container.querySelector(".mj_ChatView_body")).toBeNull();
+        expect(headerObservers()).toHaveLength(0);
 
         await act(async () => client.selectConversation(PARENT.id));
-        const firstBody = container.querySelector<HTMLElement>(".mx_RoomView_body")!;
+        const firstBody = container.querySelector<HTMLElement>(".mj_ChatView_body")!;
         expect(firstBody).not.toBeNull();
-        expect(bodyObservers()).toHaveLength(1);
-        expect(bodyObservers()[0].observe).toHaveBeenCalledWith(firstBody);
+        expect(headerObservers()).toHaveLength(1);
+        expect(headerObservers()[0].observe).toHaveBeenCalledWith(firstBody);
         expect(container.textContent).toContain("Finished child");
 
-        resize(bodyObservers()[0], firstBody, 560);
+        resize(headerObservers()[0], firstBody, 560);
         await flushFrames();
         expect(container.querySelector(".mj_UsageCluster_collapsed")).not.toBeNull();
 
         await act(async () => client.clearSelection());
-        expect(container.querySelector(".mx_RoomView_body")).toBeNull();
-        expect(bodyObservers()[0].disconnect).toHaveBeenCalledTimes(1);
+        expect(container.querySelector(".mj_ChatView_body")).toBeNull();
+        expect(headerObservers()[0].disconnect).toHaveBeenCalledTimes(1);
 
         await act(async () => client.selectConversation(PARENT.id));
-        const secondBody = container.querySelector<HTMLElement>(".mx_RoomView_body")!;
+        const secondBody = container.querySelector<HTMLElement>(".mj_ChatView_body")!;
         expect(secondBody).not.toBe(firstBody);
-        expect(bodyObservers()).toHaveLength(2);
-        expect(bodyObservers()[1].observe).toHaveBeenCalledWith(secondBody);
+        expect(headerObservers()).toHaveLength(2);
+        expect(headerObservers()[1].observe).toHaveBeenCalledWith(secondBody);
 
-        resize(bodyObservers()[1], secondBody, 560);
+        resize(headerObservers()[1], secondBody, 560);
         await flushFrames();
         expect(container.querySelector(".mj_UsageCluster_collapsed")).not.toBeNull();
     });

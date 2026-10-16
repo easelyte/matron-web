@@ -3,6 +3,7 @@ import {
     childSidebarPlacement,
     hasSubagentChildRows,
     isSubChat,
+    childrenByParent,
     childrenOf,
     runningChildrenOf,
     parentPresent,
@@ -36,6 +37,16 @@ describe("subchat derivations", () => {
         expect(childrenOf(all, "p1").map((c) => c.id)).toEqual(["p1:sub:a1", "p1:sub:a2"]);
         expect(childrenOf(all, c1.id).map((c) => c.id)).toEqual(["p1:sub:a1:sub:a3"]);
         expect(childrenOf(all, undefined)).toEqual([]);
+    });
+    it("childrenByParent lists every parent's children as childrenOf does", () => {
+        const tied = convo("p1:sub:a0", { parent_convo_id: "p1", created_at: 2 });
+        const withTie = [...all, tied];
+        const index = childrenByParent(withTie);
+        for (const parent of ["p1", c1.id]) {
+            expect(index.get(parent)).toEqual(childrenOf(withTie, parent));
+        }
+        expect(index.has(c3.id)).toBe(false);
+        expect([...index.keys()].sort()).toEqual(["p1", c1.id].sort());
     });
     it("runningChildrenOf filters to running", () => {
         expect(runningChildrenOf(all, "p1").map((c) => c.id)).toEqual(["p1:sub:a1"]);

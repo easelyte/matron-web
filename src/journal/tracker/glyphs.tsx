@@ -178,7 +178,10 @@ export function NeedsYouBadge({ count }: { count: number }): React.ReactElement 
     if (!(count > 0)) return null;
     const shown = count > 99 ? "99+" : String(count);
     return (
-        <span className="mj_TrackerNeedsYouBadge" aria-label={`${count} item${count === 1 ? "" : "s"} need you`}>
+        <span
+            className="mj_TrackerNeedsYouBadge"
+            aria-label={`${count} ${count === 1 ? "item needs" : "items need"} you`}
+        >
             <svg
                 viewBox="0 0 24 24"
                 width="1em"

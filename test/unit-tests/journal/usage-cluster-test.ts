@@ -40,6 +40,26 @@ afterEach(async () => {
 });
 
 describe("UsageCluster", () => {
+    it("shows each limit's reset time beside its bar, and none for meters without one", async () => {
+        const now = Date.parse("2026-07-15T08:00:00Z");
+        await renderUsage(
+            [
+                { id: "context", label: "context", percent: 40, used: 80_000, limit: 200_000 },
+                { id: "session", label: "Session", percent: 41, resets_at: "2026-07-15T11:20:00Z" },
+                { id: "week_all", label: "Week (all models)", percent: 63, resets: "Jul 18" },
+            ],
+            now,
+        );
+
+        const rows = container.querySelectorAll(".mj_UsageRow");
+        expect(rows[0].querySelector(".mj_UsageReset")).toBeNull();
+        expect(rows[1].querySelector(".mj_UsageReset")?.textContent).toBe("3h20");
+        // No parseable timestamp: the raw text the bridge scraped, as the Mac shows it.
+        expect(rows[2].querySelector(".mj_UsageReset")?.textContent).toBe("Jul 18");
+        // Visible only; the progressbar already announces it.
+        expect(rows[1].querySelector(".mj_UsageReset")?.getAttribute("aria-hidden")).toBe("true");
+    });
+
     it("renders all non-blank limits with visible percentages and progressbar ARIA", async () => {
         const limits = Array.from({ length: 12 }, (_, index) => ({
             label: `Limit ${index + 1}`,

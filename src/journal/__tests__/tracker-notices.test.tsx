@@ -109,6 +109,88 @@ describe("Notice items", () => {
         unsubscribe();
     });
 
+    describe("the Done tab", () => {
+        const seenNotice = (): TrackerItem => ({ ...closedNotice(), chosen_action: "Seen", updated_at: 30 });
+        const answered = (): TrackerItem =>
+            trackerItem({ id: "it_1", num: 1, title: "Pick a colour", state: "closed", resolution: "answered" });
+        const openDone = async (container: HTMLElement): Promise<void> => {
+            const tab = [...container.querySelectorAll<HTMLButtonElement>(".mj_TrackerToggleTab")].find(
+                (button) => button.textContent === "Done",
+            )!;
+            await act(async () => tab.click());
+        };
+        const mountInbox = async (client: MatronJournalClient): Promise<HTMLElement> => {
+            const render = (root: Root): void =>
+                root.render(
+                    <ItemsInbox
+                        items={client.getSnapshot().inboxItems ?? []}
+                        done={client.getSnapshot().inboxDone}
+                        client={client}
+                        onOpenItem={jest.fn()}
+                    />,
+                );
+            const { container, root } = await mount(<div />);
+            await act(async () => render(root));
+            client.subscribe(() => render(root));
+            return container;
+        };
+
+        it("lists closed notices with closed questions, a seen notice reading Seen", async () => {
+            const items = jest.fn().mockResolvedValue({ items: [seenNotice(), answered()], next_cursor: null });
+            const client = clientWith({ inboxItems: [] }, { items });
+            const container = await mountInbox(client);
+            expect(items).not.toHaveBeenCalled();
+
+            await openDone(container);
+
+            expect(items).toHaveBeenCalledWith({
+                state: "done",
+                kind: ["question", "decision", "notice"],
+                sort: "acted",
+                limit: 50,
+            });
+            const rows = [...container.querySelectorAll(".mj_TrackerItemRow")];
+            expect(rows.map((row) => row.querySelector(".mj_TrackerItemRow_title")?.textContent)).toEqual([
+                "#9Deploy notes",
+                "#1Pick a colour",
+            ]);
+            expect(rows[0].querySelector(".mj_TrackerItemRow_status")?.textContent).toBe("Seen");
+            expect(rows[1].querySelector(".mj_TrackerItemRow_status")?.textContent).toBe("Answered");
+            expect(container.querySelector(".mj_TrackerItemRow_seen")).toBeNull();
+            expect(container.querySelector(".mj_TrackerShowMore")).toBeNull();
+        });
+
+        it("Show more appends the next page", async () => {
+            const items = jest
+                .fn()
+                .mockResolvedValueOnce({ items: [seenNotice()], next_cursor: "c1" })
+                .mockResolvedValueOnce({ items: [answered()], next_cursor: null });
+            const client = clientWith({ inboxItems: [] }, { items });
+            const container = await mountInbox(client);
+            await openDone(container);
+            expect(container.querySelectorAll(".mj_TrackerItemRow")).toHaveLength(1);
+
+            await act(async () => container.querySelector<HTMLButtonElement>(".mj_TrackerShowMore")!.click());
+
+            expect(items).toHaveBeenLastCalledWith(expect.objectContaining({ state: "done", cursor: "c1" }));
+            expect(container.querySelectorAll(".mj_TrackerItemRow")).toHaveLength(2);
+            expect(container.querySelector(".mj_TrackerShowMore")).toBeNull();
+        });
+
+        it("says what it collects when it is empty, and says so when it cannot load", async () => {
+            const items = jest.fn().mockResolvedValueOnce({ items: [], next_cursor: null });
+            const client = clientWith({ inboxItems: [] }, { items });
+            const container = await mountInbox(client);
+            await openDone(container);
+            expect(container.querySelector(".mj_TrackerEmpty_title")?.textContent).toBe("Nothing done yet");
+
+            items.mockRejectedValueOnce(new Error("offline"));
+            await act(async () => client.loadInboxDone());
+            expect(container.querySelector("[role='alert']")?.textContent).toBe("Couldn't load the Done list: offline");
+            expect(container.querySelector(".mj_TrackerEmpty_title")).toBeNull();
+        });
+    });
+
     it("says what For you collects when nothing needs the user", async () => {
         const client = clientWith({ inboxItems: [] }, {});
         const { container } = await mount(<ItemsInbox items={[]} client={client} onOpenItem={jest.fn()} />);
@@ -139,13 +221,13 @@ describe("Notice items", () => {
         const unsubscribe = client.subscribe(() => render(root));
 
         expect(container.querySelector(".mj_TrackerItemHead_kind")?.textContent).toContain("To read");
-        const seen = container.querySelector<HTMLButtonElement>('button[data-action="seen"]')!;
+        const seen = container.querySelector<HTMLButtonElement>(".mj_TrackerItemActions .mj_TrackerAction")!;
         expect(seen.textContent).toBe("Seen");
         await act(async () => seen.click());
 
         expect(postItemComment).toHaveBeenCalledWith(9, { action: "Seen", body: "Seen" }, expect.any(String));
         expect(container.querySelector(".mj_TrackerStatusPill")?.textContent).toBe("Closed · Done");
-        expect(container.querySelector('button[data-action="seen"]')).toBeNull();
+        expect(container.querySelector(".mj_TrackerItemActions")).toBeNull();
         unsubscribe();
     });
 });

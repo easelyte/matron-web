@@ -106,12 +106,12 @@ describe("read-only subchat viewer", () => {
         expect(header?.textContent).toContain(stateLabel);
         // Context is now the leading "ctx" usage meter, not a subtitle text field.
         expect(header?.querySelector(".mj_UsageLabel")?.textContent).toBe("ctx");
-        expect(rendered.container.querySelector(".mx_MessageComposer")).toBeNull();
+        expect(rendered.container.querySelector(".mj_Composer")).toBeNull();
         expect(rendered.container.querySelector(".mj_ReadOnlyHint")?.textContent).toContain(
             "Read-only — subagent transcript",
         );
 
-        const room = rendered.container.querySelector(".mx_RoomView")!;
+        const room = rendered.container.querySelector(".mj_ChatView")!;
         const file = new File(["content"], "notes.txt", { type: "text/plain" });
         const drop = new Event("drop", { bubbles: true, cancelable: true });
         Object.defineProperty(drop, "dataTransfer", { value: { types: ["Files"], files: [file] } });

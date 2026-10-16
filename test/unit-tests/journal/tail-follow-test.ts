@@ -3,8 +3,8 @@ import {
     type ClientState,
     type Conversation,
     isNearBottom,
+    type ComposerAttachment,
     type PendingMessage,
-    type StagedUploads,
 } from "../../../src/journal/types";
 
 const PARENT: Conversation = {
@@ -53,7 +53,7 @@ function fakeDatabase(rows: PendingMessage[] = []): FakeDatabase {
     };
 }
 
-function readyClient(options: { selectedId?: string; stagedUploads?: StagedUploads } = {}): {
+function readyClient(options: { selectedId?: string; tray?: ComposerAttachment[] } = {}): {
     client: MatronJournalClient;
     state: ClientInternals;
     database: FakeDatabase;
@@ -66,7 +66,7 @@ function readyClient(options: { selectedId?: string; stagedUploads?: StagedUploa
         phase: "signed-in",
         conversations: [PARENT, CHILD],
         selectedConversationId: options.selectedId ?? PARENT.id,
-        stagedUploads: options.stagedUploads,
+        composerAttachments: options.tray ? { [PARENT.id]: options.tray } : {},
     };
     state.api = { uploadMedia: jest.fn().mockResolvedValue({ media_id: "media-1" }) };
     state.database = database;
@@ -91,17 +91,11 @@ describe("sendTick", () => {
         expect(client.getSnapshot().sendTick).toBe(1);
     });
 
-    it("increments when a valid staged head is confirmed", async () => {
-        const file = new File([], "empty.txt", { type: "text/plain" });
-        const stagedUploads: StagedUploads = {
-            convoId: PARENT.id,
-            items: [{ id: "head", file }],
-            total: 1,
-            confirming: false,
-        };
-        const { client } = readyClient({ stagedUploads });
+    it("increments when a tray send starts", async () => {
+        const file = new File(["x"], "notes.txt", { type: "text/plain" });
+        const { client } = readyClient({ tray: [{ id: "a", file, state: "staged" }] });
 
-        await client.confirmStagedFile("head");
+        await client.sendStagedFiles(PARENT.id, "");
 
         expect(client.getSnapshot().sendTick).toBe(1);
     });
@@ -137,28 +131,18 @@ describe("sendTick", () => {
         expect(database.addToOutbox).not.toHaveBeenCalled();
     });
 
-    it("does not increment when staged confirmation has no matching valid head", async () => {
-        const file = new File([], "empty.txt", { type: "text/plain" });
-        const stagedUploads: StagedUploads = {
-            convoId: PARENT.id,
-            items: [{ id: "head", file }],
-            total: 1,
-            confirming: false,
-        };
-        const { client, state } = readyClient({ stagedUploads });
+    it("does not increment when there is no tray to send, or its conversation is gone", async () => {
+        const file = new File(["x"], "notes.txt", { type: "text/plain" });
+        const { client, state } = readyClient();
 
-        await client.confirmStagedFile("not-head");
-        expect(client.getSnapshot().sendTick).toBe(0);
-
-        state.state = { ...state.state, stagedUploads: undefined };
-        await client.confirmStagedFile("head");
+        await client.sendStagedFiles(PARENT.id, "caption");
         expect(client.getSnapshot().sendTick).toBe(0);
 
         state.state = {
             ...state.state,
-            stagedUploads: { ...stagedUploads, convoId: "missing-conversation" },
+            composerAttachments: { "missing-conversation": [{ id: "a", file, state: "staged" }] },
         };
-        await client.confirmStagedFile("head");
+        await client.sendStagedFiles("missing-conversation", "");
         expect(client.getSnapshot().sendTick).toBe(0);
     });
 

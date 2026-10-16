@@ -233,7 +233,7 @@ export function BriefingDetail({
                         <button
                             type="button"
                             className="mj_TrackerButton"
-                            onClick={() => client.openBriefingInChat(briefing.convo_id)}
+                            onClick={() => client.openBriefingInChat(briefing.convo_id, briefing.seq)}
                         >
                             Open in chat
                         </button>

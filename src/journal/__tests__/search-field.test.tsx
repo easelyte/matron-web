@@ -203,20 +203,20 @@ describe("sidebar search uses the shared field", () => {
         jest.spyOn(client, "searchMessages").mockResolvedValue(undefined);
 
         const { container, root } = await mount(<MatronApp client={client} />);
-        const input = container.querySelector<HTMLInputElement>("#room-list-search-input")!;
+        const input = container.querySelector<HTMLInputElement>("#conversation-search-input")!;
         expect(input.closest(".mj_SearchField")).not.toBeNull();
-        const before = container.querySelectorAll(".mj_RoomListItem").length;
+        const before = container.querySelectorAll(".mj_ConversationListItem").length;
         expect(before).toBeGreaterThanOrEqual(2);
 
         input.focus();
         await type(input, "bravo");
-        expect(container.querySelectorAll(".mj_RoomListItem").length).toBeLessThan(before);
-        expect(container.querySelector(".mj_RoomList")?.textContent).not.toContain("Alpha design");
+        expect(container.querySelectorAll(".mj_ConversationListItem").length).toBeLessThan(before);
+        expect(container.querySelector(".mj_ConversationList")?.textContent).not.toContain("Alpha design");
 
         await act(async () => clearButton(container)!.click());
         expect(input.value).toBe("");
         expect(document.activeElement).toBe(input);
-        expect(container.querySelectorAll(".mj_RoomListItem").length).toBe(before);
+        expect(container.querySelectorAll(".mj_ConversationListItem").length).toBe(before);
         expect(clearButton(container)).toBeNull();
         await act(async () => root.unmount());
     });
@@ -234,7 +234,7 @@ describe("search field styling", () => {
     };
 
     it("draws hover and the focus ring on the whole rounded bar, never on the inner input", () => {
-        expect(decls("controls.pcss", ".mj_SearchField")["border-radius"]).toBe("var(--cpd-radius-md)");
+        expect(decls("controls.pcss", ".mj_SearchField")["border-radius"]).toBe("var(--mj-radius-md)");
         expect(decls("controls.pcss", ".mj_SearchField:hover")["border-color"]).toBeDefined();
         const ring = decls("controls.pcss", ".mj_SearchField:has(.mj_SearchField_input:focus-visible)");
         expect(ring.outline).toBe("var(--mj-focus-ring)");

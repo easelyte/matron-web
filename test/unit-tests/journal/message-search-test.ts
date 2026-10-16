@@ -95,12 +95,12 @@ describe("MessageSearchResults", () => {
         await act(async () => root.unmount());
     });
 
-    it("calls onSelect with the hit's conversation id and sequence when clicked", async () => {
+    it("calls onSelect with the hit, so the conversation opens on its message", async () => {
         const onSelect = jest.fn();
         const { container, root } = await render(
             React.createElement(MessageSearchResults, {
                 query: "rollout",
-                search: search({ hits: [hit({ convo_id: "c9", seq: 73 })] }),
+                search: search({ hits: [hit({ convo_id: "c9", seq: 412 })] }),
                 now: NOW,
                 onSelect,
             }),
@@ -109,7 +109,7 @@ describe("MessageSearchResults", () => {
         await act(async () => {
             btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
         });
-        expect(onSelect).toHaveBeenCalledWith("c9", 73);
+        expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ convo_id: "c9", seq: 412 }));
         await act(async () => root.unmount());
     });
 

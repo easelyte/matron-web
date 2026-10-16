@@ -342,7 +342,7 @@ describe("BriefingDetail and the Projects dashboard", () => {
         mounted = [];
     });
 
-    it("renders the markdown with working matron:// links and opens the conversation in chat", async () => {
+    it("renders the markdown with working matron:// links and opens the conversation on the briefing", async () => {
         const client = fakeClient();
         const body =
             "See [the deploy](matron://convo/c_deploy), [#5](matron://mission/5), " +
@@ -371,7 +371,7 @@ describe("BriefingDetail and the Projects dashboard", () => {
         expect(container.querySelector("time")?.getAttribute("dateTime")).toBe(new Date(NOW - 5 * MIN).toISOString());
         const open = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Open in chat");
         await act(async () => open!.click());
-        expect(client.openBriefingInChat).toHaveBeenCalledWith("c_coord");
+        expect(client.openBriefingInChat).toHaveBeenCalledWith("c_coord", 42);
     });
 
     it("heads the projects dashboard with the card and loads the briefing when the tab shows", async () => {

@@ -11,6 +11,7 @@ import {
     eventSnippet,
     fileKindFromMime,
     IMAGE_FRAME_MAX_HEIGHT_PX,
+    mediaFileName,
     imageFrameStyle,
     MESSAGE_EVENT_TYPES,
     normalizeServerUrl,
@@ -72,6 +73,15 @@ describe("matron-journal media payload helpers (§6)", () => {
         expect(fileKindFromMime(undefined)).toBe("generic");
         expect(fileKindFromMime(42)).toBe("generic");
     });
+
+    it("reads the file name from `name` (the media-send key), falling back to `filename`", () => {
+        expect(mediaFileName({ name: "report.pdf" })).toBe("report.pdf");
+        expect(mediaFileName({ filename: "legacy.txt" })).toBe("legacy.txt");
+        expect(mediaFileName({ name: "report.pdf", filename: "legacy.txt" })).toBe("report.pdf");
+        expect(mediaFileName({ name: "", filename: "legacy.txt" })).toBe("legacy.txt");
+        expect(mediaFileName({ name: 42, filename: "legacy.txt" })).toBe("legacy.txt");
+        expect(mediaFileName({})).toBe("");
+    });
 });
 
 describe("matron-journal wire helpers", () => {
@@ -132,6 +142,8 @@ describe("eventSnippet captions", () => {
     it("falls back to the filename when no caption is present", () => {
         expect(eventSnippet("image", { filename: "shot.png" })).toBe("🖼 shot.png");
         expect(eventSnippet("file", { filename: "notes.txt", caption: "" })).toBe("📎 notes.txt");
+        expect(eventSnippet("file", { name: "notes.txt" })).toBe("📎 notes.txt");
+        expect(eventSnippet("image", { name: "shot.png" })).toBe("🖼 shot.png");
     });
 
     it("labels a generic permission_request with its description", () => {

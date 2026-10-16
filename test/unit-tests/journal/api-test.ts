@@ -123,6 +123,107 @@ describe("JournalApi uploadMedia", () => {
         expect(journalRequest).not.toHaveBeenCalled();
         expect(fetchMock).not.toHaveBeenCalled();
     });
+
+    describe("with upload progress", () => {
+        // A scripted XMLHttpRequest: the test drives progress and the response by hand.
+        class FakeXhr {
+            public static last: FakeXhr | undefined;
+            public method = "";
+            public url = "";
+            public headers: Record<string, string> = {};
+            public body: unknown;
+            public responseType = "";
+            public status = 0;
+            public response: ArrayBuffer | null = null;
+            public responseHeaders = "";
+            public aborted = false;
+            public upload: { onprogress: ((event: ProgressEvent) => void) | null } = { onprogress: null };
+            public onload: (() => void) | null = null;
+            public onerror: (() => void) | null = null;
+            public onabort: (() => void) | null = null;
+            public constructor() {
+                FakeXhr.last = this;
+            }
+            public open(method: string, url: string): void {
+                this.method = method;
+                this.url = url;
+            }
+            public setRequestHeader(name: string, value: string): void {
+                this.headers[name] = value;
+            }
+            public getAllResponseHeaders(): string {
+                return this.responseHeaders;
+            }
+            public send(body: unknown): void {
+                this.body = body;
+            }
+            public abort(): void {
+                this.aborted = true;
+                this.onabort?.();
+            }
+            public progress(loaded: number, total: number): void {
+                this.upload.onprogress?.({ lengthComputable: true, loaded, total } as ProgressEvent);
+            }
+            public respond(status: number, body: unknown): void {
+                this.status = status;
+                this.responseHeaders = "content-type: application/json\r\n";
+                this.response = new NodeTextEncoder().encode(JSON.stringify(body)).buffer as ArrayBuffer;
+                this.onload?.();
+            }
+        }
+        const realXhr = globalThis.XMLHttpRequest;
+
+        beforeEach(() => {
+            FakeXhr.last = undefined;
+            globalThis.XMLHttpRequest = FakeXhr as unknown as typeof XMLHttpRequest;
+        });
+
+        afterEach(() => {
+            globalThis.XMLHttpRequest = realXhr;
+        });
+
+        it("reports the uploaded fraction and resolves with the media response", async () => {
+            const api = new JournalApi("https://journal.example", "token");
+            const bytes = new Uint8Array([1, 2, 3, 4]).buffer;
+            const fractions: number[] = [];
+
+            const upload = api.uploadMedia(bytes, "image/png", undefined, (fraction) => fractions.push(fraction));
+            const xhr = FakeXhr.last!;
+            expect(xhr.method).toBe("POST");
+            expect(xhr.url).toBe("https://journal.example/media");
+            expect(xhr.headers).toEqual(
+                expect.objectContaining({ Authorization: "Bearer token", "Content-Type": "image/png" }),
+            );
+            expect(xhr.body).toBe(bytes);
+            xhr.progress(1, 4);
+            xhr.progress(4, 4);
+            xhr.respond(200, { media_id: "media-1", size: 4, content_type: "image/png" });
+
+            await expect(upload).resolves.toEqual({ media_id: "media-1", size: 4, content_type: "image/png" });
+            expect(fractions).toEqual([0.25, 1]);
+            expect(fetchMock).not.toHaveBeenCalled();
+        });
+
+        it("maps an error status to the same prose as the fetch path", async () => {
+            const api = new JournalApi("https://journal.example", "token");
+
+            const upload = api.uploadMedia(new ArrayBuffer(1), "image/png", undefined, () => undefined);
+            FakeXhr.last!.respond(413, { error: "too_large" });
+
+            await expect(upload).rejects.toMatchObject({ message: "File too large.", status: 413, code: "too_large" });
+        });
+
+        it("aborts the request when the signal aborts", async () => {
+            const api = new JournalApi("https://journal.example", "token");
+            const controller = new AbortController();
+
+            const upload = api.uploadMedia(new ArrayBuffer(1), "image/png", controller.signal, () => undefined);
+            controller.abort();
+
+            await expect(upload).rejects.toBeInstanceOf(JournalApiError);
+            expect(FakeXhr.last!.aborted).toBe(true);
+        });
+    });
 });
 
 describe("JournalApi snapshot", () => {
@@ -394,6 +495,44 @@ describe("JournalApi answerAgentSpawn", () => {
     });
 });
 
+describe("JournalApi answerAgentChat", () => {
+    beforeAll(() => {
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    beforeEach(() => {
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    it("POSTs exactly room_id, target_device_id and decision to /agent-chat/answer", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ ok: true, delivered: true }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.answerAgentChat("room-1", 12, "deny")).resolves.toBe(true);
+
+        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/agent-chat/answer");
+        expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ method: "POST" }));
+        const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+        expect(body).toEqual({ room_id: "room-1", target_device_id: 12, decision: "deny" });
+    });
+
+    it("reports an approval still owed to the target as not delivered", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.answerAgentChat("room-1", 12, "approve")).resolves.toBe(false);
+    });
+
+    it("rejects with a typed 409 when the ask is no longer awaiting an answer", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ error: "conflict" }, 409));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.answerAgentChat("room-1", 12, "approve")).rejects.toMatchObject({ status: 409 });
+    });
+});
+
 describe("JournalApi messages", () => {
     beforeAll(() => {
         globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
@@ -487,6 +626,19 @@ describe("JournalApi search", () => {
         const api = new JournalApi("https://journal.example", "token");
 
         await expect(api.search("", 20)).rejects.toMatchObject({ status: 400 });
+    });
+
+    it("scopes find-in-chat to one conversation in the journal's newest-first mode", async () => {
+        const hits = [{ convo_id: "c 1", seq: 9, ts: 1, sender: "user:alice" }];
+        fetchMock.mockResolvedValue(jsonResponse({ hits }));
+        const api = new JournalApi("https://journal.example", "token");
+        const controller = new AbortController();
+
+        await expect(api.searchConversation("c 1", "roll out", 500, controller.signal)).resolves.toEqual({ hits });
+        expect(String(fetchMock.mock.calls[0][0])).toBe(
+            "https://journal.example/search?q=roll+out&limit=500&mode=recent&convo_id=c+1",
+        );
+        expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ signal: controller.signal }));
     });
 });
 
@@ -793,6 +945,16 @@ describe("JournalApi box defaults", () => {
         expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ default_agent: "codex" });
     });
 
+    it("PUTs only {consent} to /coordinator, never the conversation", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ convo_id: "c9", consent: false }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.putCoordinatorConsent(false)).resolves.toEqual({ convo_id: "c9", consent: false });
+        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/coordinator");
+        expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ method: "PUT" }));
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ consent: false });
+    });
+
     it.each([
         ["bad_agent", "The journal did not accept that agent."],
         ["bad_model", "The journal did not accept that model."],
@@ -814,5 +976,74 @@ describe("JournalApi box defaults", () => {
         const api = new JournalApi("https://journal.example", "token");
 
         await expect(api.putBoxDefaults(7, { default_agent: null })).rejects.toBeInstanceOf(JournalApiError);
+    });
+});
+
+describe("JournalApi project filing", () => {
+    beforeAll(() => {
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    beforeEach(() => {
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    const sent = (): { url: string; init: RequestInit; body: Record<string, unknown> } => ({
+        url: String(fetchMock.mock.calls[0][0]),
+        init: fetchMock.mock.calls[0][1] as RequestInit,
+        body: JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>,
+    });
+
+    it("creates a project with a title, an optional body and an Idempotency-Key", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ project: { id: "pj_1", num: 7 } }, 201));
+        const api = new JournalApi("https://journal.example", "token");
+
+        const out = await api.createProject({ title: "Launch", body: "The spring launch" }, "key-1");
+
+        const { url, init, body } = sent();
+        expect(url).toBe("https://journal.example/projects");
+        expect(init).toEqual(
+            expect.objectContaining({
+                method: "POST",
+                headers: expect.objectContaining({ "Idempotency-Key": "key-1" }),
+            }),
+        );
+        expect(body).toEqual({ title: "Launch", body: "The spring launch" });
+        expect(out.project.num).toBe(7);
+    });
+
+    it("leaves a blank body out of the create", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ project: { id: "pj_1", num: 7 } }, 201));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await api.createProject({ title: "Launch", body: "   " }, "key-1");
+
+        expect(sent().body).toEqual({ title: "Launch" });
+    });
+
+    it("merges a project into another by POST /projects/:id/merge with only `into`", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ project: { id: "pj_2" }, merged: { id: "pj_1" } }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await api.mergeProject("pj_1", "pj_2");
+
+        const { url, init, body } = sent();
+        expect(url).toBe("https://journal.example/projects/pj_1/merge");
+        expect(init.method).toBe("POST");
+        expect(body).toEqual({ into: "pj_2" });
+    });
+
+    it("moves a mission by PATCHing its project", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ mission: { id: "ms_1" } }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await api.patchMission("ms_1", { project: "pj_2" }, "key-2");
+
+        const { url, init, body } = sent();
+        expect(url).toBe("https://journal.example/missions/ms_1");
+        expect(init.method).toBe("PATCH");
+        expect(body).toEqual({ project: "pj_2" });
     });
 });

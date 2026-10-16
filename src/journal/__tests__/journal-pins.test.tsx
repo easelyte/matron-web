@@ -97,18 +97,20 @@ describe("journal pins in the sidebar", () => {
                 journalPins: [pin("c2", 0, { emoji: "🚀" }), pin("c1", 1)],
             }),
         );
-        const rows = [...pinnedSection().querySelectorAll<HTMLElement>(".mj_RoomListItem")];
-        expect(rows.map((row) => row.querySelector('[data-testid="room-name"]')?.textContent)).toEqual([
+        const rows = [...pinnedSection().querySelectorAll<HTMLElement>(".mj_ConversationListItem")];
+        expect(rows.map((row) => row.querySelector('[data-testid="conversation-name"]')?.textContent)).toEqual([
             "Desk c2",
             "Desk c1",
         ]);
         expect(rows[0].querySelector(".mj_PinGlyph")?.textContent).toBe("🚀");
         expect(rows[1].querySelector(".mj_PinGlyph")?.textContent).toBe("D");
-        expect(rows[0].querySelector(".mj_RoomListSnippet")?.textContent).toBe("Chat c2");
+        expect(rows[0].querySelector(".mj_ConversationListSnippet")?.textContent).toBe("Chat c2");
         expect(rows[0].querySelector(".mj_UnreadBadge")?.textContent).toBe("3");
         // Pinned rows leave the day groups.
-        const dayRows = [...container.querySelectorAll('section:not([aria-label="Pinned"]) .mj_RoomListItem')];
-        expect(dayRows.map((row) => row.querySelector('[data-testid="room-name"]')?.textContent)).toEqual(["Chat c3"]);
+        const dayRows = [...container.querySelectorAll('section:not([aria-label="Pinned"]) .mj_ConversationListItem')];
+        expect(dayRows.map((row) => row.querySelector('[data-testid="conversation-name"]')?.textContent)).toEqual([
+            "Chat c3",
+        ]);
     });
 
     it("greys a missing pin with only Move pin… and Unpin", async () => {
@@ -144,8 +146,10 @@ describe("journal pins in the sidebar", () => {
                 archivedIds: new Set(["c2"]),
             }),
         );
-        const rows = [...pinnedSection().querySelectorAll(".mj_RoomListItem")];
-        expect(rows.map((row) => row.querySelector('[data-testid="room-name"]')?.textContent)).toEqual(["Desk c1"]);
+        const rows = [...pinnedSection().querySelectorAll(".mj_ConversationListItem")];
+        expect(rows.map((row) => row.querySelector('[data-testid="conversation-name"]')?.textContent)).toEqual([
+            "Desk c1",
+        ]);
     });
 
     it("keeps an archived pin that is missing or offers a successor, so it can still be managed", async () => {
@@ -189,7 +193,7 @@ describe("journal pins in the sidebar", () => {
                 journalPins: [pin("k1", 0)],
             }),
         );
-        const rows = [...container.querySelectorAll(".mj_RoomListItem")];
+        const rows = [...container.querySelectorAll(".mj_ConversationListItem")];
         expect(rows.filter((row) => row.textContent?.includes("Sub k1")).length).toBe(1);
         expect(pinnedSection().textContent).toContain("Desk k1");
     });
@@ -202,8 +206,10 @@ describe("journal pins in the sidebar", () => {
                 journalPins: null,
             }),
         );
-        const rows = [...pinnedSection().querySelectorAll(".mj_RoomListItem")];
-        expect(rows.map((row) => row.querySelector('[data-testid="room-name"]')?.textContent)).toEqual(["Chat c2"]);
+        const rows = [...pinnedSection().querySelectorAll(".mj_ConversationListItem")];
+        expect(rows.map((row) => row.querySelector('[data-testid="conversation-name"]')?.textContent)).toEqual([
+            "Chat c2",
+        ]);
         expect(pinnedSection().querySelector(".mj_PinGlyph")).toBeNull();
     });
 
@@ -211,7 +217,7 @@ describe("journal pins in the sidebar", () => {
         const client = signedInClient({ conversations: [convo("c1", { title: "🐣 [ab] Deploy" })], journalPins: [] });
         const save = jest.spyOn(client, "savePin").mockResolvedValue("You can pin up to 5 chats.");
         await render(client);
-        const trigger = container.querySelector<HTMLButtonElement>(".mj_RoomItemMenu_trigger")!;
+        const trigger = container.querySelector<HTMLButtonElement>(".mj_ConversationMenu_trigger")!;
         await act(async () => trigger.click());
         const item = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
             (button) => button.textContent === "Pin to sidebar…",
@@ -231,7 +237,7 @@ describe("journal pins in the sidebar", () => {
         });
         const shift = jest.spyOn(client, "shiftPin").mockResolvedValue();
         await render(client);
-        const triggers = pinnedSection().querySelectorAll<HTMLButtonElement>(".mj_RoomItemMenu_trigger");
+        const triggers = pinnedSection().querySelectorAll<HTMLButtonElement>(".mj_ConversationMenu_trigger");
         await act(async () => triggers[0].click());
         const labels = [...container.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
         expect(labels).toEqual(expect.arrayContaining(["Edit pin…", "Move down", "Move pin…", "Unpin"]));
@@ -251,7 +257,7 @@ describe("journal pins in the sidebar", () => {
         });
         const shift = jest.spyOn(client, "shiftPin").mockResolvedValue();
         await render(client);
-        const triggers = pinnedSection().querySelectorAll<HTMLButtonElement>(".mj_RoomItemMenu_trigger");
+        const triggers = pinnedSection().querySelectorAll<HTMLButtonElement>(".mj_ConversationMenu_trigger");
         await act(async () => triggers[1].click());
         const items = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
         expect(items.map((item) => item.textContent)).not.toContain("Move down");
@@ -269,7 +275,7 @@ describe("journal pins in the sidebar", () => {
         );
         const archivedTab = container.querySelector<HTMLButtonElement>('button[data-tab="archived"]')!;
         await act(async () => archivedTab.click());
-        await act(async () => container.querySelector<HTMLButtonElement>(".mj_RoomItemMenu_trigger")!.click());
+        await act(async () => container.querySelector<HTMLButtonElement>(".mj_ConversationMenu_trigger")!.click());
         const labels = [...container.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
         expect(labels).toEqual(expect.arrayContaining(["Edit pin…", "Move pin…", "Unpin"]));
         expect(labels).not.toContain("Pin to sidebar…");
@@ -284,7 +290,9 @@ describe("journal pins in the sidebar", () => {
     });
 
     async function openMovePinSheet(): Promise<HTMLElement> {
-        await act(async () => pinnedSection().querySelector<HTMLButtonElement>(".mj_RoomItemMenu_trigger")!.click());
+        await act(async () =>
+            pinnedSection().querySelector<HTMLButtonElement>(".mj_ConversationMenu_trigger")!.click(),
+        );
         const item = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
             (button) => button.textContent === "Move pin…",
         )!;
@@ -372,6 +380,6 @@ describe("journal pins in the sidebar", () => {
                 collapsedSubagentParentIds: new Set(["p1"]),
             }),
         );
-        expect(container.querySelector(".mj_RoomListCollapsedSubs")?.textContent).toBe("1");
+        expect(container.querySelector(".mj_ConversationListCollapsedSubs")?.textContent).toBe("1");
     });
 });

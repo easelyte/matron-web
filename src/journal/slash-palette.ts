@@ -5,62 +5,113 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import type { Session } from "./types";
+import type { Session, SessionStatus } from "./types";
+
+/**
+ * One pickable argument for a slash command: a flag (`--browser`) or a value (`interactive`).
+ * `conflictsWith` lists lowercased tokens that hide it once on the line — mutual exclusion is two
+ * entries naming each other (`--claude` / `--codex`), a dependency is one-way (`--browser` is
+ * Claude-only, so `--codex` hides it) — so the palette never builds a line the bridge refuses.
+ */
+export interface ArgSuggestion {
+    value: string;
+    label?: string;
+    summary?: string;
+    conflictsWith?: string[];
+}
 
 export interface BotCommand {
     trigger: string;
     summary: string;
     argHint?: string;
+    argSuggestions?: ArgSuggestion[];
+    /** The session's own list (status frame `model_options` / `effort_levels`) supplies the values. */
+    sessionArgSource?: "model_options" | "effort_levels";
 }
 
-// source: bridge lib/command-dispatch.js BRIDGE_COMMAND_NAMES + index.js !help text — resync on bridge command changes
+const AGENT_FLAGS: ArgSuggestion[] = [
+    { value: "--claude", summary: "Use the Claude agent", conflictsWith: ["--codex"] },
+    { value: "--codex", summary: "Use the Codex agent", conflictsWith: ["--claude", "--browser"] },
+];
+const BROWSER_FLAG: ArgSuggestion = {
+    value: "--browser",
+    summary: "Add browser tools (chrome-devtools MCP)",
+    conflictsWith: ["--codex"],
+};
+
+// The Mac composer's catalog (and its argument offers), checked against the bridge's command
+// names and !help text — resync on bridge command changes. /context and /compact are not bridge
+// commands: they pass through to the agent's own terminal.
 export const CLAUDE_BRIDGE_COMMANDS: BotCommand[] = [
     {
         trigger: "/start",
-        argHint: "[--claude|--codex] [--browser] [workdir]",
-        summary: "Start a new session (creates a new room)",
+        summary: "Start a new session",
+        argHint: "[--claude|--codex] [--browser] [--model alias] [workdir]",
+        argSuggestions: [...AGENT_FLAGS, BROWSER_FLAG],
     },
     { trigger: "/stop", summary: "Stop the current session" },
-    { trigger: "/restart", summary: "Stop and immediately resume the session (--browser also accepted)" },
+    {
+        trigger: "/restart",
+        summary: "Stop and immediately resume the session",
+        argHint: "[--force] [--browser]",
+        argSuggestions: [{ value: "--force", summary: "Restart immediately, even mid-turn" }, BROWSER_FLAG],
+    },
     {
         trigger: "/resume",
-        argHint: "[--claude|--codex] <n|id>",
-        summary: "Resume a session from that agent",
+        summary: "Resume a previous session",
+        argHint: "[--claude|--codex] [n|id]",
+        argSuggestions: AGENT_FLAGS,
     },
-    {
-        trigger: "/sessions",
-        argHint: "[--claude|--codex]",
-        summary: "List past sessions for an agent",
-    },
+    { trigger: "/sessions", summary: "List past sessions", argHint: "[--claude|--codex]", argSuggestions: AGENT_FLAGS },
     {
         trigger: "/workdir",
-        argHint: "[--claude|--codex] <path>",
         summary: "Start a session in a different directory",
+        argHint: "[--claude|--codex] <path>",
+        argSuggestions: AGENT_FLAGS,
     },
     { trigger: "/status", summary: "Show current session info" },
     { trigger: "/agent", summary: "Show the current agent" },
     {
         trigger: "/switch",
+        summary: "Hand this conversation to the other coding agent",
         argHint: "<claude|codex>",
-        summary: "Hand this conversation to the other agent",
+        argSuggestions: [
+            { value: "claude", summary: "Hand over to Claude" },
+            { value: "codex", summary: "Hand over to Codex" },
+        ],
     },
     { trigger: "/working", summary: "Toggle tool call visibility" },
     { trigger: "/mcp", summary: "Show MCP server status" },
-    { trigger: "/model", summary: "Show current model" },
-    { trigger: "/effort", argHint: "[level]", summary: "Show or set effort level" },
+    { trigger: "/model", summary: "Show or switch the model", argHint: "[alias]", sessionArgSource: "model_options" },
+    { trigger: "/effort", summary: "Show or set effort level", argHint: "[level]", sessionArgSource: "effort_levels" },
     {
         trigger: "/mode",
+        summary: "Show or switch interactive vs print",
         argHint: "[interactive|print]",
-        summary: "Show or switch interactive vs non-interactive",
+        argSuggestions: [
+            { value: "interactive", summary: "Interactive TUI mode" },
+            { value: "print", summary: "Non-interactive print mode" },
+        ],
     },
-    { trigger: "/login", summary: "Log in to your Anthropic account" },
-    { trigger: "/logout", summary: "Log out of your Anthropic account" },
     { trigger: "/cost", summary: "Show session cost" },
     { trigger: "/usage", summary: "Show token usage" },
-    { trigger: "/limits", summary: "Show subscription usage limits (session & weekly)" },
+    { trigger: "/limits", summary: "Show subscription usage limits" },
     { trigger: "/tools", summary: "List available tools" },
-    { trigger: "/help", summary: "Show this help message" },
-    { trigger: "!esc", summary: "Cancel the current turn without killing the session" },
+    { trigger: "/context", summary: "Show what's using the context window" },
+    { trigger: "/compact", summary: "Compact the conversation to free context", argHint: "[instructions]" },
+    { trigger: "/login", summary: "Log in to your Anthropic account" },
+    { trigger: "/logout", summary: "Log out of your Anthropic account" },
+    {
+        trigger: "/timer",
+        summary: "Send a message to this chat later",
+        argHint: "<duration> <message> | cancel <id|all>",
+        argSuggestions: [{ value: "cancel", summary: "Cancel a pending timer" }],
+    },
+    // The rescue keystrokes are bang-only on the bridge: a typed "/esc" would reach the agent's
+    // terminal as a junk command, so the palette completes the bang form ("/es" still finds it).
+    { trigger: "!esc", summary: "Cancel the current turn" },
+    { trigger: "!enter", summary: "Press Enter in the agent's terminal" },
+    { trigger: "/help", summary: "Show command help" },
 ];
 
 export function filterCommands(commands: BotCommand[], input: string): BotCommand[] {
@@ -80,7 +131,7 @@ interface ParsedFolderCommand {
 
 // recognized flags mirror bridge lib/agent-backend.js extractAgentFlag + lib/mcp-config.js extractMcpExtraFlags — resync if the bridge adds flags
 function isRecognizedFolderFlag(token: string): boolean {
-    const normalized = token.replace(/^[‐‑‒–—―]+/, "--");
+    const normalized = normalizeLeadingDashes(token);
     return (
         normalized === "--claude" ||
         normalized === "--codex" ||
@@ -119,6 +170,75 @@ export function folderCompletionPartial(input: string): string | null {
 
 export function applyCommand(trigger: string): string {
     return `${trigger} `;
+}
+
+/** Phone keyboards turn a leading `--` into a dash character; the bridge reads it back as `--`. */
+export function normalizeLeadingDashes(token: string): string {
+    return token.replace(/^[‐‑‒–—―]+/, "--");
+}
+
+// A session-supplied list, deduplicated case-insensitively in the bridge's order (rows are keyed
+// by value). Entries without a usable value are skipped: the list is remote input.
+function sessionSuggestions(
+    source: BotCommand["sessionArgSource"],
+    status: SessionStatus | undefined,
+): ArgSuggestion[] {
+    const options = source ? status?.[source] : undefined;
+    if (!Array.isArray(options)) return [];
+    const seen = new Set<string>();
+    const suggestions: ArgSuggestion[] = [];
+    for (const option of options) {
+        if (typeof option?.value !== "string" || !option.value.trim()) continue;
+        const key = option.value.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        suggestions.push({ value: option.value, label: typeof option.label === "string" ? option.label : undefined });
+    }
+    return suggestions;
+}
+
+/**
+ * The argument rows for a fully typed command (either prefix) followed by whitespace: its static
+ * suggestions plus the session's list, filtered by the trailing partial token. Flags compose, so a
+ * flag stays offered until it, or one it conflicts with, is on the line — but only while no
+ * positional token is down (the grammar is `[flags] [path]`). A plain value fills the one slot, so
+ * it is offered only before any argument. A suggestion equal to the partial offers nothing.
+ */
+export function argSuggestions(input: string, commands: BotCommand[], status?: SessionStatus): ArgSuggestion[] {
+    const match = input.match(/^[ \t]*[/!](\S+)(\s[\s\S]*)$/);
+    if (!match) return [];
+    const name = match[1].toLowerCase();
+    const command = commands.find((candidate) => candidate.trigger.slice(1).toLowerCase() === name);
+    if (!command) return [];
+
+    const args = match[2];
+    const partialStart = args.search(/\S*$/);
+    const partial = normalizeLeadingDashes(args.slice(partialStart)).toLowerCase();
+    const earlier = new Set(
+        args
+            .slice(0, partialStart)
+            .split(/\s+/)
+            .filter((token) => token.length > 0)
+            .map((token) => normalizeLeadingDashes(token).toLowerCase()),
+    );
+    const positionalFilled = [...earlier].some((token) => !token.startsWith("--"));
+
+    const pool = [...(command.argSuggestions ?? []), ...sessionSuggestions(command.sessionArgSource, status)];
+    return pool.filter((suggestion) => {
+        const value = suggestion.value.toLowerCase();
+        if (value.startsWith("--")) {
+            if (positionalFilled || earlier.has(value)) return false;
+        } else if (earlier.size > 0) {
+            return false;
+        }
+        if (suggestion.conflictsWith?.some((token) => earlier.has(token))) return false;
+        return value.startsWith(partial) && value !== partial;
+    });
+}
+
+/** Replaces the trailing partial token with the picked argument and a space, ready for the next. */
+export function applyArgument(input: string, value: string): string {
+    return input.replace(/\S*$/, () => `${value} `);
 }
 
 export function applyFolder(input: string, path: string): string {

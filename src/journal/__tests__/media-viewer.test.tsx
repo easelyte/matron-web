@@ -8,6 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+import { JournalApiError } from "../api";
 import type { MatronJournalClient } from "../client";
 import {
     buildMediaCorpus,
@@ -102,6 +103,37 @@ describe("media render classification (pure)", () => {
         expect(viewerRetypeMime({ kind: "download", filename: "x.gz" })).toBeUndefined();
     });
 
+    it("routes audio to the audio player, by MIME or by extension when the MIME is generic", () => {
+        // Voice notes travel as `voice-note.m4a` / audio/mp4.
+        expect(mediaRenderKind(false, "audio/mp4", "voice-note.m4a")).toBe("audio");
+        expect(mediaRenderKind(false, "audio/mpeg")).toBe("audio");
+        expect(mediaRenderKind(false, "audio/webm;codecs=opus", "voice-note.webm")).toBe("audio");
+        expect(mediaRenderKind(false, "application/octet-stream", "voice-note.m4a")).toBe("audio");
+        expect(mediaRenderKind(false, undefined, "song.mp3")).toBe("audio");
+        expect(mediaRenderKind(false, "", "clip.ogg")).toBe("audio");
+        expect(mediaRenderKind(false, undefined, "take.wav")).toBe("audio");
+        // A typed non-audio MIME wins over an audio-looking extension; video stays video.
+        expect(mediaRenderKind(false, "text/plain", "notes.mp3")).toBe("download");
+        expect(mediaRenderKind(false, undefined, "clip.webm")).toBe("video");
+        expect(isRenderableInViewer("audio/mp4")).toBe(true);
+    });
+
+    it("viewerRetypeMime keeps a sent audio MIME and maps extensions when the sender gave none", () => {
+        expect(viewerRetypeMime({ kind: "audio", filename: "voice-note.m4a", contentType: "audio/mp4" })).toBe(
+            "audio/mp4",
+        );
+        expect(viewerRetypeMime({ kind: "audio", filename: "x.webm", contentType: "audio/webm;codecs=opus" })).toBe(
+            "audio/webm;codecs=opus",
+        );
+        expect(viewerRetypeMime({ kind: "audio", filename: "voice-note.m4a" })).toBe("audio/mp4");
+        expect(
+            viewerRetypeMime({ kind: "audio", filename: "voice.m4a", contentType: "application/octet-stream" }),
+        ).toBe("audio/mp4");
+        expect(viewerRetypeMime({ kind: "audio", filename: "song.mp3" })).toBe("audio/mpeg");
+        expect(viewerRetypeMime({ kind: "audio", filename: "clip.ogg" })).toBe("audio/ogg");
+        expect(viewerRetypeMime({ kind: "audio", filename: "take.wav" })).toBe("audio/wav");
+    });
+
     it("formatMediaSize renders machine size strings", () => {
         expect(formatMediaSize(512)).toBe("512 B");
         expect(formatMediaSize(2048)).toBe("2 KB");
@@ -127,6 +159,17 @@ describe("buildMediaCorpus (pure)", () => {
         expect(corpus[0].kind).toBe("raster");
         expect(corpus[1].kind).toBe("svg");
         expect(corpus[2].kind).toBe("download");
+    });
+
+    it("carries the reaper tombstone onto the item", () => {
+        const corpus = buildMediaCorpus([
+            event(1, "file", { blob_ref: "a", filename: "old.pdf", expired: true }),
+            event(2, "file", { blob_ref: "b", filename: "new.pdf" }),
+        ]);
+        expect(corpus.map((c) => [c.mediaId, c.expired])).toEqual([
+            ["a", true],
+            ["b", false],
+        ]);
     });
 });
 
@@ -322,5 +365,77 @@ describe("MediaViewer overlay", () => {
         rendered.container.remove();
         rendered = undefined;
         opener.remove();
+    });
+
+    it("plays an audio item in an <audio controls> body", async () => {
+        const voice = item({
+            mediaId: "voice-1",
+            kind: "audio",
+            fileKind: "audio",
+            isImageEvent: false,
+            contentType: "audio/mp4",
+            filename: "voice-note.m4a",
+            size: 48_000,
+        });
+        rendered = await render(
+            <MediaViewer
+                client={stubClient("blob:https://journal.example/voice-1")}
+                items={[voice]}
+                initialMediaId="voice-1"
+                opener={null}
+                onClose={() => {}}
+            />,
+        );
+        const audio = rendered.container.querySelector<HTMLAudioElement>(".mj_MediaViewer_body audio");
+        expect(audio?.controls).toBe(true);
+        expect(audio?.getAttribute("src")).toBe("blob:https://journal.example/voice-1");
+        expect(rendered.container.querySelector(".mj_MediaViewer_downloadName")?.textContent).toBe("voice-note.m4a");
+    });
+
+    it("shows a tombstoned item as expired without fetching it", async () => {
+        const client = stubClient();
+        rendered = await render(
+            <MediaViewer
+                client={client}
+                items={[item({ mediaId: "old-1", filename: "old.png", expired: true })]}
+                initialMediaId="old-1"
+                opener={null}
+                onClose={() => {}}
+            />,
+        );
+        const expired = rendered.container.querySelector(".mj_MediaViewer_expired");
+        expect(expired?.textContent).toContain("Image expired");
+        expect(expired?.textContent).toContain("old.png");
+        expect(client.mediaUrl).not.toHaveBeenCalled();
+    });
+
+    it("shows a 404 as expired with no Retry, but a transient failure keeps Retry", async () => {
+        const gone = { mediaUrl: jest.fn().mockRejectedValue(new JournalApiError("not found", 404)) };
+        rendered = await render(
+            <MediaViewer
+                client={gone as unknown as MatronJournalClient}
+                items={[item({ mediaId: "vid-1", kind: "video", isImageEvent: false, filename: "clip.mp4" })]}
+                initialMediaId="vid-1"
+                opener={null}
+                onClose={() => {}}
+            />,
+        );
+        expect(rendered.container.querySelector(".mj_MediaViewer_expired")?.textContent).toContain("File expired");
+        expect(rendered.container.querySelector(".mj_MediaViewer_retry")).toBeNull();
+        await act(async () => rendered?.root.unmount());
+        rendered.container.remove();
+
+        const flaky = { mediaUrl: jest.fn().mockRejectedValue(new JournalApiError("busy", 503)) };
+        rendered = await render(
+            <MediaViewer
+                client={flaky as unknown as MatronJournalClient}
+                items={[item({ mediaId: "vid-2", kind: "video", isImageEvent: false, filename: "clip.mp4" })]}
+                initialMediaId="vid-2"
+                opener={null}
+                onClose={() => {}}
+            />,
+        );
+        expect(rendered.container.querySelector(".mj_MediaViewer_expired")).toBeNull();
+        expect(rendered.container.querySelector(".mj_MediaViewer_retry")).not.toBeNull();
     });
 });

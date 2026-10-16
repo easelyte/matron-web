@@ -231,7 +231,7 @@ describe("Enable browser tools in the session menu", () => {
         );
     };
     const item = (): HTMLButtonElement =>
-        [...container.querySelectorAll<HTMLButtonElement>(".mj_RoomItemMenu_item")].find((node) =>
+        [...container.querySelectorAll<HTMLButtonElement>(".mj_ConversationMenu_item")].find((node) =>
             /browser tools/i.test(node.textContent ?? ""),
         )!;
 
@@ -303,7 +303,7 @@ describe("Enable browser tools in the session menu", () => {
             root.render(<MatronApp client={client([op("/restart --browser"), ev(RESTARTED_ON)], {}, null)} />),
         );
         await openMenu();
-        expect(container.querySelector('[role="menu"], .mj_RoomItemMenu')).not.toBeNull();
+        expect(container.querySelector('[role="menu"], .mj_ConversationMenu')).not.toBeNull();
         expect(item()).toBeUndefined();
     });
 

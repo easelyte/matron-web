@@ -466,3 +466,82 @@ describe("subchat existing-client backfill", () => {
         database.close();
     });
 });
+
+describe("room membership existing-client backfill", () => {
+    beforeEach(() => {
+        globalThis.indexedDB = new IDBFactory();
+        localStorage.clear();
+        jest.spyOn(JournalApi.prototype, "messages").mockResolvedValue({ events: [] });
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        jest.spyOn(JournalConnection.prototype, "stop").mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+        jest.restoreAllMocks();
+    });
+
+    async function forgetMembershipBackfill(): Promise<void> {
+        const name = `matron-journal:${SESSION.serverUrl}:${SESSION.userId}`;
+        const database = await new Promise<IDBDatabase>((resolve, reject) => {
+            const request = indexedDB.open(name, 1);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error ?? new Error("Could not open cache"));
+        });
+        const transaction = database.transaction("meta", "readwrite");
+        transaction.objectStore("meta").delete("room_membership_backfill_v1");
+        await new Promise<void>((resolve, reject) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error ?? new Error("Could not forget the backfill"));
+        });
+        database.close();
+    }
+
+    it("reads one snapshot shortly after start-up and shows each room's membership", async () => {
+        (await seedExistingClient()).close();
+        await sealLegacyBackfill();
+        await forgetMembershipBackfill();
+        const snapshotRequest = jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue({
+            seq: 5,
+            capabilities: ["session_outcome"],
+            conversations: [conversation("c1", { participants: [1, 2], participant_convos: ["a", "b"] })],
+        });
+        const outcomeSealed = jest.spyOn(JournalDatabase.prototype, "backfillDone").mockResolvedValue(true);
+        jest.useFakeTimers({ doNotFake: ["queueMicrotask"] });
+        const client = new MatronJournalClient();
+
+        await internals(client).startSession(SESSION);
+        expect(snapshotRequest).not.toHaveBeenCalled();
+        // Start-up's own reads run on the (fake) clock too: step it until the snapshot lands.
+        for (let i = 0; i < 100 && !client.getSnapshot().conversations[0]?.participant_convos; i += 1) {
+            await jest.advanceTimersByTimeAsync(200);
+        }
+        expect(snapshotRequest).toHaveBeenCalledTimes(1);
+        expect(client.getSnapshot().conversations[0]).toMatchObject({ participant_convos: ["a", "b"] });
+        expect(await internals(client).database?.roomMembershipBackfillDue()).toBe(false);
+
+        outcomeSealed.mockRestore();
+        internals(client).connection?.stop();
+        internals(client).database?.close();
+    });
+
+    it("drops the backfill when the session ends before it runs", async () => {
+        (await seedExistingClient()).close();
+        await sealLegacyBackfill();
+        await forgetMembershipBackfill();
+        const snapshotRequest = jest.spyOn(JournalApi.prototype, "snapshot").mockResolvedValue({
+            seq: 5,
+            capabilities: ["session_outcome"],
+            conversations: [conversation("c1", { participants: [1, 2], participant_convos: ["a", "b"] })],
+        });
+        jest.spyOn(JournalDatabase.prototype, "backfillDone").mockResolvedValue(true);
+        jest.useFakeTimers({ doNotFake: ["queueMicrotask"] });
+        const client = new MatronJournalClient();
+
+        await internals(client).startSession(SESSION);
+        await client.logout();
+        for (let i = 0; i < 50; i += 1) await jest.advanceTimersByTimeAsync(200);
+        expect(snapshotRequest).not.toHaveBeenCalled();
+        expect(client.getSnapshot().conversations).toEqual([]);
+    });
+});

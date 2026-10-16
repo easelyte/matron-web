@@ -643,7 +643,7 @@ describe("the modal contains focus while a request is in flight (Codex confirmin
         // The pane's own `inert` is not enough: the conversation sidebar is a sibling of the pane,
         // not a child of it.
         const sidebar = document.createElement("div");
-        sidebar.className = "mx_ConversationList";
+        sidebar.className = "mj_ConversationList";
         document.body.append(sidebar);
         const preInert = document.createElement("div");
         preInert.setAttribute("inert", "");

@@ -6,14 +6,18 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    COMPACT_NUDGE_TOKENS,
     HOST_VITALS_STALE_MS,
+    compactNudgeTitle,
     compactTokens,
     formatSampleAge,
     isSampleStale,
     mergeSessionStatus,
+    modelLine,
     normalizePercent,
     resetDisplay,
     sampleAgeMs,
+    shouldNudgeCompact,
     usageAccessibleLabel,
     usageBarLabel,
     usageLevel,
@@ -21,7 +25,7 @@ import {
     usageShortLabel,
     worstLimit,
 } from "../../../src/journal/status";
-import type { SessionStatus } from "../../../src/journal/types";
+import type { SessionStatus, SessionStatusOption } from "../../../src/journal/types";
 
 describe("journal session status presentation", () => {
     it("matches the Apple client's compact token and limit labels", () => {
@@ -261,5 +265,57 @@ describe("journal session status presentation", () => {
         expect(formatSampleAge(4 * 60_000)).toBe("4m ago");
         expect(formatSampleAge(2 * 60 * 60_000)).toBe("2h ago");
         expect(formatSampleAge(3 * 24 * 60 * 60_000)).toBe("3d ago");
+    });
+
+    it("puts the effort level beside the model, and nothing at all when it is unknown", () => {
+        expect(modelLine("opus", "high")).toBe("opus · high");
+        expect(modelLine("opus", " max ")).toBe("opus · max");
+        expect(modelLine("opus", undefined)).toBe("opus");
+        expect(modelLine("opus", null)).toBe("opus");
+        expect(modelLine("opus", "  ")).toBe("opus");
+    });
+
+    it("treats effort as tri-state: a string sets it, null clears it, absence keeps it", () => {
+        const held = mergeSessionStatus({ model: "m" }, { effort: "high" });
+        expect(held.effort).toBe("high");
+        // A frame without the key says nothing about effort.
+        expect(mergeSessionStatus(held, { model: "m2" }).effort).toBe("high");
+        // An explicit null is the bridge disowning the level it was tracking.
+        expect(mergeSessionStatus(held, { effort: null }).effort).toBeUndefined();
+        expect(mergeSessionStatus(held, { effort: "low" }).effort).toBe("low");
+    });
+
+    it("keeps the /model and /effort offers until a frame replaces them, an empty list included", () => {
+        const offers = { model_options: [{ value: "opus", label: "Opus" }], effort_levels: [{ value: "high" }] };
+        const held = mergeSessionStatus({ model: "m" }, offers);
+        expect(mergeSessionStatus(held, { model: "m2" })).toMatchObject(offers);
+        // An empty list is the agent offering nothing (a switch to an agent without the list).
+        expect(mergeSessionStatus(held, { model_options: [], effort_levels: [] })).toMatchObject({
+            model_options: [],
+            effort_levels: [],
+        });
+    });
+
+    it("ignores a /model or /effort offer it cannot read, keeping the held list", () => {
+        const held = mergeSessionStatus(undefined, { model_options: [{ value: "opus", label: "Opus" }] });
+        const garbled = [{ label: "no value" }, { value: "" }] as unknown as SessionStatusOption[];
+        expect(mergeSessionStatus(held, { model_options: garbled }).model_options).toEqual(held.model_options);
+        const notAList = "opus" as unknown as SessionStatusOption[];
+        expect(mergeSessionStatus(held, { model_options: notAList }).model_options).toEqual(held.model_options);
+        // Readable entries survive, the unreadable ones are dropped.
+        expect(mergeSessionStatus(held, { model_options: [{ value: "haiku" }, ...garbled] }).model_options).toEqual([
+            { value: "haiku" },
+        ]);
+    });
+
+    it("nudges to compact only strictly above the absolute token threshold", () => {
+        expect(COMPACT_NUDGE_TOKENS).toBe(400_000);
+        expect(shouldNudgeCompact(undefined)).toBe(false);
+        expect(shouldNudgeCompact({ tokens: 400_000, window: 1_000_000, pct: 40 })).toBe(false);
+        expect(shouldNudgeCompact({ tokens: 400_001, window: 1_000_000, pct: 40 })).toBe(true);
+        // Absolute, not a fraction of the window: a nearly full small window does not nudge.
+        expect(shouldNudgeCompact({ tokens: 190_000, window: 200_000, pct: 95 })).toBe(false);
+        expect(compactNudgeTitle(512_300)).toBe("Large conversation (512k)");
+        expect(compactNudgeTitle(1_200_000)).toBe("Large conversation (1.2m)");
     });
 });

@@ -16,6 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import HtmlWebpackPlugin from "html-webpack-plugin";
 import MiniCssExtractPlugin from "mini-css-extract-plugin";
+import MinimizerPlugin from "minimizer-webpack-plugin";
 import postcssPresetEnv from "postcss-preset-env";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -33,6 +34,17 @@ export default () => ({
         clean: true,
     },
     resolve: { extensions: [".js", ".json", ".ts", ".tsx"] },
+    // Same CSS minifier as the app build, so the screenshots show the CSS that ships.
+    optimization: {
+        minimizer: [
+            "...",
+            new MinimizerPlugin({
+                test: /\.css$/i,
+                minify: MinimizerPlugin.cleanCssMinify,
+                minimizerOptions: { level: 1 },
+            }),
+        ],
+    },
     module: {
         rules: [
             {
@@ -49,7 +61,7 @@ export default () => ({
                         loader: "postcss-loader",
                         options: {
                             postcssOptions: {
-                                plugins: [postcssPresetEnv({ stage: 3, browsers: "last 2 versions" })],
+                                plugins: [postcssPresetEnv({ stage: 3 })],
                             },
                         },
                     },

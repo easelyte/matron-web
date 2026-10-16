@@ -5,6 +5,9 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import type { CoordinatorDecision } from "./coordinator-consent";
+import type { Routine } from "./routines";
+
 export const MESSAGE_EVENT_TYPES = new Set([
     "text",
     "peer_message",
@@ -85,6 +88,12 @@ export interface DeviceDTO {
     last_seen_at?: number;
     connected: boolean;
     is_self: boolean;
+    /** The journal-held tag character shown before an agent box's chat titles; null = automatic. */
+    tag_char?: string | null;
+    /** Enrolment time (ms); the Devices list sorts newest first within apps and agent boxes. */
+    created_at?: number;
+    /** How many events the device's cursor trails the user's head. */
+    lag?: number;
     // The box's last capacity report (journal `box_status`). Absent for a
     // device that never reported (clients, non-bridge agents) or an older journal.
     status?: BoxStatus;
@@ -93,6 +102,23 @@ export interface DeviceDTO {
     defaults?: BoxDefaults;
 }
 
+/** POST /pair/preview: who is asking to pair, and how long the code has left (seconds). */
+export interface PairPreview {
+    requester_ip: string;
+    expires_in: number;
+}
+
+/** POST /link/start: the code this device shows, and its lifetime (seconds). */
+export interface LinkStart {
+    link_code: string;
+    expires_in: number;
+}
+
+/** POST /link/status: still waiting for a scan, or claimed by a device asking to sign in. */
+export type LinkStatus =
+    | { status: "waiting"; expires_in: number }
+    | { status: "claimed"; device_name: string; requester_ip: string; expires_in: number };
+
 export interface DevicesResponse {
     devices: DeviceDTO[];
 }
@@ -100,6 +126,40 @@ export interface DevicesResponse {
 export interface RecentFolder {
     path: string;
     last_used: number | null;
+}
+
+/** One choice a box offers on its `recent_folders` reply (`agent_options`, `model_options`,
+ *  `effort_options`): `value` is what the `start` RPC takes, `label` what the picker shows
+ *  (never empty — the parser falls back to `value`). */
+export interface StartOption {
+    value: string;
+    label: string;
+}
+
+/** Everything a box's `recent_folders` reply offers the New session sheet. Every block beside
+ *  `folders` is optional on the wire: an older bridge omits it, which parses to an empty offer
+ *  (the picker hides) rather than failing the folders it rides with. */
+export interface NewSessionOffer {
+    folders: RecentFolder[];
+    /** Coding agents a `start` there may name. Empty = the bridge predates the switch. */
+    agentOptions: StartOption[];
+    /** What a start with no `agent` runs as. */
+    defaultAgent: string | null;
+    /** Claude models, without the bridge's own `default` alias (the picker's Default row). */
+    modelOptions: StartOption[];
+    /** What a start with no `model` runs on, when the box says. Display only. */
+    defaultModel: string | null;
+    /** Claude effort levels a `start` may name. */
+    effortOptions: StartOption[];
+    /** What a start with no `effort` runs at, when the box says. Display only. */
+    defaultEffort: string | null;
+}
+
+/** The New session sheet's picks for `start`. An absent key leaves the choice to the box. */
+export interface StartSessionPicks {
+    agent?: string;
+    model?: string;
+    effort?: string;
 }
 
 export interface Conversation {
@@ -133,6 +193,12 @@ export interface Conversation {
         when it was one — the sidebar reads it as plain English with Developer view off. Absent
         after a snapshot replace; the preview then falls back to the server snippet. */
     last_step?: { tool: string; input: Record<string, string | undefined> } | null;
+    /** A room's owner plus joined participant device ids (`/snapshot`, membership `convo_meta`);
+     *  absent on a conversation that was never an agent-chat room. */
+    participants?: number[];
+    /** A room's participant conversation ids, owner side first; [] when unknown or nobody is
+     *  joined. Present on exactly the rows that carry `participants`. */
+    participant_convos?: string[];
 }
 
 /** One of the user's agent boxes as the snapshot and `device_meta` frames describe it. */
@@ -210,7 +276,24 @@ export interface SearchResponse {
 }
 
 /**
- * Message-content search state (Apple-parity "Messages" section). The room-list search box
+ * What a tracker number is (`GET /lookup`). Items, missions, milestones and projects share one
+ * per-user number space, so a number alone does not say which kind it names. `num` and `title`
+ * are absent on an older journal; `mission` is the mission a milestone sits on.
+ */
+export type NumberLookupKind = "item" | "mission" | "milestone" | "project";
+export interface NumberLookup {
+    kind: NumberLookupKind;
+    id: string;
+    num?: number;
+    title?: string;
+    mission?: { id: string; num: number };
+}
+
+/** `none`: no such number (or not visible to this user). `failed`: the journal could not be asked. */
+export type NumberLookupOutcome = { status: "found"; hit: NumberLookup } | { status: "none" } | { status: "failed" };
+
+/**
+ * Message-content search state (Apple-parity "Messages" section). The conversation list search box
  * filters chat titles in-memory (the "Chats" behaviour); this holds the server-side content
  * hits for the same query. `query` is the query the current `hits` belong to, so the view can
  * ignore results that raced in after the box was cleared or retyped.
@@ -220,6 +303,22 @@ export interface MessageSearchState {
     hits: SearchHit[];
     loading: boolean;
     failed: boolean;
+}
+
+/**
+ * Find in chat: one search within the open conversation. `matchSeqs` holds the matching messages'
+ * seqs newest first and `index` the one in view (0 = newest). An empty `query` is a bar opened with
+ * nothing searched yet.
+ */
+export interface ChatSearchState {
+    conversationId: string;
+    query: string;
+    matchSeqs: number[];
+    index: number;
+    loading: boolean;
+    failed: boolean;
+    /** Bumped each time the bar should take keyboard focus (Ctrl/⌘F while it is already open). */
+    focusTick: number;
 }
 
 export interface JournalControlFrame {
@@ -234,6 +333,8 @@ export interface JournalControlFrame {
     pins?: unknown;
     /** `hello_ok` and the `settings` op carry the user's journal settings (unvalidated JSON). */
     settings?: unknown;
+    /** hello_ok: the user's Coordinator conversation (null for none); absent on an older journal. */
+    coordinator_convo_id?: unknown;
 }
 
 export interface JournalRpcFrame {
@@ -438,6 +539,19 @@ export interface SessionStatus {
         sampled_at_ms: number;
     };
     email?: string;
+    // The session's effort level. Tri-state on the wire: a string while the bridge tracks one,
+    // an explicit null once it tracks none, and absent from frames that say nothing about it
+    // (see mergeSessionStatus). Held state is a string or absent.
+    effort?: string | null;
+    // The session's arguments for /model and /effort, as the composer offers them. The bridge owns
+    // these lists (they differ per agent): absent says nothing, an empty list offers nothing.
+    model_options?: SessionStatusOption[];
+    effort_levels?: SessionStatusOption[];
+}
+
+export interface SessionStatusOption {
+    value: string;
+    label?: string;
 }
 
 export interface ToolStreamState {
@@ -471,28 +585,82 @@ export interface PendingMessage {
         | "electron_binary_unsupported";
     errorMessage?: string;
     canRetry?: boolean;
+    /** Set on an attachment sent together with others from one composer message. */
+    batch?: AttachmentBatchTag;
 }
 
 export type ConnectionState = "offline" | "connecting" | "online";
 
-export interface StagedUploadItem {
+/**
+ * One attachment's place in a multi-attachment composer send. Every attachment of a send with more
+ * than one carries the same `id`, so the bridge can gather their frames back into the one message
+ * the user wrote; `index` is 1-based and `total` is how many frames complete the batch. On the
+ * wire it rides in the media payload as `batch_id` / `batch_index` / `batch_total`.
+ */
+export interface AttachmentBatchTag {
     id: string;
-    file: File;
-    /** Built on first confirm attempt; reused by persist retries so a page has ONE row identity. */
-    message?: PendingMessage;
+    index: number;
+    total: number;
 }
 
-export interface StagedUploads {
-    convoId: string;
-    items: StagedUploadItem[];
-    /** Cumulative count ever staged into this queue (paste-append increments). Header: "File k of N", k = total - items.length + 1. */
-    total: number;
-    /** P23 transient-submission lock: set synchronously at confirm entry; all modal actions inert while true. */
-    confirming: boolean;
-    /** Terminal invalidation notice (items cleared, error page shown). */
-    error?: "archived";
-    /** Non-terminal persist failure: page kept, inline error shown, Send retries. */
-    persistError?: boolean;
+/**
+ * A file in the composer's attachment tray: picked, pasted or dropped, and not yet sent. It leaves
+ * with the composer text when the user sends, so the agent gets the file and the words about it
+ * as one turn.
+ */
+export interface ComposerAttachment {
+    id: string;
+    file: File;
+    /**
+     * `staged` waits for a send; `queued` is part of a send in flight and waiting its turn;
+     * `uploading` is on its way; `failed` didn't go out and stays for the next send to retry.
+     */
+    state: "staged" | "queued" | "uploading" | "failed";
+    /** Uploaded fraction (0…1) while uploading. */
+    progress?: number;
+    /** Why it failed, in prose. */
+    error?: string;
+    /** A file that can never upload (empty, or too big for the browser): it blocks the send until removed. */
+    unsendable?: boolean;
+    /**
+     * The tag this file's frame was about to carry when its send failed. A retry re-emits it under
+     * the same batch, so the bridge can still complete the message its siblings already started.
+     */
+    batch?: AttachmentBatchTag;
+}
+
+/** The loaded part of For you's Done list. `error` is the last load's failure; the rows it could
+ *  not replace stay. */
+export interface InboxDone {
+    items: TrackerItem[];
+    nextCursor: string | null;
+    loading: boolean;
+    error?: string;
+}
+
+/**
+ * The chat's Tasks & decisions pane, beside the conversation. It stays open across conversation
+ * switches; `allFor` names the conversation whose pane shows "All" (any other shows "This chat",
+ * so moving to another conversation starts on its own items). `items` is the list last loaded for
+ * `scope` (the conversation id, or "all"): the open items, then the latest closed ones for Done.
+ * `error` is the last load's failure (the rows it could not replace stay); `actionError` the last
+ * failed move, until dismissed. `unsupported`: GET /items answered 404, a journal without items.
+ */
+export interface ChatTasksState {
+    open: boolean;
+    allFor?: string;
+    scope?: string;
+    items?: TrackerItem[];
+    loading?: boolean;
+    error?: string;
+    actionError?: string;
+    unsupported?: boolean;
+}
+
+export interface FocusTarget {
+    conversationId: string;
+    seq: number;
+    token: number;
 }
 
 export interface ClientState {
@@ -515,6 +683,12 @@ export interface ClientState {
      * Threaded into every buildSidebarIndex call so render/selection/unread/mark-all agree.
      */
     collapsedSubagentParentIds: Set<string>;
+    /**
+     * Sessions that arrived while this tab was live without this device asking for them (an
+     * agent, the Coordinator or a routine started them) and that the user has not opened since.
+     * Their rows carry a "New" marker. In memory only: a reload starts clean.
+     */
+    newConversationIds: Set<string>;
     controlError?: string;
     preferencesUnavailable?: boolean;
     selectedConversationId?: string;
@@ -543,8 +717,13 @@ export interface ClientState {
     textStreams: Record<string, string>;
     toolStreams: Record<string, ToolStreamState>;
     dragActive: boolean;
-    stagedUploads?: StagedUploads;
+    /** Each conversation's attachment tray, by conversation id; a conversation with none has no key. */
+    composerAttachments: Record<string, ComposerAttachment[]>;
     sendTick: number;
+    // A row the open timeline should scroll to and flash once it renders (a search hit, a
+    // milestone, "jump to my last message"). Set by client.focusMessage after the history holding
+    // `seq` has loaded; the timeline clears it by `token` once it has landed.
+    focusTarget?: FocusTarget;
     // Message-content search hits (Apple-parity "Messages" section). Undefined until the first
     // search of a session; cleared back to undefined when the search box empties.
     messageSearch?: MessageSearchState;
@@ -554,6 +733,8 @@ export interface ClientState {
     // selection, and preview are FilesPane-local (like the conversation timeline is RoomView-local).
     // Mirrors how `selectedConversationId` is the only main-region discriminant today.
     filesView?: FilesViewState;
+    // Find in chat: the search bar over the open conversation, while it is up.
+    chatSearch?: ChatSearchState;
     // Tracker pane (Missions / Milestones / Decisions-Inbox / Work). `trackerView` is the
     // main-region discriminant (checked alongside filesView — one surface at a time).
     // The rest are store-resident so sidebar badges stay live off WS invalidation:
@@ -566,8 +747,16 @@ export interface ClientState {
     // discriminant, one surface at a time with Files and the tracker. The pane owns its fetched
     // data; the store only carries the open flag (live box reports live in `boxStatuses`).
     opsView?: { open: true };
+    /** The "Go to number" field is open (the shortcut and both header buttons set it). */
+    goToNumberOpen?: boolean;
+    /** The subagent open in the pane beside its parent chat (see chatSidePane). It belongs to
+     *  `parentId`: it shows only while that chat is on screen. */
+    subChatPane?: { parentId: string; childId: string };
     missions?: Mission[];
     inboxItems?: TrackerItem[];
+    /** For you's Done tab: closed questions, decisions and notices, newest first. Undefined until
+     *  the tab is first opened; `nextCursor` null = everything is loaded. */
+    inboxDone?: InboxDone;
     /** Projects (unify step 7): the dashboard rows and the open project's detail. */
     projects?: Project[];
     projectsError?: string;
@@ -576,8 +765,15 @@ export interface ClientState {
     /** Last failed project-detail load, keyed by its number (like missionLoadError). */
     projectLoadError?: { id: string; message: string };
     trackerProject?: ProjectDetail | null;
+    /** True while the project page's Latest feed fetches its next pages. */
+    trackerProjectFeedLoading?: boolean;
     trackerItem?: { item: TrackerItem; comments: TrackerComment[] } | null;
     trackerMission?: MissionDetail | null;
+    /** The selected conversation's missions, for the chat header's mission chip. Absent until
+     *  fetched; a fetch for another conversation is never shown against this one. */
+    conversationMissions?: ConversationMissions;
+    /** The chat's Tasks & decisions pane; absent until it is first opened. */
+    chatTasks?: ChatTasksState;
     /** True while ANY tracker fetch is in flight (v1: one detail/list open at a time). */
     trackerLoading?: boolean;
     /** Last tracker fetch/mutation error; cleared on the next successful load. */
@@ -614,6 +810,27 @@ export interface ClientState {
     userSettingsUnsupported?: boolean;
     /** The last failed settings save; cleared by the next save. */
     userSettingsError?: string;
+    /** Settings → Coordinator: whether the Coordinator may answer chat and spawn asks (`consent`
+     *  on GET /coordinator). `enabled` undefined = not known yet, or a journal without the switch. */
+    coordinatorConsent?: { enabled?: boolean; error?: string };
+    /** The user's Coordinator conversation (GET/PUT /coordinator `convo_id`, `hello_ok`
+     *  `coordinator_convo_id`). Undefined = not known yet; null = none set. */
+    coordinatorConvoId?: string | null;
+    /** Settings → Coordinator → Routines. Undefined = never loaded this session. */
+    routines?: RoutinesState;
+}
+
+/** The Routines sheet's view of GET /routines and the writes in flight. */
+export interface RoutinesState {
+    /** Sorted by name. Undefined until the first load lands. */
+    list?: Routine[];
+    /** GET /routines answered 404: the journal predates routines. */
+    unsupported?: boolean;
+    loading?: boolean;
+    /** The last load's failure. A failed load never clears `list`. */
+    error?: string;
+    /** Routines with a pause/resume or run request in flight. */
+    busyIds?: ReadonlySet<string>;
 }
 
 // ── New-chat defaults (journal GET/PUT /defaults) ───────────────────────────────────────────────
@@ -674,9 +891,12 @@ export interface UserSettings {
     notices: boolean;
 }
 
-/** The in-app `matron://` deep links the markdown renderer activates (markdown.tsx parseMatronHref). */
-export type MatronLinkKind = "item" | "mission" | "project" | "convo";
-/** `target` is the #num for item/mission/project and the conversation id for convo. */
+/**
+ * The in-app links the markdown renderer activates (markdown.tsx parseMatronHref): the `matron://`
+ * deep links, and `link` for an https `/u/<name>/<n>` link to this deployment (link-path.ts).
+ */
+export type MatronLinkKind = "item" | "mission" | "project" | "convo" | "link";
+/** `target` is the #num for item/mission/project, the conversation id for convo, the URL for link. */
 export type TrackerLinkHandler = (kind: MatronLinkKind, target: number | string) => void;
 
 // ── Coordinator briefings (journal /briefings, spec 2026-10-04 latest briefing) ─────────────────
@@ -836,6 +1056,23 @@ export interface StatusSnapshot {
     awaiting: TrackerAwaiting | null;
 }
 
+/** Whether the session that owns an item is busy (the journal's `working` block). `running`: that
+ *  conversation is mid-turn. `queued`: the user wrote on the item and the agent's turn has not
+ *  started yet; it lapses at `until` (ms) if nothing else happens. */
+export interface TrackerWorking {
+    state: "running" | "queued";
+    since: number | null;
+    until: number | null;
+}
+
+/** A pending offer to move an item to another conversation. The owner changes only on acceptance. */
+export interface TrackerHandover {
+    state: "awaiting_user" | "offered";
+    to_convo_id: string;
+    to_convo_title: string | null;
+    expires_at: number;
+}
+
 export interface TrackerItem {
     id: string;
     num: number;
@@ -859,6 +1096,9 @@ export interface TrackerItem {
     created_at: number;
     updated_at: number;
     closed_at: number | null;
+    /** When the user last acted on the item (a reply, a tap, a close or reopen; else when they
+     *  filed it). Null when only agents have touched it; absent on a journal that predates it. */
+    last_user_input_at?: number | null;
     mission_id: string | null;
     mission_num: number | null;
     comment_count: number;
@@ -868,6 +1108,13 @@ export interface TrackerItem {
     /** The item's own one-tap answers (a notice offers "Seen"). Absent on a journal that predates
      *  item actions. */
     actions?: string[];
+    /** The action the user last tapped on the item itself ("Seen" on a notice they have read). */
+    chosen_action?: string | null;
+    /** Null when the owning session is idle; absent on a journal that predates the field and on
+     *  another person's item. */
+    working?: TrackerWorking | null;
+    /** Null when no handover waits; absent on older journals and cached items. */
+    handover?: TrackerHandover | null;
 }
 
 export interface TrackerComment {
@@ -904,6 +1151,18 @@ export interface TrackerCommentWrite {
     action?: string;
     reply_to?: string;
 }
+
+/** `POST /items` body: a new item filed into the conversation `convo_id`. */
+export interface TrackerItemCreate {
+    kind: "task" | "question" | "decision";
+    title: string;
+    body: string;
+    convo_id: string;
+}
+
+/** `POST /items/:id/rank` body: to the top or bottom of the open tasks, or between two of them
+ *  (their item ids). */
+export type TrackerRankChange = { position: "top" | "bottom" } | { after: string; before: string };
 
 /** The `{num,title,kind,created_at}` digest a mission list-row carries for its newest milestone. */
 export interface MissionLastMilestone {
@@ -943,6 +1202,14 @@ export interface Mission {
     project_num?: number | null;
     /** The mission's activity rollup, where the journal sends it. */
     activity?: string;
+    /** When anything last happened on the mission (milestone, status, its conversations), where
+     *  the journal sends it. */
+    last_activity_at?: number | null;
+    /** The mission's status line (one short paragraph, inline markdown), who set it and when.
+     *  Null when unset; absent from journals that predate mission status. */
+    status?: string | null;
+    status_by?: TrackerActor | null;
+    status_updated_at?: number | null;
 }
 
 export interface Milestone {
@@ -1000,15 +1267,78 @@ export interface Project {
     last_activity_at: number;
 }
 
-/** `GET /projects/:id`. */
+/** The project roll-up's kinds (`GET /projects/:id/feed?kind=`). */
+export type ProjectFeedKind = "decisions" | "files" | "milestones";
+
+/** One page of a roll-up kind: `total` across every page, `next_before` the cursor for the next
+ *  (older) page, null on the last. */
+export interface ProjectFeedPage<Row> {
+    total: number;
+    rows: Row[];
+    next_before: string | null;
+}
+
+/** A decision item (open = in force; closed = decided, done or reversed), or a question closed as
+ *  answered, on one of the project's missions. */
+export interface ProjectDecisionRow {
+    id: string;
+    num: number;
+    kind: "decision" | "question";
+    state: TrackerItemState;
+    resolution: TrackerResolution | null;
+    title: string;
+    supersedes?: string | null;
+    created_at: number;
+    closed_at: number | null;
+    mission_id?: string | null;
+    mission_num?: number | null;
+    /** A question's answer: the user's newest comment, else a voice note's transcript. */
+    answer?: string | null;
+}
+
+/** A file or image on the project's items or in its missions' chats. */
+export interface ProjectFileRow {
+    blob_id: string;
+    name?: string | null;
+    content_type?: string | null;
+    size?: number | null;
+    caption?: string | null;
+    mission_num?: number | null;
+    source: { item_num: number } | { convo_id: string; seq: number };
+    posted_at?: number | null;
+}
+
+/** `GET /projects/:id`. The three roll-up pages come from a journal with Projects view v2; an
+ *  older one sends none of them. */
 export interface ProjectDetail {
     project: Project;
-    missions: Array<Mission & { status?: string | null; activity?: string }>;
+    missions: Mission[];
     needs_you: Array<MissionItemRef & { mission_id: string; mission_num: number }>;
     recent_milestones: Array<Milestone & { mission_num: number }>;
     sessions_by_box: Record<string, number>;
+    decisions?: ProjectFeedPage<ProjectDecisionRow>;
+    files?: ProjectFeedPage<ProjectFileRow>;
+    milestones?: ProjectFeedPage<Milestone & { mission_num: number | null }>;
     /** Set when the asked-for project was merged: this detail is the project it went into. */
     merged_from?: { id: string; num: number };
+}
+
+/** One mission a conversation has touched (`GET /conversations/:id/missions`): the mission row
+ *  with the link's own fields beside it. */
+export interface ConversationMissionLink extends Mission {
+    /** Where the conversation's milestones go by default. At most one link is current. */
+    current: boolean;
+    /** False once the conversation left the mission. */
+    active: boolean;
+    how?: string | null;
+    joined_at?: number | null;
+    ended_at?: number | null;
+}
+
+/** The selected conversation's missions, as last fetched for it. */
+export interface ConversationMissions {
+    convoId: string;
+    links: ConversationMissionLink[];
 }
 
 export interface MissionDetail {
@@ -1051,6 +1381,26 @@ export function groupChildrenByParent(conversations: Conversation[]): Map<string
         siblings.sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     }
     return byParent;
+}
+
+/**
+ * Every parent's children in one pass, each list ordered as `childrenOf` orders it. The sidebar
+ * looks up a row's children once per row; scanning the whole list each time made a render
+ * quadratic in the number of conversations.
+ */
+export function childrenByParent(conversations: Conversation[]): Map<string, Conversation[]> {
+    const index = new Map<string, Conversation[]>();
+    for (const conversation of conversations) {
+        const parentId = conversation.parent_convo_id;
+        if (!parentId) continue;
+        const list = index.get(parentId);
+        if (list) list.push(conversation);
+        else index.set(parentId, [conversation]);
+    }
+    for (const list of index.values()) {
+        list.sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    }
+    return index;
 }
 
 export function runningChildrenOf(conversations: Conversation[], parentId: string | null | undefined): Conversation[] {
@@ -1156,7 +1506,12 @@ export function buildSidebarIndex(
         const parentIsTopLevelRow = parent != null && !archivedIds.has(parent.id) && resolve(parent) === "top-level";
         resolving.delete(conversation.id);
 
-        if (parentIsTopLevelRow && parent != null) {
+        // An ARCHIVED child is rendered in the Archived tab, never as a nested Active row, so it
+        // must NOT register its parent as a host — otherwise the parent offers a dead "Collapse
+        // subagents" control that hides nothing (the render splice + the collapsed count already
+        // skip archived children with `!archivedIds.has(child.id)`). Fall through to top-level;
+        // archivedIds filters it out of Active regardless of placement.
+        if (parentIsTopLevelRow && parent != null && !archivedIds.has(conversation.id)) {
             // This is a real subagent child row for `parent` — record the host relationship
             // regardless of collapse (drives the menu gate + the collapsed-count affordance).
             parentsWithChildRows.add(parent.id);
@@ -1216,6 +1571,15 @@ export function isObject(value: unknown): value is Record<string, unknown> {
 
 export function asString(value: unknown, fallback = ""): string {
     return typeof value === "string" ? value : fallback;
+}
+
+/**
+ * The display name of a `file` / `image` event. `name` is the key the media-send contract defines
+ * and what the bridge and the native apps emit; `filename` is the older spelling, still read so
+ * events written before the switch keep their names.
+ */
+export function mediaFileName(payload: EventPayload): string {
+    return asString(payload.name) || asString(payload.filename);
 }
 
 export function asNumber(value: unknown, fallback = 0): number {
@@ -1312,6 +1676,31 @@ export function spawnOutcomeKind(payload: EventPayload): SpawnOutcomeKind {
     return "unknown";
 }
 
+/** One agent-spawn ask as a conversation's events tell it: its card and its outcome, if any. */
+export interface SpawnConsentRows {
+    /** The `permission_request` (kind `agent_spawn`) that asked; null when it is not here. */
+    request: JournalEvent | null;
+    /** The ask's `spawn_outcome` payload; null while it has none. */
+    outcome: EventPayload | null;
+    /** The Coordinator's answer to the card, when it gave one (spawnConsentRowsIn). */
+    coordinatorDecision?: CoordinatorDecision;
+}
+
+/**
+ * Finds one agent-spawn ask in a conversation's events by its request id: the first card that
+ * names it, and the last outcome for it should there ever be two (the timeline's own rule).
+ */
+export function findSpawnConsentRows(events: readonly JournalEvent[], requestId: string): SpawnConsentRows {
+    let request: JournalEvent | null = null;
+    let outcome: EventPayload | null = null;
+    for (const event of events) {
+        if (event.payload.request_id !== requestId) continue;
+        if (event.type === "permission_request" && event.payload.kind === "agent_spawn") request ??= event;
+        else if (event.type === "spawn_outcome") outcome = event.payload;
+    }
+    return { request, outcome };
+}
+
 export function spawnOutcomeSnippet(payload: EventPayload): string {
     switch (spawnOutcomeKind(payload)) {
         case "started":
@@ -1332,8 +1721,8 @@ export function spawnOutcomeSnippet(payload: EventPayload): string {
 export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "text") return asString(payload.body).slice(0, 120);
     if (type === "peer_message") return sanitizePeerText(payload.body, 120);
-    if (type === "file") return `📎 ${asString(payload.caption) || asString(payload.filename, "File")}`.slice(0, 120);
-    if (type === "image") return `🖼 ${asString(payload.caption) || asString(payload.filename, "Image")}`.slice(0, 120);
+    if (type === "file") return `📎 ${asString(payload.caption) || mediaFileName(payload) || "File"}`.slice(0, 120);
+    if (type === "image") return `🖼 ${asString(payload.caption) || mediaFileName(payload) || "Image"}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;
     if (type === "permission_request") {
         // agent_spawn payloads carry no `description` (that's a generic-permission field) — the
@@ -1342,6 +1731,7 @@ export function eventSnippet(type: string, payload: EventPayload): string {
         // into the snapshot snippet, and the two must be byte-exact or the sidebar row
         // flip-flops across a resume (same ruling just applied to the Android client).
         if (asString(payload.kind) === "agent_spawn") return "🤝 Agent spawn request";
+        if (asString(payload.kind) === "agent_chat") return "🤝 Agent chat request";
         return `Permission: ${asString(payload.description).slice(0, 100)}`;
     }
     if (type === "spawn_outcome") {

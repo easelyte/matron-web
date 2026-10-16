@@ -7,7 +7,6 @@ Please see LICENSE files in the repository root for full details.
 
 import React, {
     type FormEvent,
-    type RefObject,
     useCallback,
     useEffect,
     useId,
@@ -18,12 +17,36 @@ import React, {
     useState,
     useSyncExternalStore,
 } from "react";
+import { createPortal } from "react-dom";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
-import { INITIAL_SGR_STATE, parseAnsi, stripLeadingSgrFragment } from "./ansi";
-import { JournalApiError } from "./api";
 import {
-    BROWSER_MEMORY_SAFETY_MAX_BYTES,
+    AgentSpawnCard,
+    isAnswerableAgentSpawn,
+    PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS,
+    PromptTerminalGlyph,
+} from "./agent-spawn-card";
+import { INITIAL_SGR_STATE, parseAnsi, stripLeadingSgrFragment } from "./ansi";
+import {
+    agentChatAnswersScope,
+    agentChatCardKey,
+    agentChatFromLabel,
+    agentChatHeadline,
+    agentChatToLabel,
+    type AgentChatDecision,
+    type AgentChatRequest,
+    type AgentChatResolution,
+    isAgentChatPayload,
+    parseAgentChatRequest,
+    readAgentChatResolutions,
+    rememberAgentChatAnswer,
+    rememberedAgentChatAnswer,
+    type RememberedAgentChatAnswer,
+    unanswerableAgentRequestNotice,
+} from "./agent-chat";
+import { isMediaExpiredError, JournalApiError } from "./api";
+import {
+    type AgentProbe,
     errorMessage,
     type MatronJournalClient,
     PREFERENCES_UNAVAILABLE_ERROR,
@@ -34,19 +57,43 @@ import { type DraftStore, makeDraftStore } from "./composer-drafts";
 import { isImeComposing, isSendKey, useAutoGrow } from "./composer-input";
 import { type EditFileEdit, type EditFileOutcome, pathRejectMessage } from "./edit-file";
 import { type ReadFileOutcome } from "./read-file";
+import { SentMessageHistory } from "./sent-history";
 import { effectiveUnread } from "./conversation-flags";
+import { chipHeadline, chipLabel, isEarlierLink, linkLine, missionSections } from "./conversation-missions";
 import { type RowContextMenu, useRowContextMenu } from "./context-menu";
+import {
+    coordinatorBadgeText,
+    type CoordinatorDecision,
+    readCoordinatorDecisions,
+    stopSpawnedSession,
+} from "./coordinator-consent";
+import { CompactNudge } from "./compact-nudge";
+import { CoordinatorEventNotice, isUnrenderableNoticeEvent } from "./coordinator-notices";
+import {
+    isSystemNoticeEvent,
+    sameTimelineSection as sameSection,
+    systemNotice,
+    type SystemNotice,
+} from "./system-notice";
+import { dateTimeFormat } from "./date-format";
+import { ChatTasksPane, CoordinatorChooserSheet, RoutinesSheet, SettingsSheet, TrackerPane } from "./deferred-ui";
+import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
+import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
+import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
+import { CommandPalette } from "./CommandPalette";
+import { shortcutLabel, useAppShortcuts, useShortcutCommand } from "./shortcuts";
 import { pinGlyph, successorHintText } from "./pins";
 import {
     AnthropicMark,
     ArchiveIcon,
-    AttachmentIcon,
     ComposeIcon,
+    ArrowUpToLineIcon,
     CheckIcon,
     ChevronDownIcon,
     ChevronLeftIcon,
     ChevronUpIcon,
+    ChecklistIcon,
     ClipboardIcon,
     CloseIcon,
     CodeBracketsIcon,
@@ -60,35 +107,43 @@ import {
     InactiveIcon,
     InterruptedIcon,
     KebabIcon,
+    MediaBrowserIcon,
     PdfFileIcon,
     TextFileIcon,
     VideoFileIcon,
     MarkdownIcon,
     MarkAllReadIcon,
+    NumberSignIcon,
     MarkReadIcon,
     MarkUnreadIcon,
     OpenAIMark,
     PinIcon,
-    SendIcon,
     SettingsIcon,
     SystemThemeIcon,
     LightThemeIcon,
     DarkThemeIcon,
     StarFilledIcon,
     StarIcon,
+    StopIcon,
     UnarchiveIcon,
-    UploadTrayIcon,
     CheckCircleIcon,
     XOctagonIcon,
     PlusCircleIcon,
+    RefreshIcon,
     ArrowUpCircleIcon,
+    ProjectsIcon,
 } from "./icons";
 import { FilesPane } from "./files/FilesPane";
 import { SearchField } from "./search-field";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
-import { SettingsSheet } from "./SettingsSheet";
+import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
+import { notificationsFor, unreadTotal as countUnread } from "./notifications";
+import { ConvoNotifyBell, OverflowRoomsAndNotify, RoomsControl } from "./ChatHeaderRooms";
+import { useDismissablePopover } from "./use-dismissable-popover";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
+import { observeSeenRows } from "./seen-tracker";
+import { preloadDeferredUi } from "./lazy";
 import { createLongPressController, type LongPressController } from "./longPress";
 
 // True inside the packaged Electron desktop app (its preload injects window.electron). The Files
@@ -99,9 +154,19 @@ function isElectronRuntime(): boolean {
 import { MarkdownBody, markdownToPlainText } from "./markdown";
 import { snippetText } from "./plain-text";
 import { ConnectionBanner, mainSurfaceOpen } from "./mobile-shell";
-import { isRenderableItemMarker, MemoryNotice, MilestoneCard, MissionNotice, renderItemMarker } from "./tracker/cards";
+import {
+    EMPTY_ITEM_CARD_FOLD,
+    foldItemCards,
+    isRenderableItemMarker,
+    type ItemCardFold,
+    MemoryNotice,
+    MilestoneCard,
+    MissionNotice,
+    renderItemMarker,
+} from "./tracker/cards";
 import { OpsPane } from "./ops/OpsPane";
 import { needsUser } from "./tracker/format";
+import { NeedsYouBadge } from "./tracker/glyphs";
 import {
     isPreviewableMarkdown,
     MarkdownPreviewContext,
@@ -109,20 +174,28 @@ import {
     useMarkdownPreview,
     useMarkdownPreviewPanel,
 } from "./markdown-preview";
-import { TrackerPane } from "./tracker/TrackerPane";
+import { MediaBrowserSheet } from "./media-browser";
+import { paneCoversChat, SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
+import { chatSidePane, subtaskDescription } from "./subtask";
+import { SubtaskLine } from "./subtask-link";
 import {
     buildMediaCorpus,
     isRenderableInViewer,
     type MediaItem,
+    mediaRenderKind,
     MediaViewer,
     MediaViewerContext,
     type MediaViewerContextValue,
     useMediaViewer,
+    useRenderableObjectUrl,
 } from "./media-viewer";
 import { getSnapshot, nextThemePref, setTheme, subscribe } from "./theme";
 import {
+    applyArgument,
     applyCommand,
     applyFolder,
+    type ArgSuggestion,
+    argSuggestions,
     type BotCommand,
     CLAUDE_BRIDGE_COMMANDS,
     filterCommands,
@@ -133,11 +206,11 @@ import {
 } from "./slash-palette";
 import { conversationSummary } from "./summary";
 import { useShowTheWork } from "./show-the-work";
-import { assembleTurns, type Turn, threadRows, type ThreadRow } from "./turn-assembly";
+import { assembleTurns, isOperatorEvent, type Turn, threadRows, type ThreadRow } from "./turn-assembly";
 import { noticeText, TurnCard, type TurnCardMode, TurnErrorRow } from "./turn-card";
 import { V6Icon } from "./v6-icons";
 import { applyPaneBand } from "./pane-width";
-import { NewSessionSheet } from "./new-session-ui";
+import { BoxUsage, NewSessionSheet as OneTapNewSessionSheet } from "./new-session-ui";
 import {
     BROWSER_RESTART_COMMAND,
     BROWSER_RESTART_NOW_COMMAND,
@@ -153,6 +226,7 @@ import {
     compactTokens,
     formatSampleAge,
     isSampleStale,
+    modelLine,
     normalizePercent,
     resetDisplay,
     sampleAgeMs,
@@ -166,16 +240,20 @@ import {
     asNumber,
     asString,
     buildSidebarIndex,
+    childrenByParent,
     childrenOf,
-    groupChildrenByParent,
     childSidebarPlacement,
     type ClientState,
+    type ComposerAttachment,
     type MessageSearchState,
+    type SearchHit,
     type Conversation,
+    type ConversationMissionLink,
     type ConvoPin,
     conversationTitle,
     type DeviceDTO,
     displaySender,
+    eventSnippet,
     type EventPayload,
     hasSubagentChildRows,
     type FileKind,
@@ -185,30 +263,35 @@ import {
     imageFrameStyle,
     isNearBottom,
     type MediaDims,
+    mediaFileName,
     parseMediaDims,
     PEER_BODY_CAP,
     PEER_NAME_CAP,
     type JournalEvent,
     type PendingMessage,
+    type NewSessionOffer,
+    type StartOption,
+    type StartSessionPicks,
     rendersAsTopLevelRow,
     sanitizePeerText,
     isSubChat,
     type SessionStatus,
     spawnOutcomeKind,
-    type SpawnOutcomeKind,
     spawnOutcomeSnippet,
-    type StagedUploadItem,
-    type StagedUploads,
     type ToolStreamState,
     normalizeServerUrl,
 } from "./types";
 import {
+    useVoiceNoteBarVisible,
     useVoiceRecorder,
     VoiceErrorBanner,
     VoiceMicButton,
+    VoiceNoteBar,
     type VoiceRecordingContext,
     VoiceRecordingBar,
 } from "./voice-recorder";
+import { voiceNoteSessionFor } from "./voice-note-session";
+import { type ListPlace, useWindowedList } from "./windowing";
 
 const NAV_VIEW = { projects: "missions", decisions: "inbox", memories: "memories" } as const;
 const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories" | "work", NavKey> = {
@@ -217,7 +300,9 @@ const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories" | "work", NavKe
     memories: "memories",
     work: "projects",
 };
-const LEFT_PANEL_SIZE_KEY = "mx_lhs_size";
+const LEFT_PANEL_SIZE_KEY = "matron_sidebar_width";
+// The key earlier versions stored the width under; moved to the current key on first read.
+const LEGACY_LEFT_PANEL_SIZE_KEY = "mx_lhs_size";
 const LEFT_PANEL_DEFAULT_WIDTH = 350;
 const LEFT_PANEL_MIN_WIDTH = 224;
 
@@ -228,6 +313,13 @@ function clampLeftPanelWidth(width: number, containerWidth: number): number {
 function initialLeftPanelWidth(): number {
     let storedWidth = Number.NaN;
     try {
+        const legacy = window.localStorage.getItem(LEGACY_LEFT_PANEL_SIZE_KEY);
+        if (legacy !== null) {
+            if (window.localStorage.getItem(LEFT_PANEL_SIZE_KEY) === null) {
+                window.localStorage.setItem(LEFT_PANEL_SIZE_KEY, legacy);
+            }
+            window.localStorage.removeItem(LEGACY_LEFT_PANEL_SIZE_KEY);
+        }
         storedWidth = Number.parseInt(window.localStorage.getItem(LEFT_PANEL_SIZE_KEY) ?? "", 10);
     } catch {
         // Storage can be unavailable; the default width remains usable.
@@ -330,7 +422,7 @@ export function MenuSeparator(): React.ReactElement {
 }
 
 function formatTime(timestamp: number): string {
-    return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
+    return dateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
 }
 
 /**
@@ -378,6 +470,24 @@ export function formatRelativeDay(timestamp: number, now: number = Date.now()): 
     return makeRelativeDayFormatter()(timestamp, now);
 }
 
+// formatRelativeDay for the sidebar, which labels every row on each render: a label depends only
+// on the timestamp and today's date, so labels are kept until the day changes.
+const relativeDayLabels = { day: NaN, labels: new Map<number, string>() };
+export function relativeDayLabel(timestamp: number, now: number): string {
+    const today = new Date(now);
+    const day = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    if (day !== relativeDayLabels.day) {
+        relativeDayLabels.day = day;
+        relativeDayLabels.labels.clear();
+    }
+    let label = relativeDayLabels.labels.get(timestamp);
+    if (label === undefined) {
+        label = formatRelativeDay(timestamp, now);
+        relativeDayLabels.labels.set(timestamp, label);
+    }
+    return label;
+}
+
 // True when two epoch-ms timestamps fall on the same local calendar day.
 export function sameCalendarDay(a: number, b: number): boolean {
     const left = new Date(a);
@@ -400,14 +510,14 @@ export function formatDayDivider(timestamp: number, now: number = Date.now()): s
     const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     const daysAgo = Math.round((startOf(today) - startOf(then)) / 86_400_000);
     const sameYear = then.getFullYear() === today.getFullYear();
-    const dateStr = new Intl.DateTimeFormat(
+    const dateStr = dateTimeFormat(
         undefined,
         sameYear ? { day: "numeric", month: "long" } : { day: "numeric", month: "long", year: "numeric" },
     ).format(then);
     let word: string | undefined;
     if (daysAgo === 0) word = "Today";
     else if (daysAgo === 1) word = "Yesterday";
-    else if (daysAgo >= 2 && daysAgo <= 6) word = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(then);
+    else if (daysAgo >= 2 && daysAgo <= 6) word = dateTimeFormat(undefined, { weekday: "long" }).format(then);
     return word ? `${word} · ${dateStr}` : dateStr;
 }
 
@@ -532,12 +642,111 @@ function hostLabel(url: string): string {
         return url;
     }
 }
+
+type SheetState =
+    | { step: "loading-agents" }
+    | { step: "agents-error" }
+    | { step: "agents"; agents: DeviceDTO[] }
+    | {
+          step: "folders";
+          agent: DeviceDTO;
+          foldersRequestId: number;
+          offer?: NewSessionOffer;
+          foldersError?: string;
+      }
+    | { step: "starting"; agent: DeviceDTO }
+    | { step: "uncertain" }
+    // The box's offer rides along so Retry sends the same picks, and Change options can go back
+    // to the form to pick another.
+    | { step: "error"; agent: DeviceDTO; message: string; offer?: NewSessionOffer };
+
+// The sheet's own agent, model and effort picks. null = no pick: the box's default applies.
+interface SheetPicks {
+    agent: string | null;
+    model: string | null;
+    effort: string | null;
+}
+
+const NO_PICKS: SheetPicks = { agent: null, model: null, effort: null };
+
+const EMPTY_OFFER: NewSessionOffer = {
+    folders: [],
+    agentOptions: [],
+    defaultAgent: null,
+    modelOptions: [],
+    defaultModel: null,
+    effortOptions: [],
+    defaultEffort: null,
+};
+
+const CLAUDE_AGENT = "claude";
+
+function offers(options: StartOption[], value: string | null): value is string {
+    return value !== null && options.some((option) => option.value === value);
+}
+
+// The agent `start` names: the pick when this box offers it, else the box's default, else its
+// first offer. Reads as Claude on a bridge that offers none, which is what such a bridge runs.
+function selectedAgent(offer: NewSessionOffer, picks: SheetPicks): string {
+    if (offers(offer.agentOptions, picks.agent)) return picks.agent;
+    if (offers(offer.agentOptions, offer.defaultAgent)) return offer.defaultAgent;
+    return offer.agentOptions[0]?.value ?? CLAUDE_AGENT;
+}
+
+// A pick this box doesn't list is dropped, not parked: carried to the next box it would be a
+// `bad_model` (or `bad_agent`, `bad_effort`) waiting to happen.
+function prunePicks(offer: NewSessionOffer, picks: SheetPicks): SheetPicks {
+    return {
+        agent: offers(offer.agentOptions, picks.agent) ? picks.agent : null,
+        model: offers(offer.modelOptions, picks.model) ? picks.model : null,
+        effort: offers(offer.effortOptions, picks.effort) ? picks.effort : null,
+    };
+}
+
+function startPicks(offer: NewSessionOffer | undefined, picks: SheetPicks): StartSessionPicks {
+    if (!offer) return {};
+    const result: StartSessionPicks = {};
+    const agent = selectedAgent(offer, picks);
+    // Named whenever the box offered agents, even its default: saying what was shown beats
+    // trusting the box default not to have moved since. A bridge that offered none isn't told.
+    if (offer.agentOptions.length > 0) result.agent = agent;
+    // Model and effort are Claude's: a Codex session takes neither, and the bridge refuses one.
+    // No pick omits the key, so the box's own default (the user's, else the box's) applies.
+    if (agent === CLAUDE_AGENT) {
+        if (offers(offer.modelOptions, picks.model)) result.model = picks.model;
+        if (offers(offer.effortOptions, picks.effort)) result.effort = picks.effort;
+    }
+    return result;
+}
+
+// The nil row's title: "Default (Opus)" on a box that names its default, plain "Default" else.
+function defaultRowTitle(options: StartOption[], value: string | null): string {
+    if (value === null) return "Default";
+    return `Default (${options.find((option) => option.value === value)?.label ?? value})`;
+}
+
+// A recent folder's caption: how long since a session last started there. last_used is epoch ms;
+// null is the bridge's default folder on a box that has never started one.
+function folderLastUsed(lastUsed: number | null, now: number): string {
+    return lastUsed === null ? "Never used" : formatSampleAge(Math.max(0, now - lastUsed));
+}
+
+// What an offline box's row says while its Wake button is at work. Absent = not being woken.
+type RowWake = "waking" | "failed";
+
+// The wake loop re-asks a booting box this often, and gives up after this many asks or this long.
+const WAKE_RETRY_DELAY_MS = 3_000;
+const WAKE_ATTEMPT_LIMIT = 40;
+const WAKE_DEADLINE_MS = 120_000;
+
 function agentName(agent: DeviceDTO): string {
     return agent.name?.trim() || `Agent ${agent.device_id}`;
 }
 
-function agentStatus(agent: DeviceDTO): string {
+function agentStatus(agent: DeviceDTO, wake?: RowWake): string {
     if (agent.connected) return "Connected";
+    if (wake === "waking") return "Waking…";
+    if (wake === "failed") return "Didn't wake — try again";
     if (agent.last_seen_at === undefined) return "Offline · last seen unknown";
     const timestamp = agent.last_seen_at < 1_000_000_000_000 ? agent.last_seen_at * 1000 : agent.last_seen_at;
     return `Offline · last seen ${new Date(timestamp).toLocaleString()}`;
@@ -1082,6 +1291,480 @@ export function EditFileSheet({
     );
 }
 
+/** "New coordinator chat…" starts the session on this model, as on the Mac. */
+const COORDINATOR_NEW_CHAT_MODEL = "opus[1m]";
+
+export function NewSessionSheet({
+    client,
+    onClose,
+    title = "New session",
+    initialModel,
+    onCreated,
+}: {
+    client: MatronJournalClient;
+    onClose: () => void;
+    title?: string;
+    /** A model picked up front (the Coordinator chooser's new chat); dropped on a box without it. */
+    initialModel?: string;
+    /** Called with the new conversation once the box created it, after it is opened. */
+    onCreated?: (convoId: string) => void;
+}): React.ReactElement {
+    const [sheetState, setSheetState] = useState<SheetState>({ step: "loading-agents" });
+    const boxStatuses = useSyncExternalStore(client.subscribe, () => client.getSnapshot().boxStatuses);
+    const now = useMinuteClock();
+    const [workdir, setWorkdir] = useState("");
+    const [browserTools, setBrowserTools] = useState(false);
+    const [picks, setPicks] = useState<SheetPicks>(() =>
+        initialModel ? { ...NO_PICKS, model: initialModel } : NO_PICKS,
+    );
+    const [showBack, setShowBack] = useState(false);
+    const sheetStateRef = useRef(sheetState);
+    const agentsRef = useRef<DeviceDTO[]>([]);
+    const agentsRequestIdRef = useRef(0);
+    const foldersRequestIdRef = useRef(0);
+    const startingRef = useRef(false);
+    const mountedRef = useRef(false);
+    const dismissedRef = useRef(false);
+    const [rowWakes, setRowWakes] = useState<Record<number, RowWake>>({});
+    const wakingRef = useRef(new Set<number>());
+
+    const transition = useCallback((next: SheetState): void => {
+        sheetStateRef.current = next;
+        setSheetState(next);
+    }, []);
+
+    // Wakes an offline box from its row, without leaving the list. Each box runs its own loop,
+    // so several can be woken at once; a loop carries on behind another box's folder step and
+    // stops only when the sheet goes away. A box that answers turns "Connected" where it
+    // stands: rows don't move under someone working down the list.
+    const wake = useCallback(
+        async (agent: DeviceDTO): Promise<void> => {
+            const id = agent.device_id;
+            if (wakingRef.current.has(id) || dismissedRef.current) return;
+            wakingRef.current.add(id);
+            setRowWakes((current) => ({ ...current, [id]: "waking" }));
+            const gone = (): boolean => !mountedRef.current || dismissedRef.current;
+            const began = Date.now();
+            let outcome: AgentProbe = "booting";
+            for (let attempt = 1; attempt <= WAKE_ATTEMPT_LIMIT; attempt += 1) {
+                outcome = await client.probeAgent(id).catch((): AgentProbe => "failed");
+                if (gone()) return;
+                if (outcome !== "booting") break;
+                if (attempt === WAKE_ATTEMPT_LIMIT || Date.now() - began >= WAKE_DEADLINE_MS) break;
+                await new Promise((resolve) => window.setTimeout(resolve, WAKE_RETRY_DELAY_MS));
+                if (gone()) return;
+            }
+            wakingRef.current.delete(id);
+            if (outcome !== "up") {
+                setRowWakes((current) => ({ ...current, [id]: "failed" }));
+                return;
+            }
+            setRowWakes(({ [id]: _woken, ...rest }) => rest);
+            agentsRef.current = agentsRef.current.map((candidate) =>
+                candidate.device_id === id ? { ...candidate, connected: true } : candidate,
+            );
+            const current = sheetStateRef.current;
+            if (current.step === "agents") transition({ step: "agents", agents: agentsRef.current });
+        },
+        [client, transition],
+    );
+
+    const loadFolders = useCallback(
+        (agent: DeviceDTO, backAvailable: boolean): void => {
+            const foldersRequestId = ++foldersRequestIdRef.current;
+            setShowBack(backAvailable);
+            transition({ step: "folders", agent, foldersRequestId });
+            void client.newSessionOffer(agent.device_id).then(
+                (offer) => {
+                    const current = sheetStateRef.current;
+                    if (
+                        !mountedRef.current ||
+                        dismissedRef.current ||
+                        current.step !== "folders" ||
+                        current.agent.device_id !== agent.device_id ||
+                        current.foldersRequestId !== foldersRequestId
+                    ) {
+                        return;
+                    }
+                    setPicks((current) => prunePicks(offer, current));
+                    transition({ ...current, offer });
+                },
+                () => {
+                    const current = sheetStateRef.current;
+                    if (
+                        !mountedRef.current ||
+                        dismissedRef.current ||
+                        current.step !== "folders" ||
+                        current.agent.device_id !== agent.device_id ||
+                        current.foldersRequestId !== foldersRequestId
+                    ) {
+                        return;
+                    }
+                    transition({ ...current, offer: EMPTY_OFFER, foldersError: "Couldn't load recent folders." });
+                },
+            );
+        },
+        [client, transition],
+    );
+
+    const loadAgents = useCallback((): void => {
+        const agentsRequestId = ++agentsRequestIdRef.current;
+        transition({ step: "loading-agents" });
+        void client.listAgents().then(
+            (agents) => {
+                if (!mountedRef.current || dismissedRef.current || agentsRequestId !== agentsRequestIdRef.current) {
+                    return;
+                }
+                agentsRef.current = agents;
+                // Only a fleet of one skips the list. One box awake among sleeping ones is the
+                // usual state, and skipping to it would leave the others with no row to wake from.
+                if (agents.length === 1 && agents[0].connected) {
+                    loadFolders(agents[0], false);
+                } else {
+                    setShowBack(true);
+                    transition({ step: "agents", agents });
+                }
+            },
+            () => {
+                if (mountedRef.current && !dismissedRef.current && agentsRequestId === agentsRequestIdRef.current) {
+                    transition({ step: "agents-error" });
+                }
+            },
+        );
+    }, [client, loadFolders, transition]);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        loadAgents();
+        return () => {
+            mountedRef.current = false;
+        };
+    }, [loadAgents]);
+
+    const dismiss = (): void => {
+        dismissedRef.current = true;
+        onClose();
+    };
+
+    const start = async (agent: DeviceDTO, path = workdir, browser = browserTools): Promise<void> => {
+        if (startingRef.current || dismissedRef.current) return;
+        const current = sheetStateRef.current;
+        const offer =
+            (current.step === "folders" || current.step === "error") && current.agent.device_id === agent.device_id
+                ? current.offer
+                : undefined;
+        startingRef.current = true;
+        transition({ step: "starting", agent });
+        const outcome = await client.startSessionRpc(agent.device_id, path, browser, startPicks(offer, picks));
+        if (!mountedRef.current || dismissedRef.current) return;
+        if (outcome.kind === "created") {
+            dismissedRef.current = true;
+            onClose();
+            void client.selectConversation(outcome.convoId, { fromRpcCreate: true });
+            onCreated?.(outcome.convoId);
+            return;
+        }
+        if (outcome.kind === "uncertain") {
+            transition({ step: "uncertain" });
+            return;
+        }
+        startingRef.current = false;
+        transition({ step: "error", agent, message: outcome.message, offer });
+    };
+
+    const folderState = sheetState.step === "folders" ? sheetState : undefined;
+    const offer = folderState?.offer;
+    const agentPick = offer ? selectedAgent(offer, picks) : CLAUDE_AGENT;
+    // One choice is no choice: the switch shows only with a second agent to switch to. The model
+    // and effort pickers hide for a box that offers none (an older bridge, or one whose default
+    // agent is Codex) and while Codex is picked.
+    const agentSwitchVisible = (offer?.agentOptions.length ?? 0) > 1;
+    const modelPickerVisible = offer !== undefined && offer.modelOptions.length > 0 && agentPick === CLAUDE_AGENT;
+    const effortPickerVisible = offer !== undefined && offer.effortOptions.length > 0 && agentPick === CLAUDE_AGENT;
+
+    return (
+        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-labelledby="mj-new-session-title">
+            <div className="mj_UploadConfirm mj_NewSessionSheet">
+                <div className="mj_NewSessionSheet_head">
+                    <h2 className="mj_UploadConfirm_title" id="mj-new-session-title">
+                        {title}
+                    </h2>
+                    <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={dismiss}>
+                        <svg
+                            viewBox="0 0 24 24"
+                            width="16"
+                            height="16"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                        >
+                            <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+
+                {sheetState.step === "loading-agents" && (
+                    <div role="status">
+                        <span className="mj_Spinner" aria-hidden="true" /> Loading agents…
+                    </div>
+                )}
+
+                {sheetState.step === "agents-error" && (
+                    <>
+                        <p className="mj_UploadConfirm_error">Couldn't load agents.</p>
+                        <div className="mj_UploadConfirm_actions">
+                            <button type="button" className="mj_UploadConfirm_send" onClick={loadAgents}>
+                                Retry
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {sheetState.step === "agents" && (
+                    <>
+                        {sheetState.agents.length === 0 ? (
+                            <p>No agents connected — start the bridge on your box.</p>
+                        ) : (
+                            <div role="list" aria-label="Agents">
+                                {sheetState.agents.map((agent) => {
+                                    const rowWake = agent.connected ? undefined : rowWakes[agent.device_id];
+                                    return (
+                                        <div
+                                            key={agent.device_id}
+                                            role="listitem"
+                                            className="mj_NewSessionSheet_agentRow"
+                                        >
+                                            <button
+                                                type="button"
+                                                className="mj_NewSessionSheet_agent"
+                                                disabled={!agent.connected}
+                                                onClick={() => loadFolders(agent, true)}
+                                            >
+                                                <strong>{agentName(agent)}</strong>
+                                                <span role={rowWake ? "status" : undefined}>
+                                                    {agentStatus(agent, rowWake)}
+                                                </span>
+                                                <BoxUsage status={boxStatuses[agent.device_id]} now={now} />
+                                            </button>
+                                            {rowWake === "waking" ? (
+                                                <span
+                                                    className="mj_Spinner mj_NewSessionSheet_waking"
+                                                    aria-hidden="true"
+                                                />
+                                            ) : (
+                                                !agent.connected && (
+                                                    <button
+                                                        type="button"
+                                                        className="mj_NewSessionSheet_wake"
+                                                        aria-label={`Wake ${agentName(agent)}`}
+                                                        onClick={() => void wake(agent)}
+                                                    >
+                                                        Wake
+                                                    </button>
+                                                )
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </>
+                )}
+
+                {folderState && (
+                    <>
+                        <p>Start on {agentName(folderState.agent)}</p>
+                        <BoxUsage status={boxStatuses[folderState.agent.device_id]} now={now} />
+                        {offer === undefined ? (
+                            <div role="status">
+                                <span className="mj_Spinner" aria-hidden="true" /> Loading recent folders…
+                            </div>
+                        ) : (
+                            offer.folders.length > 0 && (
+                                <div role="list" aria-label="Recent folders">
+                                    {offer.folders.map((folder) => (
+                                        <button
+                                            key={folder.path}
+                                            type="button"
+                                            role="listitem"
+                                            className="mj_NewSessionSheet_folder"
+                                            onClick={() => {
+                                                setWorkdir(folder.path);
+                                                void start(folderState.agent, folder.path, browserTools);
+                                            }}
+                                        >
+                                            <span className="mj_NewSessionSheet_folderPath">{folder.path}</span>
+                                            <span className="mj_NewSessionSheet_folderUsed">
+                                                {folderLastUsed(folder.last_used, now)}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            )
+                        )}
+                        {folderState.foldersError && (
+                            <p className="mj_UploadConfirm_error">{folderState.foldersError}</p>
+                        )}
+                        <label htmlFor="mj-new-session-workdir">Folder path</label>
+                        <input
+                            id="mj-new-session-workdir"
+                            type="text"
+                            value={workdir}
+                            onChange={(event) => setWorkdir(event.target.value)}
+                            placeholder="Agent default"
+                        />
+                        {offer && agentSwitchVisible && (
+                            <div
+                                className="mj_TrackerSegment mj_NewSessionSheet_agentSwitch"
+                                role="group"
+                                aria-label="Agent"
+                            >
+                                {offer.agentOptions.map((option) => (
+                                    <button
+                                        key={option.value}
+                                        type="button"
+                                        aria-pressed={agentPick === option.value}
+                                        onClick={() => setPicks((current) => ({ ...current, agent: option.value }))}
+                                    >
+                                        {option.label}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        {offer && (modelPickerVisible || effortPickerVisible) && (
+                            <div className="mj_NewSessionSheet_picks">
+                                {modelPickerVisible && (
+                                    <div className="mj_NewSessionSheet_pick">
+                                        <label htmlFor="mj-new-session-model">Model</label>
+                                        <select
+                                            id="mj-new-session-model"
+                                            value={picks.model ?? ""}
+                                            onChange={(event) =>
+                                                setPicks((current) => ({
+                                                    ...current,
+                                                    model: event.target.value || null,
+                                                }))
+                                            }
+                                        >
+                                            <option value="">
+                                                {defaultRowTitle(offer.modelOptions, offer.defaultModel)}
+                                            </option>
+                                            {offer.modelOptions.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                                {effortPickerVisible && (
+                                    <div className="mj_NewSessionSheet_pick">
+                                        <label htmlFor="mj-new-session-effort">Effort</label>
+                                        <select
+                                            id="mj-new-session-effort"
+                                            value={picks.effort ?? ""}
+                                            onChange={(event) =>
+                                                setPicks((current) => ({
+                                                    ...current,
+                                                    effort: event.target.value || null,
+                                                }))
+                                            }
+                                        >
+                                            <option value="">
+                                                {defaultRowTitle(offer.effortOptions, offer.defaultEffort)}
+                                            </option>
+                                            {offer.effortOptions.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={browserTools}
+                                onChange={(event) => setBrowserTools(event.target.checked)}
+                            />{" "}
+                            Browser tools
+                        </label>
+                        <div className="mj_UploadConfirm_actions">
+                            {showBack && (
+                                <button
+                                    type="button"
+                                    onClick={() => transition({ step: "agents", agents: agentsRef.current })}
+                                >
+                                    Back
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                className="mj_UploadConfirm_send"
+                                onClick={() => void start(folderState.agent)}
+                            >
+                                Start
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {sheetState.step === "starting" && (
+                    <div role="status">
+                        <span className="mj_Spinner" aria-hidden="true" /> Starting session…
+                    </div>
+                )}
+
+                {sheetState.step === "uncertain" && (
+                    <>
+                        <p>The session may have started. Check your conversations before trying again.</p>
+                        <div className="mj_UploadConfirm_actions">
+                            <button type="button" onClick={dismiss}>
+                                Close
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {sheetState.step === "error" && (
+                    <>
+                        <p className="mj_UploadConfirm_error">{sheetState.message}</p>
+                        <div className="mj_UploadConfirm_actions">
+                            {sheetState.offer && (
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        transition({
+                                            step: "folders",
+                                            agent: sheetState.agent,
+                                            foldersRequestId: foldersRequestIdRef.current,
+                                            offer: sheetState.offer,
+                                        })
+                                    }
+                                >
+                                    Change options
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                className="mj_UploadConfirm_send"
+                                onClick={() => void start(sheetState.agent)}
+                            >
+                                Retry
+                            </button>
+                        </div>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export function markForKind(kind: string | null | undefined, className?: string): React.ReactElement | null {
     const classes = [className, kind === "codex" ? "mj_OpenAIMark" : "mj_AnthropicMark"].filter(Boolean).join(" ");
     if (kind === "codex") return <OpenAIMark className={classes} />;
@@ -1147,7 +1830,10 @@ function OutcomeGlyph({
 function SubRowStatus({ conversation }: { conversation: Conversation }): React.ReactElement {
     const classification = classifyOutcome(conversation);
     return (
-        <span className={`mj_RoomListSubStatus mj_RoomListSubStatus_${classification}`} aria-hidden="true">
+        <span
+            className={`mj_ConversationListSubStatus mj_ConversationListSubStatus_${classification}`}
+            aria-hidden="true"
+        >
             {classification === "running" ? (
                 <span className="mj_TurnCard_spinner" />
             ) : classification === "completed" ? (
@@ -1155,7 +1841,7 @@ function SubRowStatus({ conversation }: { conversation: Conversation }): React.R
             ) : classification === "failed" ? (
                 <V6Icon name="x" />
             ) : (
-                <span className="mj_RoomListSubStatus_dot" />
+                <span className="mj_ConversationListSubStatus_dot" />
             )}
         </span>
     );
@@ -1193,7 +1879,7 @@ export function MessageSearchResults({
     query: string;
     search: MessageSearchState | undefined;
     now: number;
-    onSelect: (conversationId: string, seq: number) => void;
+    onSelect: (hit: SearchHit) => void;
 }): React.ReactElement | null {
     // Only surface the section for a live query. `search` can lag the box by a debounce interval
     // or a stale query, so gate on the current box being non-empty AND the results being for it.
@@ -1206,18 +1892,18 @@ export function MessageSearchResults({
                 Messages
             </div>
             {failed ? (
-                <p className="mj_RoomListEmpty" role="status">
+                <p className="mj_ConversationListEmpty" role="status">
                     Search is unavailable right now.
                 </p>
             ) : hits.length === 0 ? (
                 // Hits are bound to their query, so an empty set while loading means the current
                 // query has no results yet — show a searching state, never a prior query's rows.
                 loading ? (
-                    <p className="mj_RoomListEmpty" role="status">
+                    <p className="mj_ConversationListEmpty" role="status">
                         Searching…
                     </p>
                 ) : (
-                    <p className="mj_RoomListEmpty" role="status">
+                    <p className="mj_ConversationListEmpty" role="status">
                         No messages match your search.
                     </p>
                 )
@@ -1228,7 +1914,7 @@ export function MessageSearchResults({
                             <button
                                 type="button"
                                 className="mj_SearchHit"
-                                onClick={() => onSelect(hit.convo_id, hit.seq)}
+                                onClick={() => onSelect(hit)}
                                 aria-label={`Open conversation ${hit.title || "Untitled"}`}
                             >
                                 <span className="mj_SearchHit_top">
@@ -1245,7 +1931,200 @@ export function MessageSearchResults({
     );
 }
 
-function ConversationList({
+/** What a sidebar row does when used; one stable object for the whole list, so a row's props
+ *  only change when what it shows changes. */
+interface ConversationRowActions {
+    open(conversationId: string, event: React.MouseEvent): void;
+    contextMenu(conversationId: string, event: React.MouseEvent<HTMLButtonElement>): void;
+    pointerDown(conversationId: string, event: React.PointerEvent<HTMLButtonElement>): void;
+    pointerMove(event: React.PointerEvent): void;
+    pointerUp(event: React.PointerEvent): void;
+    pointerCancel(event: React.PointerEvent): void;
+    menuTrigger(conversationId: string, element: HTMLButtonElement | null): void;
+    menuButton(conversationId: string, event: React.MouseEvent<HTMLButtonElement>): void;
+}
+
+interface ConversationRowProps {
+    conversation: Conversation;
+    isSubagent: boolean;
+    /** The last subagent row under its parent: the tree connector ends there. */
+    isLastSubagent: boolean;
+    /** The row's one-line preview (Developer view: the snippet's words; otherwise the activity). */
+    preview: string;
+    /** A journal pin row: the pin's glyph + label lead, the conversation's title goes secondary. */
+    pin?: ConvoPin;
+    selected: boolean;
+    unread: boolean;
+    overrideUnread: boolean;
+    pinned: boolean;
+    favorite: boolean;
+    menuOpen: boolean;
+    needsYou: number;
+    isNew: boolean;
+    timestamp: string;
+    collapsedCount: number;
+    collapsedUnread: boolean;
+    agents: ClientState["agents"];
+    actions: ConversationRowActions;
+}
+
+/** One sidebar row. Memoised: the list re-renders on every state change it does not ignore, and
+ *  with a thousand rows re-rendering each one is most of the cost of switching conversation. */
+const ConversationRow = React.memo(function ConversationRow({
+    conversation,
+    isSubagent,
+    isLastSubagent,
+    preview,
+    pin,
+    selected,
+    unread,
+    overrideUnread,
+    pinned,
+    favorite,
+    menuOpen,
+    needsYou,
+    isNew,
+    timestamp,
+    collapsedCount,
+    collapsedUnread,
+    agents,
+    actions,
+}: ConversationRowProps): React.ReactElement {
+    const name = pin ? pin.label : conversationTitle(conversation);
+    const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
+    return (
+        <div className="mj_ConversationListItem_wrapper" role="listitem">
+            <button
+                className={`mj_ConversationListItem${selected ? " mj_ConversationListItem_selected" : ""}${
+                    isSubagent
+                        ? ` mj_ConversationListItem_sub${isLastSubagent ? " mj_ConversationListItem_subLast" : ""}`
+                        : ""
+                }`}
+                type="button"
+                aria-current={selected ? "page" : undefined}
+                aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${timestamp}${isNew ? ", new session" : ""}${
+                    needsYou > 0 ? `, ${needsYou} ${needsYou === 1 ? "item needs" : "items need"} you` : ""
+                }${overrideUnread ? ", marked unread" : ""}${
+                    collapsedCount > 0
+                        ? `, ${collapsedCount} subagent${collapsedCount === 1 ? "" : "s"} hidden${collapsedUnread ? " (unread)" : ""}`
+                        : ""
+                }`}
+                onClick={(event) => actions.open(conversation.id, event)}
+                onContextMenu={(event) => actions.contextMenu(conversation.id, event)}
+                onPointerDown={(event) => actions.pointerDown(conversation.id, event)}
+                onPointerMove={actions.pointerMove}
+                onPointerUp={actions.pointerUp}
+                onPointerCancel={actions.pointerCancel}
+            >
+                {/* §118 leading-glyph precedence. Subagent rows show one status glyph (the v6
+                    spinner while running, a check once done) on a tree connector from the
+                    parent. Parent rows keep the shipped pin-or-status behaviour (star renders
+                    separately before the meta). */}
+                {isSubagent ? (
+                    <SubRowStatus conversation={conversation} />
+                ) : pin ? (
+                    <span className="mj_ConversationListPinGlyph mj_PinGlyph" aria-hidden="true">
+                        {pinGlyph(pin)}
+                    </span>
+                ) : pinned ? (
+                    <span className="mj_ConversationListPinGlyph">
+                        <PinIcon aria-hidden />
+                    </span>
+                ) : (
+                    <span
+                        className={`mj_ConversationListStatus mj_ConversationListStatus_${
+                            conversation.session_state === "running" ? "running" : "idle"
+                        }`}
+                        aria-hidden="true"
+                    />
+                )}
+                <span className={`mj_ConversationListText${unread ? " mj_ConversationListText_unread" : ""}`}>
+                    <span className="mj_ConversationListName" title={name} data-testid="conversation-name">
+                        {pin ? pin.label : <TaggedTitle conversation={conversation} agents={agents} />}
+                    </span>
+                    <span className="mj_ConversationListMeta" title={pin ? displayTitle(conversation) : preview}>
+                        {pin ? (
+                            <>
+                                <span className="mj_ConversationListSnippet">
+                                    <TaggedTitle conversation={conversation} agents={agents} />
+                                </span>
+                                <span className="mj_ConversationListDot"> · </span>
+                            </>
+                        ) : (
+                            preview && (
+                                <>
+                                    <span
+                                        className={`mj_ConversationListSnippet${isSubagent ? " mj_ConversationListPreview" : ""}`}
+                                    >
+                                        {preview}
+                                    </span>
+                                    <span className="mj_ConversationListDot"> · </span>
+                                </>
+                            )
+                        )}
+                        <span className="mj_ConversationListTime">{timestamp}</span>
+                    </span>
+                </span>
+                {favorite && (
+                    <span className="mj_ConversationListStarGlyph">
+                        <StarFilledIcon aria-hidden />
+                    </span>
+                )}
+                <span className="mj_ConversationListTrailing">
+                    {collapsedCount > 0 && (
+                        // Decorative: the hidden-child count + unread state are announced via the
+                        // containing row button's aria-label (a nested label here would be silent to AT).
+                        <span
+                            className={`mj_ConversationListCollapsedSubs${
+                                collapsedUnread ? " mj_ConversationListCollapsedSubs_unread" : ""
+                            }`}
+                            aria-hidden="true"
+                        >
+                            <ChevronLeftIcon aria-hidden />
+                            {collapsedCount}
+                            {collapsedUnread && <span className="mj_UnreadDot" aria-hidden />}
+                        </span>
+                    )}
+                    {/* Mac order: New, then what needs you, then unread. Announced via the row's
+                        aria-label, like the collapsed-children chip above. */}
+                    {(isNew || needsYou > 0 || conversation.unread_count > 0 || overrideUnread) && (
+                        <span className="mj_ConversationListBadges">
+                            {isNew && (
+                                <span className="mj_ConversationListNew" aria-hidden="true">
+                                    New
+                                </span>
+                            )}
+                            <NeedsYouBadge count={needsYou} />
+                            {conversation.unread_count > 0 ? (
+                                <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
+                                    {conversation.unread_count}
+                                </span>
+                            ) : overrideUnread ? (
+                                <span className="mj_UnreadDot" aria-hidden />
+                            ) : null}
+                        </span>
+                    )}
+                </span>
+            </button>
+            {/* The row menu opens via right-click / long-press for pointer + touch. This
+                trigger is invisible to mouse users (no hover reveal) but appears on
+                keyboard focus, so keyboard/AT users keep a discoverable, operable route. */}
+            <button
+                className="mj_ConversationMenu_trigger"
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-label="Conversation options"
+                ref={(element) => actions.menuTrigger(conversation.id, element)}
+                onClick={(event) => actions.menuButton(conversation.id, event)}
+            >
+                <KebabIcon />
+            </button>
+        </div>
+    );
+});
+
+function ConversationListView({
     client,
     state,
     width,
@@ -1259,23 +2138,31 @@ function ConversationList({
     const [tab, setTab] = useState<"active" | "favorites" | "archived">("active");
     const [accountOpen, setAccountOpen] = useState(false);
     const [newSessionOpen, setNewSessionOpen] = useState(false);
+    // The Coordinator's sheets (chooser, its new chat, Routines), one at a time. Opened from
+    // Settings, they take its place and give it back when they close, as the Mac's sit over it.
+    // "assigning": the new chat exists and PUT /coordinator is in flight; nothing shows.
+    const [coordinatorSheet, setCoordinatorSheet] = useState<{
+        kind: "chooser" | "new-chat" | "assigning" | "routines";
+        fromSettings: boolean;
+        error?: string;
+    } | null>(null);
+    const coordinatorSheetRef = useRef(coordinatorSheet);
+    coordinatorSheetRef.current = coordinatorSheet;
     const [pinDialog, setPinDialog] = useState<PinDialogTarget>();
-    const [roomMenu, setRoomMenu] = useState<{ conversationId: string; left: number; top: number }>();
-    const roomMenuRef = useRef(roomMenu);
-    const roomMenuElementRef = useRef<HTMLDivElement>(null);
-    const roomMenuOpenerRef = useRef<HTMLElement | null>(null);
-    // Handle for the deferred post-action focus-restore rAF (below). Tracked so
-    // it can be cancelled when it becomes stale — on unmount, and when a new
-    // menu opens — so a prior action's restore can never steal focus from a
-    // freshly opened menu (or fire after unmount into a later render's DOM).
-    const menuActionFocusRafRef = useRef<number | undefined>(undefined);
+    const [conversationMenu, setConversationMenu] = useState<{ conversationId: string; left: number; top: number }>();
+    const conversationMenuRef = useRef(conversationMenu);
+    const conversationMenuElementRef = useRef<HTMLDivElement>(null);
+    const conversationMenuOpenerRef = useRef<HTMLElement | null>(null);
+    // Pending rAF id for the post-menu-action focus restore; cancelled before re-scheduling
+    // and on unmount so a stale callback can never steal focus (see restoreFocusAfterMenuAction).
+    const restoreFocusFrameRef = useRef<number | undefined>(undefined);
     const menuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
     const longPressTargetRef = useRef<{ conversationId: string; row: HTMLButtonElement } | undefined>(undefined);
     const longPressFiredRef = useRef(false);
     const longPressScrollCleanupRef = useRef<() => void>(() => undefined);
-    const openRoomMenuRef = useRef<(conversationId: string, left: number, top: number, opener: HTMLElement) => void>(
-        () => undefined,
-    );
+    const openConversationMenuRef = useRef<
+        (conversationId: string, left: number, top: number, opener: HTMLElement) => void
+    >(() => undefined);
     const longPressControllerRef = useRef<LongPressController | undefined>(undefined);
     const childOutcomesRef = useRef(
         new Map(
@@ -1330,18 +2217,12 @@ function ConversationList({
         return () => clearTimeout(timer);
     }, [query, client]);
 
-    roomMenuRef.current = roomMenu;
-    openRoomMenuRef.current = (conversationId, left, top, opener): void => {
+    conversationMenuRef.current = conversationMenu;
+    openConversationMenuRef.current = (conversationId, left, top, opener): void => {
         setAccountOpen(false);
         setNewSessionOpen(false);
-        // A pending focus-restore from a just-actioned menu would otherwise fire
-        // after this menu's item[0] focus and yank focus to the search input.
-        if (menuActionFocusRafRef.current !== undefined) {
-            cancelAnimationFrame(menuActionFocusRafRef.current);
-            menuActionFocusRafRef.current = undefined;
-        }
-        roomMenuOpenerRef.current = opener;
-        setRoomMenu({ conversationId, left, top });
+        conversationMenuOpenerRef.current = opener;
+        setConversationMenu({ conversationId, left, top });
     };
     if (!longPressControllerRef.current) {
         longPressControllerRef.current = createLongPressController({
@@ -1352,16 +2233,30 @@ function ConversationList({
                 if (!target) return;
                 const rect = target.row.getBoundingClientRect();
                 longPressFiredRef.current = true;
-                openRoomMenuRef.current(target.conversationId, rect.right, rect.top, target.row);
+                openConversationMenuRef.current(target.conversationId, rect.right, rect.top, target.row);
             },
         });
     }
 
-    const closeRoomMenu = useCallback((restoreFocus = false): void => {
-        if (!roomMenuRef.current) return;
-        setRoomMenu(undefined);
-        if (restoreFocus) roomMenuOpenerRef.current?.focus();
+    const closeConversationMenu = useCallback((restoreFocus = false): void => {
+        if (!conversationMenuRef.current) return;
+        setConversationMenu(undefined);
+        if (restoreFocus) conversationMenuOpenerRef.current?.focus();
     }, []);
+
+    // ⌘N and ⇧⌘F (shortcuts.ts). Like the Mac, search-all-chats acts only on Conversations,
+    // where its field is.
+    useShortcutCommand("newSession", () => {
+        setAccountOpen(false);
+        closeConversationMenu();
+        setNewSessionOpen(true);
+    });
+    useShortcutCommand("searchAllChats", () => {
+        if (state.trackerView?.open) return;
+        const field = document.getElementById("conversation-search-input") as HTMLInputElement | null;
+        field?.focus();
+        field?.select();
+    });
 
     // After a menu ACTION (mark-read/archive/unarchive) the focused menuitem unmounts, and
     // archive/unarchive also remove the originating row — so restoring to the opener only works
@@ -1369,12 +2264,16 @@ function ConversationList({
     // connected (mark-read), else the always-present search input, so keyboard focus never falls
     // through to document.body.
     const restoreFocusAfterMenuAction = useCallback((): void => {
-        const opener = roomMenuOpenerRef.current;
-        if (menuActionFocusRafRef.current !== undefined) cancelAnimationFrame(menuActionFocusRafRef.current);
-        menuActionFocusRafRef.current = requestAnimationFrame(() => {
-            menuActionFocusRafRef.current = undefined;
+        const opener = conversationMenuOpenerRef.current;
+        // Cancel any still-pending restore before scheduling a new one. Without this the
+        // leaked callback fires on a LATER tick (or in a later test), finds its opener
+        // disconnected, and yanks focus to the search input — a real focus-steal, and the
+        // source of the flaky keyboard-focus test.
+        if (restoreFocusFrameRef.current != null) cancelAnimationFrame(restoreFocusFrameRef.current);
+        restoreFocusFrameRef.current = requestAnimationFrame(() => {
+            restoreFocusFrameRef.current = undefined;
             if (opener && opener.isConnected) opener.focus();
-            else document.getElementById("room-list-search-input")?.focus();
+            else document.getElementById("conversation-search-input")?.focus();
         });
     }, []);
 
@@ -1399,22 +2298,23 @@ function ConversationList({
         () => () => {
             longPressControllerRef.current?.onPointerCancel();
             longPressScrollCleanupRef.current();
-            if (menuActionFocusRafRef.current !== undefined) cancelAnimationFrame(menuActionFocusRafRef.current);
+            if (restoreFocusFrameRef.current != null) cancelAnimationFrame(restoreFocusFrameRef.current);
         },
         [],
     );
 
     useEffect(() => {
-        if (!roomMenu) return;
+        if (!conversationMenu) return;
         const onPointerDown = (event: PointerEvent): void => {
-            if (!roomMenuRef.current || roomMenuElementRef.current?.contains(event.target as Node)) return;
-            closeRoomMenu();
+            if (!conversationMenuRef.current || conversationMenuElementRef.current?.contains(event.target as Node))
+                return;
+            closeConversationMenu();
         };
         const onKeyDown = (event: KeyboardEvent): void => {
-            if (roomMenuRef.current && event.key === "Escape") closeRoomMenu(true);
+            if (conversationMenuRef.current && event.key === "Escape") closeConversationMenu(true);
         };
         const onScroll = (): void => {
-            if (roomMenuRef.current) closeRoomMenu();
+            if (conversationMenuRef.current) closeConversationMenu();
         };
         document.addEventListener("pointerdown", onPointerDown);
         document.addEventListener("keydown", onKeyDown);
@@ -1424,31 +2324,37 @@ function ConversationList({
             document.removeEventListener("keydown", onKeyDown);
             document.removeEventListener("scroll", onScroll, true);
         };
-    }, [Boolean(roomMenu), closeRoomMenu]);
+    }, [Boolean(conversationMenu), closeConversationMenu]);
 
     useLayoutEffect(() => {
-        if (!roomMenu || !roomMenuElementRef.current) return;
-        const rect = roomMenuElementRef.current.getBoundingClientRect();
-        const left = Math.max(8, Math.min(roomMenu.left, window.innerWidth - rect.width - 8));
-        const top = Math.max(8, Math.min(roomMenu.top, window.innerHeight - rect.height - 8));
-        if (left !== roomMenu.left || top !== roomMenu.top) {
-            setRoomMenu({ ...roomMenu, left, top });
+        if (!conversationMenu || !conversationMenuElementRef.current) return;
+        const rect = conversationMenuElementRef.current.getBoundingClientRect();
+        const left = Math.max(8, Math.min(conversationMenu.left, window.innerWidth - rect.width - 8));
+        const top = Math.max(8, Math.min(conversationMenu.top, window.innerHeight - rect.height - 8));
+        if (left !== conversationMenu.left || top !== conversationMenu.top) {
+            setConversationMenu({ ...conversationMenu, left, top });
         }
-    }, [roomMenu]);
+    }, [conversationMenu]);
 
     useLayoutEffect(() => {
-        if (!roomMenu) return;
-        roomMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-    }, [roomMenu]);
+        if (!conversationMenu) return;
+        conversationMenuElementRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }, [conversationMenu]);
     // ONE canonical index feeds BOTH sidebar paths here (top-level fallback + nested
     // splice) AND the client-side selection/unread/mark-all consumers, so "rendered" and
     // "selectable/counted" can never diverge. rendersAsTopLevelRow: a non-child always
     // renders top-level; a child renders top-level only when childSidebarPlacement says so
     // (orphan → always; parent exists → running-only, and then only when it can't nest).
-    const sidebarIndex = buildSidebarIndex(state.conversations, state.archivedIds, state.collapsedSubagentParentIds);
-    // Every row asks for its children; grouping once keeps a render linear in the conversation
-    // count instead of quadratic (childrenOf scans the whole list per call).
-    const childrenByParent = useMemo(() => groupChildrenByParent(state.conversations), [state.conversations]);
+    const sidebarIndex = useMemo(
+        () => buildSidebarIndex(state.conversations, state.archivedIds, state.collapsedSubagentParentIds),
+        [state.conversations, state.archivedIds, state.collapsedSubagentParentIds],
+    );
+    const childIndex = useMemo(() => childrenByParent(state.conversations), [state.conversations]);
+    // Keyed on the open-items array, which the client replaces whenever an item changes, so the
+    // memoised list re-renders (inboxItems is not in CONVERSATION_LIST_IGNORED_STATE) and the
+    // counts are rebuilt only then, not on every row render.
+    const needsYouCounts = useMemo(() => needsYouByConversation(state.inboxItems), [state.inboxItems]);
+    const childRowsOf = (parentId: string): Conversation[] => childIndex.get(parentId) ?? [];
     const isTopLevelRow = (conversation: Conversation): boolean => rendersAsTopLevelRow(conversation, sidebarIndex);
     const conversations = useMemo(() => {
         const normalized = query.trim().toLocaleLowerCase();
@@ -1515,18 +2421,78 @@ function ConversationList({
             !state.archivedIds.has(conversation.id) &&
             isTopLevelRow(conversation),
     );
-    const menuConversation = roomMenu
-        ? state.conversations.find((conversation) => conversation.id === roomMenu.conversationId)
+    const menuConversation = conversationMenu
+        ? state.conversations.find((conversation) => conversation.id === conversationMenu.conversationId)
         : undefined;
 
     useEffect(() => {
-        if (roomMenu && !menuConversation) closeRoomMenu();
-    }, [roomMenu, menuConversation, closeRoomMenu]);
+        if (conversationMenu && !menuConversation) closeConversationMenu();
+    }, [conversationMenu, menuConversation, closeConversationMenu]);
 
-    const openAtElement = (conversationId: string, anchor: HTMLElement, opener: HTMLElement = anchor): void => {
-        const rect = anchor.getBoundingClientRect();
-        openRoomMenuRef.current(conversationId, rect.right, rect.bottom, opener);
-    };
+    const openAtElement = useCallback(
+        (conversationId: string, anchor: HTMLElement, opener: HTMLElement = anchor): void => {
+            const rect = anchor.getBoundingClientRect();
+            openConversationMenuRef.current(conversationId, rect.right, rect.bottom, opener);
+        },
+        [],
+    );
+    // Built once: every handler reads refs or stable callbacks, so the memoised rows never see a
+    // new actions object.
+    const rowActions = useMemo<ConversationRowActions>(
+        () => ({
+            open(conversationId, event) {
+                if (longPressFiredRef.current) {
+                    longPressFiredRef.current = false;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                }
+                void client.selectConversation(conversationId);
+            },
+            contextMenu(conversationId, event) {
+                event.preventDefault();
+                const keyboardTriggered = event.clientX === 0 && event.clientY === 0;
+                if (keyboardTriggered) {
+                    const trigger = menuTriggerRefs.current.get(conversationId);
+                    openAtElement(conversationId, trigger ?? event.currentTarget, event.currentTarget);
+                    return;
+                }
+                openConversationMenuRef.current(conversationId, event.clientX, event.clientY, event.currentTarget);
+            },
+            pointerDown(conversationId, event) {
+                if (event.pointerType !== "touch") return;
+                longPressTargetRef.current = { conversationId, row: event.currentTarget };
+                longPressFiredRef.current = false;
+                longPressControllerRef.current?.onPointerDown(event.clientX, event.clientY);
+                listenForLongPressScroll();
+            },
+            pointerMove(event) {
+                if (event.pointerType !== "touch") return;
+                longPressControllerRef.current?.onPointerMove(event.clientX, event.clientY);
+                if (!longPressControllerRef.current?.isPending && !longPressControllerRef.current?.didFire) {
+                    longPressScrollCleanupRef.current();
+                }
+            },
+            pointerUp(event) {
+                if (event.pointerType !== "touch") return;
+                longPressControllerRef.current?.onPointerUp();
+                longPressTargetRef.current = undefined;
+                longPressScrollCleanupRef.current();
+            },
+            pointerCancel(event) {
+                if (event.pointerType === "touch") cancelLongPress();
+            },
+            menuTrigger(conversationId, element) {
+                if (element) menuTriggerRefs.current.set(conversationId, element);
+                else menuTriggerRefs.current.delete(conversationId);
+            },
+            menuButton(conversationId, event) {
+                event.stopPropagation();
+                openAtElement(conversationId, event.currentTarget);
+            },
+        }),
+        [client, openAtElement, listenForLongPressScroll, cancelLongPress],
+    );
 
     // Nav rail: which section is current, and the unread total it badges (archived rows excluded;
     // a row marked unread by hand counts once, like its own badge dot).
@@ -1537,16 +2503,20 @@ function ConversationList({
           : state.filesView?.open && !isElectronRuntime()
             ? "files"
             : "conversations";
-    const unreadTotal = state.conversations.reduce((total, conversation) => {
-        if (state.archivedIds.has(conversation.id)) return total;
-        if (conversation.unread_count > 0) return total + conversation.unread_count;
-        return total + (effectiveUnread(conversation, state.unreadOverrideIds) ? 1 : 0);
-    }, 0);
+    const unreadTotal = countUnread(state.conversations, state.archivedIds, state.unreadOverrideIds);
     // The For you badge: open items awaiting the user, the inbox's own "Needs you" filter.
     const needsYouTotal = (state.inboxItems ?? []).filter(needsUser).length;
+    // The Projects badge: what needs the user across the missions (the Mac's Missions total).
+    const projectsNeedsYouTotal = projectsNeedsYou(state.inboxItems, state.missions);
     const closeSettings = useCallback(() => setAccountOpen(false), []);
+    const closeCoordinatorSheet = (): void => {
+        if (coordinatorSheet?.fromSettings) setAccountOpen(true);
+        setCoordinatorSheet(null);
+    };
+    const coordinatorConversation = state.coordinatorConvoId
+        ? state.conversations.find((conversation) => conversation.id === state.coordinatorConvoId)
+        : undefined;
     const renderNow = Date.now();
-    const relativeDay = makeRelativeDayFormatter();
     const pinnedRows = journalPins ? [] : visibleRows.filter((conversation) => state.pinnedIds.has(conversation.id));
     const unpinnedRows = journalPins
         ? visibleRows.filter((conversation) => tab !== "active" || !journalPinnedIds.has(conversation.id))
@@ -1583,12 +2553,14 @@ function ConversationList({
             : [];
     // Move up / Move down step through the pins the Pinned section shows (hidden archived pins
     // keep their place but are hopped over, so every step moves the row on screen).
-    const menuPinIndex = roomMenu ? shownPins.findIndex((pin) => pin.convo_id === roomMenu.conversationId) : -1;
+    const menuPinIndex = conversationMenu
+        ? shownPins.findIndex((pin) => pin.convo_id === conversationMenu.conversationId)
+        : -1;
     const shownPinIds = shownPins.map((pin) => pin.convo_id);
     const nestedChildRows = (conversation: Conversation): React.ReactElement[] =>
         tab === "archived"
             ? []
-            : childrenOf(state.conversations, conversation.id)
+            : childRowsOf(conversation.id)
                   .filter(
                       (child) =>
                           !state.archivedIds.has(child.id) &&
@@ -1606,29 +2578,34 @@ function ConversationList({
     ): React.ReactElement => {
         const selected = state.selectedConversationId === conversation.id;
         const overrideUnread = state.unreadOverrideIds.has(conversation.id) && conversation.unread_count === 0;
-        const unread = effectiveUnread(conversation, state.unreadOverrideIds);
-        const name = pin ? pin.label : conversationTitle(conversation);
-        const outcomeStatus = isSubagent ? accessibleOutcome(classifyOutcome(conversation)) : undefined;
-        const relativeTimestamp = relativeDay(conversation.last_ts ?? conversation.created_at, renderNow);
         // Developer view off: the preview never shows a command line or markdown source — a tool
         // call reads as its activity ("Reading paths.py…"), anything else as one line of prose.
         // Developer view on keeps the snippet's words, with only the markdown dropped.
         const preview = developerView
             ? snippetText(conversation.snippet)
             : previewLine({ ...conversation, worker: workerKind(conversation) });
-        // when this parent's subagent rows are collapsed, surface a subtle count of the
-        // hidden child rows so the collapse is discoverable on the row itself. Gate on the
-        // CANONICAL index (hasSubagentChildRows = parentsWithChildRows) — NOT an independent
-        // running-child count — so it agrees with the menu and the placement derivation. An
-        // archived parent hosts no child rows (its running children are promoted to top-level),
-        // so it is absent from that set → no count, no false "N hidden" even if its collapse
-        // state persisted through archival. The set is only populated for real hosts, so the
-        // running-child count below always measures exactly the rows collapse is suppressing.
+        // Items this conversation raised that wait on the user, and the "New" marker on a session
+        // that arrived unasked and has not been opened (a room's title, or a child's parent link,
+        // can land after the mark).
+        const needsYou = needsYouCounts.get(conversation.id) ?? 0;
+        const isNew =
+            !selected &&
+            !isSubagent &&
+            !isSubChat(conversation) &&
+            state.newConversationIds.has(conversation.id) &&
+            !isAgentRoomTitle(conversation.title);
+        // When this parent's subagent rows are collapsed, surface a subtle count of the hidden
+        // child rows so the collapse stays discoverable on the row itself. Gate on the CANONICAL
+        // index (hasSubagentChildRows) — NOT an independent running-child count — so it agrees with
+        // the menu and the placement derivation. An archived parent hosts no child rows (its running
+        // children are promoted to top-level), so it is absent from that set → no count, no false
+        // "N hidden" even if its collapse state persisted through archival. The set is only populated
+        // for real hosts, so the running-child count below always measures exactly what collapse hides.
         const collapsedSubagentChildren =
             !isSubagent &&
             state.collapsedSubagentParentIds.has(conversation.id) &&
             hasSubagentChildRows(conversation, sidebarIndex)
-                ? (childrenByParent.get(conversation.id) ?? []).filter(
+                ? childRowsOf(conversation.id).filter(
                       (child) =>
                           !state.archivedIds.has(child.id) &&
                           // A pinned sub-chat stays in the Pinned section; collapse never hides it.
@@ -1645,169 +2622,40 @@ function ConversationList({
             effectiveUnread(child, state.unreadOverrideIds),
         );
         return (
-            <div className="mj_RoomListItem_wrapper" role="listitem" key={conversation.id}>
-                <button
-                    className={`mj_RoomListItem${selected ? " mj_RoomListItem_selected" : ""}${
-                        isSubagent ? ` mj_RoomListItem_sub${isLastSubagent ? " mj_RoomListItem_subLast" : ""}` : ""
-                    }`}
-                    type="button"
-                    aria-current={selected ? "page" : undefined}
-                    aria-label={`Open ${isSubagent ? "subagent" : "room"} ${name}${outcomeStatus ? `, ${outcomeStatus}` : ""}, last activity ${relativeTimestamp}${overrideUnread ? ", marked unread" : ""}`}
-                    onClick={(event) => {
-                        if (longPressFiredRef.current) {
-                            longPressFiredRef.current = false;
-                            event.preventDefault();
-                            event.stopPropagation();
-                            return;
-                        }
-                        void client.selectConversation(conversation.id);
-                    }}
-                    onContextMenu={(event) => {
-                        event.preventDefault();
-                        const keyboardTriggered = event.clientX === 0 && event.clientY === 0;
-                        if (keyboardTriggered) {
-                            const trigger = menuTriggerRefs.current.get(conversation.id);
-                            openAtElement(conversation.id, trigger ?? event.currentTarget, event.currentTarget);
-                            return;
-                        }
-                        openRoomMenuRef.current(conversation.id, event.clientX, event.clientY, event.currentTarget);
-                    }}
-                    onPointerDown={(event) => {
-                        if (event.pointerType !== "touch") return;
-                        longPressTargetRef.current = { conversationId: conversation.id, row: event.currentTarget };
-                        longPressFiredRef.current = false;
-                        longPressControllerRef.current?.onPointerDown(event.clientX, event.clientY);
-                        listenForLongPressScroll();
-                    }}
-                    onPointerMove={(event) => {
-                        if (event.pointerType !== "touch") return;
-                        longPressControllerRef.current?.onPointerMove(event.clientX, event.clientY);
-                        if (!longPressControllerRef.current?.isPending && !longPressControllerRef.current?.didFire) {
-                            longPressScrollCleanupRef.current();
-                        }
-                    }}
-                    onPointerUp={(event) => {
-                        if (event.pointerType !== "touch") return;
-                        longPressControllerRef.current?.onPointerUp();
-                        longPressTargetRef.current = undefined;
-                        longPressScrollCleanupRef.current();
-                    }}
-                    onPointerCancel={(event) => {
-                        if (event.pointerType === "touch") cancelLongPress();
-                    }}
-                >
-                    {/* §118 leading-glyph precedence. Subagent rows show one status glyph (the v6
-                        spinner while running, a check once done) on a tree connector from the
-                        parent. Parent rows keep the shipped pin-or-status behaviour (star renders
-                        separately before the meta). */}
-                    {isSubagent ? (
-                        <SubRowStatus conversation={conversation} />
-                    ) : pin ? (
-                        <span className="mj_RoomListPinGlyph mj_PinGlyph" aria-hidden="true">
-                            {pinGlyph(pin)}
-                        </span>
-                    ) : isPinned(conversation.id) ? (
-                        <span className="mj_RoomListPinGlyph">
-                            <PinIcon aria-hidden />
-                        </span>
-                    ) : (
-                        <span
-                            className={`mj_RoomListStatus mj_RoomListStatus_${
-                                conversation.session_state === "running" ? "running" : "idle"
-                            }`}
-                            aria-hidden="true"
-                        />
-                    )}
-                    <span className={`mj_RoomListText${unread ? " mj_RoomListText_unread" : ""}`}>
-                        <span className="mj_RoomListName" title={name} data-testid="room-name">
-                            {pin ? pin.label : <TaggedTitle conversation={conversation} agents={state.agents} />}
-                        </span>
-                        <span className="mj_RoomListMeta" title={pin ? displayTitle(conversation) : preview}>
-                            {pin ? (
-                                <>
-                                    <span className="mj_RoomListSnippet">
-                                        <TaggedTitle conversation={conversation} agents={state.agents} />
-                                    </span>
-                                    <span className="mj_RoomListDot"> · </span>
-                                </>
-                            ) : (
-                                preview && (
-                                    <>
-                                        <span
-                                            className={`mj_RoomListSnippet${isSubagent ? " mj_RoomListPreview" : ""}`}
-                                        >
-                                            {preview}
-                                        </span>
-                                        <span className="mj_RoomListDot"> · </span>
-                                    </>
-                                )
-                            )}
-                            <span className="mj_RoomListTime">{relativeTimestamp}</span>
-                        </span>
-                    </span>
-                    {state.favoriteIds.has(conversation.id) && (
-                        <span className="mj_RoomListStarGlyph">
-                            <StarFilledIcon aria-hidden />
-                        </span>
-                    )}
-                    <span className="mj_RoomListTrailing">
-                        {collapsedSubagentCount > 0 && (
-                            <span
-                                className={`mj_RoomListCollapsedSubs${
-                                    collapsedSubagentUnread ? " mj_RoomListCollapsedSubs_unread" : ""
-                                }`}
-                                aria-label={`${collapsedSubagentCount} subagent${
-                                    collapsedSubagentCount === 1 ? "" : "s"
-                                } hidden${collapsedSubagentUnread ? " (unread)" : ""}`}
-                            >
-                                <ChevronLeftIcon aria-hidden />
-                                {collapsedSubagentCount}
-                                {collapsedSubagentUnread && <span className="mj_UnreadDot" aria-hidden />}
-                            </span>
-                        )}
-                        {conversation.unread_count > 0 ? (
-                            <span className="mj_UnreadBadge" aria-label={`${conversation.unread_count} unread`}>
-                                {conversation.unread_count}
-                            </span>
-                        ) : overrideUnread ? (
-                            <span className="mj_UnreadDot" aria-hidden />
-                        ) : null}
-                    </span>
-                </button>
-                {/* The row menu opens via right-click / long-press for pointer + touch. This
-                    trigger is invisible to mouse users (no hover reveal) but appears on
-                    keyboard focus, so keyboard/AT users keep a discoverable, operable route. */}
-                <button
-                    className="mj_RoomItemMenu_trigger"
-                    type="button"
-                    aria-haspopup="menu"
-                    aria-expanded={roomMenu?.conversationId === conversation.id}
-                    aria-label="Conversation options"
-                    ref={(element) => {
-                        if (element) menuTriggerRefs.current.set(conversation.id, element);
-                        else menuTriggerRefs.current.delete(conversation.id);
-                    }}
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        openAtElement(conversation.id, event.currentTarget);
-                    }}
-                >
-                    <KebabIcon />
-                </button>
-            </div>
+            <ConversationRow
+                key={conversation.id}
+                conversation={conversation}
+                isSubagent={isSubagent}
+                pin={pin}
+                selected={selected}
+                unread={effectiveUnread(conversation, state.unreadOverrideIds)}
+                overrideUnread={overrideUnread}
+                pinned={isPinned(conversation.id)}
+                favorite={state.favoriteIds.has(conversation.id)}
+                menuOpen={conversationMenu?.conversationId === conversation.id}
+                needsYou={needsYou}
+                isNew={isNew}
+                timestamp={relativeDayLabel(conversation.last_ts ?? conversation.created_at, renderNow)}
+                collapsedCount={collapsedSubagentCount}
+                collapsedUnread={collapsedSubagentUnread}
+                isLastSubagent={isLastSubagent}
+                preview={preview}
+                agents={state.agents}
+                actions={rowActions}
+            />
         );
     };
 
     // A pin whose conversation is gone (or not in this client's list): greyed, Move pin… / Unpin only.
     const renderMissingPin = (pin: ConvoPin): React.ReactElement => (
-        <div className="mj_RoomListItem_wrapper mj_PinRow_missing" role="listitem" key={pin.convo_id}>
-            <div className="mj_RoomListItem" aria-label={`Pinned ${pin.label}, conversation unavailable`}>
-                <span className="mj_RoomListPinGlyph mj_PinGlyph" aria-hidden="true">
+        <div className="mj_ConversationListItem_wrapper mj_PinRow_missing" role="listitem" key={pin.convo_id}>
+            <div className="mj_ConversationListItem" aria-label={`Pinned ${pin.label}, conversation unavailable`}>
+                <span className="mj_ConversationListPinGlyph mj_PinGlyph" aria-hidden="true">
                     {pinGlyph(pin)}
                 </span>
-                <span className="mj_RoomListText">
-                    <span className="mj_RoomListName">{pin.label}</span>
-                    <span className="mj_RoomListMeta">Conversation unavailable</span>
+                <span className="mj_ConversationListText">
+                    <span className="mj_ConversationListName">{pin.label}</span>
+                    <span className="mj_ConversationListMeta">Conversation unavailable</span>
                 </span>
             </div>
             <div className="mj_PinRow_actions">
@@ -1840,16 +2688,16 @@ function ConversationList({
 
     return (
         <div
-            className={`mx_LeftPanel_outerWrapper ${mainSurfaceOpen(state, !isElectronRuntime()) ? "mj_Sidebar_mobileHidden" : ""}`}
+            className={`mj_Sidebar_outerWrapper ${mainSurfaceOpen(state, !isElectronRuntime()) ? "mj_Sidebar_mobileHidden" : ""}`}
             style={{ "--mj-left-panel-width": `${width}px` } as React.CSSProperties}
         >
             <NavRail
                 active={navActive}
                 filesAvailable={!isElectronRuntime()}
-                counts={{ conversations: unreadTotal, decisions: needsYouTotal }}
+                counts={{ projects: projectsNeedsYouTotal, conversations: unreadTotal, decisions: needsYouTotal }}
                 onSelect={(key) => {
                     setAccountOpen(false);
-                    closeRoomMenu();
+                    closeConversationMenu();
                     if (key === "conversations") {
                         client.closeTrackerView();
                         client.closeOpsView();
@@ -1868,6 +2716,23 @@ function ConversationList({
                             itemId: null,
                             memoryName: null,
                         });
+                }}
+                coordinator={{
+                    selected:
+                        !state.trackerView?.open &&
+                        !!state.coordinatorConvoId &&
+                        state.selectedConversationId === state.coordinatorConvoId,
+                    unread: coordinatorConversation?.unread_count ?? 0,
+                    onOpen: () => {
+                        setAccountOpen(false);
+                        closeConversationMenu();
+                        void client.openCoordinator().then((opened) => {
+                            // A new coordinator chat being assigned is the answer on its way: its own
+                            // result (Settings back, or the chooser with the error) lands instead.
+                            if (opened || coordinatorSheetRef.current?.kind === "assigning") return;
+                            setCoordinatorSheet({ kind: "chooser", fromSettings: false });
+                        });
+                    },
                 }}
                 footer={
                     // Mac: theme and account live in the Settings sheet; the rail foot keeps one
@@ -1902,103 +2767,109 @@ function ConversationList({
                     </button>
                 }
             />
-            <div className="mx_LeftPanel_wrapper mx_LeftPanel_newRoomList">
-                <div className="mx_LeftPanel_wrapper--user">
-                    <div className="mx_LeftPanel mx_LeftPanel_newRoomList">
-                        <div className="mx_LeftPanel_roomListContainer">
-                            <nav className="mx_RoomListPanel" aria-label="Room list">
-                                <header
-                                    className="mj_RoomListHeader"
-                                    aria-label="Room options"
-                                    data-testid="room-list-header"
-                                >
-                                    <h2 className="mj_RoomListTitle">Conversations</h2>
-                                    <div className="mj_RoomListHeaderActions">
-                                        {tab !== "archived" && hasActiveUnread && (
-                                            <button
-                                                className="mj_IconButton mj_MarkAllReadButton"
-                                                type="button"
-                                                aria-label="Mark all as read"
-                                                onClick={() => client.markAllRead()}
-                                            >
-                                                <MarkAllReadIcon />
-                                            </button>
-                                        )}
-                                        {/* Mac: New Chat is the toolbar's square.and.pencil glyph, not a button row. */}
-                                        <button
-                                            className="mj_IconButton mj_HeaderNavButton mj_IconButton_badged"
-                                            type="button"
-                                            aria-label="New session"
-                                            title="New session — runs /start"
-                                            onClick={() => {
-                                                setAccountOpen(false);
-                                                closeRoomMenu();
-                                                setNewSessionOpen(true);
-                                            }}
-                                        >
-                                            <ComposeIcon />
-                                        </button>
-                                    </div>
-                                </header>
-                                <div className="mj_RoomListTabs" role="group" aria-label="Filter conversations">
-                                    {(
-                                        [
-                                            ["active", "Active"],
-                                            ["favorites", "Favorites"],
-                                            ["archived", "Archived"],
-                                        ] as const
-                                    ).map(([key, label]) => (
-                                        <button
-                                            key={key}
-                                            type="button"
-                                            data-tab={key}
-                                            className={`mj_Seg_item mj_RoomListTab${tab === key ? " mj_Seg_item_on mj_RoomListTab_active" : ""}`}
-                                            aria-pressed={tab === key}
-                                            aria-label={key === "favorites" ? "Favorites" : undefined}
-                                            onClick={(event) => {
-                                                setTab(key);
-                                                event.currentTarget.focus({ preventScroll: true });
-                                            }}
-                                        >
-                                            {label}
-                                        </button>
-                                    ))}
-                                </div>
-                                <div data-testid="room-list-search" className="mx_RoomListSearch" role="search">
-                                    <SearchField
-                                        id="room-list-search-input"
-                                        className="mj_SearchField_subtle mx_RoomListSearch_field"
-                                        value={query}
-                                        onChange={setQuery}
-                                        placeholder="Search"
-                                        label="Search"
-                                        // Server rejects message-search queries over 256 chars; cap the shared
-                                        // box so a giant paste can't produce a misleading "unavailable" state.
-                                        maxLength={256}
-                                    />
-                                </div>
-                                {state.preferencesUnavailable && (
-                                    <div className="mj_ConnectionError" role="status">
-                                        {PREFERENCES_UNAVAILABLE_ERROR}
-                                    </div>
-                                )}
-                                {state.controlError && (
-                                    <div className="mj_ConnectionError" role="status">
-                                        {state.controlError}
-                                    </div>
-                                )}
-                                {outcomeAnnouncement && (
-                                    <span
-                                        className="mj_ScreenReaderOnly mj_SubagentOutcomeStatus"
-                                        role="status"
-                                        aria-live="polite"
-                                        aria-atomic="true"
-                                    >
-                                        {outcomeAnnouncement}
-                                    </span>
-                                )}
-                                <div className="mj_RoomList" data-testid="room-list">
-                                    {/* Active/Favorites render each parent row, then splice
+            <nav className="mj_ConversationListPanel" aria-label="Room list">
+                <header
+                    className="mj_ConversationListHeader"
+                    aria-label="Room options"
+                    data-testid="conversation-list-header"
+                >
+                    <h2 className="mj_ConversationListTitle">Conversations</h2>
+                    <div className="mj_ConversationListHeaderActions">
+                        {tab !== "archived" && hasActiveUnread && (
+                            <button
+                                className="mj_IconButton mj_MarkAllReadButton"
+                                type="button"
+                                aria-label="Mark all as read"
+                                onClick={() => client.markAllRead()}
+                            >
+                                <MarkAllReadIcon />
+                            </button>
+                        )}
+                        <button
+                            className="mj_IconButton"
+                            type="button"
+                            aria-label="Go to number"
+                            title={`Go to number (${goToNumberShortcutLabel()})`}
+                            onClick={() => client.openGoToNumber()}
+                        >
+                            <NumberSignIcon />
+                        </button>
+                        {/* Mac: New Chat is the toolbar's square.and.pencil glyph, not a button row. */}
+                        <button
+                            className="mj_IconButton mj_HeaderNavButton mj_IconButton_badged"
+                            type="button"
+                            aria-label="New session"
+                            title={`New session (${shortcutLabel("n")}) — runs /start`}
+                            onClick={() => {
+                                setAccountOpen(false);
+                                closeConversationMenu();
+                                setNewSessionOpen(true);
+                            }}
+                        >
+                            <ComposeIcon />
+                        </button>
+                    </div>
+                </header>
+                <div className="mj_ConversationListTabs" role="group" aria-label="Filter conversations">
+                    {(
+                        [
+                            ["active", "Active"],
+                            ["favorites", "Favorites"],
+                            ["archived", "Archived"],
+                        ] as const
+                    ).map(([key, label]) => (
+                        <button
+                            key={key}
+                            type="button"
+                            data-tab={key}
+                            className={`mj_Seg_item mj_ConversationListTab${tab === key ? " mj_Seg_item_on mj_ConversationListTab_active" : ""}`}
+                            aria-pressed={tab === key}
+                            aria-label={key === "favorites" ? "Favorites" : undefined}
+                            onClick={(event) => {
+                                setTab(key);
+                                event.currentTarget.focus({ preventScroll: true });
+                            }}
+                        >
+                            {label}
+                        </button>
+                    ))}
+                </div>
+                <div data-testid="conversation-search" className="mj_ConversationSearch" role="search">
+                    <SearchField
+                        id="conversation-search-input"
+                        className="mj_SearchField_subtle mj_ConversationSearch_field"
+                        value={query}
+                        onChange={setQuery}
+                        placeholder="Search"
+                        label="Search"
+                        // Server rejects message-search queries over 256 chars; cap the shared
+                        // box so a giant paste can't produce a misleading "unavailable" state.
+                        maxLength={256}
+                    />
+                </div>
+                {state.preferencesUnavailable && (
+                    <div className="mj_ConnectionError" role="status">
+                        {PREFERENCES_UNAVAILABLE_ERROR}
+                    </div>
+                )}
+                {state.controlError && (
+                    <div className="mj_ConnectionError" role="status">
+                        {state.controlError}
+                    </div>
+                )}
+                {outcomeAnnouncement && (
+                    <span
+                        className="mj_ScreenReaderOnly mj_SubagentOutcomeStatus"
+                        role="status"
+                        aria-live="polite"
+                        aria-atomic="true"
+                    >
+                        {outcomeAnnouncement}
+                    </span>
+                )}
+                <div className="mj_ConversationList" data-testid="conversation-list">
+                    <NumberSearchResult client={client} query={query} />
+                    {/* Active/Favorites render each parent row, then splice
                                         its NON-ARCHIVED subagent children in beneath (indented) —
                                         archiving a child removes it from these tabs. The Archived
                                         tab renders flat (archived parents + archived children as
@@ -2013,369 +2884,398 @@ function ConversationList({
                                         nested path and the fallback path stay in lock-step (a done
                                         child of an ARCHIVED parent can't leak in via either). The
                                         Archived tab is unaffected. */}
-                                    {/* Mac sidebar: rows sit under day section headers ("Today",
+                    {/* Mac sidebar: rows sit under day section headers ("Today",
                                         "Yesterday", weekday, date); pinned rows keep their own
                                         section first. Each parent row is followed by its nested
                                         running children, as before. */}
-                                    {pinSection.length > 0 && (
-                                        <section className="mj_RoomListGroup" aria-label="Pinned">
-                                            <div className="mj_RoomListGroup_label" aria-hidden="true">
-                                                Pinned
-                                            </div>
-                                            <div role="list">
-                                                {pinSection.flatMap(({ pin, conversation }) =>
-                                                    conversation
-                                                        ? [
-                                                              renderConversation(conversation, false, false, pin),
-                                                              renderSuccessorHint(pin),
-                                                              ...nestedChildRows(conversation),
-                                                          ].filter((row): row is React.ReactElement => row !== null)
-                                                        : [renderMissingPin(pin), renderSuccessorHint(pin)].filter(
-                                                              (row): row is React.ReactElement => row !== null,
-                                                          ),
-                                                )}
-                                            </div>
-                                        </section>
-                                    )}
-                                    {rowGroups.map((group) => (
-                                        <section
-                                            className="mj_RoomListGroup"
-                                            key={group.label}
-                                            aria-label={group.label}
-                                        >
-                                            <div className="mj_RoomListGroup_label" aria-hidden="true">
-                                                {group.label}
-                                            </div>
-                                            <div role="list">
-                                                {group.rows.flatMap((conversation) => [
-                                                    renderConversation(conversation, false),
-                                                    ...nestedChildRows(conversation),
-                                                ])}
-                                            </div>
-                                        </section>
-                                    ))}
-                                    {tab === "active" && !hasAnyActive && archivedTotal === 0 && !pinSection.length && (
-                                        <p className="mj_RoomListEmpty">Your agent conversations will appear here.</p>
-                                    )}
-                                    {tab === "active" && !hasAnyActive && archivedTotal > 0 && !pinSection.length && (
-                                        <p className="mj_RoomListEmpty">No active conversations.</p>
-                                    )}
-                                    {tab === "active" && hasAnyActive && !visibleRows.length && !pinSection.length && (
-                                        <p className="mj_RoomListEmpty">No conversations match your search.</p>
-                                    )}
-                                    {tab === "favorites" && !hasAnyFavorite && (
-                                        <p className="mj_RoomListEmpty">No favorite conversations yet.</p>
-                                    )}
-                                    {tab === "favorites" && hasAnyFavorite && !visibleRows.length && (
-                                        <p className="mj_RoomListEmpty">No favorites match your search.</p>
-                                    )}
-                                    {tab === "archived" && archivedTotal === 0 && (
-                                        <p className="mj_RoomListEmpty">No archived conversations.</p>
-                                    )}
-                                    {tab === "archived" && archivedTotal > 0 && !visibleRows.length && (
-                                        <p className="mj_RoomListEmpty">No archived conversations match your search.</p>
-                                    )}
-                                    {/* Inside the room-list scroll container so the Messages section
+                    {pinSection.length > 0 && (
+                        <section className="mj_ConversationListGroup" aria-label="Pinned">
+                            <div className="mj_ConversationListGroup_label" aria-hidden="true">
+                                Pinned
+                            </div>
+                            <div role="list">
+                                {pinSection.flatMap(({ pin, conversation }) =>
+                                    conversation
+                                        ? [
+                                              renderConversation(conversation, false, false, pin),
+                                              renderSuccessorHint(pin),
+                                              ...nestedChildRows(conversation),
+                                          ].filter((row): row is React.ReactElement => row !== null)
+                                        : [renderMissingPin(pin), renderSuccessorHint(pin)].filter(
+                                              (row): row is React.ReactElement => row !== null,
+                                          ),
+                                )}
+                            </div>
+                        </section>
+                    )}
+                    {rowGroups.map((group) => (
+                        <section className="mj_ConversationListGroup" key={group.label} aria-label={group.label}>
+                            <div className="mj_ConversationListGroup_label" aria-hidden="true">
+                                {group.label}
+                            </div>
+                            <div role="list">
+                                {group.rows.flatMap((conversation) => [
+                                    renderConversation(conversation, false),
+                                    ...nestedChildRows(conversation),
+                                ])}
+                            </div>
+                        </section>
+                    ))}
+                    {tab === "active" && !hasAnyActive && archivedTotal === 0 && !pinSection.length && (
+                        <p className="mj_ConversationListEmpty">Your agent conversations will appear here.</p>
+                    )}
+                    {tab === "active" && !hasAnyActive && archivedTotal > 0 && !pinSection.length && (
+                        <p className="mj_ConversationListEmpty">No active conversations.</p>
+                    )}
+                    {tab === "active" && hasAnyActive && !visibleRows.length && !pinSection.length && (
+                        <p className="mj_ConversationListEmpty">No conversations match your search.</p>
+                    )}
+                    {tab === "favorites" && !hasAnyFavorite && (
+                        <p className="mj_ConversationListEmpty">No favorite conversations yet.</p>
+                    )}
+                    {tab === "favorites" && hasAnyFavorite && !visibleRows.length && (
+                        <p className="mj_ConversationListEmpty">No favorites match your search.</p>
+                    )}
+                    {tab === "archived" && archivedTotal === 0 && (
+                        <p className="mj_ConversationListEmpty">No archived conversations.</p>
+                    )}
+                    {tab === "archived" && archivedTotal > 0 && !visibleRows.length && (
+                        <p className="mj_ConversationListEmpty">No archived conversations match your search.</p>
+                    )}
+                    {/* Inside the conversation list scroll container so the Messages section
                                         scrolls with the chat list — a long hit list stays reachable. */}
-                                    <MessageSearchResults
-                                        query={query}
-                                        search={state.messageSearch}
-                                        now={renderNow}
-                                        onSelect={(conversationId, seq) =>
-                                            void client.selectConversationAtSeq(conversationId, seq)
-                                        }
-                                    />
-                                </div>
-                            </nav>
-                        </div>
-                    </div>
+                    <MessageSearchResults
+                        query={query}
+                        search={state.messageSearch}
+                        now={renderNow}
+                        onSelect={(hit) => client.openSearchHit(hit)}
+                    />
                 </div>
-                {accountOpen && (
-                    <SettingsSheet
-                        client={client}
-                        session={state.session}
-                        connection={state.connection}
-                        notices={state.userSettingsUnsupported ? undefined : state.userSettings?.notices}
-                        noticesError={state.userSettingsError}
-                        onLoadSettings={() => void client.loadSettings()}
-                        onNoticesChange={(value) => void client.setNoticesSetting(value)}
-                        onSignOut={() => {
-                            setAccountOpen(false);
-                            void client.logout();
-                        }}
-                        onClose={closeSettings}
-                    />
-                )}
-                {newSessionOpen && <NewSessionSheet client={client} onClose={() => setNewSessionOpen(false)} />}
-                {pinDialog && (
-                    <PinDialog
-                        client={client}
-                        state={state}
-                        target={pinDialog}
-                        onClose={() => setPinDialog(undefined)}
-                    />
-                )}
-                {roomMenu && menuConversation && (
-                    <div
-                        className="mj_HeaderMenu mj_RoomItemMenu"
-                        role="menu"
-                        ref={roomMenuElementRef}
-                        style={{ position: "fixed", left: roomMenu.left, top: roomMenu.top }}
-                        onKeyDown={(event) => {
-                            const items = Array.from(
-                                event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
-                            );
-                            const currentIndex = items.findIndex((item) => item === document.activeElement);
-                            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                                event.preventDefault();
-                                const direction = event.key === "ArrowDown" ? 1 : -1;
-                                const nextIndex =
-                                    currentIndex === -1
-                                        ? event.key === "ArrowDown"
-                                            ? 0
-                                            : items.length - 1
-                                        : (currentIndex + direction + items.length) % items.length;
-                                items[nextIndex]?.focus();
-                            } else if (event.key === "Enter" || event.key === " ") {
-                                const currentItem = items[currentIndex];
-                                if (!currentItem) return;
-                                event.preventDefault();
-                                currentItem.click();
-                            } else if (event.key === "Escape") {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                closeRoomMenu(true);
+            </nav>
+            {accountOpen && (
+                <SettingsSheet
+                    client={client}
+                    session={state.session}
+                    connection={state.connection}
+                    notices={state.userSettingsUnsupported ? undefined : state.userSettings?.notices}
+                    noticesError={state.userSettingsError}
+                    onLoadSettings={() => void client.loadSettings()}
+                    onNoticesChange={(value) => void client.setNoticesSetting(value)}
+                    onChooseCoordinator={() => {
+                        setAccountOpen(false);
+                        setCoordinatorSheet({ kind: "chooser", fromSettings: true });
+                    }}
+                    onOpenRoutines={() => {
+                        setAccountOpen(false);
+                        setCoordinatorSheet({ kind: "routines", fromSettings: true });
+                    }}
+                    onSignOut={() => {
+                        setAccountOpen(false);
+                        void client.logout();
+                    }}
+                    onClose={closeSettings}
+                />
+            )}
+            {newSessionOpen && <OneTapNewSessionSheet client={client} onClose={() => setNewSessionOpen(false)} />}
+            {coordinatorSheet?.kind === "chooser" && (
+                <CoordinatorChooserSheet
+                    client={client}
+                    state={state}
+                    initialError={coordinatorSheet.error}
+                    onClose={closeCoordinatorSheet}
+                    onNewChat={() => setCoordinatorSheet({ ...coordinatorSheet, kind: "new-chat", error: undefined })}
+                />
+            )}
+            {coordinatorSheet?.kind === "new-chat" && (
+                <NewSessionSheet
+                    client={client}
+                    title="New coordinator chat"
+                    initialModel={COORDINATOR_NEW_CHAT_MODEL}
+                    // Closing the new chat goes back to the chooser. A created chat closes it too,
+                    // and onCreated runs in the same batch: it replaces the chooser with
+                    // "assigning", so the chooser never shows while the new chat becomes the
+                    // Coordinator. The answer lands only if nothing else opened meanwhile.
+                    onClose={() => setCoordinatorSheet({ ...coordinatorSheet, kind: "chooser", error: undefined })}
+                    onCreated={(convoId) => {
+                        const fromSettings = coordinatorSheet.fromSettings;
+                        const assigning = { kind: "assigning" as const, fromSettings };
+                        setCoordinatorSheet(assigning);
+                        void client.setCoordinator(convoId).then((error) => {
+                            if (coordinatorSheetRef.current !== assigning) return;
+                            if (error) {
+                                // The chat started but did not become the Coordinator: say so in the chooser.
+                                setCoordinatorSheet({ kind: "chooser", fromSettings, error });
+                                return;
                             }
-                        }}
-                    >
-                        {journalPins ? (
-                            !(roomMenu && journalPinnedIds.has(roomMenu.conversationId)) ? (
+                            setCoordinatorSheet(null);
+                            if (fromSettings) setAccountOpen(true);
+                        });
+                    }}
+                />
+            )}
+            {coordinatorSheet?.kind === "routines" && <RoutinesSheet client={client} onClose={closeCoordinatorSheet} />}
+            {pinDialog && (
+                <PinDialog client={client} state={state} target={pinDialog} onClose={() => setPinDialog(undefined)} />
+            )}
+            {conversationMenu && menuConversation && (
+                <div
+                    className="mj_HeaderMenu mj_ConversationMenu"
+                    role="menu"
+                    ref={conversationMenuElementRef}
+                    style={{ position: "fixed", left: conversationMenu.left, top: conversationMenu.top }}
+                    onKeyDown={(event) => {
+                        const items = Array.from(
+                            event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+                        );
+                        const currentIndex = items.findIndex((item) => item === document.activeElement);
+                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                            event.preventDefault();
+                            const direction = event.key === "ArrowDown" ? 1 : -1;
+                            const nextIndex =
+                                currentIndex === -1
+                                    ? event.key === "ArrowDown"
+                                        ? 0
+                                        : items.length - 1
+                                    : (currentIndex + direction + items.length) % items.length;
+                            items[nextIndex]?.focus();
+                        } else if (event.key === "Enter" || event.key === " ") {
+                            const currentItem = items[currentIndex];
+                            if (!currentItem) return;
+                            event.preventDefault();
+                            currentItem.click();
+                        } else if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            closeConversationMenu(true);
+                        }
+                    }}
+                >
+                    {journalPins ? (
+                        !(conversationMenu && journalPinnedIds.has(conversationMenu.conversationId)) ? (
+                            <button
+                                className="mj_ConversationMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeConversationMenu();
+                                    setPinDialog({ kind: "edit", convoId: menuConversation.id });
+                                }}
+                            >
+                                <PinIcon aria-hidden />
+                                Pin to sidebar…
+                            </button>
+                        ) : (
+                            <>
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
-                                        closeRoomMenu();
+                                        closeConversationMenu();
                                         setPinDialog({ kind: "edit", convoId: menuConversation.id });
                                     }}
                                 >
-                                    <PinIcon aria-hidden />
-                                    Pin to sidebar…
+                                    <FileEditIcon aria-hidden />
+                                    Edit pin…
                                 </button>
-                            ) : (
-                                <>
+                                {menuPinIndex > 0 && (
                                     <button
-                                        className="mj_RoomItemMenu_item"
+                                        className="mj_ConversationMenu_item"
                                         type="button"
                                         role="menuitem"
                                         onClick={() => {
-                                            closeRoomMenu();
-                                            setPinDialog({ kind: "edit", convoId: menuConversation.id });
-                                        }}
-                                    >
-                                        <FileEditIcon aria-hidden />
-                                        Edit pin…
-                                    </button>
-                                    {menuPinIndex > 0 && (
-                                        <button
-                                            className="mj_RoomItemMenu_item"
-                                            type="button"
-                                            role="menuitem"
-                                            onClick={() => {
-                                                closeRoomMenu();
-                                                void client.shiftPin(menuConversation.id, "up", shownPinIds);
-                                                restoreFocusAfterMenuAction();
-                                            }}
-                                        >
-                                            <ChevronUpIcon aria-hidden />
-                                            Move up
-                                        </button>
-                                    )}
-                                    {menuPinIndex >= 0 && menuPinIndex < shownPins.length - 1 && (
-                                        <button
-                                            className="mj_RoomItemMenu_item"
-                                            type="button"
-                                            role="menuitem"
-                                            onClick={() => {
-                                                closeRoomMenu();
-                                                void client.shiftPin(menuConversation.id, "down", shownPinIds);
-                                                restoreFocusAfterMenuAction();
-                                            }}
-                                        >
-                                            <ChevronDownIcon aria-hidden />
-                                            Move down
-                                        </button>
-                                    )}
-                                    <button
-                                        className="mj_RoomItemMenu_item"
-                                        type="button"
-                                        role="menuitem"
-                                        onClick={() => {
-                                            closeRoomMenu();
-                                            setPinDialog({ kind: "move", convoId: menuConversation.id });
-                                        }}
-                                    >
-                                        <PinIcon aria-hidden />
-                                        Move pin…
-                                    </button>
-                                    <button
-                                        className="mj_RoomItemMenu_item"
-                                        type="button"
-                                        role="menuitem"
-                                        onClick={() => {
-                                            closeRoomMenu();
-                                            void client.removePin(menuConversation.id);
+                                            closeConversationMenu();
+                                            void client.shiftPin(menuConversation.id, "up", shownPinIds);
                                             restoreFocusAfterMenuAction();
                                         }}
                                     >
-                                        <PinIcon aria-hidden />
-                                        Unpin
+                                        <ChevronUpIcon aria-hidden />
+                                        Move up
                                     </button>
-                                </>
-                            )
-                        ) : state.pinnedIds.has(menuConversation.id) ? (
-                            <button
-                                className="mj_RoomItemMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeRoomMenu();
-                                    client.unpinConversation(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <PinIcon aria-hidden />
-                                Unpin
-                            </button>
-                        ) : (
-                            <button
-                                className="mj_RoomItemMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeRoomMenu();
-                                    client.pinConversation(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <PinIcon aria-hidden />
-                                Pin
-                            </button>
-                        )}
-                        {state.favoriteIds.has(menuConversation.id) ? (
-                            <button
-                                className="mj_RoomItemMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeRoomMenu();
-                                    client.unfavoriteConversation(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <StarFilledIcon aria-hidden />
-                                Remove from Favorites
-                            </button>
-                        ) : (
-                            <button
-                                className="mj_RoomItemMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeRoomMenu();
-                                    client.favoriteConversation(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <StarIcon aria-hidden />
-                                Add to Favorites
-                            </button>
-                        )}
-                        {!state.archivedIds.has(menuConversation.id) &&
-                            !effectiveUnread(menuConversation, state.unreadOverrideIds) && (
+                                )}
+                                {menuPinIndex >= 0 && menuPinIndex < shownPins.length - 1 && (
+                                    <button
+                                        className="mj_ConversationMenu_item"
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={() => {
+                                            closeConversationMenu();
+                                            void client.shiftPin(menuConversation.id, "down", shownPinIds);
+                                            restoreFocusAfterMenuAction();
+                                        }}
+                                    >
+                                        <ChevronDownIcon aria-hidden />
+                                        Move down
+                                    </button>
+                                )}
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
-                                        closeRoomMenu();
-                                        client.markConversationUnread(menuConversation.id);
-                                        restoreFocusAfterMenuAction();
+                                        closeConversationMenu();
+                                        setPinDialog({ kind: "move", convoId: menuConversation.id });
                                     }}
                                 >
-                                    <MarkUnreadIcon aria-hidden />
-                                    Mark as unread
+                                    <PinIcon aria-hidden />
+                                    Move pin…
                                 </button>
-                            )}
-                        {!state.archivedIds.has(menuConversation.id) &&
-                            effectiveUnread(menuConversation, state.unreadOverrideIds) && (
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => {
-                                        closeRoomMenu();
-                                        client.markConversationRead(menuConversation.id);
+                                        closeConversationMenu();
+                                        void client.removePin(menuConversation.id);
                                         restoreFocusAfterMenuAction();
                                     }}
                                 >
-                                    <MarkReadIcon aria-hidden />
-                                    Mark as read
+                                    <PinIcon aria-hidden />
+                                    Unpin
                                 </button>
-                            )}
-                        {/* manual collapse/expand of this conversation's subagent child
-                            rows — shown ONLY when it currently hosts child rows (hasSubagentChildRows
+                            </>
+                        )
+                    ) : state.pinnedIds.has(menuConversation.id) ? (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.unpinConversation(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <PinIcon aria-hidden />
+                            Unpin
+                        </button>
+                    ) : (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.pinConversation(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <PinIcon aria-hidden />
+                            Pin
+                        </button>
+                    )}
+                    {state.favoriteIds.has(menuConversation.id) ? (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.unfavoriteConversation(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <StarFilledIcon aria-hidden />
+                            Remove from Favorites
+                        </button>
+                    ) : (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.favoriteConversation(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <StarIcon aria-hidden />
+                            Add to Favorites
+                        </button>
+                    )}
+                    {!state.archivedIds.has(menuConversation.id) &&
+                        !effectiveUnread(menuConversation, state.unreadOverrideIds) && (
+                            <button
+                                className="mj_ConversationMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeConversationMenu();
+                                    client.markConversationUnread(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <MarkUnreadIcon aria-hidden />
+                                Mark as unread
+                            </button>
+                        )}
+                    {!state.archivedIds.has(menuConversation.id) &&
+                        effectiveUnread(menuConversation, state.unreadOverrideIds) && (
+                            <button
+                                className="mj_ConversationMenu_item"
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                    closeConversationMenu();
+                                    client.markConversationRead(menuConversation.id);
+                                    restoreFocusAfterMenuAction();
+                                }}
+                            >
+                                <MarkReadIcon aria-hidden />
+                                Mark as read
+                            </button>
+                        )}
+                    {/* Manual collapse/expand of this conversation's subagent child rows —
+                            shown ONLY when it currently hosts child rows (hasSubagentChildRows
                             stays true while collapsed, so "Show subagents" remains reachable). */}
-                        {hasSubagentChildRows(menuConversation, sidebarIndex) && (
-                            <button
-                                className="mj_RoomItemMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeRoomMenu();
-                                    client.toggleSubagentCollapse(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <ChevronDownIcon aria-hidden />
-                                {state.collapsedSubagentParentIds.has(menuConversation.id)
-                                    ? "Show subagents"
-                                    : "Collapse subagents"}
-                            </button>
-                        )}
-                        <MenuSeparator />
-                        {state.archivedIds.has(menuConversation.id) ? (
-                            <button
-                                className="mj_RoomItemMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeRoomMenu();
-                                    client.unarchiveConversation(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <UnarchiveIcon aria-hidden />
-                                Unarchive
-                            </button>
-                        ) : (
-                            <button
-                                className="mj_RoomItemMenu_item"
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                    closeRoomMenu();
-                                    client.archiveConversation(menuConversation.id);
-                                    restoreFocusAfterMenuAction();
-                                }}
-                            >
-                                <ArchiveIcon aria-hidden />
-                                Archive
-                            </button>
-                        )}
-                    </div>
-                )}
-            </div>
+                    {hasSubagentChildRows(menuConversation, sidebarIndex) && (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.toggleSubagentCollapse(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <ChevronDownIcon aria-hidden />
+                            {state.collapsedSubagentParentIds.has(menuConversation.id)
+                                ? "Show subagents"
+                                : "Collapse subagents"}
+                        </button>
+                    )}
+                    {state.archivedIds.has(menuConversation.id) ? (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.unarchiveConversation(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <UnarchiveIcon aria-hidden />
+                            Unarchive
+                        </button>
+                    ) : (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                                closeConversationMenu();
+                                client.archiveConversation(menuConversation.id);
+                                restoreFocusAfterMenuAction();
+                            }}
+                        >
+                            <ArchiveIcon aria-hidden />
+                            Archive
+                        </button>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
@@ -2411,68 +3311,86 @@ export function usePressToggle(
     };
 }
 
-export function useDismissablePopover(
-    open: boolean,
-    close: () => void,
-    refs: { openerRef: RefObject<HTMLElement | null>; panelRef: RefObject<HTMLElement | null> },
-): void {
-    const { openerRef, panelRef } = refs;
-    useEffect(() => {
-        if (!open) return;
-        const onPointerDown = (event: PointerEvent): void => {
-            const target = event.target as Node;
-            if (!openerRef.current?.contains(target) && !panelRef.current?.contains(target)) close();
-        };
-        const onKeyDown = (event: KeyboardEvent): void => {
-            if (event.key !== "Escape") return;
-            close();
-            openerRef.current?.focus();
-        };
-        const onScroll = (event: Event): void => {
-            if (!panelRef.current?.contains(event.target as Node)) close();
-        };
-        document.addEventListener("pointerdown", onPointerDown);
-        document.addEventListener("keydown", onKeyDown);
-        document.addEventListener("scroll", onScroll, true);
-        return () => {
-            document.removeEventListener("pointerdown", onPointerDown);
-            document.removeEventListener("keydown", onKeyDown);
-            document.removeEventListener("scroll", onScroll, true);
-        };
-    }, [open, close, openerRef, panelRef]);
+// State the conversation list never reads. The open conversation's streams, activity, header
+// and events change many times a second while an agent works; re-rendering every sidebar row for
+// each of those frames kept the main thread busy with nothing on the list changing.
+const CONVERSATION_LIST_IGNORED_STATE = new Set<keyof ClientState>([
+    "textStreams",
+    "toolStreams",
+    "activity",
+    "sessionStatus",
+    "events",
+    "pendingMessages",
+    "loadingHistory",
+    "hasOlderHistory",
+    "sendTick",
+    "dragActive",
+    "subChatPane",
+    // The Routines sheet reads its own state from the client; the list never does.
+    "routines",
+    "composerAttachments",
+    "chatTasks",
+    "focusTarget",
+    "chatSearch",
+]);
+
+export function sameStateExcept(
+    previous: ClientState,
+    next: ClientState,
+    ignored: ReadonlySet<keyof ClientState>,
+): boolean {
+    if (previous === next) return true;
+    const keys = new Set([...Object.keys(previous), ...Object.keys(next)] as (keyof ClientState)[]);
+    for (const key of keys) {
+        if (!ignored.has(key) && previous[key] !== next[key]) return false;
+    }
+    return true;
 }
 
+const ConversationList = React.memo(
+    ConversationListView,
+    (previous, next) =>
+        previous.client === next.client &&
+        previous.width === next.width &&
+        sameStateExcept(previous.state, next.state, CONVERSATION_LIST_IGNORED_STATE),
+);
+
 // Redesign-v4 pane-width bands (ResizeObserver on the chat pane, not viewport):
-// >=640 full 2×2 usage grid (keep all four bars as long as they genuinely fit — the
-// 2×2 is ~350px and clears a minimal title down to ~640); <640 collapse to a ctx+5h
+// >=720 full 2×2 usage grid (keep all four bars as long as they genuinely fit — the
+// 2×2 is ~430px with reset times and clears a minimal title down to ~720); <720 collapse to a ctx+5h
 // two-row stack + popover with all four. >=560 full subtitle + Compact; <560 subtitle →
 // status dot + short model, title popover, Compact hidden.
-const USAGE_COLLAPSE_PX = 640;
-// with host cpu/ram the grid grows to a 3rd column (~500px) — it needs a wider pane
+// Both widths include the reset time trailing each limit's bar ("3h20", "Sun 10pm").
+const USAGE_COLLAPSE_PX = 720;
+// with host cpu/ram the grid grows to a 3rd column (~600px with reset times) — it needs a wider pane
 // to render without crushing the title, so collapse earlier (to the ctx+5h popover, which
 // still lists all six bars). Only the collapse WIDTH moves for the wide grid; the collapse
 // BEHAVIOUR (ctx+5h stack + popover) is unchanged, preserving the tuned narrow experience.
-const USAGE_COLLAPSE_WIDE_PX = 760;
+const USAGE_COLLAPSE_WIDE_PX = 960;
 const USAGE_WIDE_METER_COUNT = 4; // >4 meters ⇒ 3rd column ⇒ use the wide threshold
 const TITLE_COLLAPSE_PX = 560;
 
-export function useAdaptiveHeader(
-    bodyEl: HTMLElement | null,
-    meterCount = 0,
-): {
+export interface HeaderCollapse {
     usageCollapsed: boolean;
     titleCollapsed: boolean;
-} {
+    /** Rooms · n and the bell live in the ⋯ menu and Compact keeps only its icon. */
+    controlsFolded: boolean;
+}
+
+const EXPANDED_HEADER: HeaderCollapse = { usageCollapsed: false, titleCollapsed: false, controlsFolded: false };
+
+export function useAdaptiveHeader(bodyEl: HTMLElement | null, meterCount = 0): HeaderCollapse {
     const usageCollapsePx = meterCount > USAGE_WIDE_METER_COUNT ? USAGE_COLLAPSE_WIDE_PX : USAGE_COLLAPSE_PX;
-    const [collapse, setCollapse] = useState({ usageCollapsed: false, titleCollapsed: false });
+    const foldPx = meterCount > USAGE_WIDE_METER_COUNT ? CONTROLS_FOLD_WIDE_PX : CONTROLS_FOLD_PX;
+    const [collapse, setCollapse] = useState<HeaderCollapse>(EXPANDED_HEADER);
     const collapseRef = useRef(collapse);
 
     useEffect(() => {
         if (bodyEl == null || typeof ResizeObserver === "undefined") {
-            if (collapseRef.current.usageCollapsed || collapseRef.current.titleCollapsed) {
-                const expanded = { usageCollapsed: false, titleCollapsed: false };
-                collapseRef.current = expanded;
-                setCollapse(expanded);
+            const current = collapseRef.current;
+            if (current.usageCollapsed || current.titleCollapsed || current.controlsFolded) {
+                collapseRef.current = EXPANDED_HEADER;
+                setCollapse(EXPANDED_HEADER);
             }
             return;
         }
@@ -2489,11 +3407,15 @@ export function useAdaptiveHeader(
                 frame = null;
                 const usageCollapsed = latestWidth < usageCollapsePx;
                 const titleCollapsed = latestWidth < TITLE_COLLAPSE_PX;
+                // Folded below the width the current usage form needs: the collapsed two-bar
+                // disclosure is far narrower than either grid.
+                const controlsFolded = latestWidth < (usageCollapsed ? CONTROLS_FOLD_USAGE_COLLAPSED_PX : foldPx);
                 if (
                     collapseRef.current.usageCollapsed !== usageCollapsed ||
-                    collapseRef.current.titleCollapsed !== titleCollapsed
+                    collapseRef.current.titleCollapsed !== titleCollapsed ||
+                    collapseRef.current.controlsFolded !== controlsFolded
                 ) {
-                    const next = { usageCollapsed, titleCollapsed };
+                    const next = { usageCollapsed, titleCollapsed, controlsFolded };
                     collapseRef.current = next;
                     setCollapse(next);
                 }
@@ -2505,10 +3427,22 @@ export function useAdaptiveHeader(
             observer.disconnect();
             if (frame != null) cancelAnimationFrame(frame);
         };
-    }, [bodyEl, usageCollapsePx]);
+    }, [bodyEl, usageCollapsePx, foldPx]);
 
     return collapse;
 }
+
+// Below these pane widths the controls beside the title fold: Rooms · n and the bell move into
+// the ⋯ menu and Compact keeps only its icon, so the title keeps about 240px. Measured with every
+// control showing (usage grid with reset times, Compact, Rooms · n, Tasks, Media, the bell, ⋯).
+// The full four-meter grid shows from USAGE_COLLAPSE_PX and needs about 810px of controls
+// inline; the six-meter grid shows from USAGE_COLLAPSE_WIDE_PX and needs about 160px more; the
+// collapsed two-bar disclosure needs about 590px. So a six-meter header can be inline just below
+// USAGE_COLLAPSE_WIDE_PX and fold again just above it, where the wide grid appears. The Mac
+// shrinks its mission chip instead and never folds, but its title row has no usage grid.
+const CONTROLS_FOLD_PX = 1060;
+const CONTROLS_FOLD_WIDE_PX = 1200;
+const CONTROLS_FOLD_USAGE_COLLAPSED_PX = 840;
 
 function useMinuteClock(now?: number): number {
     const [clockNow, setClockNow] = useState(Date.now);
@@ -2723,6 +3657,13 @@ export function UsageCluster({
                             <span className={`mj_UsagePercent mj_UsagePercent_${level}`}>
                                 {norm === null ? "—" : `${Math.round(norm)}%`}
                             </span>
+                            {/* Reset time trailing the bar, as the Mac header shows it. Visible
+                                only: the progressbar's value text already announces it. */}
+                            {reset && (
+                                <span className="mj_UsageReset" aria-hidden="true">
+                                    {reset}
+                                </span>
+                            )}
                         </div>
                     );
                 })}
@@ -2840,6 +3781,17 @@ function HeaderDisclosure({
     );
 }
 
+/** The title cluster alone, or in a row with the control beside it (the mission chip). */
+function withAccessory(cluster: React.ReactElement, accessory: React.ReactNode): React.ReactElement {
+    if (!accessory) return cluster;
+    return (
+        <div className="mj_HeaderTitleRow">
+            {cluster}
+            {accessory}
+        </div>
+    );
+}
+
 export function HeaderShell({
     mode,
     onBack,
@@ -2848,6 +3800,7 @@ export function HeaderShell({
     titleNode,
     titleGlyph,
     titleBadge,
+    titleAccessory,
     subtitle,
     subtitleCompact,
     hasSubtitle,
@@ -2867,6 +3820,8 @@ export function HeaderShell({
     // requires the header to name the SUBAGENT when inside one — never the parent.
     titleGlyph?: React.ReactNode;
     titleBadge?: React.ReactNode;
+    /** A control beside the title, outside the heading (the mission chip). */
+    titleAccessory?: React.ReactNode;
     subtitle: React.ReactNode;
     subtitleCompact?: React.ReactNode;
     hasSubtitle: boolean;
@@ -2911,62 +3866,67 @@ export function HeaderShell({
     const controls = titleCollapsed && hideControlsWhenCompact ? null : rightControls;
 
     return (
-        <header
-            ref={headerRef}
-            className={`mx_RoomHeader light-panel mj_ChatHeader${mode === "child" ? " mj_SubChatHeader" : ""}`}
-            tabIndex={-1}
-        >
+        <header ref={headerRef} className={`mj_ChatHeader${mode === "child" ? " mj_SubChatHeader" : ""}`} tabIndex={-1}>
             <button type="button" className="mj_BackButton" onClick={onBack} aria-label={backLabel}>
                 <ChevronLeftIcon />
             </button>
-            {titleCollapsed ? (
-                <HeaderDisclosure
-                    className="mj_HeaderCluster mj_HeaderTitleCluster mj_HeaderTitleCluster_compact"
-                    triggerClassName="mj_HeaderTitleDisclosure"
-                    panelClassName="mj_HeaderMenu mj_TitlePopover"
-                    label="Conversation details"
-                    headerRef={headerRef}
-                    before={
+            {withAccessory(
+                titleCollapsed ? (
+                    <HeaderDisclosure
+                        className="mj_HeaderCluster mj_HeaderTitleCluster mj_HeaderTitleCluster_compact"
+                        triggerClassName="mj_HeaderTitleDisclosure"
+                        panelClassName="mj_HeaderMenu mj_TitlePopover"
+                        label="Conversation details"
+                        headerRef={headerRef}
+                        before={
+                            <div
+                                id={titleHeadingId}
+                                dir="auto"
+                                role="heading"
+                                aria-level={1}
+                                className="mj_ChatHeader_heading"
+                                title={title}
+                            >
+                                {titleGlyph && (
+                                    <span className="mj_HeaderTitleGlyph" aria-hidden="true">
+                                        {titleGlyph}
+                                    </span>
+                                )}
+                                <span className="mj_ChatHeader_truncated mj_lineClamp">{titleNode ?? title}</span>
+                                {titleBadge}
+                            </div>
+                        }
+                        trigger={
+                            <>
+                                {subtitleCompact}
+                                <ChevronDownIcon aria-hidden="true" />
+                            </>
+                        }
+                    >
+                        <div className="mj_TitlePopoverTitle">{title}</div>
+                        {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
+                    </HeaderDisclosure>
+                ) : (
+                    <div className="mj_HeaderCluster mj_HeaderTitleCluster">
                         <div
                             id={titleHeadingId}
                             dir="auto"
                             role="heading"
                             aria-level={1}
-                            className="mx_RoomHeader_heading"
-                            title={title}
+                            className="mj_ChatHeader_heading"
                         >
                             {titleGlyph && (
                                 <span className="mj_HeaderTitleGlyph" aria-hidden="true">
                                     {titleGlyph}
                                 </span>
                             )}
-                            <span className="mx_RoomHeader_truncated mx_lineClamp">{titleNode ?? title}</span>
+                            <span className="mj_ChatHeader_truncated mj_lineClamp">{titleNode ?? title}</span>
                             {titleBadge}
                         </div>
-                    }
-                    trigger={
-                        <>
-                            {subtitleCompact}
-                            <ChevronDownIcon aria-hidden="true" />
-                        </>
-                    }
-                >
-                    <div className="mj_TitlePopoverTitle">{title}</div>
-                    {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
-                </HeaderDisclosure>
-            ) : (
-                <div className="mj_HeaderCluster mj_HeaderTitleCluster">
-                    <div id={titleHeadingId} dir="auto" role="heading" aria-level={1} className="mx_RoomHeader_heading">
-                        {titleGlyph && (
-                            <span className="mj_HeaderTitleGlyph" aria-hidden="true">
-                                {titleGlyph}
-                            </span>
-                        )}
-                        <span className="mx_RoomHeader_truncated mx_lineClamp">{titleNode ?? title}</span>
-                        {titleBadge}
+                        {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
                     </div>
-                    {hasSubtitle && <div className="mj_HeaderMeta">{subtitle}</div>}
-                </div>
+                ),
+                titleAccessory,
             )}
             <div className="mj_HeaderControls">
                 {usageCollapsed && hasCollapsedUsage ? (
@@ -3148,7 +4108,7 @@ function BrowserToolsItem({
     const disabled = codex || state !== "idle";
     return (
         <button
-            className={`mj_RoomItemMenu_item${hint ? " mj_RoomItemMenu_item_hinted" : ""}`}
+            className={`mj_ConversationMenu_item${hint ? " mj_ConversationMenu_item_hinted" : ""}`}
             type="button"
             role={on ? "menuitemcheckbox" : "menuitem"}
             aria-checked={on ? true : undefined}
@@ -3165,6 +4125,9 @@ function BrowserToolsItem({
         </button>
     );
 }
+// The items a header menu's arrow keys walk: actions, the level choices' radio items, and the
+// browser-tools row's checkbox item (every role starting "menuitem").
+const MENU_ITEM_SELECTOR = '[role^="menuitem"]';
 
 // Header "⋯" overflow: the selected conversation's actions (same set as the sidebar
 // row menu), opened by click only (never hover — these mutate state).
@@ -3172,10 +4135,14 @@ function HeaderOverflowMenu({
     client,
     conversation,
     state,
+    extras,
 }: {
     client: MatronJournalClient;
     conversation: Conversation;
     state: ClientState;
+    /** Sections shown above the actions (the folded Rooms and bell); `pick` closes the menu,
+     *  runs the choice and gives focus back to the ⋯ button. */
+    extras?: (pick: (run: () => void) => void) => React.ReactNode;
 }): React.ReactElement {
     const [open, setOpen] = useState(false);
     const [confirmBrowser, setConfirmBrowser] = useState(false);
@@ -3184,8 +4151,11 @@ function HeaderOverflowMenu({
     const restoreFrameRef = useRef<number | undefined>(undefined);
     const busy = conversation.session_state === "running";
     const codex = conversation.agent_kind === "codex";
-    const extras = state.sessionStatus?.extras;
-    const browserState = useMemo(() => browserToolsState(state.events, busy, extras), [state.events, busy, extras]);
+    const statusExtras = state.sessionStatus?.extras;
+    const browserState = useMemo(
+        () => browserToolsState(state.events, busy, statusExtras),
+        [state.events, busy, statusExtras],
+    );
     const close = useCallback(() => setOpen(false), []);
     useDismissablePopover(open, close, { openerRef, panelRef });
     const toggle = usePressToggle(open, (next) => {
@@ -3193,7 +4163,7 @@ function HeaderOverflowMenu({
         if (!next) openerRef.current?.focus();
     });
     useLayoutEffect(() => {
-        if (open) panelRef.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus();
+        if (open) panelRef.current?.querySelector<HTMLElement>(MENU_ITEM_SELECTOR)?.focus();
     }, [open]);
     // Cancel any pending focus-restore frame on unmount so a leaked callback
     // can't fire after this menu is gone and steal focus (upstream's guard,
@@ -3258,13 +4228,11 @@ function HeaderOverflowMenu({
             </button>
             {open && (
                 <div
-                    className="mj_HeaderMenu mj_RoomItemMenu"
+                    className={`mj_HeaderMenu mj_ConversationMenu${extras ? " mj_ConversationMenu_withSections" : ""}`}
                     role="menu"
                     ref={panelRef}
                     onKeyDown={(event) => {
-                        const items = Array.from(
-                            event.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
-                        );
+                        const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR));
                         const currentIndex = items.findIndex((item) => item === document.activeElement);
                         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                             event.preventDefault();
@@ -3284,11 +4252,12 @@ function HeaderOverflowMenu({
                         }
                     }}
                 >
+                    {extras?.(act)}
                     {state.journalPins ? (
                         journalPinned ? (
                             <>
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => openPinDialog({ kind: "edit", convoId: id })}
@@ -3297,7 +4266,7 @@ function HeaderOverflowMenu({
                                     Edit pin…
                                 </button>
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => openPinDialog({ kind: "move", convoId: id })}
@@ -3306,7 +4275,7 @@ function HeaderOverflowMenu({
                                     Move pin…
                                 </button>
                                 <button
-                                    className="mj_RoomItemMenu_item"
+                                    className="mj_ConversationMenu_item"
                                     type="button"
                                     role="menuitem"
                                     onClick={() => act(() => void client.removePin(id))}
@@ -3317,7 +4286,7 @@ function HeaderOverflowMenu({
                             </>
                         ) : (
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => openPinDialog({ kind: "edit", convoId: id })}
@@ -3328,7 +4297,7 @@ function HeaderOverflowMenu({
                         )
                     ) : (
                         <button
-                            className="mj_RoomItemMenu_item"
+                            className="mj_ConversationMenu_item"
                             type="button"
                             role="menuitem"
                             onClick={() =>
@@ -3340,7 +4309,7 @@ function HeaderOverflowMenu({
                         </button>
                     )}
                     <button
-                        className="mj_RoomItemMenu_item"
+                        className="mj_ConversationMenu_item"
                         type="button"
                         role="menuitem"
                         onClick={() =>
@@ -3354,7 +4323,7 @@ function HeaderOverflowMenu({
                     </button>
                     {!isArchived && (
                         <button
-                            className="mj_RoomItemMenu_item"
+                            className="mj_ConversationMenu_item"
                             type="button"
                             role="menuitem"
                             onClick={() =>
@@ -3368,7 +4337,7 @@ function HeaderOverflowMenu({
                         </button>
                     )}
                     {/* Hidden, never guessed, until the bridge reports the session's extras. */}
-                    {extras !== undefined && (
+                    {statusExtras !== undefined && (
                         <BrowserToolsItem
                             state={browserState}
                             codex={codex}
@@ -3380,7 +4349,7 @@ function HeaderOverflowMenu({
                     )}
                     <MenuSeparator />
                     <button
-                        className="mj_RoomItemMenu_item"
+                        className="mj_ConversationMenu_item"
                         type="button"
                         role="menuitem"
                         onClick={() =>
@@ -3435,9 +4404,12 @@ const COMPACT_PULSE_TIMEOUT_MS = 180_000;
 function CompactButton({
     client,
     contextTokens,
+    iconOnly = false,
 }: {
     client: MatronJournalClient;
     contextTokens: number;
+    /** Too narrow for the label: the header folds the pill to its icon. */
+    iconOnly?: boolean;
 }): React.ReactElement {
     const [compacting, setCompacting] = useState(false);
     const baselineRef = useRef<number | null>(null);
@@ -3465,7 +4437,7 @@ function CompactButton({
 
     return (
         <button
-            className={`mj_CompactButton${compacting ? " mj_CompactButton_compacting" : ""}`}
+            className={`mj_CompactButton${compacting ? " mj_CompactButton_compacting" : ""}${iconOnly ? " mj_CompactButton_iconOnly" : ""}`}
             type="button"
             aria-label="Compact conversation"
             aria-busy={compacting}
@@ -3473,8 +4445,8 @@ function CompactButton({
             disabled={compacting}
             onClick={onClick}
         >
-            <CompactIcon />
-            <span>{compacting ? "Compacting…" : "Compact"}</span>
+            <CompactIcon aria-hidden />
+            {!iconOnly && <span>{compacting ? "Compacting…" : "Compact"}</span>}
         </button>
     );
 }
@@ -3556,6 +4528,185 @@ function LimitsResetIndicator({ limits }: { limits: SessionStatus["limits"] }): 
     );
 }
 
+/** The least of a mission name worth drawing in the chip; with less room it reads "#12 S…", so the
+ *  chip shows "#12 +2" instead (the Mac's minimumNameWidth). */
+const CHIP_MIN_NAME_PX = 40;
+const CHIP_MAX_PX = 240;
+const CHIP_TITLE_STUB_REM = 6;
+
+/**
+ * How the chip fits beside the conversation title: the title comes first and the chip takes what it
+ * leaves. The name shows while there is room for at least CHIP_MIN_NAME_PX of it, else the chip
+ * reads "#12 +2" rather than "#12 S…"; and the chip keeps that number-only width (`minWidth`) unless
+ * even that would push the title below its stub, when the chip is hidden (`minWidth` null). Measured from the
+ * title row (the chip's parent), since which of the two gives way depends on both their lengths.
+ */
+function useChipFit(
+    triggerRef: React.RefObject<HTMLButtonElement | null>,
+    name: string | null,
+): { nameFits: boolean; minWidth: number | null } {
+    const [fit, setFit] = useState<{ nameFits: boolean; minWidth: number | null }>({ nameFits: true, minWidth: null });
+    useLayoutEffect(() => {
+        const trigger = triggerRef.current;
+        const row = trigger?.parentElement?.parentElement;
+        const nameEl = trigger?.querySelector<HTMLElement>(".mj_MissionChip_name");
+        if (!trigger || !row || !nameEl) return;
+        const measure = (): void => {
+            const title = row.firstElementChild as HTMLElement | null;
+            const heading = title?.querySelector<HTMLElement>(".mj_ChatHeader_heading");
+            const meta = title?.querySelector<HTMLElement>(".mj_HeaderMeta, .mj_HeaderTitleDisclosure");
+            const titleWant = Math.max(heading?.scrollWidth ?? 0, meta?.scrollWidth ?? 0);
+            // The title's stub: `min-width: min(6rem, 100%)` on the title cluster in the CSS.
+            const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+            const titleStub = Math.min(titleWant, CHIP_TITLE_STUB_REM * rem);
+            const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
+            // The chip without its name ("#12 +2"), and with all of it, capped like the CSS.
+            const numberOnly = Math.ceil(trigger.scrollWidth - nameEl.getBoundingClientRect().width);
+            const full = Math.min(CHIP_MAX_PX, numberOnly + (name ? nameEl.scrollWidth + 4 : 0));
+            const room = row.clientWidth - titleWant - gap;
+            const nameFits = !!name && (room >= full || room >= numberOnly + CHIP_MIN_NAME_PX);
+            const minWidth = row.clientWidth - titleStub - gap >= numberOnly ? numberOnly : null;
+            setFit((prev) =>
+                prev.nameFits === nameFits && prev.minWidth === minWidth ? prev : { nameFits, minWidth },
+            );
+        };
+        measure();
+        if (typeof ResizeObserver === "undefined") return;
+        const observer = new ResizeObserver(measure);
+        observer.observe(row);
+        const heading = row.firstElementChild?.querySelector(".mj_ChatHeader_heading");
+        if (heading) observer.observe(heading);
+        return () => observer.disconnect();
+    }, [triggerRef, name]);
+    return fit;
+}
+
+// The chat header's mission chip, after the Mac's: "⚑ #12 Ship the docs +2 ▾" names the
+// conversation's current mission (else its newest), and opens every mission the conversation
+// touched as Current / Also on / Earlier. Picking one opens its mission page. Hidden while the
+// conversation has never been on a mission, and until its missions are fetched.
+export function MissionChip({
+    client,
+    conversation,
+    links,
+}: {
+    client: MatronJournalClient;
+    conversation: Conversation;
+    links: readonly ConversationMissionLink[];
+}): React.ReactElement | null {
+    const [open, setOpen] = useState(false);
+    const openerRef = useRef<HTMLButtonElement>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+    const close = useCallback(() => setOpen(false), []);
+    useDismissablePopover(open, close, { openerRef, panelRef });
+    useLayoutEffect(() => {
+        if (open) panelRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }, [open]);
+
+    const label = chipLabel(links, conversation.title);
+    const fit = useChipFit(openerRef, label?.name ?? null);
+    if (!label) return null;
+    const sections = missionSections(links);
+    const headline = chipHeadline(sections)!;
+    const groups: Array<[string, ConversationMissionLink[]]> = [
+        ["Current", sections.current ? [sections.current] : []],
+        ["Also on", sections.alsoOn],
+        ["Earlier", sections.earlier],
+    ];
+    const openMission = (num: number): void => {
+        close();
+        client.openTrackerMission(num);
+    };
+    const accessible =
+        `Mission ${headline.num}, ${headline.title}` +
+        (label.others > 0 ? `, and ${label.others} more` : "") +
+        ". Every mission this conversation worked on";
+
+    return (
+        <div
+            className={`mj_MissionChip${fit.minWidth == null ? " mj_MissionChip_hidden" : ""}`}
+            style={fit.minWidth != null ? { minWidth: fit.minWidth } : undefined}
+            onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close();
+            }}
+        >
+            <button
+                ref={openerRef}
+                type="button"
+                className={`mj_MissionChip_trigger${headline.current ? " mj_MissionChip_trigger_current" : ""}`}
+                aria-label={accessible}
+                title="Every mission this conversation worked on"
+                aria-haspopup="menu"
+                aria-expanded={open}
+                onClick={() => setOpen((current) => !current)}
+            >
+                <ProjectsIcon className="mj_MissionChip_flag" aria-hidden="true" />
+                <span className="mj_MissionChip_num">{label.number}</span>
+                {/* Always rendered, empty when unused: the chip's grid has a fixed column for each. */}
+                <span className={`mj_MissionChip_name${fit.nameFits ? "" : " mj_MissionChip_name_hidden"}`}>
+                    {label.name ?? ""}
+                </span>
+                <span className="mj_MissionChip_more">{label.others > 0 ? `+${label.others}` : ""}</span>
+                <ChevronDownIcon className="mj_MissionChip_chevron" aria-hidden="true" />
+            </button>
+            {open && (
+                <div
+                    className="mj_HeaderMenu mj_MissionMenu"
+                    role="menu"
+                    aria-label="Missions"
+                    ref={panelRef}
+                    onKeyDown={(event) => {
+                        const items = Array.from(
+                            event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+                        );
+                        const index = items.findIndex((item) => item === document.activeElement);
+                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                            event.preventDefault();
+                            const step = event.key === "ArrowDown" ? 1 : -1;
+                            const next =
+                                index === -1
+                                    ? step === 1
+                                        ? 0
+                                        : items.length - 1
+                                    : (index + step + items.length) % items.length;
+                            items[next]?.focus();
+                        } else if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            close();
+                            openerRef.current?.focus();
+                        }
+                    }}
+                >
+                    {groups.map(([groupLabel, rows]) =>
+                        rows.length === 0 ? null : (
+                            <div key={groupLabel} className="mj_MissionMenu_group" role="group" aria-label={groupLabel}>
+                                <div className="mj_MissionMenu_label" aria-hidden="true">
+                                    {groupLabel}
+                                </div>
+                                {rows.map((link) => (
+                                    <button
+                                        key={link.id}
+                                        type="button"
+                                        role="menuitem"
+                                        className={`mj_MissionMenu_item${isEarlierLink(link) ? " mj_MissionMenu_item_earlier" : ""}`}
+                                        onClick={() => openMission(link.num)}
+                                    >
+                                        <span className="mj_MissionMenu_title">
+                                            <span className="mj_MissionMenu_num">#{link.num}</span> {link.title}
+                                        </span>
+                                        <span className="mj_MissionMenu_line">{linkLine(link)}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        ),
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
 function ChatHeader({
     client,
     state,
@@ -3563,22 +4714,32 @@ function ChatHeader({
 }: {
     client: MatronJournalClient;
     state: ClientState;
-    collapse?: { usageCollapsed: boolean; titleCollapsed: boolean };
+    /** `controlsFolded`: too narrow for every control beside the title (useAdaptiveHeader). */
+    collapse?: { usageCollapsed: boolean; titleCollapsed: boolean; controlsFolded?: boolean };
 }): React.ReactElement {
     const conversation = client.selectedConversation();
+    const controlsFolded = collapse.controlsFolded === true;
     const title = conversation ? displayTitle(conversation) : "Conversation";
     const status = state.sessionStatus;
     const runState = conversation?.session_state;
     const limits = status?.limits?.filter((limit) => limit.label.trim());
     const meters = buildUsageMeters(status, limits, state.hostVitals);
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
-    const hasSubtitle = Boolean(status?.model || runState);
+    const hasSubtitle = Boolean(status?.model || status?.email || runState);
     const browserQueued = useMemo(
         () =>
             conversation?.agent_kind !== "codex" &&
             browserToolsState(state.events, runState === "running", status?.extras) === "queued",
         [conversation?.agent_kind, state.events, runState, status?.extras],
     );
+    // The mission chip's data: fetched whenever another conversation comes on screen (mission
+    // markers keep it fresh after that), and only ever shown for the conversation it was fetched for.
+    const convoId = conversation?.id;
+    useEffect(() => {
+        if (convoId) void client.loadConversationMissions(convoId);
+    }, [client, convoId]);
+    const missionLinks =
+        convoId && state.conversationMissions?.convoId === convoId ? state.conversationMissions.links : [];
     return (
         <HeaderShell
             mode="parent"
@@ -3588,8 +4749,10 @@ function ChatHeader({
             titleNode={conversation ? <TaggedTitle conversation={conversation} agents={state.agents} /> : undefined}
             subtitle={
                 <>
-                    {status?.model && <span className="mj_HeaderModel">{status.model}</span>}
+                    {status?.model && <span className="mj_HeaderModel">{modelLine(status.model, status.effort)}</span>}
                     <LimitsResetIndicator limits={limits} />
+                    {/* The account the session runs under, after its workdir, as on the Mac. */}
+                    {status?.email && <span className="mj_HeaderEmail">{status.email}</span>}
                     {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runState}</span>}
                 </>
             }
@@ -3605,7 +4768,16 @@ function ChatHeader({
                 )
             }
             hasSubtitle={hasSubtitle}
-            rightControls={status?.context && <CompactButton client={client} contextTokens={status.context.tokens} />}
+            titleAccessory={
+                conversation && missionLinks.length > 0 ? (
+                    <MissionChip client={client} conversation={conversation} links={missionLinks} />
+                ) : undefined
+            }
+            rightControls={
+                status?.context && (
+                    <CompactButton client={client} contextTokens={status.context.tokens} iconOnly={controlsFolded} />
+                )
+            }
             persistentControls={
                 // Keyed by conversation id so a selection change while the menu is open
                 // remounts (and closes) it, instead of silently retargeting the actions.
@@ -3617,11 +4789,43 @@ function ChatHeader({
                                 Restarting after this step
                             </span>
                         )}
+                        {!controlsFolded && (
+                            <RoomsControl
+                                key={`rooms-${conversation.id}`}
+                                client={client}
+                                state={state}
+                                conversation={conversation}
+                            />
+                        )}
+                        <MediaBrowserButton
+                            key={`media:${conversation.id}`}
+                            client={client}
+                            convoId={conversation.id}
+                        />
+                        <ChatTasksButton client={client} state={state} convoId={conversation.id} />
+                        <ConvoNotifyBell
+                            key={`notify-${conversation.id}`}
+                            client={client}
+                            convoId={conversation.id}
+                            onlyWhenSilenced={controlsFolded}
+                        />
                         <HeaderOverflowMenu
                             key={conversation.id}
                             client={client}
                             conversation={conversation}
                             state={state}
+                            extras={
+                                controlsFolded
+                                    ? (pick) => (
+                                          <OverflowRoomsAndNotify
+                                              client={client}
+                                              state={state}
+                                              conversation={conversation}
+                                              onPick={pick}
+                                          />
+                                      )
+                                    : undefined
+                            }
                         />
                     </>
                 )
@@ -3630,6 +4834,81 @@ function ChatHeader({
             limits={meters}
             collapse={collapse}
         />
+    );
+}
+
+// Opens the conversation's Media / Files / Links browser. Keyed by conversation, so moving to
+// another chat closes it.
+function MediaBrowserButton({ client, convoId }: { client: MatronJournalClient; convoId: string }): React.ReactElement {
+    const [open, setOpen] = useState(false);
+    const close = useCallback(() => setOpen(false), []);
+    // A Files row: the chat's own file chip, so a file opens the same way it does in the chat.
+    const renderFile = useCallback(
+        (item: MediaItem): React.ReactNode =>
+            item.expired ? (
+                <ExpiredFile filename={item.filename} contentType={item.contentType} />
+            ) : (
+                <AuthenticatedMedia
+                    client={client}
+                    mediaId={item.mediaId}
+                    image={false}
+                    filename={item.filename || "attachment"}
+                    contentType={item.contentType}
+                    size={item.size}
+                />
+            ),
+        [client],
+    );
+    return (
+        <>
+            <button
+                type="button"
+                className="mj_IconButton mj_MediaBrowserToggle"
+                aria-label="Media, files and links"
+                aria-haspopup="dialog"
+                title="Media, files & links"
+                onClick={() => setOpen(true)}
+            >
+                <MediaBrowserIcon aria-hidden />
+            </button>
+            {open &&
+                createPortal(
+                    <MediaBrowserSheet client={client} convoId={convoId} renderFile={renderFile} onClose={close} />,
+                    document.body,
+                )}
+        </>
+    );
+}
+
+// Opens the Tasks & decisions pane beside the chat. Its badge counts this chat's open items that
+// wait on the user, from the app-wide open items that already feed the For you badge.
+function ChatTasksButton({
+    client,
+    state,
+    convoId,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    convoId: string;
+}): React.ReactElement {
+    const needsYou = useMemo(
+        () => (state.inboxItems ?? []).filter((item) => item.origin_convo_id === convoId && needsUser(item)).length,
+        [state.inboxItems, convoId],
+    );
+    // Pressed only while the slot beside the chat shows the Tasks pane (a subagent there wins).
+    const open = chatSidePane(state)?.kind === "tasks";
+    return (
+        <button
+            type="button"
+            className={`mj_IconButton mj_ChatTasksToggle${open ? " mj_ChatTasksToggle_open" : ""}`}
+            aria-label={`Tasks and decisions${needsYou > 0 ? `, ${needsYou} need you` : ""}`}
+            aria-pressed={open}
+            title="Tasks & decisions"
+            onClick={() => client.toggleChatTasks(!open)}
+        >
+            <ChecklistIcon aria-hidden />
+            <NeedsYouBadge count={needsYou} />
+        </button>
     );
 }
 
@@ -3856,8 +5135,6 @@ export function QueuedReleaseCard({
     );
 }
 
-const PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS = 10_000;
-
 function PromptCard({
     client,
     event,
@@ -3874,6 +5151,9 @@ function PromptCard({
     isReadOnly?: boolean;
 }): React.ReactElement {
     const [freeText, setFreeText] = useState("");
+    // Indexes of the options ticked on a pick_many question; nothing is sent until Send.
+    const [picked, setPicked] = useState<ReadonlySet<number>>(() => new Set());
+    const questionId = useId();
     const [locallyAnswered, setLocallyAnswered] = useState(false);
     const [confirmationTimedOut, setConfirmationTimedOut] = useState(false);
     const [nowMs, setNowMs] = useState(() => Date.now());
@@ -3894,6 +5174,9 @@ function PromptCard({
         }
         return { label: String(option), value: String(option) };
     });
+    // A multi-select question (`mode: "pick_many"`): options toggle, and one Send answers with
+    // every ticked option's value, in option order, joined by ", " — the reply the other apps send.
+    const pickMany = !permission && event.payload.mode === "pick_many" && options.length > 0;
     const resolved = answered || (!permission && locallyAnswered);
     const expiresAt =
         typeof event.payload.expires_at === "number" && Number.isFinite(event.payload.expires_at)
@@ -3941,9 +5224,24 @@ function PromptCard({
     // "Allow"; for a generic question the first option whose label reads affirmative
     // (send/yes/continue/confirm/ok/approve). Chosen by SEMANTICS, not position, so a
     // reordered payload never fills "Always allow" / "Deny" / "Cancel".
-    const affirmativeIndex = options.findIndex((option) =>
-        permission ? option.label.trim().toLocaleLowerCase() === "allow" : PROMPT_AFFIRMATIVE.test(option.label.trim()),
-    );
+    // A multi-select question's one primary is its Send button, never an option.
+    const affirmativeIndex = pickMany
+        ? -1
+        : options.findIndex((option) =>
+              permission
+                  ? option.label.trim().toLocaleLowerCase() === "allow"
+                  : PROMPT_AFFIRMATIVE.test(option.label.trim()),
+          );
+    const togglePicked = (index: number): void =>
+        setPicked((current) => {
+            const next = new Set(current);
+            if (!next.delete(index)) next.add(index);
+            return next;
+        });
+    const sendPicked = (): void => {
+        const values = options.filter((_option, index) => picked.has(index)).map((option) => option.value);
+        if (values.length > 0) answer(values.join(", "));
+    };
 
     return (
         <div className={permission ? "mj_PromptCard mj_PromptCard_permission" : "mj_PromptCard"}>
@@ -3957,9 +5255,46 @@ function PromptCard({
                 <span className="mj_PromptGlyph" aria-hidden="true">
                     {permission ? <PromptTerminalGlyph /> : <PromptMailGlyph />}
                 </span>
-                <span className="mj_PromptQuestion">{question}</span>
+                <span className="mj_PromptQuestion" id={questionId}>
+                    {question}
+                </span>
             </div>
-            {!isReadOnly && !resolved && options.length > 0 && (
+            {!isReadOnly && !resolved && pickMany && (
+                <>
+                    <div
+                        className="mj_PromptOptions mj_PromptOptions_pickMany"
+                        role="group"
+                        aria-labelledby={questionId}
+                    >
+                        {options.map((option, index) => (
+                            <button
+                                key={`${option.label}:${option.value}`}
+                                type="button"
+                                className="mj_PromptOption_toggle"
+                                aria-pressed={picked.has(index)}
+                                disabled={pending}
+                                onClick={() => togglePicked(index)}
+                            >
+                                <span className="mj_PromptOption_check" aria-hidden="true">
+                                    {picked.has(index) && <PromptCheckGlyph />}
+                                </span>
+                                {option.label}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="mj_PromptOptions mj_PromptOptions_send">
+                        <button
+                            type="button"
+                            className="mj_PromptOption_affirmative"
+                            disabled={pending || picked.size === 0}
+                            onClick={sendPicked}
+                        >
+                            Send
+                        </button>
+                    </div>
+                </>
+            )}
+            {!isReadOnly && !resolved && !pickMany && options.length > 0 && (
                 <div className="mj_PromptOptions">
                     {options.map((option, index) => (
                         <button
@@ -4012,9 +5347,9 @@ function PromptCard({
                         aria-hidden="true"
                         style={
                             durablyDenied
-                                ? { color: "var(--cpd-color-text-critical-primary)" }
+                                ? { color: "var(--mj-color-text-critical-primary)" }
                                 : durablyAllowed
-                                  ? { color: "var(--cpd-color-usage-low)" }
+                                  ? { color: "var(--mj-color-usage-low)" }
                                   : undefined
                         }
                     >
@@ -4024,9 +5359,9 @@ function PromptCard({
                         className="mj_Answered"
                         style={
                             durablyDenied
-                                ? { color: "var(--cpd-color-text-critical-primary)" }
+                                ? { color: "var(--mj-color-text-critical-primary)" }
                                 : durablyAllowed
-                                  ? { color: "var(--cpd-color-usage-low)" }
+                                  ? { color: "var(--mj-color-usage-low)" }
                                   : undefined
                         }
                     >
@@ -4066,24 +5401,6 @@ function PromptMailGlyph(): React.ReactElement {
     );
 }
 
-function PromptTerminalGlyph(): React.ReactElement {
-    return (
-        <svg
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <path d="m5 7 5 5-5 5" />
-            <path d="M13 17h6" />
-        </svg>
-    );
-}
-
 function PromptCheckGlyph(): React.ReactElement {
     return (
         <svg
@@ -4117,266 +5434,231 @@ function PromptDeniedGlyph(): React.ReactElement {
     );
 }
 
-// A journaled agent_spawn card is unanswerable if the bridge minted a malformed payload
-// (non-string/empty request_id or task) — rendered as a read-only AgentSpawnCard rather than
-// with Approve/Deny buttons nothing can resolve.
-function isAnswerableAgentSpawn(payload: EventPayload): boolean {
-    return (
-        typeof payload.request_id === "string" &&
-        payload.request_id.length > 0 &&
-        typeof payload.task === "string" &&
-        payload.task.length > 0
-    );
+type AgentChatLocalPhase = { kind: "idle" } | { kind: "sending" } | { kind: "failed"; message: string };
+
+type AgentChatAnswerOutcome =
+    { kind: "settled"; answer: RememberedAgentChatAnswer } | { kind: "failed"; message: string };
+
+// Answers still in flight, keyed by answers scope + card. Module-level so they outlive the card:
+// the request is never aborted on unmount, and a remounted card follows it instead of drawing
+// its buttons again (a second tap would race the first, and its 409 read as "expired").
+const agentChatAnswersInFlight = new Map<string, Promise<AgentChatAnswerOutcome>>();
+
+const noopAgentChatAnswer = (_decision: AgentChatDecision): Promise<unknown> => Promise.resolve();
+
+// A transport failure surfaces as a JournalApiError with status 0.
+function agentChatErrorMessage(error: unknown): string {
+    if (error instanceof JournalApiError && error.status === 404) return "That request is no longer on the server.";
+    if (error instanceof JournalApiError && error.status !== 0) return "The server refused that answer.";
+    return "Couldn't reach the server — check your connection and try again.";
 }
 
-const SPAWN_OUTCOME_CARD_LABELS: Record<Exclude<SpawnOutcomeKind, "failed">, string> = {
-    started: "Started",
-    declined: "Denied",
-    expired: "Expired",
-    unknown: "Spawn request resolved",
-};
-
-// Plain-text labels for the card's resolved-state row (§ design "Resolved states"). Distinct
-// from spawnOutcomeSnippet's emoji-prefixed copy, which is for the standalone timeline row.
-function spawnOutcomeCardLabel(payload: EventPayload): string {
-    const kind = spawnOutcomeKind(payload);
-    if (kind === "failed") {
-        const errorCode = asString(payload.error_code);
-        return errorCode ? `Failed — ${errorCode}` : "Failed";
-    }
-    return SPAWN_OUTCOME_CARD_LABELS[kind];
+function rememberedResolution(answer: RememberedAgentChatAnswer | undefined): AgentChatResolution | undefined {
+    if (answer === undefined) return undefined;
+    return answer === "expired" ? { kind: "expired" } : { kind: "answered", approved: answer === "approve" };
 }
 
-type AgentSpawnDecision = "approve" | "deny";
-type AgentSpawnLocalPhase = "idle" | "sending" | "retryable" | "already-answered" | "gone";
-
-const noopAgentSpawnAnswer = (_decision: AgentSpawnDecision, _signal?: AbortSignal): Promise<void> => Promise.resolve();
-const noopAgentSpawnOpen = (): void => undefined;
-
-// Joins the .mj_PromptCard family (§ design "Kind dispatch and components"): same chrome and
-// row order as PromptCard so answering doesn't reflow.
-//
-// Local state machine (§ design "Resolution state"): idle -> sending -> {resolved via the
-// DURABLE spawn_outcome event | retryable after PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS with no
-// durable event, mirroring PromptCard's confirmation-timeout treatment}. A tap's own POST can
-// also fail synchronously: 409 (already answered elsewhere/expired) and 404 (row gone) resolve
-// the card immediately with local copy; any other failure (network/transport) goes straight to
-// the retryable state. The `outcome` prop (derived from journaled events, no local persistence)
-// always wins over local phase — a durable resolution can arrive from another device at any time.
-// The card's "Runs" line: the agent, model and effort the child will start with (journal
-// protocol.md "What will run"). A value taken from the target box's defaults is marked "(box
-// default)" — once, after the first value, when all of them came from the box; else on each.
-const SPAWN_AGENT_LABELS: Record<string, string> = { claude: "Claude", codex: "Codex" };
-
-function spawnRunsLabel(payload: EventPayload): string {
-    const parts = (["agent", "model", "effort"] as const).flatMap((key) => {
-        const value = asString(payload[key]).trim();
-        if (!value) return [];
-        const text = key === "agent" ? (SPAWN_AGENT_LABELS[value] ?? value) : value;
-        return [{ text, boxDefault: payload[`${key}_source`] === "box_default" }];
-    });
-    const allBoxDefault = parts.length > 0 && parts.every((part) => part.boxDefault);
-    return parts
-        .map((part, index) =>
-            (allBoxDefault ? index === 0 : part.boxDefault) ? `${part.text} (box default)` : part.text,
-        )
-        .join(" · ");
-}
-
-function AgentSpawnCard({
+// The agent-chat consent card: who is asking to talk to whom, about what and why, and the two
+// buttons that answer it. Same .mj_PromptCard chrome as the spawn card. Unlike the spawn card
+// there is no durable outcome event to wait for: a 200 from the answer call IS the decision, so
+// it is remembered locally. Precedence: what the timeline says (the consent item's closing
+// marker — a decision made on another device, or the ask lapsing) > the answer remembered here
+// > the in-flight/failed tap > answerable. A 409 means the ask stopped waiting between drawing
+// and the tap; that is nothing the user can act on, so it settles the card rather than erroring.
+// An answer in flight is never aborted when the card unmounts (leaving the conversation): the
+// decision may already be on the server, and it is still remembered when the call settles.
+function AgentChatRequestCard({
     event,
-    outcome,
+    request,
+    resolution,
+    coordinatorDecision,
+    answersScope,
     isReadOnly = false,
-    onAnswer = noopAgentSpawnAnswer,
-    onOpen = noopAgentSpawnOpen,
+    onAnswer = noopAgentChatAnswer,
 }: {
     event: JournalEvent;
-    outcome: EventPayload | null;
+    request: AgentChatRequest;
+    resolution?: AgentChatResolution;
+    /** The Coordinator's answer to this card, when it gave one: it settles the card, and its
+        reason goes on the outcome line. */
+    coordinatorDecision?: CoordinatorDecision;
+    /** Where this session's answers are remembered (agentChatAnswersScope). */
+    answersScope?: string;
     isReadOnly?: boolean;
-    onAnswer?: (decision: AgentSpawnDecision, signal?: AbortSignal) => Promise<void>;
-    onOpen?: (roomId: string) => void;
+    onAnswer?: (decision: AgentChatDecision) => Promise<unknown>;
 }): React.ReactElement {
-    const payload = event.payload;
-    const task = asString(payload.task);
-    const topic = asString(payload.topic);
-    const headline = topic || task.split("\n")[0] || "Agent spawn request";
-    const fromConvoTitle = asString(payload.from_convo_title);
-    const fromName = asString(payload.from_name);
-    const targetName = asString(payload.target_name);
-    const workdir = asString(payload.workdir);
-    const runs = spawnRunsLabel(payload);
-    const resolved = outcome !== null;
-    const kind = resolved ? spawnOutcomeKind(outcome) : undefined;
-    const roomId = resolved ? asString(outcome.room_id) : "";
-
-    const [phase, setPhase] = useState<AgentSpawnLocalPhase>("idle");
-    const phaseRef = useRef(phase);
-    // Bugbot/CodeRabbit finding on #23: attempt A's POST can still be in flight when the user
-    // retries (attempt B) after A's own confirmation timeout. Every phase transition below is
-    // gated on "is my attemptId still the current one?" so a late-settling A can never clobber
-    // B's `sending` with a stale `retryable`/`already-answered`/`gone` — which would otherwise
-    // re-enable Approve/Deny while B is still pending and invite a duplicate POST. mountedRef
-    // additionally guards the promise-settlement handlers (not the setTimeout below, whose
-    // cleanup already cancels it on unmount) — mirrors the new-session sheet's
-    // agentsRequestIdRef/mountedRef pattern above.
-    const attemptIdRef = useRef(0);
+    const cardKey = agentChatCardKey(event);
+    const flightKey = `${answersScope ?? ""}|${cardKey}`;
+    const [remembered, setRemembered] = useState(() => rememberedAgentChatAnswer(answersScope, cardKey));
+    // A card remounted while its answer is still in flight (the user left the conversation and
+    // came back) picks the request up again rather than offering the buttons a second time.
+    const [phase, setPhase] = useState<AgentChatLocalPhase>(() =>
+        agentChatAnswersInFlight.has(flightKey) ? { kind: "sending" } : { kind: "idle" },
+    );
     const mountedRef = useRef(false);
-    // Aborting the previous attempt's POST before the buttons re-enable narrows the
-    // Deny-races-Approve window: without it, a stalled Approve can still be in flight when the
-    // confirmation timeout re-enables the row, and a user's corrective Deny then loses the
-    // server-side first-arrival race to their own abandoned tap. The abort can't recall bytes the
-    // server already received — the durable outcome event stays authoritative for that case.
-    const abortRef = useRef<AbortController | null>(null);
-    const setLocalPhase = (next: AgentSpawnLocalPhase): void => {
-        phaseRef.current = next;
-        setPhase(next);
-    };
+
+    const follow = useCallback((flight: Promise<AgentChatAnswerOutcome>): void => {
+        void flight.then((outcome) => {
+            if (!mountedRef.current) return;
+            if (outcome.kind === "failed") {
+                setPhase({ kind: "failed", message: outcome.message });
+            } else {
+                setRemembered(outcome.answer);
+                setPhase({ kind: "idle" });
+            }
+        });
+    }, []);
 
     useEffect(() => {
         mountedRef.current = true;
+        const flight = agentChatAnswersInFlight.get(flightKey);
+        if (flight) follow(flight);
         return (): void => {
             mountedRef.current = false;
-            abortRef.current?.abort();
         };
-    }, []);
+    }, [flightKey, follow]);
 
-    const handleAnswer = (decision: AgentSpawnDecision): void => {
-        if (resolved || phaseRef.current === "sending") return;
-        const attemptId = ++attemptIdRef.current;
-        abortRef.current?.abort();
-        const controller = new AbortController();
-        abortRef.current = controller;
-        setLocalPhase("sending");
-        void onAnswer(decision, controller.signal).then(
-            () => undefined, // ack received; wait for the durable event (or the timeout effect below)
-            (error: unknown) => {
-                // A newer attempt (retry, or another tab) has already moved the phase on —
-                // this settlement is stale and must not touch state.
-                if (!mountedRef.current || attemptId !== attemptIdRef.current) return;
-                if (error instanceof JournalApiError && error.status === 409) setLocalPhase("already-answered");
-                else if (error instanceof JournalApiError && error.status === 404) setLocalPhase("gone");
-                else setLocalPhase("retryable"); // transport/other error -> back to answerable
-            },
-        );
+    // A Coordinator decision outranks everything: a later close of its consent item cannot undo it.
+    const settled: AgentChatResolution | undefined = coordinatorDecision
+        ? { kind: "answered", approved: coordinatorDecision.approved, byCoordinator: true }
+        : (resolution ?? rememberedResolution(remembered));
+
+    const handleAnswer = (decision: AgentChatDecision): void => {
+        if (settled || agentChatAnswersInFlight.has(flightKey)) return;
+        setPhase({ kind: "sending" });
+        const flight = onAnswer(decision)
+            .then(
+                (): AgentChatAnswerOutcome => ({ kind: "settled", answer: decision }),
+                (error: unknown): AgentChatAnswerOutcome =>
+                    error instanceof JournalApiError && error.status === 409
+                        ? { kind: "settled", answer: "expired" }
+                        : { kind: "failed", message: agentChatErrorMessage(error) },
+            )
+            .then((outcome): AgentChatAnswerOutcome => {
+                agentChatAnswersInFlight.delete(flightKey);
+                if (outcome.kind === "settled") {
+                    rememberAgentChatAnswer(answersScope, cardKey, outcome.answer);
+                    // A 409 never overwrites a decision already remembered for this card.
+                    const stored = rememberedAgentChatAnswer(answersScope, cardKey);
+                    return stored ? { kind: "settled", answer: stored } : outcome;
+                }
+                return outcome;
+            });
+        agentChatAnswersInFlight.set(flightKey, flight);
+        follow(flight);
     };
 
-    useEffect(() => {
-        if (phase !== "sending" || resolved) return;
-        const attemptId = attemptIdRef.current;
-        const timer = setTimeout(() => {
-            if (attemptId !== attemptIdRef.current) return; // superseded by a newer attempt
-            if (phaseRef.current === "sending") {
-                abortRef.current?.abort(); // kill the stalled POST before re-enabling the buttons
-                setLocalPhase("retryable");
-            }
-        }, PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS);
-        return (): void => clearTimeout(timer);
-    }, [phase, resolved]);
-
-    const pending = !resolved && phase === "sending";
-    const retryable = !resolved && phase === "retryable";
-    const alreadyAnswered = !resolved && phase === "already-answered";
-    const gone = !resolved && phase === "gone";
-    // Hides the action row for the same reasons a durable resolution does — nothing more to
-    // tap — even though these two are local-only, never journaled.
-    const pseudoResolved = resolved || alreadyAnswered || gone;
+    const sending = !settled && phase.kind === "sending";
+    const fields: Array<[string, string, string]> = [
+        ["from", "From", agentChatFromLabel(request)],
+        ["to", "To", agentChatToLabel(request)],
+    ];
+    if (request.topic) fields.push(["about", "About", request.topic]);
+    if (request.justification) fields.push(["why", "Why", request.justification]);
 
     return (
-        <div className="mj_PromptCard mj_PromptCard_spawn">
+        <div className="mj_PromptCard mj_PromptCard_chat">
             <div className="mj_PromptHeader">
-                <span className="mj_PromptLabel">Agent spawn request</span>
+                <span className="mj_PromptLabel">Agent chat request</span>
                 <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
                     {formatTime(event.ts)}
                 </time>
             </div>
             <div className="mj_PromptBody">
                 <span className="mj_PromptGlyph" aria-hidden="true">
-                    <PromptTerminalGlyph />
+                    <PromptPeopleGlyph />
                 </span>
-                <span className="mj_SpawnHeadline">{headline}</span>
+                <span className="mj_PromptQuestion">{agentChatHeadline(request)}</span>
             </div>
             <div className="mj_SpawnDetails">
-                <div className="mj_SpawnDetail mj_SpawnDetail_from">
-                    <span className="mj_SpawnDetail_label">From</span>
-                    <span className="mj_SpawnDetail_value">
-                        {fromConvoTitle}
-                        {fromConvoTitle && fromName ? " · " : ""}
-                        {fromName}
-                    </span>
-                </div>
-                <div className="mj_SpawnDetail mj_SpawnDetail_target">
-                    <span className="mj_SpawnDetail_label">Target</span>
-                    <span className="mj_SpawnDetail_value">{targetName}</span>
-                </div>
-                <div className="mj_SpawnDetail mj_SpawnDetail_folder">
-                    <span className="mj_SpawnDetail_label">Folder</span>
-                    <span className="mj_SpawnDetail_value">{workdir}</span>
-                </div>
-                {runs && (
-                    <div className="mj_SpawnDetail mj_SpawnDetail_runs">
-                        <span className="mj_SpawnDetail_label">Runs</span>
-                        <span className="mj_SpawnDetail_value">{runs}</span>
+                {fields.map(([key, label, value]) => (
+                    <div key={key} className={`mj_SpawnDetail mj_ChatDetail_${key}`}>
+                        <span className="mj_SpawnDetail_label">{label}</span>
+                        <span className="mj_SpawnDetail_value">{value}</span>
                     </div>
-                )}
+                ))}
             </div>
-            <pre className="mj_SpawnTask">{task}</pre>
-            {/* A read-only card (sub-chat transcript viewer) never shows live Approve/Deny — it
-                mirrors PromptCard's own isReadOnly gate (§ Task-1-review scope A). */}
-            {!isReadOnly && !pseudoResolved && (
+            {!isReadOnly && !settled && (
                 <div className="mj_PromptOptions">
-                    <button type="button" disabled={pending} onClick={() => handleAnswer("deny")}>
-                        Deny
+                    <button type="button" disabled={sending} onClick={() => handleAnswer("deny")}>
+                        Decline
                     </button>
                     <button
                         type="button"
                         className="mj_PromptOption_affirmative"
-                        disabled={pending}
+                        disabled={sending}
                         onClick={() => handleAnswer("approve")}
                     >
                         Approve
                     </button>
                 </div>
             )}
-            {pending && (
+            {sending && (
                 <div className="mj_PromptResolved mj_PromptResolved_pending">
                     <span className="mj_PromptGlyph" aria-hidden="true" />
                     <span className="mj_Muted">Sending…</span>
                 </div>
             )}
-            {retryable && (
-                <div className="mj_PromptResolved mj_PromptResolved_retryable">
+            {!settled && phase.kind === "failed" && (
+                <div className="mj_PromptResolved mj_PromptResolved_failed" role="alert">
                     <span className="mj_PromptGlyph" aria-hidden="true" />
-                    <span className="mj_Muted">Reply not confirmed — tap to retry</span>
+                    <span className="mj_Answered" style={{ color: "var(--mj-color-text-critical-primary)" }}>
+                        {phase.message}
+                    </span>
                 </div>
             )}
-            {alreadyAnswered && (
+            {settled?.kind === "answered" && (
+                <div
+                    className={`mj_PromptResolved ${settled.approved ? "mj_PromptResolved_allowed" : "mj_PromptResolved_denied"}`}
+                >
+                    <span
+                        className="mj_PromptGlyph mj_PromptGlyph_ok"
+                        aria-hidden="true"
+                        style={{
+                            color: settled.approved ? "var(--mj-color-usage-low)" : "var(--mj-color-text-secondary)",
+                        }}
+                    >
+                        {settled.approved ? <PromptCheckGlyph /> : <PromptDeniedGlyph />}
+                    </span>
+                    <span className="mj_Answered">{agentChatOutcomeText(settled, coordinatorDecision)}</span>
+                </div>
+            )}
+            {settled?.kind === "expired" && (
                 <div className="mj_PromptResolved mj_PromptResolved_expired">
                     <span className="mj_PromptGlyph" aria-hidden="true" />
-                    <span className="mj_Answered">Already answered or expired</span>
-                </div>
-            )}
-            {gone && (
-                <div className="mj_PromptResolved mj_PromptResolved_gone">
-                    <span className="mj_PromptGlyph" aria-hidden="true" />
-                    <span className="mj_Answered">That request is no longer on the server.</span>
-                </div>
-            )}
-            {resolved && (
-                <div className={`mj_PromptResolved mj_PromptResolved_${kind}`}>
-                    <span className="mj_PromptGlyph" aria-hidden="true" />
-                    <span className="mj_Answered">{spawnOutcomeCardLabel(outcome)}</span>
-                    {kind === "started" && roomId && (
-                        <button
-                            type="button"
-                            className="mj_Btn mj_Btn_primary mj_SpawnOpenButton"
-                            onClick={() => onOpen(roomId)}
-                        >
-                            Open
-                        </button>
-                    )}
+                    <span className="mj_Muted">This request is no longer waiting for an answer.</span>
                 </div>
             )}
         </div>
+    );
+}
+
+function agentChatOutcomeText(
+    settled: Extract<AgentChatResolution, { kind: "answered" }>,
+    coordinatorDecision: CoordinatorDecision | undefined,
+): string {
+    if (coordinatorDecision) return coordinatorBadgeText(coordinatorDecision);
+    if (settled.byCoordinator) return settled.approved ? "Approved by the Coordinator" : "Declined by the Coordinator";
+    return settled.approved ? "Approved" : "Declined";
+}
+
+function PromptPeopleGlyph(): React.ReactElement {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <circle cx="9" cy="8" r="3" />
+            <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+            <path d="M16 5.5a3 3 0 0 1 0 5" />
+            <path d="M17.5 14a5.5 5.5 0 0 1 3 5" />
+        </svg>
     );
 }
 
@@ -4417,6 +5699,41 @@ function SpawnOutcomeRow({ client, event }: { client: MatronJournalClient; event
                 </button>
             )}
         </div>
+    );
+}
+
+/** A tagged bridge notice: icon, summary and time on one line; the full text when opened. */
+function SystemNoticeRow({
+    client,
+    event,
+    notice,
+    body,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+    notice: SystemNotice;
+    body: string;
+}): React.ReactElement {
+    return (
+        <details className="mj_SystemNotice" data-notice-kind={notice.kind}>
+            <summary title={notice.summary}>
+                <ChevronDownIcon className="mj_SystemNotice_chevron" aria-hidden="true" />
+                <span className="mj_SystemNotice_icon" aria-hidden="true">
+                    {notice.icon}
+                </span>
+                <span className="mj_SystemNotice_summary">{notice.summary}</span>
+                <time className="mj_SystemNotice_time" dateTime={new Date(event.ts).toISOString()}>
+                    {formatTime(event.ts)}
+                </time>
+            </summary>
+            <div className="mj_SystemNotice_body mj_Markdown">
+                <MarkdownBody
+                    text={body}
+                    label={String(event.seq)}
+                    onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
+                />
+            </div>
+        </details>
     );
 }
 
@@ -4511,6 +5828,182 @@ const FILE_KIND_ICON: Record<FileKind, (props: React.SVGProps<SVGSVGElement>) =>
     generic: FileIcon,
 };
 
+// An image the server's media reaper has deleted: say so instead of a forever-loading frame or
+// a fetch error. Reached from the payload tombstone (`expired: true`) or a 404 on fetch.
+function ExpiredImage({ caption }: { caption?: string }): React.ReactElement {
+    return (
+        <figure className="mj_Image">
+            <div
+                className="mj_MediaExpired"
+                role="img"
+                aria-label={caption ? `Image attachment, expired. ${caption}` : "Image attachment, expired"}
+            >
+                <ImageFileIcon className="mj_FileIcon" aria-hidden />
+                <span>Image expired</span>
+            </div>
+            {caption && <figcaption>{caption}</figcaption>}
+        </figure>
+    );
+}
+
+// The file counterpart: the name stays readable, the size gives way to "Expired", and there is
+// no click target — there is nothing left to download.
+function ExpiredFile({ filename, contentType }: { filename?: string; contentType?: string }): React.ReactElement {
+    const KindIcon = FILE_KIND_ICON[fileKindFromMime(contentType)];
+    const name = filename || "attachment";
+    return (
+        <span className="mj_File mj_File_expired" role="group" aria-label={`File attachment: ${name}, expired`}>
+            <KindIcon className="mj_FileIcon" aria-hidden />
+            <span className="mj_FileName">{name}</span>
+            <span className="mj_Expired">Expired</span>
+        </span>
+    );
+}
+
+// Voice notes and other short clips load into the player once their row scrolls into view, like
+// the viewer's thumbnails; past this size the player waits for a click so a long recording is not
+// downloaded just by scrolling past. Opening a conversation full of voice notes therefore fetches
+// only the ones on screen, not every clip in the history.
+const AUDIO_AUTOLOAD_MAX_BYTES = 20 * 1024 * 1024;
+
+function InlineAudio({
+    client,
+    mediaId,
+    filename,
+    contentType,
+    size,
+}: {
+    client: MatronJournalClient;
+    mediaId: string;
+    filename?: string;
+    contentType?: string;
+    size?: number;
+}): React.ReactElement {
+    const autoload = size !== undefined && size <= AUDIO_AUTOLOAD_MAX_BYTES;
+    // `clicked` asks for playback once the blob is in; `inView` only loads it.
+    const [clicked, setClicked] = useState(false);
+    const [inView, setInView] = useState(false);
+    const holderRef = useRef<HTMLButtonElement>(null);
+    useEffect(() => {
+        if (!autoload || inView) return undefined;
+        const holder = holderRef.current;
+        if (!holder) return undefined;
+        if (typeof IntersectionObserver === "undefined") {
+            setInView(true); // jsdom / old engines: degrade to eager
+            return undefined;
+        }
+        const observer = new IntersectionObserver((entries) => {
+            if (entries.some((entry) => entry.isIntersecting)) {
+                setInView(true);
+                observer.disconnect();
+            }
+        });
+        observer.observe(holder);
+        return () => observer.disconnect();
+    }, [autoload, inView]);
+    const name = filename || "audio";
+    const sizeLabel = formatBytes(size);
+    if (!clicked && !(autoload && inView)) {
+        return (
+            <button ref={holderRef} className="mj_File" onClick={() => setClicked(true)} aria-label={`Play ${name}`}>
+                <AudioFileIcon className="mj_FileIcon" />
+                <span className="mj_FileName">{name}</span>
+                {sizeLabel && <span className="mj_FileSize">{sizeLabel}</span>}
+            </button>
+        );
+    }
+    return (
+        <InlineAudioPlayer
+            client={client}
+            mediaId={mediaId}
+            filename={filename}
+            contentType={contentType}
+            sizeLabel={sizeLabel}
+            autoPlay={clicked}
+        />
+    );
+}
+
+function InlineAudioPlayer({
+    client,
+    mediaId,
+    filename,
+    contentType,
+    sizeLabel,
+    autoPlay,
+}: {
+    client: MatronJournalClient;
+    mediaId: string;
+    filename?: string;
+    contentType?: string;
+    sizeLabel?: string;
+    autoPlay: boolean;
+}): React.ReactElement {
+    // Same authenticated blob as every other attachment, re-typed so an octet-stream blob still
+    // plays.
+    const { url, error, expired, retry } = useRenderableObjectUrl(client, {
+        mediaId,
+        kind: "audio",
+        filename,
+        contentType,
+    });
+    const audioRef = useRef<HTMLAudioElement>(null);
+    // A click on Play starts playback once the blob arrives. The fetch outlives the click's
+    // user-activation window, so a browser with a strict autoplay policy may refuse: the player
+    // is on screen with its own controls by then, so a refusal just leaves it paused.
+    useEffect(() => {
+        if (!autoPlay || !url) return;
+        const played = audioRef.current?.play();
+        played?.catch(() => undefined);
+    }, [autoPlay, url]);
+    if (expired) return <ExpiredFile filename={filename} contentType={contentType} />;
+    const name = filename || "audio";
+    if (error) {
+        // A transient failure (a 404 is `expired` above): keep the row and offer another try.
+        return (
+            <div className="mj_Audio">
+                <div className="mj_Audio_head">
+                    <AudioFileIcon className="mj_FileIcon" aria-hidden />
+                    <span className="mj_FileName">{name}</span>
+                </div>
+                <div className="mj_Error">
+                    {error}{" "}
+                    <button
+                        type="button"
+                        className="mj_Audio_retry"
+                        onClick={retry}
+                        aria-label={`Retry loading ${name}`}
+                    >
+                        Retry
+                    </button>
+                </div>
+            </div>
+        );
+    }
+    return (
+        <div className="mj_Audio">
+            <div className="mj_Audio_head">
+                <AudioFileIcon className="mj_FileIcon" aria-hidden />
+                <span className="mj_FileName">{name}</span>
+                {sizeLabel && <span className="mj_FileSize">{sizeLabel}</span>}
+            </div>
+            {url ? (
+                // eslint-disable-next-line jsx-a11y/media-has-caption
+                <audio
+                    ref={audioRef}
+                    className="mj_Audio_player"
+                    src={url}
+                    controls
+                    preload="metadata"
+                    aria-label={`Play ${name}`}
+                />
+            ) : (
+                <div className="mj_MediaLoading">Loading audio…</div>
+            )}
+        </div>
+    );
+}
+
 function AuthenticatedMedia({
     client,
     mediaId,
@@ -4533,6 +6026,9 @@ function AuthenticatedMedia({
     const [url, setUrl] = useState<string>();
     const [error, setError] = useState<string>();
     const [loading, setLoading] = useState(false);
+    // A 404 means the blob was reaped server-side — permanent, so it renders as expired rather
+    // than as an error. Seeded from the client so a remounted row does not ask again.
+    const [expired, setExpired] = useState(() => client.isMediaExpired(mediaId));
     const viewer = useMediaViewer();
     const markdownPreview = useMarkdownPreview();
 
@@ -4541,16 +6037,24 @@ function AuthenticatedMedia({
         try {
             setUrl(await client.mediaUrl(mediaId));
         } catch (loadError) {
-            setError(errorMessage(loadError));
+            if (isMediaExpiredError(loadError)) setExpired(true);
+            else setError(errorMessage(loadError));
         } finally {
             setLoading(false);
         }
     }, [client, mediaId]);
 
     useEffect(() => {
-        if (image) void load();
-    }, [image, load]);
+        if (image && !expired) void load();
+    }, [image, expired, load]);
 
+    if (expired) {
+        return image ? (
+            <ExpiredImage caption={caption} />
+        ) : (
+            <ExpiredFile filename={filename} contentType={contentType} />
+        );
+    }
     if (error) return <div className="mj_Error">{error}</div>;
     if (image) {
         // Reserve an aspect-ratio box BEFORE the blob decodes so the thread does not reflow when
@@ -4598,22 +6102,36 @@ function AuthenticatedMedia({
             </figure>
         );
     }
+    if (mediaRenderKind(false, contentType, filename) === "audio") {
+        return (
+            <InlineAudio client={client} mediaId={mediaId} filename={filename} contentType={contentType} size={size} />
+        );
+    }
+    const sizeLabel = formatBytes(size);
+    const sizeTag = sizeLabel && <span className="mj_FileSize">{sizeLabel}</span>;
     const KindIcon = FILE_KIND_ICON[fileKindFromMime(contentType)];
     const fileLabel = filename || "Download attachment";
     // Markdown up to 2 MB opens in the side preview panel (which offers Download); larger files
     // keep the download chip.
     if (markdownPreview && isPreviewableMarkdown({ mime: contentType, name: filename, size })) {
         return (
-            <button
-                className="mj_File mj_File_preview"
-                onClick={() =>
-                    markdownPreview.openMarkdownPreview({ blobRef: mediaId, name: filename || "attachment.md", size })
-                }
-                aria-label={`Preview ${fileLabel}`}
-            >
-                <KindIcon className="mj_FileIcon" />
-                <span className="mj_FileName">{fileLabel}</span>
-            </button>
+            <>
+                <button
+                    className="mj_File mj_File_preview"
+                    onClick={() =>
+                        markdownPreview.openMarkdownPreview({
+                            blobRef: mediaId,
+                            name: filename || "attachment.md",
+                            size,
+                        })
+                    }
+                    aria-label={`Preview ${fileLabel}`}
+                >
+                    <KindIcon className="mj_FileIcon" />
+                    <span className="mj_FileName">{fileLabel}</span>
+                </button>
+                {sizeTag}
+            </>
         );
     }
     // Renderable files (svg / pdf / video / raster) open the lightbox inline; the viewer
@@ -4621,26 +6139,34 @@ function AuthenticatedMedia({
     // download chip (HTML and unknown never render inline).
     if (viewer && isRenderableInViewer(contentType, filename)) {
         return (
-            <button
-                className="mj_File mj_File_preview"
-                onClick={(event) => viewer.openViewer(mediaId, event.currentTarget)}
-                aria-label={`Preview ${fileLabel}`}
-            >
-                <KindIcon className="mj_FileIcon" />
-                <span className="mj_FileName">{fileLabel}</span>
-            </button>
+            <>
+                <button
+                    className="mj_File mj_File_preview"
+                    onClick={(event) => viewer.openViewer(mediaId, event.currentTarget)}
+                    aria-label={`Preview ${fileLabel}`}
+                >
+                    <KindIcon className="mj_FileIcon" />
+                    <span className="mj_FileName">{fileLabel}</span>
+                </button>
+                {sizeTag}
+            </>
         );
     }
-    return url ? (
-        <a className="mj_File" href={url} download={filename || "attachment"}>
-            <KindIcon className="mj_FileIcon" />
-            <span className="mj_FileName">{fileLabel}</span>
-        </a>
-    ) : (
-        <button className="mj_File" onClick={() => void load()} disabled={loading}>
-            <KindIcon className="mj_FileIcon" />
-            <span className="mj_FileName">{loading ? "Preparing download…" : fileLabel}</span>
-        </button>
+    return (
+        <>
+            {url ? (
+                <a className="mj_File" href={url} download={filename || "attachment"}>
+                    <KindIcon className="mj_FileIcon" />
+                    <span className="mj_FileName">{fileLabel}</span>
+                </a>
+            ) : (
+                <button className="mj_File" onClick={() => void load()} disabled={loading}>
+                    <KindIcon className="mj_FileIcon" />
+                    <span className="mj_FileName">{loading ? "Preparing download…" : fileLabel}</span>
+                </button>
+            )}
+            {sizeTag}
+        </>
     );
 }
 
@@ -4901,19 +6427,6 @@ export function isQueuedReleaseReply(
     return legacyQueuePromptSeqs.has(targetSeq) && (choice === "interrupt" || /^cancel:\d+$/.test(choice));
 }
 
-// A permission-decision reply is a prompt_reply targeting a permission_request
-// card. The card already renders the decision inline (answered/allowed/denied
-// via answeredPromptReplies), so its reply must NOT also render as a standalone
-// chat bubble — that duplicate reads as if the operator typed "Allow"/"Deny"
-// into the thread. Identified by target-seq provenance, mirroring
-// isQueuedReleaseReply: prompt_reply carries no self-identifying kind, so a
-// permission reply is only distinguishable by the permission_request it targets.
-export function isPermissionDecisionReply(event: JournalEvent, permissionRequestSeqs: ReadonlySet<number>): boolean {
-    if (event.type !== "prompt_reply") return false;
-    const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
-    return permissionRequestSeqs.has(targetSeq);
-}
-
 /**
  * Tracker events that EventContent renders as null and so must not occupy a timeline row at all —
  * otherwise EventRow still wraps the null content in an avatar + sender bubble (a ghost message).
@@ -4968,12 +6481,54 @@ function PeerMessage({ event }: { event: JournalEvent }): React.ReactElement {
 }
 
 const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
+const EMPTY_AGENT_CHAT_RESOLUTIONS: ReadonlyMap<string, AgentChatResolution> = new Map();
+const EMPTY_COORDINATOR_DECISIONS: ReadonlyMap<string, CoordinatorDecision> = new Map();
+
+// A permission-decision reply is a prompt_reply targeting a permission_request
+// card. The card already renders the decision inline (answered/allowed/denied
+// via answeredPromptReplies), so its reply must NOT also render as a standalone
+// chat bubble — that duplicate reads as if the operator typed "Allow"/"Deny"
+// into the thread. Identified by target-seq provenance, mirroring
+// isQueuedReleaseReply: prompt_reply carries no self-identifying kind, so a
+// permission reply is only distinguishable by the permission_request it targets.
+const TRANSCRIPT_HIDDEN_TYPES = new Set(["read_marker", "edit", "session_status", "convo_meta", "summary"]);
+
+/** Whether the transcript leaves `event` out: bookkeeping frames, and rows folded into another
+ *  (answered queue releases, decided permissions, restated item cards). One rule for the chat and
+ *  the subagent pane beside it. */
+function isFoldedTranscriptEvent(
+    event: JournalEvent,
+    folds: {
+        queuedReleasePromptSeqs: ReadonlySet<number>;
+        legacyQueuePromptSeqs: ReadonlySet<number>;
+        permissionRequestSeqs: ReadonlySet<number>;
+        itemCards: { hidden: ReadonlySet<number> };
+    },
+): boolean {
+    return (
+        TRANSCRIPT_HIDDEN_TYPES.has(event.type) ||
+        isUnrenderableNoticeEvent(event) ||
+        isQueuedReleaseReply(event, folds.queuedReleasePromptSeqs, folds.legacyQueuePromptSeqs) ||
+        isSuppressedTrackerEvent(event) ||
+        (event.type === "item" && folds.itemCards.hidden.has(event.seq)) ||
+        isPermissionDecisionReply(event, folds.permissionRequestSeqs)
+    );
+}
+
+export function isPermissionDecisionReply(event: JournalEvent, permissionRequestSeqs: ReadonlySet<number>): boolean {
+    if (event.type !== "prompt_reply") return false;
+    const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
+    return permissionRequestSeqs.has(targetSeq);
+}
 
 export function EventContent({
     client,
     event,
     answeredPromptReplies,
     spawnOutcomes = EMPTY_SPAWN_OUTCOMES,
+    agentChatResolutions = EMPTY_AGENT_CHAT_RESOLUTIONS,
+    coordinatorDecisions = EMPTY_COORDINATOR_DECISIONS,
+    itemCards = EMPTY_ITEM_CARD_FOLD,
     isReadOnly = false,
     resolvedAction,
 }: {
@@ -4981,31 +6536,55 @@ export function EventContent({
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
+    agentChatResolutions?: ReadonlyMap<string, AgentChatResolution>;
+    /** The Coordinator's answers, keyed by card (readCoordinatorDecisions). */
+    coordinatorDecisions?: ReadonlyMap<string, CoordinatorDecision>;
+    itemCards?: ItemCardFold;
     isReadOnly?: boolean;
     resolvedAction?: (itemId: string) => "send" | "cancel" | "expired" | undefined;
 }): React.ReactElement | null {
     const answer = answeredPromptReplies.get(`${event.convo_id}:${event.seq}`);
     switch (event.type) {
-        case "text":
+        case "text": {
             // A tracker fallback text (payload.fallback_for set) is the plain-text mirror the
             // bridge emits for old clients that can't render the real `item` marker. This client
             // renders that marker, so suppress the duplicate fallback text.
             if (asString(event.payload.fallback_for)) return null;
+            const body = asString(event.payload.body);
+            // A bridge notice about a turn it injected (payload.notice): one short row, the full
+            // text one click away.
+            const notice = systemNotice(event);
+            if (notice) return <SystemNoticeRow client={client} event={event} notice={notice} body={body} />;
+            // A bridge "🔀 Subtask: …" line opens the subagent it started, once that is known.
+            const subtask = event.sender.startsWith("user:") ? undefined : subtaskDescription(body);
+            if (subtask) {
+                return (
+                    <SubtaskLine client={client} convoId={event.convo_id} description={subtask}>
+                        <div className="mj_Markdown">
+                            <MarkdownBody text={body} label={String(event.seq)} />
+                        </div>
+                    </SubtaskLine>
+                );
+            }
             return (
                 <div className="mj_Markdown">
                     {/* A Coordinator briefing (payload.briefing_id) is an ordinary text event in the
                         Coordinator conversation; a small badge says what it is. */}
                     {asString(event.payload.briefing_id) ? <span className="mj_BriefingBadge">Briefing</span> : null}
                     <MarkdownBody
-                        text={asString(event.payload.body)}
+                        text={body}
                         label={String(event.seq)}
                         onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
                     />
                 </div>
             );
-        case "item":
-            // Quiet invalidation-only markers (reordered/updated) and unknown actions render null.
-            return renderItemMarker(event, client);
+        }
+        case "item": {
+            // Quiet invalidation-only markers (reordered/updated) and unknown actions render null. An
+            // item card shows its item's latest state (foldItemCards), not this marker's frozen one.
+            const restated = itemCards.restated.get(event.seq);
+            return renderItemMarker(restated ? { ...event, payload: restated } : event, client);
+        }
         case "milestone":
             return <MilestoneCard client={client} event={event} />;
         case "mission":
@@ -5014,6 +6593,10 @@ export function EventContent({
             return <PeerMessage event={event} />;
         case "memory":
             return <MemoryNotice client={client} event={event} />;
+        case "coordinator":
+        case "routine":
+        case "consent_decision":
+            return <CoordinatorEventNotice event={event} />;
         case "prompt":
             if (asString(event.payload.kind) === "queued_release") {
                 return (
@@ -5036,6 +6619,28 @@ export function EventContent({
                 />
             );
         case "permission_request": {
+            if (isAgentChatPayload(event.payload)) {
+                const request = parseAgentChatRequest(event.payload);
+                // A malformed agent-chat payload can't be answered: the generic PromptCard's
+                // Allow/Deny would post a prompt_reply nothing reads. Draw an inert notice instead.
+                if (!request) {
+                    return <div className="mj_AgentRequestNotice">{unanswerableAgentRequestNotice(event.payload)}</div>;
+                }
+                return (
+                    <AgentChatRequestCard
+                        key={`${event.convo_id}:${event.seq}`}
+                        event={event}
+                        request={request}
+                        resolution={agentChatResolutions.get(agentChatCardKey(event))}
+                        coordinatorDecision={coordinatorDecisions.get(agentChatCardKey(event))}
+                        answersScope={agentChatAnswersScope(client.getSnapshot().session)}
+                        isReadOnly={isReadOnly}
+                        onAnswer={(decision) =>
+                            client.answerAgentChat(request.roomId, request.targetDeviceId, decision)
+                        }
+                    />
+                );
+            }
             if (asString(event.payload.kind) === "agent_spawn") {
                 const requestId = asString(event.payload.request_id);
                 // A malformed agent_spawn payload (no request_id/task) can never be resolved:
@@ -5048,6 +6653,7 @@ export function EventContent({
                         key={`${event.convo_id}:${event.seq}`}
                         event={event}
                         outcome={(requestId ? spawnOutcomes.get(requestId) : undefined) ?? null}
+                        coordinatorDecision={coordinatorDecisions.get(agentChatCardKey(event))}
                         isReadOnly={isReadOnly || !answerable}
                         onAnswer={
                             answerable
@@ -5055,6 +6661,9 @@ export function EventContent({
                                 : undefined
                         }
                         onOpen={(roomId) => void client.selectConversation(roomId, { suppressNotFound: true })}
+                        onStopSession={(convoId) =>
+                            void stopSpawnedSession(convoId, (target) => client.sendMessage("/stop", target))
+                        }
                     />
                 );
             }
@@ -5084,6 +6693,7 @@ export function EventContent({
             return <DiffCard data={parseDiffPayload(event.payload)} />;
         case "image": {
             const mediaId = asString(event.payload.blob_ref);
+            if (event.payload.expired === true) return <ExpiredImage caption={asString(event.payload.caption)} />;
             return mediaId ? (
                 <AuthenticatedMedia
                     client={client}
@@ -5099,14 +6709,20 @@ export function EventContent({
         }
         case "file": {
             const mediaId = asString(event.payload.blob_ref);
+            const expired = event.payload.expired === true;
             return (
                 <div>
-                    {mediaId ? (
+                    {expired ? (
+                        <ExpiredFile
+                            filename={mediaFileName(event.payload) || undefined}
+                            contentType={asString(event.payload.content_type) || undefined}
+                        />
+                    ) : mediaId ? (
                         <AuthenticatedMedia
                             client={client}
                             mediaId={mediaId}
                             image={false}
-                            filename={asString(event.payload.filename, "attachment")}
+                            filename={mediaFileName(event.payload) || "attachment"}
                             contentType={asString(event.payload.content_type) || undefined}
                             size={
                                 typeof event.payload.size === "number" && Number.isFinite(event.payload.size)
@@ -5115,10 +6731,12 @@ export function EventContent({
                             }
                         />
                     ) : (
-                        <span className="mj_Muted">File unavailable</span>
-                    )}
-                    {formatBytes(event.payload.size) && (
-                        <span className="mj_FileSize">{formatBytes(event.payload.size)}</span>
+                        <>
+                            <span className="mj_Muted">File unavailable</span>
+                            {formatBytes(event.payload.size) && (
+                                <span className="mj_FileSize">{formatBytes(event.payload.size)}</span>
+                            )}
+                        </>
                     )}
                     {asString(event.payload.caption) && (
                         <div className="mj_FileCaption">{asString(event.payload.caption)}</div>
@@ -5141,6 +6759,9 @@ function EventRow({
     event,
     answeredPromptReplies,
     spawnOutcomes,
+    agentChatResolutions,
+    coordinatorDecisions,
+    itemCards,
     isReadOnly = false,
     resolvedAction,
     continuation = false,
@@ -5152,6 +6773,9 @@ function EventRow({
     event: JournalEvent;
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes?: ReadonlyMap<string, EventPayload>;
+    agentChatResolutions?: ReadonlyMap<string, AgentChatResolution>;
+    coordinatorDecisions?: ReadonlyMap<string, CoordinatorDecision>;
+    itemCards?: ItemCardFold;
     isReadOnly?: boolean;
     resolvedAction: (itemId: string) => "send" | "cancel" | "expired" | undefined;
     continuation?: boolean;
@@ -5160,13 +6784,15 @@ function EventRow({
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
     const peer = event.type === "peer_message";
-    const own = !peer && event.sender.startsWith("user:");
+    // A bridge notice row is its own one-line row: no sender header, no grouping, never an own bubble.
+    const noticeRow = isSystemNoticeEvent(event);
+    const own = !peer && !noticeRow && event.sender.startsWith("user:");
     const liRef = useRef<HTMLLIElement>(null);
     const handlers = rowHandlers(event, () => liRef.current);
     return (
         <li
             ref={liRef}
-            className={`mx_EventTile${peer ? " mx_EventTile_peer" : ""}${continuation ? " mx_EventTile_continuation" : ""}${lastInSection ? " mx_EventTile_lastInSection" : ""}${searchHighlighted ? " mj_EventRow_searchHighlighted" : ""}`}
+            className={`mj_EventTile${peer ? " mj_EventTile_peer" : ""}${continuation ? " mj_EventTile_continuation" : ""}${lastInSection ? " mj_EventTile_lastInSection" : ""}${noticeRow ? " mj_EventTile_systemNotice" : ""}${searchHighlighted ? " mj_EventRow_searchHighlighted" : ""}`}
             style={
                 peer
                     ? {
@@ -5184,42 +6810,45 @@ function EventRow({
             {...handlers}
             onClickCapture={handlers.onClickCapture}
         >
-            {!own && !continuation && (
-                <span className="mx_DisambiguatedProfile">
+            {!own && !continuation && !noticeRow && (
+                <span className="mj_SenderName">
                     <MsgAvatar />
-                    <span className="mx_DisambiguatedProfile_displayName">{displaySender(event.sender)}</span>
+                    <span className="mj_SenderName_displayName">{displaySender(event.sender)}</span>
                     {/* tool_output owns its timestamp inline (after the exit badge); prompt /
                         permission cards own theirs in the card header (§10.2). Suppress the
                         profile-row time for all three so a first-in-section event never shows
                         two identical timestamps. */}
                     {event.type !== "tool_output" && event.type !== "prompt" && event.type !== "permission_request" && (
                         <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                            <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                            <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
                                 {formatTime(event.ts)}
                             </time>
                         </a>
                     )}
                 </span>
             )}
-            <div className="mx_EventTile_line">
+            <div className="mj_EventTile_line">
                 {/* Own bubbles carry an inline timestamp (design: "…text <09:58>"). Agent
                     continuation blocks do NOT — the section shows one timestamp on the profile
                     row (§10.2 one-per-section), so continuation blocks fill to the shared right
                     edge with no reserved timestamp gutter (kills the first-block spill). */}
                 {own && event.type !== "tool_output" && (
                     <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                        <time className="mx_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
+                        <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
                             {formatTime(event.ts)}
                         </time>
                     </a>
                 )}
-                <div className="mx_MTextBody mx_EventTile_content">
+                <div className="mj_TextBody mj_EventTile_content">
                     <div className="markdown-body">
                         <EventContent
                             client={client}
                             event={event}
                             answeredPromptReplies={answeredPromptReplies}
                             spawnOutcomes={spawnOutcomes}
+                            agentChatResolutions={agentChatResolutions}
+                            coordinatorDecisions={coordinatorDecisions}
+                            itemCards={itemCards}
                             isReadOnly={isReadOnly}
                             resolvedAction={resolvedAction}
                         />
@@ -5321,9 +6950,9 @@ export const EXPANDED_HELPER_TURNS = 3;
 /** Developer view: a helper's card in the flat timeline, after the event it started at. */
 function DevHelperRow({ client, child }: { client: MatronJournalClient; child: Conversation }): React.ReactElement {
     return (
-        <li className="mx_EventTile mx_EventTile_lastInSection mj_HelperTile" data-layout="bubble" data-self="false">
-            <div className="mx_EventTile_line">
-                <div className="mx_MTextBody mx_EventTile_content">
+        <li className="mj_EventTile mj_EventTile_lastInSection mj_HelperTile" data-layout="bubble" data-self="false">
+            <div className="mj_EventTile_line">
+                <div className="mj_TextBody mj_EventTile_content">
                     <SubagentCard
                         child={child}
                         kind={workerKind(child)}
@@ -5381,6 +7010,9 @@ function AgentTurnRow({
     live,
     answeredPromptReplies,
     spawnOutcomes,
+    agentChatResolutions,
+    coordinatorDecisions,
+    itemCards,
     isReadOnly,
     resolvedAction,
     highlightedSeq,
@@ -5403,6 +7035,9 @@ function AgentTurnRow({
     helpers?: readonly Conversation[];
     answeredPromptReplies: ReadonlyMap<string, { choice?: string }>;
     spawnOutcomes: ReadonlyMap<string, EventPayload>;
+    agentChatResolutions?: ReadonlyMap<string, AgentChatResolution>;
+    coordinatorDecisions?: ReadonlyMap<string, CoordinatorDecision>;
+    itemCards?: ItemCardFold;
     isReadOnly: boolean;
     resolvedAction: (itemId: string) => "send" | "cancel" | "expired" | undefined;
     highlightedSeq?: number;
@@ -5468,6 +7103,9 @@ function AgentTurnRow({
                 event={event}
                 answeredPromptReplies={answeredPromptReplies}
                 spawnOutcomes={spawnOutcomes}
+                agentChatResolutions={agentChatResolutions}
+                coordinatorDecisions={coordinatorDecisions}
+                itemCards={itemCards}
                 isReadOnly={isReadOnly}
                 resolvedAction={resolvedAction}
             />
@@ -5491,7 +7129,7 @@ function AgentTurnRow({
     );
     return (
         <li
-            className={`mx_EventTile mx_EventTile_lastInSection mj_AgentTurn${helperThread ? " mj_AgentTurn_helper" : ""}${
+            className={`mj_EventTile mj_EventTile_lastInSection mj_AgentTurn${helperThread ? " mj_AgentTurn_helper" : ""}${
                 highlightedSeq !== undefined &&
                 turn.events.some((event) => event.seq === highlightedSeq) &&
                 ![...turn.breaks, ...turn.answer, ...turn.errors].some((event) => event.seq === highlightedSeq)
@@ -5504,18 +7142,18 @@ function AgentTurnRow({
             data-turn={turn.key}
         >
             {first && (
-                <span className="mx_DisambiguatedProfile">
+                <span className="mj_SenderName">
                     <MsgAvatar />
-                    <span className="mx_DisambiguatedProfile_displayName">{displaySender(first.sender)}</span>
+                    <span className="mj_SenderName_displayName">{displaySender(first.sender)}</span>
                     <a href={`#event-${first.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                        <time className="mx_MessageTimestamp" dateTime={new Date(first.ts).toISOString()}>
+                        <time className="mj_MessageTimestamp" dateTime={new Date(first.ts).toISOString()}>
                             {formatTime(first.ts)}
                         </time>
                     </a>
                 </span>
             )}
-            <div className="mx_EventTile_line">
-                <div className="mx_MTextBody mx_EventTile_content">
+            <div className="mj_EventTile_line">
+                <div className="mj_TextBody mj_EventTile_content">
                     <div className="markdown-body mj_AgentTurn_blocks">
                         {helperThread && (hasCard || live.mode === "running") ? (
                             <HeadlineList
@@ -5550,6 +7188,31 @@ function AgentTurnRow({
                                 />
                             )
                         )}
+                        {/* A bridge "🔀 Subtask: …" line: upstream's card that opens the subagent beside
+                            the chat once it is known, the plain line until then. The card above holds
+                            the same line as a collapsed step; this is the row that opens the pane. */}
+                        {!helperThread &&
+                            turn.events.map((event) => {
+                                if (event.type !== "text" || isOperatorEvent(event)) return null;
+                                if (asString(event.payload.fallback_for)) return null;
+                                const body = asString(event.payload.body);
+                                const description = subtaskDescription(body);
+                                if (!description) return null;
+                                return (
+                                    <TurnBlock
+                                        key={`subtask-${event.seq}`}
+                                        event={event}
+                                        rowHandlers={rowHandlers}
+                                        highlighted={highlightedSeq === event.seq}
+                                    >
+                                        <SubtaskLine client={client} convoId={event.convo_id} description={description}>
+                                            <div className="mj_Markdown">
+                                                <MarkdownBody text={body} label={String(event.seq)} />
+                                            </div>
+                                        </SubtaskLine>
+                                    </TurnBlock>
+                                );
+                            })}
                         {helpers.map((helper) => (
                             <SubagentCard
                                 key={helper.id}
@@ -5588,7 +7251,7 @@ function AgentTurnRow({
 }
 
 /** A bridge system notice (`.mj_SystemNotice`): one tertiary meta line, no avatar. */
-function SystemNoticeRow({
+function TurnNoticeRow({
     event,
     highlighted,
     text,
@@ -5611,33 +7274,121 @@ function SystemNoticeRow({
     );
 }
 
+// Every prop is stable while an agent streams (the event objects, the memoised reply and outcome
+// maps, the menu handlers), so a streamed token re-renders only the streaming bubble instead of
+// every row in a long transcript.
+const MemoEventRow = React.memo(EventRow);
+
 function MsgAvatar(): React.ReactElement {
     const mask = `url("${matronLogo}")`;
 
     return <span className="mj_MsgAvatar" style={{ WebkitMaskImage: mask, maskImage: mask }} aria-hidden />;
 }
 
+/** How much of the stream tail a collapsed tool-stream pane renders; it only shows a few lines. */
+export const TOOL_STREAM_COLLAPSED_CAP_CHARS = 4096;
+
+// The tail a collapsed pane renders, opened at a line boundary so the cut never starts mid-word
+// or inside an escape sequence, unless the first line is long (then the tail is effectively one
+// line and trimming through it would drop nearly everything). `cut` says if anything was dropped.
+export function collapsedToolStreamSlice(text: string): { text: string; cut: boolean } {
+    if (text.length <= TOOL_STREAM_COLLAPSED_CAP_CHARS) return { text, cut: false };
+    const tail = text.slice(cleanCutStart(text, text.length - TOOL_STREAM_COLLAPSED_CAP_CHARS));
+    const newline = tail.slice(0, 512).indexOf("\n");
+    return { text: newline >= 0 ? tail.slice(newline + 1) : tail, cut: true };
+}
+
+// Where a cut at `start` can open cleanly: past the rest of an escape sequence it landed inside
+// (any fragment, not only "[…m"), and past the low half of a surrogate pair it split. Unlike a
+// head-truncated buffer, the text before the cut is at hand, so the fix is exact.
+function cleanCutStart(text: string, start: number): number {
+    const lookback = Math.max(0, start - 64);
+    const escAt = text.slice(lookback, start).lastIndexOf("\x1b");
+    if (escAt >= 0) {
+        const esc = lookback + escAt;
+        let end = esc + 2; // ESC + one byte, for a non-CSI escape
+        if (text[esc + 1] === "[") {
+            while (end < text.length) {
+                const code = text.charCodeAt(end);
+                end++;
+                if (code >= 0x40 && code <= 0x7e) break;
+            }
+        }
+        if (end > start) start = end;
+    }
+    const code = text.charCodeAt(start);
+    if (code >= 0xdc00 && code <= 0xdfff) start++;
+    return start;
+}
+
 export function ToolStream({ stream }: { stream: ToolStreamState }): React.ReactElement {
+    // Mac ToolStreamCard: collapsed to the last few lines, expandable to a taller scrolling pane.
+    const [expanded, setExpanded] = useState(false);
     const nodes = useMemo(() => {
-        const cleaned = stream.headTruncated ? stripLeadingSgrFragment(stream.content) : stream.content;
-        const text = stream.headTruncated ? `… earlier output omitted …\n${cleaned}` : stream.content;
-        return parseAnsi(text, INITIAL_SGR_STATE, "", 0).nodes;
-    }, [stream.content, stream.headTruncated]);
+        let shown = stream.headTruncated ? stripLeadingSgrFragment(stream.content) : stream.content;
+        let cut = stream.headTruncated;
+        if (!expanded) {
+            const sliced = collapsedToolStreamSlice(shown);
+            shown = sliced.text;
+            cut = cut || sliced.cut;
+        }
+        return parseAnsi(cut ? `… earlier output omitted …\n${shown}` : shown, INITIAL_SGR_STATE, "", 0).nodes;
+    }, [stream.content, stream.headTruncated, expanded]);
+    // Stay pinned to the newest output unless the user has scrolled up.
+    const paneRef = useRef<HTMLPreElement>(null);
+    const pinned = useRef(true);
+    useLayoutEffect(() => {
+        const pane = paneRef.current;
+        if (pane && pinned.current) pane.scrollTop = pane.scrollHeight;
+    }, [nodes]);
+    const onScroll = (): void => {
+        const pane = paneRef.current;
+        if (pane) pinned.current = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 8;
+    };
 
     return (
-        <li className="mx_EventTile mx_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
-            <span className="mx_DisambiguatedProfile">
+        <li className="mj_EventTile mj_EventTile_lastInSection" tabIndex={-1} data-layout="bubble" data-self="false">
+            <span className="mj_SenderName">
                 <MsgAvatar />
-                <span className="mx_DisambiguatedProfile_displayName">agent</span>
+                <span className="mj_SenderName_displayName">agent</span>
             </span>
-            <div className="mx_EventTile_line">
-                <div className="mx_MTextBody mx_EventTile_content">
+            <div className="mj_EventTile_line">
+                <div className="mj_TextBody mj_EventTile_content">
                     <div className="markdown-body mj_LiveTool">
-                        <div>
-                            <span className="mj_LiveDot" /> Running{" "}
-                            <code>{stream.command || stream.tool || "tool"}</code>
+                        <div className="mj_LiveTool_header">
+                            <span>
+                                <span className="mj_LiveDot" /> Running{" "}
+                                <code>{stream.command || stream.tool || "tool"}</code>
+                            </span>
+                            <button
+                                type="button"
+                                className="mj_LiveTool_toggle"
+                                aria-expanded={expanded}
+                                aria-label={expanded ? "Collapse output" : "Expand output"}
+                                onClick={() => {
+                                    // Like the Mac pane's bottom anchor: the resized pane opens on the newest output.
+                                    pinned.current = true;
+                                    setExpanded((current) => !current);
+                                }}
+                            >
+                                <svg viewBox="0 0 16 16" width={16} height={16} aria-hidden="true">
+                                    <path
+                                        d={expanded ? "m4 6 4 4 4-4" : "m6 4 4 4-4 4"}
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                    />
+                                </svg>
+                            </button>
                         </div>
-                        <pre>{nodes}</pre>
+                        <pre
+                            ref={paneRef}
+                            onScroll={onScroll}
+                            className={expanded ? "mj_LiveTool_expanded" : "mj_LiveTool_collapsed"}
+                        >
+                            {nodes}
+                        </pre>
                     </div>
                 </div>
             </div>
@@ -5702,7 +7453,7 @@ function PendingAttachment({
 
     return (
         <li
-            className={`mx_EventTile mx_EventTile_lastInSection mj_AttachmentChip mj_AttachmentChip_${message.attachState ?? "sending"}`}
+            className={`mj_EventTile mj_EventTile_lastInSection mj_AttachmentChip mj_AttachmentChip_${message.attachState ?? "sending"}`}
             data-layout="bubble"
             data-self="true"
         >
@@ -5767,6 +7518,103 @@ function operatorAnchor(node: HTMLElement | null): { seq: string; offset: number
     return best;
 }
 
+/**
+ * The floating "stop the current turn" control, top-trailing over the timeline. Shown while
+ * the durable run-state says a turn is running; a tap sends the bridge's `!esc` interrupt —
+ * exactly what typing `!esc` in the composer sends — without touching the draft. The send
+ * lands in the timeline as an ordinary own-message, so that echo is the feedback; a second
+ * tap while the first is still being queued is dropped rather than sending `!esc` twice.
+ * Mounted keyed by conversation, so the linger after a turn and the in-flight latch both
+ * belong to one conversation and never carry over to another.
+ */
+function StopTurnButton({
+    client,
+    conversationId,
+    running,
+}: {
+    client: MatronJournalClient;
+    conversationId: string;
+    running: boolean;
+}): React.ReactElement | null {
+    const visible = useMinDisplayDuration(running);
+    const sending = useRef(false);
+    if (!visible) return null;
+    return (
+        <button
+            className="mj_StopTurn"
+            type="button"
+            aria-label="Stop the current turn"
+            title="Stop the current turn — sends !esc"
+            onClick={() => {
+                if (sending.current) return;
+                sending.current = true;
+                void client
+                    .sendMessage("!esc", conversationId)
+                    .catch((error) => console.warn("Stop command failed to send:", error))
+                    .finally(() => {
+                        sending.current = false;
+                    });
+            }}
+        >
+            <StopIcon />
+        </button>
+    );
+}
+
+const MIN_DISPLAY_MS = 500;
+
+/**
+ * Holds a brief `active` flag true for MIN_DISPLAY_MS after it last was, so a short turn
+ * doesn't flash the control on and off.
+ */
+function useMinDisplayDuration(active: boolean): boolean {
+    const [held, setHeld] = useState(active);
+    useEffect(() => {
+        if (active) {
+            setHeld(true);
+            return;
+        }
+        const timer = setTimeout(() => setHeld(false), MIN_DISPLAY_MS);
+        return () => clearTimeout(timer);
+    }, [active]);
+    return active || held;
+}
+
+type TimelineRow =
+    | { key: string; kind: "divider"; timestamp: number }
+    | { key: string; kind: "event"; event: JournalEvent; continuation: boolean; lastInSection: boolean }
+    | { key: string; kind: "pending"; message: ClientState["pendingMessages"][number] }
+    // Show the work OFF: one agent tile per operator turn, and a bridge notice as a one-line row.
+    | { key: string; kind: "turn"; turn: Turn }
+    | { key: string; kind: "notice"; event: JournalEvent }
+    // Developer view: a helper's card, after the event it started at.
+    | { key: string; kind: "helper"; child: Conversation };
+
+/** Height assumed for a row that hasn't been on screen yet. */
+function estimateTimelineRow(key: string): number {
+    return key.includes(":d-") ? 40 : 96;
+}
+
+function isAnchorableTimelineRow(key: string): boolean {
+    return !key.includes(":d-");
+}
+
+/** Scrolling up to within this many screens of the oldest loaded message loads the page before it. */
+const AUTO_LOAD_HISTORY_SCREENS = 2;
+/** How long after the reader's last wheel, touch, key or pointer input a scroll still counts as theirs. */
+const SCROLL_INPUT_MS = 2000;
+
+/** Where the reader left each conversation, for this signed-in client; at the bottom when absent. */
+const readingPlaces = new WeakMap<MatronJournalClient, Map<string, ListPlace>>();
+function placesFor(client: MatronJournalClient): Map<string, ListPlace> {
+    let places = readingPlaces.get(client);
+    if (!places) {
+        places = new Map();
+        readingPlaces.set(client, places);
+    }
+    return places;
+}
+
 function Timeline({
     client,
     state,
@@ -5777,14 +7625,13 @@ function Timeline({
     isReadOnly?: boolean;
 }): React.ReactElement {
     const scrollRef = useRef<HTMLDivElement>(null);
+    const listRef = useRef<HTMLOListElement>(null);
     const pendingScrollFrame = useRef<number | undefined>(undefined);
-    const searchHighlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const selectedConversationId = useRef(state.selectedConversationId);
-    const [isFollowingTail, setFollow] = useState(true);
-    const [highlightedSearchTarget, setHighlightedSearchTarget] = useState<{
-        conversationId?: string;
-        seq: number;
-    }>();
+    // Opening a conversation goes to its bottom, or back to where the reader left it (see below).
+    const [isFollowingTail, setFollow] = useState(
+        () => !(state.selectedConversationId && placesFor(client).has(state.selectedConversationId)),
+    );
     const [sourceEvent, setSourceEvent] = useState<JournalEvent>();
     const [showTheWork] = useShowTheWork();
     const turnsRef = useRef<Turn[]>([]);
@@ -5827,7 +7674,6 @@ function Timeline({
         | undefined
     >(undefined);
     const historyScrollRestored = useRef(false);
-    const wasViewingHistoryWindow = useRef(state.viewingHistoryWindow);
     const { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs } = useMemo(() => {
         const queuedReleasePromptSeqs = new Set<number>();
         const legacyQueuePromptSeqs = new Set<number>();
@@ -5843,31 +7689,63 @@ function Timeline({
         }
         return { queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs };
     }, [state.events]);
+    // One card per tracker item, at its latest card marker, in its latest state (foldItemCards).
+    const itemCards = useMemo(() => foldItemCards(state.events), [state.events]);
     const visibleEvents = useMemo(
         () =>
             state.events.filter(
                 (event) =>
-                    !["read_marker", "edit", "session_status", "convo_meta"].includes(event.type) &&
-                    !isQueuedReleaseReply(event, queuedReleasePromptSeqs, legacyQueuePromptSeqs) &&
-                    !isPermissionDecisionReply(event, permissionRequestSeqs) &&
-                    !isSuppressedTrackerEvent(event),
+                    !isFoldedTranscriptEvent(event, {
+                        queuedReleasePromptSeqs,
+                        legacyQueuePromptSeqs,
+                        permissionRequestSeqs,
+                        itemCards,
+                    }),
             ),
-        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs],
+        [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs, itemCards],
     );
     const timeline = useMemo(
         () =>
             [
                 ...visibleEvents.map((event) => ({ kind: "event" as const, timestamp: event.ts, event })),
-                ...(state.viewingHistoryWindow
-                    ? []
-                    : state.pendingMessages.map((message) => ({
-                          kind: "pending" as const,
-                          timestamp: message.createdAt,
-                          message,
-                      }))),
+                ...state.pendingMessages.map((message) => ({
+                    kind: "pending" as const,
+                    timestamp: message.createdAt,
+                    message,
+                })),
             ].sort((left, right) => left.timestamp - right.timestamp),
-        [visibleEvents, state.pendingMessages, state.viewingHistoryWindow],
+        [visibleEvents, state.pendingMessages],
     );
+    // One entry per element in the list: a day divider before the first row of each calendar day,
+    // then the row. Windowing mounts a slice of these.
+    const eventRows = useMemo(() => {
+        const conversation = state.selectedConversationId ?? "";
+        const out: TimelineRow[] = [];
+        timeline.forEach((item, index) => {
+            const previous = timeline[index - 1];
+            const newDay = !previous || !sameCalendarDay(item.timestamp, previous.timestamp);
+            if (newDay) {
+                // Keyed by the day, not by its first row, so the key survives older rows of the same
+                // day arriving with "Load earlier messages".
+                const day = new Date(item.timestamp);
+                const dayKey = `${day.getFullYear()}-${day.getMonth() + 1}-${day.getDate()}`;
+                out.push({ key: `${conversation}:d-${dayKey}`, kind: "divider", timestamp: item.timestamp });
+            }
+            if (item.kind === "event") {
+                const next = timeline[index + 1];
+                out.push({
+                    key: `${conversation}:e-${item.event.seq}`,
+                    kind: "event",
+                    event: item.event,
+                    continuation: previous?.kind === "event" && sameSection(previous.event, item.event) && !newDay,
+                    lastInSection: next?.kind !== "event" || !sameSection(item.event, next.event),
+                });
+            } else {
+                out.push({ key: `${conversation}:m-${item.message.localId}`, kind: "pending", message: item.message });
+            }
+        });
+        return out;
+    }, [timeline, state.selectedConversationId]);
     const answeredPromptReplies = useMemo(() => {
         const replies = new Map<string, { choice?: string }>();
         for (const event of state.events) {
@@ -5895,6 +7773,11 @@ function Timeline({
         }
         return outcomes;
     }, [state.events]);
+    // Agent-chat cards settled by the timeline itself (the consent item's closing marker): a
+    // decision made on another device, or the ask lapsing.
+    const agentChatResolutions = useMemo(() => readAgentChatResolutions(state.events), [state.events]);
+    // The Coordinator's answers to chat and spawn cards (`consent_decision`), for their badges.
+    const coordinatorDecisions = useMemo(() => readCoordinatorDecisions(state.events), [state.events]);
     const releasedActions = useMemo(() => {
         const actions = new Map<string, "send" | "cancel" | "expired">();
         for (const event of state.events) {
@@ -5929,181 +7812,6 @@ function Timeline({
         (itemId: string): "send" | "cancel" | "expired" | undefined => releasedActions.get(itemId),
         [releasedActions],
     );
-    const scrollToBottom = useCallback((): void => {
-        const node = scrollRef.current;
-        if (node) node.scrollTop = node.scrollHeight;
-    }, []);
-    const cancelPendingScrollFrame = useCallback((): void => {
-        if (pendingScrollFrame.current === undefined) return;
-        cancelAnimationFrame(pendingScrollFrame.current);
-        pendingScrollFrame.current = undefined;
-    }, []);
-    const onScroll = (): void => {
-        const node = scrollRef.current;
-        if (!node) return;
-        cancelPendingScrollFrame();
-        const queuedConversationId = state.selectedConversationId;
-        pendingScrollFrame.current = requestAnimationFrame(() => {
-            pendingScrollFrame.current = undefined;
-            if (selectedConversationId.current !== queuedConversationId) return;
-            const nearBottom = isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight);
-            // While a historical window is open we are browsing, not tailing live: keep follow off
-            // so the layout effect never snaps to the bottom mid-forward-page. Scrolling down to
-            // the loaded newest edge pages FORWARD (loads newer) instead of demanding "Jump to
-            // latest". The client guards on loadingHistory + hasMoreNewer, so a burst of scroll
-            // frames self-debounces and stops at the true tail (which collapses the window back to
-            // live, after which normal follow resumes).
-            if (state.viewingHistoryWindow) {
-                setFollow(false);
-                if (nearBottom && !state.loadingHistory) void client.loadNewerHistory();
-            } else {
-                setFollow(nearBottom);
-            }
-        });
-    };
-
-    useEffect(() => {
-        setFollow(true);
-        return cancelPendingScrollFrame;
-    }, [state.selectedConversationId, cancelPendingScrollFrame]);
-
-    useEffect(
-        () => () => {
-            if (searchHighlightTimer.current !== undefined) clearTimeout(searchHighlightTimer.current);
-        },
-        [],
-    );
-
-    useEffect(() => {
-        cancelPendingScrollFrame();
-        historyScrollAnchor.current = undefined;
-        historyScrollRestored.current = false;
-        setFollow(true);
-        scrollToBottom();
-    }, [state.sendTick, cancelPendingScrollFrame, scrollToBottom]);
-
-    useLayoutEffect(() => {
-        const node = scrollRef.current;
-        if (!node) return;
-
-        const anchor = historyScrollAnchor.current;
-        if (anchor) {
-            if (anchor.conversationId !== state.selectedConversationId) {
-                historyScrollAnchor.current = undefined;
-                historyScrollRestored.current = false;
-                node.scrollTop = node.scrollHeight;
-                return;
-            }
-            const oldestSeq = visibleEvents[0]?.seq;
-            const historyPrepended =
-                oldestSeq !== undefined && (anchor.oldestSeq === undefined || oldestSeq < anchor.oldestSeq);
-            if (historyPrepended || !state.loadingHistory) {
-                node.scrollTop = anchor.scrollTop + node.scrollHeight - anchor.scrollHeight;
-                historyScrollAnchor.current = undefined;
-                historyScrollRestored.current = state.loadingHistory;
-            }
-            return;
-        }
-
-        if (historyScrollRestored.current) {
-            if (!state.loadingHistory) historyScrollRestored.current = false;
-            return;
-        }
-
-        // never snap to the bottom while a historical window is open. Forward-paging
-        // appends newer rows below the viewport; the browser keeps scrollTop stable, preserving
-        // the reader's position. Snapping here would jump past the freshly fetched page — the
-        // exact reading-position loss this feature exists to avoid. Once the window collapses at
-        // the true tail, normal live-tail following resumes.
-        if (isFollowingTail && !state.viewingHistoryWindow) node.scrollTop = node.scrollHeight;
-    }, [
-        state.selectedConversationId,
-        state.viewingHistoryWindow,
-        visibleEvents,
-        state.pendingMessages.length,
-        state.textStreams,
-        state.toolStreams,
-        state.loadingHistory,
-        isFollowingTail,
-        showTheWork,
-    ]);
-
-    useLayoutEffect(() => {
-        const anchor = toggleAnchorRef.current;
-        toggleAnchorRef.current = undefined;
-        const node = scrollRef.current;
-        if (!anchor || !node || isFollowingTail) return;
-        const row = node.querySelector<HTMLElement>(`[data-event-id="${anchor.seq}"]`);
-        if (!row) return;
-        node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top - anchor.offset;
-    }, [showTheWork]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    useEffect(() => {
-        const wasOpen = wasViewingHistoryWindow.current;
-        wasViewingHistoryWindow.current = state.viewingHistoryWindow;
-        // forward-paging just collapsed the historical window to live (true → false). While
-        // the window was open onScroll forced follow off, so it will not resume on its own. If the
-        // reader is at the loaded bottom edge (the scroll-to-newest path that reached the tail),
-        // re-arm tail-following and snap to the newest so live messages stay visible. If they are
-        // not at the edge (collapsed via the Load-newer button mid-scroll) leave their position —
-        // Jump-to-bottom surfaces instead.
-        if (!wasOpen || state.viewingHistoryWindow) return;
-        const node = scrollRef.current;
-        if (node && isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight)) {
-            setFollow(true);
-            scrollToBottom();
-        }
-    }, [state.viewingHistoryWindow, scrollToBottom]);
-
-    useLayoutEffect(() => {
-        const targetSeq = state.pendingScrollSeq;
-        if (targetSeq === undefined) return;
-        let target = [...(scrollRef.current?.querySelectorAll<HTMLElement>("[data-event-id]") ?? [])].find(
-            (row) => row.dataset.eventId === String(targetSeq),
-        );
-        // Show the work OFF: steps and narration live inside a turn's card, so a hit on one of
-        // them lands on its turn tile.
-        if (!target) {
-            const turn = turnsRef.current.find((candidate) =>
-                candidate.events.some((event) => event.seq === targetSeq),
-            );
-            if (turn) {
-                target = [...(scrollRef.current?.querySelectorAll<HTMLElement>("[data-turn]") ?? [])].find(
-                    (row) => row.tagName === "LI" && row.dataset.turn === turn.key,
-                );
-            }
-        }
-        if (target) {
-            target.scrollIntoView({ block: "nearest" });
-            setHighlightedSearchTarget({ conversationId: state.selectedConversationId, seq: targetSeq });
-            if (searchHighlightTimer.current !== undefined) clearTimeout(searchHighlightTimer.current);
-            searchHighlightTimer.current = setTimeout(() => {
-                setHighlightedSearchTarget(undefined);
-                searchHighlightTimer.current = undefined;
-            }, 2_000);
-        }
-        client.clearPendingScrollSeq(targetSeq);
-    }, [client, state.pendingScrollSeq, state.selectedConversationId]);
-
-    const loadEarlierMessages = (): void => {
-        const node = scrollRef.current;
-        if (node) {
-            historyScrollAnchor.current = {
-                conversationId: state.selectedConversationId,
-                scrollHeight: node.scrollHeight,
-                scrollTop: node.scrollTop,
-                oldestSeq: visibleEvents[0]?.seq,
-            };
-        }
-        void client.loadOlderHistory();
-    };
-
-    // Gate the fire-and-forget ephemerals on the durable, replayed run-state: neither the turn-end
-    // tool_stream 'end' frame nor the activity 'idle' frame (bridge lib/journal-publisher.js
-    // publishActivity) is ever replayed, so a dropped one would otherwise strand a dangling
-    // 'running' tool card or a stale "Thinking" until the next turn. Only render live tool streams
-    // and the activity indicator while the session is actually running; the model reconcile
-    // (refreshConversations) prunes lingering tool streams (not activity — see there).
     const sessionRunning = client.selectedConversation()?.session_state === "running";
     // Inside a helper's own thread the turn's steps read as headlines (AgentTurnRow).
     const selectedForHeadlines = client.selectedConversation();
@@ -6164,13 +7872,10 @@ function Timeline({
     // First-seen time of each live step, so the elapsed counter and slow state survive re-renders.
     const liveSeenRef = useRef(new Map<string, number>());
     const liveStreams = useMemo(
-        () => (sessionRunning && !state.viewingHistoryWindow ? Object.values(state.toolStreams) : []),
-        [sessionRunning, state.viewingHistoryWindow, state.toolStreams],
+        () => (sessionRunning ? Object.values(state.toolStreams) : []),
+        [sessionRunning, state.toolStreams],
     );
-    const activityDetail =
-        sessionRunning && !state.viewingHistoryWindow && state.activity?.state === "tool"
-            ? state.activity.detail || ""
-            : "";
+    const activityDetail = sessionRunning && state.activity?.state === "tool" ? state.activity.detail || "" : "";
     // The running step, stable across stream chunks (keyed on the stream, not its content).
     const lastStream = liveStreams.at(-1);
     const streamKey = lastStream
@@ -6198,8 +7903,7 @@ function Timeline({
             (sessionState === "running" || sessionState === "waiting") &&
             lastTurn.breaks.some((event) => isUnansweredAsk(event, answeredPromptReplies, spawnOutcomes));
         if (waiting) return { mode: "waiting" };
-        if (!sessionRunning || state.viewingHistoryWindow)
-            return { mode: lastStep?.status === "stopped" ? "stopped" : "done" };
+        if (!sessionRunning) return { mode: lastStep?.status === "stopped" ? "stopped" : "done" };
         const seen = liveSeenRef.current;
         // Only the step running NOW keeps a clock: a repeat of the same command later starts fresh.
         const since = (key: string): number => {
@@ -6226,7 +7930,6 @@ function Timeline({
         lastTurn,
         sessionState,
         sessionRunning,
-        state.viewingHistoryWindow,
         state.activity,
         streamStep,
         activityRunning,
@@ -6234,7 +7937,7 @@ function Timeline({
         answeredPromptReplies,
         spawnOutcomes,
     ]);
-    const rows = useMemo(
+    const turnRows = useMemo(
         () => threadRows(turns, { liveLastTurn: lastTurnLive.mode === "running" && Boolean(lastTurnLive.running) }),
         [turns, lastTurnLive],
     );
@@ -6246,257 +7949,596 @@ function Timeline({
     // the turn has no card yet (the agent is thinking before its first step).
     const lastTurnHasCard = Boolean(lastTurn) && (stepsOf(lastTurn.items).length > 0 || Boolean(lastTurnLive.running));
     const showActivityIndicator = showTheWork || !lastTurnHasCard;
-    const highlightedSeq =
-        highlightedSearchTarget?.conversationId === state.selectedConversationId
-            ? highlightedSearchTarget?.seq
-            : undefined;
-
-    const pendingTimeline = useMemo(() => timeline.filter((item) => item.kind === "pending"), [timeline]);
-    const lastRowTs = useMemo(() => {
-        const last = rows.at(-1);
-        if (!last) return undefined;
-        return last.kind === "turn" ? (last.turn.events.at(-1)?.ts ?? last.turn.endTs) : last.event.ts;
-    }, [rows]);
-
-    const renderOffRow = (row: ThreadRow, index: number): React.ReactElement => {
-        const previous = rows[index - 1];
+    // With Show the work OFF the list is one row per operator turn (plus peer messages, notices and
+    // pending sends) in place of one row per event; the windowing below treats both the same.
+    const displayRows = useMemo((): TimelineRow[] => {
+        const conversation = state.selectedConversationId ?? "";
+        const out: TimelineRow[] = [];
+        if (showTheWork) {
+            if (eventHelpers.size === 0) return eventRows;
+            for (const row of eventRows) {
+                out.push(row);
+                if (row.kind !== "event") continue;
+                for (const child of eventHelpers.get(row.event.seq) ?? []) {
+                    out.push({ key: `${conversation}:h-${child.id}`, kind: "helper", child });
+                }
+            }
+            return out;
+        }
         const rowTs = (candidate: ThreadRow | undefined): number | undefined =>
             candidate === undefined
                 ? undefined
                 : candidate.kind === "turn"
                   ? (candidate.turn.events[0]?.ts ?? candidate.turn.startTs)
                   : candidate.event.ts;
-        const ts = rowTs(row)!;
-        const previousTs = rowTs(previous);
-        const divider =
-            previousTs === undefined || !sameCalendarDay(ts, previousTs) ? (
-                <li className="mj_DateDivider" role="separator">
-                    <span className="mj_DateDivider_rule" aria-hidden="true" />
-                    <span className="mj_DateDivider_label">{formatDayDivider(ts)}</span>
-                    <span className="mj_DateDivider_rule" aria-hidden="true" />
-                </li>
-            ) : null;
-        if (row.kind === "turn") {
-            return (
-                <React.Fragment key={`t-${row.turn.key}`}>
-                    {divider}
-                    <AgentTurnRow
-                        client={client}
-                        turn={row.turn}
-                        live={
-                            row.turn === lastTurn
-                                ? lastTurnLive
-                                : { mode: stepsOf(row.turn.items).at(-1)?.status === "stopped" ? "stopped" : "done" }
-                        }
-                        answeredPromptReplies={answeredPromptReplies}
-                        spawnOutcomes={spawnOutcomes}
-                        isReadOnly={isReadOnly || state.viewingHistoryWindow}
-                        resolvedAction={resolvedAction}
-                        highlightedSeq={highlightedSeq}
-                        rowHandlers={menu.rowHandlers}
-                        helpers={turnHelpers.get(row.turn.key)}
-                        helperThread={helperThread}
-                        expandHeadlines={expandedHelperTurns.has(row.turn.key)}
-                    />
-                </React.Fragment>
-            );
-        }
-        if (row.kind === "notice") {
-            return (
-                <React.Fragment key={`n-${row.event.seq}`}>
-                    {divider}
-                    <SystemNoticeRow
-                        event={row.event}
-                        highlighted={highlightedSeq === row.event.seq}
-                        text={browserNoticeSeqs.has(row.event.seq) ? "Restarting with browser tools…" : undefined}
-                    />
-                </React.Fragment>
-            );
-        }
-        const next = rows[index + 1];
-        const sameSenderAs = (candidate: ThreadRow | undefined): boolean =>
+        const dayKeyOf = (timestamp: number): string => {
+            const day = new Date(timestamp);
+            return `${day.getFullYear()}-${day.getMonth() + 1}-${day.getDate()}`;
+        };
+        let lastTs: number | undefined;
+        const divide = (timestamp: number): void => {
+            if (lastTs === undefined || !sameCalendarDay(timestamp, lastTs)) {
+                out.push({ key: `${conversation}:d-${dayKeyOf(timestamp)}`, kind: "divider", timestamp });
+            }
+        };
+        const sameSenderAs = (candidate: ThreadRow | undefined, row: ThreadRow): boolean =>
             candidate !== undefined &&
             (candidate.kind === "operator" || candidate.kind === "peer") &&
+            (row.kind === "operator" || row.kind === "peer") &&
             candidate.event.sender === row.event.sender;
-        return (
-            <React.Fragment key={`e-${row.event.seq}`}>
-                {divider}
-                <EventRow
-                    client={client}
-                    event={row.event}
-                    answeredPromptReplies={answeredPromptReplies}
-                    spawnOutcomes={spawnOutcomes}
-                    isReadOnly={isReadOnly || state.viewingHistoryWindow}
-                    resolvedAction={resolvedAction}
-                    continuation={sameSenderAs(previous) && !divider}
-                    lastInSection={!sameSenderAs(next)}
-                    searchHighlighted={highlightedSeq === row.event.seq}
-                    rowHandlers={menu.rowHandlers}
-                />
-            </React.Fragment>
-        );
+        turnRows.forEach((row, index) => {
+            const ts = rowTs(row)!;
+            divide(ts);
+            const previous = turnRows[index - 1];
+            const next = turnRows[index + 1];
+            const newDay = lastTs === undefined || !sameCalendarDay(ts, lastTs);
+            if (row.kind === "turn") {
+                out.push({ key: `${conversation}:t-${row.turn.key}`, kind: "turn", turn: row.turn });
+                lastTs = row.turn.events.at(-1)?.ts ?? row.turn.endTs;
+                return;
+            }
+            lastTs = row.event.ts;
+            if (row.kind === "notice") {
+                out.push({ key: `${conversation}:e-${row.event.seq}`, kind: "notice", event: row.event });
+                return;
+            }
+            out.push({
+                key: `${conversation}:e-${row.event.seq}`,
+                kind: "event",
+                event: row.event,
+                continuation: sameSenderAs(previous, row) && !newDay,
+                lastInSection: !sameSenderAs(next, row),
+            });
+        });
+        for (const row of eventRows) {
+            if (row.kind !== "pending") continue;
+            divide(row.message.createdAt);
+            lastTs = row.message.createdAt;
+            out.push(row);
+        }
+        return out;
+    }, [showTheWork, eventRows, turnRows, eventHelpers, state.selectedConversationId]);
+    const rowKeys = useMemo(() => displayRows.map((row) => row.key), [displayRows]);
+    const scrollToBottom = useCallback((): void => {
+        const node = scrollRef.current;
+        if (node) node.scrollTop = node.scrollHeight;
+    }, []);
+    const cancelPendingScrollFrame = useCallback((): void => {
+        if (pendingScrollFrame.current === undefined) return;
+        cancelAnimationFrame(pendingScrollFrame.current);
+        pendingScrollFrame.current = undefined;
+    }, []);
+    const lastScrollTop = useRef(0);
+    const lastScrollHeight = useRef(0);
+    // When the reader last did something that scrolls the transcript (a wheel, a touch, a key, the
+    // scrollbar); scrolling within SCROLL_INPUT_MS of it, momentum included, is theirs.
+    const lastScrollInput = useRef(-Infinity);
+    useEffect(() => {
+        const node = scrollRef.current;
+        if (!node) return;
+        const mark = (): void => {
+            lastScrollInput.current = performance.now();
+        };
+        const inputs = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
+        for (const type of inputs) node.addEventListener(type, mark, { passive: true });
+        return () => {
+            for (const type of inputs) node.removeEventListener(type, mark);
+        };
+    }, []);
+    // A remembered place waiting for its conversation's rows to arrive (see the restore below).
+    const pendingPlace = useRef<{ conversationId: string; place: ListPlace } | undefined>(undefined);
+    const onScroll = (): void => {
+        const node = scrollRef.current;
+        if (!node) return;
+        windowed.onScroll();
+        // Scrolling up towards the oldest loaded message fetches the page before it, so the reader
+        // never has to stop at the "Load earlier messages" button. Only the reader's own scrolling
+        // counts: the app moves scrollTop too (restoring a place, keeping the anchor, jumping), and
+        // so does the browser when the content changes height (switching conversation, rows
+        // arriving).
+        const scrolledUp =
+            node.scrollTop < lastScrollTop.current &&
+            node.scrollHeight === lastScrollHeight.current &&
+            performance.now() - lastScrollInput.current < SCROLL_INPUT_MS;
+        lastScrollTop.current = node.scrollTop;
+        lastScrollHeight.current = node.scrollHeight;
+        if (
+            scrolledUp &&
+            state.events[0]?.convo_id === state.selectedConversationId &&
+            node.scrollTop < node.clientHeight * AUTO_LOAD_HISTORY_SCREENS &&
+            state.hasOlderHistory &&
+            !state.loadingHistory &&
+            !pendingPlace.current
+        ) {
+            loadEarlierMessages();
+        }
+        cancelPendingScrollFrame();
+        const queuedConversationId = state.selectedConversationId;
+        pendingScrollFrame.current = requestAnimationFrame(() => {
+            pendingScrollFrame.current = undefined;
+            // While a remembered place is still being restored, the scroll is ours, not the reader's.
+            if (selectedConversationId.current !== queuedConversationId || pendingPlace.current) return;
+            const nearBottom = isNearBottom(node.scrollTop, node.scrollHeight, node.clientHeight);
+            setFollow(nearBottom);
+            // Remember where the reader is in this conversation, for when they come back to it.
+            if (!queuedConversationId) return;
+            const place = nearBottom ? null : windowed.place();
+            if (place) placesFor(client).set(queuedConversationId, place);
+            else placesFor(client).delete(queuedConversationId);
+        });
     };
 
+    // Opening a conversation goes to its bottom, or back to where the reader left it.
+    useLayoutEffect(() => {
+        const id = state.selectedConversationId;
+        setFollow(!(id && placesFor(client).has(id)));
+    }, [client, state.selectedConversationId]);
+
+    useEffect(() => cancelPendingScrollFrame, [state.selectedConversationId, cancelPendingScrollFrame]);
+
+    // A send goes to the bottom. Only a new send: on mount the timeline opens at the bottom anyway,
+    // or at the remembered place.
+    const seenSendTick = useRef(state.sendTick);
+    useEffect(() => {
+        if (seenSendTick.current === state.sendTick) return;
+        seenSendTick.current = state.sendTick;
+        cancelPendingScrollFrame();
+        historyScrollAnchor.current = undefined;
+        historyScrollRestored.current = false;
+        pendingPlace.current = undefined;
+        setFollow(true);
+        scrollToBottom();
+    }, [state.sendTick, cancelPendingScrollFrame, scrollToBottom]);
+
+    useLayoutEffect(() => {
+        const node = scrollRef.current;
+        if (!node) return;
+
+        const anchor = historyScrollAnchor.current;
+        if (anchor) {
+            if (anchor.conversationId !== state.selectedConversationId) {
+                historyScrollAnchor.current = undefined;
+                historyScrollRestored.current = false;
+                node.scrollTop = node.scrollHeight;
+                return;
+            }
+            const oldestSeq = visibleEvents[0]?.seq;
+            const historyPrepended =
+                oldestSeq !== undefined && (anchor.oldestSeq === undefined || oldestSeq < anchor.oldestSeq);
+            if (historyPrepended || !state.loadingHistory) {
+                node.scrollTop = anchor.scrollTop + node.scrollHeight - anchor.scrollHeight;
+                historyScrollAnchor.current = undefined;
+                historyScrollRestored.current = state.loadingHistory;
+            }
+            return;
+        }
+
+        if (historyScrollRestored.current) {
+            if (!state.loadingHistory) historyScrollRestored.current = false;
+            return;
+        }
+
+        if (isFollowingTail) node.scrollTop = node.scrollHeight;
+    }, [
+        state.selectedConversationId,
+        visibleEvents,
+        state.pendingMessages.length,
+        state.textStreams,
+        state.toolStreams,
+        state.loadingHistory,
+        isFollowingTail,
+        showTheWork,
+    ]);
+
+    useLayoutEffect(() => {
+        const anchor = toggleAnchorRef.current;
+        toggleAnchorRef.current = undefined;
+        const node = scrollRef.current;
+        if (!anchor || !node || isFollowingTail) return;
+        const row = node.querySelector<HTMLElement>(`[data-event-id="${anchor.seq}"]`);
+        if (!row) return;
+        node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top - anchor.offset;
+    }, [showTheWork]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Declared after the scroll effects above, so it measures once they have placed the scroller.
+    const windowed = useWindowedList({
+        scrollRef,
+        keys: rowKeys,
+        estimate: estimateTimelineRow,
+        followTail: isFollowingTail,
+        anchorable: isAnchorableTimelineRow,
+        resetKey: state.selectedConversationId,
+    });
+
+    // Put the reader back at the remembered place once the conversation's rows are here. If the
+    // row isn't among them (its history is no longer stored), open at the bottom as usual.
+    const restoringFor = useRef<string | undefined>(undefined);
+    const { restorePlace } = windowed;
+    useLayoutEffect(() => {
+        const conversationId = state.selectedConversationId;
+        if (restoringFor.current !== conversationId) {
+            restoringFor.current = conversationId;
+            const place = conversationId ? placesFor(client).get(conversationId) : undefined;
+            pendingPlace.current = conversationId && place ? { conversationId, place } : undefined;
+        }
+        // Wait for the render that has stopped following the tail, or the hook pins to the bottom.
+        const pending = pendingPlace.current;
+        if (!pending || isFollowingTail || state.events[0]?.convo_id !== pending.conversationId) return;
+        pendingPlace.current = undefined;
+        if (restorePlace(pending.place)) {
+            lastScrollTop.current = scrollRef.current?.scrollTop ?? 0;
+            return;
+        }
+        placesFor(client).delete(pending.conversationId);
+        setFollow(true);
+    }, [client, state.selectedConversationId, state.events, rowKeys, restorePlace, isFollowingTail]);
+
+    // Read state: report which rows were on screen. A layout effect, so a conversation switch
+    // re-binds before any row of the new conversation can be counted under the old one. A
+    // read-only subagent transcript reports nothing.
+    const seenConversationId = isReadOnly ? undefined : state.selectedConversationId;
+    useLayoutEffect(() => {
+        const root = scrollRef.current;
+        const list = listRef.current;
+        if (!seenConversationId || !root || !list) return;
+        return observeSeenRows({ tracker: client.seen, convoId: seenConversationId, root, list });
+    }, [client, seenConversationId]);
+
+    // New messages are announced through a live region of their own. The list is not one: with
+    // the transcript windowed, rows mount and unmount as the reader scrolls, and a live list would
+    // read those out as if they had just arrived. Only a newer last event in the same conversation
+    // counts, so opening a conversation and loading its history announce nothing.
+    // A repeat of the same text would not change the region, so every other announcement ends in
+    // a no-break space; a switch clears it.
+    const [arrival, setArrival] = useState("");
+    const lastEvent = useRef<{ conversationId: string; seq: number } | undefined>(undefined);
+    useEffect(() => {
+        const last = visibleEvents.at(-1);
+        const previous = lastEvent.current;
+        lastEvent.current = last && { conversationId: last.convo_id, seq: last.seq };
+        if (!last || last.convo_id !== state.selectedConversationId || last.sender.startsWith("user:")) return;
+        if (previous?.conversationId !== last.convo_id || last.seq <= previous.seq) return;
+        const text = `${displaySender(last.sender)}: ${eventSnippet(last.type, last.payload) || "new message"}`;
+        setArrival((current) => (current === text ? `${text}\u00a0` : text));
+    }, [visibleEvents, state.selectedConversationId]);
+    useLayoutEffect(() => setArrival(""), [state.selectedConversationId]);
+
+    const loadEarlierMessages = (): void => {
+        const node = scrollRef.current;
+        if (node) {
+            historyScrollAnchor.current = {
+                conversationId: state.selectedConversationId,
+                scrollHeight: node.scrollHeight,
+                scrollTop: node.scrollTop,
+                oldestSeq: visibleEvents[0]?.seq,
+            };
+        }
+        void client.loadOlderHistory();
+    };
+
+    // Jump to a message: once the client has loaded the history holding the target seq it hands
+    // over `focusTarget`; scroll that row into view and flash it. Rows are found by their
+    // data-event-id, so the memoised rows take no extra props. The row may not be mounted (the
+    // transcript is windowed), so it is revealed first at its estimated position. Sizing rows for
+    // real as they mount moves the target, so the position is re-checked each frame until it holds
+    // still — and given up the moment the user scrolls themself.
+    const focusRun = useRef(0);
+    const focusHighlight = useRef<{ row: HTMLElement; timer: ReturnType<typeof setTimeout> } | undefined>(undefined);
+    const focusTarget = state.focusTarget;
+    const { reveal } = windowed;
+    useLayoutEffect(() => {
+        const node = scrollRef.current;
+        if (!node || !focusTarget || focusTarget.conversationId !== state.selectedConversationId) return;
+        client.clearFocusTarget(focusTarget.token);
+        const seq = landingSeq(
+            visibleEvents.map((event) => event.seq),
+            focusTarget.seq,
+        );
+        let index = seq === undefined ? -1 : rowKeys.indexOf(`${state.selectedConversationId}:e-${seq}`);
+        // Show the work OFF: a step or a narration line lives inside its turn's tile.
+        const turnOfSeq =
+            seq === undefined || index >= 0
+                ? undefined
+                : turnsRef.current.find((candidate) => candidate.events.some((event) => event.seq === seq));
+        if (turnOfSeq) index = rowKeys.indexOf(`${state.selectedConversationId}:t-${turnOfSeq.key}`);
+        if (index < 0) return;
+        const rowFor = (): HTMLElement | null =>
+            node.querySelector<HTMLElement>(`[data-event-id="${seq}"]`) ??
+            (turnOfSeq ? node.querySelector<HTMLElement>(`li[data-turn="${turnOfSeq.key}"]`) : null);
+        cancelPendingScrollFrame();
+        historyScrollAnchor.current = undefined;
+        historyScrollRestored.current = false;
+        // A jump wins over a remembered place still waiting to be restored.
+        pendingPlace.current = undefined;
+        setFollow(false);
+        if (!rowFor()) reveal(index);
+
+        const flash = (row: HTMLElement): void => {
+            const previous = focusHighlight.current;
+            if (previous) {
+                clearTimeout(previous.timer);
+                previous.row.classList.remove("mj_EventTile_focused");
+            }
+            row.classList.add("mj_EventTile_focused");
+            const timer = setTimeout(() => {
+                row.classList.remove("mj_EventTile_focused");
+                if (focusHighlight.current?.row === row) focusHighlight.current = undefined;
+            }, FOCUS_HIGHLIGHT_MS);
+            focusHighlight.current = { row, timer };
+        };
+
+        const run = ++focusRun.current;
+        const stop = (): void => {
+            if (focusRun.current === run) focusRun.current += 1;
+        };
+        const userScroll = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+        for (const type of userScroll) node.addEventListener(type, stop, { once: true, passive: true });
+        let frames = 0;
+        let still = 0;
+        let flashed = false;
+        const place = (): void => {
+            const live = focusRun.current === run;
+            const target = live ? rowFor() : null;
+            if (target) {
+                if (!flashed) {
+                    flash(target);
+                    flashed = true;
+                }
+                const top = focusScrollTop(node, target);
+                if (Math.abs(node.scrollTop - top) > 1) {
+                    node.scrollTop = top;
+                    still = 0;
+                } else {
+                    still += 1;
+                }
+            }
+            // Until the revealed row has mounted, keep waiting for it (within the frame budget).
+            if (live && still < 3 && ++frames < 60) {
+                requestAnimationFrame(place);
+                return;
+            }
+            for (const type of userScroll) node.removeEventListener(type, stop);
+        };
+        place();
+    }, [client, focusTarget, state.selectedConversationId, visibleEvents, rowKeys, reveal, cancelPendingScrollFrame]);
+    useEffect(
+        () => () => {
+            focusRun.current += 1;
+            if (focusHighlight.current) clearTimeout(focusHighlight.current.timer);
+        },
+        [],
+    );
+
+    // ⇧⌘U / Ctrl+Shift+U, the floating pill's shortcut, is bound with the app's other shortcuts
+    // (shortcuts.ts useAppShortcuts), live whenever a conversation is open.
+
+    // The activity indicator ('Thinking' / 'Running …') and the fire-and-forget tool-call cards
+    // both ride ephemeral frames whose turn-end 'idle'/'end' frame is never replayed
+    // (lib/journal-publisher.js publishActivity), so a dropped final frame would otherwise strand
+    // a stale "Thinking" or a dangling 'running' tool card until the next turn. Gate both
+    // on the durable, replayed run-state: only render while the session is actually running; the
+    // model reconcile (refreshConversations) prunes any tool card that lingers in the map.
     const timelineMain = (
-        <main className="mx_RoomView_timeline" data-testid="timeline">
-            <div className="mx_RoomView_messagePanel mx_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
-                <div className="mx_RoomView_messageListWrapper">
-                    <ol className="mx_RoomView_MessageList" aria-live="polite">
-                        {state.hasOlderHistory && (
-                            <li className="mj_HistoryRow">
-                                <button
-                                    className="mj_LoadHistory"
-                                    onClick={loadEarlierMessages}
-                                    disabled={state.loadingHistory}
-                                >
-                                    {state.loadingHistory ? "Loading…" : "Load earlier messages"}
-                                </button>
-                            </li>
-                        )}
-                        {!showTheWork && rows.map(renderOffRow)}
-                        {(showTheWork ? timeline : pendingTimeline).map((item, index, list) => {
-                            const previous = list[index - 1];
-                            // With Show the work OFF the event rows render above; the first pending
-                            // row compares against the last of them.
-                            const previousTimestamp = previous?.timestamp ?? (showTheWork ? undefined : lastRowTs);
-                            // A day divider precedes the first row of each new calendar day (§ upload-first
-                            // ref): a centred dated label flanked by hairline rules.
-                            const divider =
-                                previousTimestamp === undefined ||
-                                !sameCalendarDay(item.timestamp, previousTimestamp) ? (
-                                    <li className="mj_DateDivider" role="separator">
-                                        <span className="mj_DateDivider_rule" aria-hidden="true" />
-                                        <span className="mj_DateDivider_label">{formatDayDivider(item.timestamp)}</span>
-                                        <span className="mj_DateDivider_rule" aria-hidden="true" />
-                                    </li>
-                                ) : null;
-                            if (item.kind === "event") {
-                                const next = list[index + 1];
-                                return (
-                                    <React.Fragment key={`e-${item.event.seq}`}>
-                                        {divider}
-                                        <EventRow
-                                            client={client}
-                                            event={item.event}
-                                            answeredPromptReplies={answeredPromptReplies}
-                                            spawnOutcomes={spawnOutcomes}
-                                            isReadOnly={isReadOnly || state.viewingHistoryWindow}
-                                            resolvedAction={resolvedAction}
-                                            continuation={
-                                                previous?.kind === "event" &&
-                                                previous.event.sender === item.event.sender &&
-                                                !divider
-                                            }
-                                            lastInSection={
-                                                next?.kind !== "event" || next.event.sender !== item.event.sender
-                                            }
-                                            searchHighlighted={
-                                                highlightedSearchTarget?.conversationId ===
-                                                    state.selectedConversationId &&
-                                                highlightedSearchTarget?.seq === item.event.seq
-                                            }
-                                            rowHandlers={menu.rowHandlers}
-                                        />
-                                        {eventHelpers.get(item.event.seq)?.map((child) => (
-                                            <DevHelperRow key={`h-${child.id}`} client={client} child={child} />
-                                        ))}
-                                    </React.Fragment>
-                                );
-                            }
-                            const message = item.message;
-                            return (
-                                <React.Fragment key={`m-${message.localId}`}>
-                                    {divider}
-                                    {message.kind === "image" || message.kind === "file" ? (
-                                        <PendingAttachment client={client} message={message} isReadOnly={isReadOnly} />
-                                    ) : (
-                                        <li
-                                            className="mx_EventTile mx_EventTile_sending mx_EventTile_lastInSection"
-                                            data-layout="bubble"
-                                            data-self="true"
-                                        >
-                                            <div className="mx_EventTile_line">
-                                                <div className="mx_MTextBody mx_EventTile_content">
-                                                    <div className="mj_Markdown">
-                                                        <MarkdownBody text={message.body} label={message.localId} />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <span className="mj_SendingLabel">Sending…</span>
-                                        </li>
-                                    )}
-                                </React.Fragment>
-                            );
-                        })}
-                        {Object.values(state.viewingHistoryWindow ? {} : state.textStreams).map((text, index) => (
-                            <li
-                                className="mx_EventTile mx_EventTile_lastInSection"
-                                key={`text-stream-${index}`}
-                                data-layout="bubble"
-                                data-self="false"
+        <main className="mj_ChatView_timeline" data-testid="timeline">
+            <div className="mj_ScreenReaderOnly" aria-live="polite" aria-atomic="true">
+                {arrival}
+            </div>
+            <div className="mj_ChatView_messagePanel mj_AutoHideScrollbar" ref={scrollRef} onScroll={onScroll}>
+                <ol className="mj_ChatView_messageList" ref={listRef}>
+                    {state.hasOlderHistory && (
+                        <li className="mj_HistoryRow">
+                            <button
+                                className="mj_LoadHistory"
+                                onClick={loadEarlierMessages}
+                                disabled={state.loadingHistory}
                             >
-                                <span className="mx_DisambiguatedProfile">
-                                    <MsgAvatar />
-                                    <span className="mx_DisambiguatedProfile_displayName">agent</span>
-                                </span>
-                                <div className="mx_EventTile_line">
-                                    <div className="mx_MTextBody mx_EventTile_content">
-                                        <div className="mj_Markdown mj_Markdown_streaming">
-                                            <MarkdownBody text={text} streaming label={`stream-${index}`} />
-                                            <span className="mj_Cursor" />
+                                {state.loadingHistory ? "Loading…" : "Load earlier messages"}
+                            </button>
+                        </li>
+                    )}
+                    <li
+                        className="mj_TimelineSpacer"
+                        aria-hidden="true"
+                        ref={windowed.beforeRef}
+                        style={{ height: windowed.range.before }}
+                    />
+                    {displayRows.slice(windowed.range.start, windowed.range.end).map((row) => {
+                        if (row.kind === "divider") {
+                            // A centred dated label flanked by hairline rules (§ upload-first ref).
+                            return (
+                                <li key={row.key} className="mj_DateDivider" role="separator">
+                                    <span className="mj_DateDivider_rule" aria-hidden="true" />
+                                    <span className="mj_DateDivider_label">{formatDayDivider(row.timestamp)}</span>
+                                    <span className="mj_DateDivider_rule" aria-hidden="true" />
+                                </li>
+                            );
+                        }
+                        if (row.kind === "turn") {
+                            return (
+                                <AgentTurnRow
+                                    key={row.key}
+                                    client={client}
+                                    turn={row.turn}
+                                    live={
+                                        row.turn === lastTurn
+                                            ? lastTurnLive
+                                            : {
+                                                  mode:
+                                                      stepsOf(row.turn.items).at(-1)?.status === "stopped"
+                                                          ? "stopped"
+                                                          : "done",
+                                              }
+                                    }
+                                    answeredPromptReplies={answeredPromptReplies}
+                                    spawnOutcomes={spawnOutcomes}
+                                    agentChatResolutions={agentChatResolutions}
+                                    coordinatorDecisions={coordinatorDecisions}
+                                    itemCards={itemCards}
+                                    isReadOnly={isReadOnly}
+                                    resolvedAction={resolvedAction}
+                                    rowHandlers={menu.rowHandlers}
+                                    helpers={turnHelpers.get(row.turn.key)}
+                                    helperThread={helperThread}
+                                    expandHeadlines={expandedHelperTurns.has(row.turn.key)}
+                                />
+                            );
+                        }
+                        if (row.kind === "notice") {
+                            return (
+                                <TurnNoticeRow
+                                    key={row.key}
+                                    event={row.event}
+                                    highlighted={false}
+                                    text={
+                                        browserNoticeSeqs.has(row.event.seq)
+                                            ? "Restarting with browser tools…"
+                                            : undefined
+                                    }
+                                />
+                            );
+                        }
+                        if (row.kind === "helper") {
+                            return <DevHelperRow key={row.key} client={client} child={row.child} />;
+                        }
+                        if (row.kind === "event") {
+                            return (
+                                <MemoEventRow
+                                    key={row.key}
+                                    client={client}
+                                    event={row.event}
+                                    answeredPromptReplies={answeredPromptReplies}
+                                    spawnOutcomes={spawnOutcomes}
+                                    agentChatResolutions={agentChatResolutions}
+                                    coordinatorDecisions={coordinatorDecisions}
+                                    itemCards={itemCards}
+                                    isReadOnly={isReadOnly}
+                                    resolvedAction={resolvedAction}
+                                    continuation={row.continuation}
+                                    lastInSection={row.lastInSection}
+                                    rowHandlers={menu.rowHandlers}
+                                />
+                            );
+                        }
+                        const message = row.message;
+                        return message.kind === "image" || message.kind === "file" ? (
+                            <PendingAttachment
+                                key={row.key}
+                                client={client}
+                                message={message}
+                                isReadOnly={isReadOnly}
+                            />
+                        ) : (
+                            <li
+                                key={row.key}
+                                className="mj_EventTile mj_EventTile_sending mj_EventTile_lastInSection"
+                                data-layout="bubble"
+                                data-self="true"
+                            >
+                                <div className="mj_EventTile_line">
+                                    <div className="mj_TextBody mj_EventTile_content">
+                                        <div className="mj_Markdown">
+                                            <MarkdownBody text={message.body} label={message.localId} />
                                         </div>
                                     </div>
                                 </div>
+                                <span className="mj_SendingLabel">Sending…</span>
                             </li>
+                        );
+                    })}
+                    <li
+                        className="mj_TimelineSpacer"
+                        aria-hidden="true"
+                        ref={windowed.afterRef}
+                        style={{ height: windowed.range.after }}
+                    />
+                    {Object.values(state.textStreams).map((text, index) => (
+                        <li
+                            className="mj_EventTile mj_EventTile_lastInSection"
+                            key={`text-stream-${index}`}
+                            data-layout="bubble"
+                            data-self="false"
+                        >
+                            <span className="mj_SenderName">
+                                <MsgAvatar />
+                                <span className="mj_SenderName_displayName">agent</span>
+                            </span>
+                            <div className="mj_EventTile_line">
+                                <div className="mj_TextBody mj_EventTile_content">
+                                    <div className="mj_Markdown mj_Markdown_streaming">
+                                        <MarkdownBody text={text} streaming label={`stream-${index}`} />
+                                        <span className="mj_Cursor" />
+                                    </div>
+                                </div>
+                            </div>
+                        </li>
+                    ))}
+                    {sessionRunning &&
+                        showTheWork &&
+                        Object.values(state.toolStreams).map((stream) => (
+                            <ToolStream key={stream.messageRef} stream={stream} />
                         ))}
-                        {sessionRunning &&
-                            showTheWork &&
-                            Object.values(state.viewingHistoryWindow ? {} : state.toolStreams).map((stream) => (
-                                <ToolStream key={stream.messageRef} stream={stream} />
-                            ))}
-                        {!state.viewingHistoryWindow &&
-                            showActivityIndicator &&
-                            state.activity &&
-                            state.activity.state !== "idle" &&
-                            sessionRunning && (
-                                <li className="mx_WhoIsTypingTile mj_Activity">
-                                    <span />
-                                    <span />
-                                    <span />
-                                    {state.activity.state === "thinking"
-                                        ? "Thinking"
-                                        : `Running ${state.activity.detail || "a tool"}`}
-                                </li>
-                            )}
-                        {state.viewingHistoryWindow && (
-                            <li className="mj_HistoryRow">
-                                <button
-                                    className="mj_LoadHistory"
-                                    onClick={() => void client.loadNewerHistory()}
-                                    disabled={state.loadingHistory}
-                                >
-                                    {state.loadingHistory ? "Loading…" : "Load newer messages"}
-                                </button>
-                            </li>
-                        )}
-                    </ol>
-                </div>
+                    {showActivityIndicator && state.activity && state.activity.state !== "idle" && sessionRunning && (
+                        <li className="mj_TypingIndicator mj_Activity">
+                            <span />
+                            <span />
+                            <span />
+                            {state.activity.state === "thinking"
+                                ? "Thinking"
+                                : `Running ${state.activity.detail || "a tool"}`}
+                        </li>
+                    )}
+                </ol>
             </div>
+            {!isReadOnly && state.selectedConversationId && (
+                <StopTurnButton
+                    key={state.selectedConversationId}
+                    client={client}
+                    conversationId={state.selectedConversationId}
+                    running={sessionRunning}
+                />
+            )}
+            {!isFollowingTail && (
+                <button
+                    type="button"
+                    className="mj_JumpToLastOwn"
+                    aria-label="Jump to my last message"
+                    title={`Jump to my last message (${jumpToLastOwnShortcutLabel()})`}
+                    onClick={() => void client.jumpToLastOwnMessage()}
+                >
+                    <ArrowUpToLineIcon aria-hidden />
+                </button>
+            )}
             {!isFollowingTail && (
                 <button
                     className="mj_JumpToBottom"
                     aria-label="Jump to bottom"
                     onClick={() => {
+                        pendingPlace.current = undefined;
                         setFollow(true);
                         scrollToBottom();
                     }}
                 >
                     ↓
-                </button>
-            )}
-            {state.viewingHistoryWindow && (
-                <button className="mj_JumpToLatest" type="button" onClick={() => void client.jumpToLatest()}>
-                    Jump to latest ↓
                 </button>
             )}
             {menu.state && (
@@ -6512,7 +8554,7 @@ function Timeline({
                             {/* Copy = readable plain text (markdown stripped); the raw markdown
                                 SOURCE is offered separately below (§10.7 icon per row). */}
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
@@ -6524,7 +8566,7 @@ function Timeline({
                                 <span>Copy</span>
                             </button>
                             <button
-                                className="mj_RoomItemMenu_item"
+                                className="mj_ConversationMenu_item"
                                 type="button"
                                 role="menuitem"
                                 onClick={() => {
@@ -6540,7 +8582,7 @@ function Timeline({
                         </>
                     )}
                     <button
-                        className="mj_RoomItemMenu_item"
+                        className="mj_ConversationMenu_item"
                         type="button"
                         role="menuitem"
                         onClick={() => {
@@ -6576,23 +8618,27 @@ function Timeline({
     return <MediaViewerContext.Provider value={mediaViewerValue}>{timelineMain}</MediaViewerContext.Provider>;
 }
 
-const SLASH_LISTBOX_ID = "mx_SlashPalette_listbox";
+const SLASH_LISTBOX_ID = "mj_SlashPalette_listbox";
 const slashRowId = (index: number): string => `${SLASH_LISTBOX_ID}_opt_${index}`;
+
+// The palette's second mode, for a fully typed command: its arguments first (few and short), then
+// any recent folders (up to eight), as the Mac composer orders them.
+type PaletteSuggestion = { kind: "argument"; argument: ArgSuggestion } | { kind: "folder"; path: string };
 
 function SlashCommandPalette({
     commands,
-    folders,
+    suggestions,
     highlighted,
     onHighlight,
     onSelectCommand,
-    onSelectFolder,
+    onSelectSuggestion,
 }: {
     commands: BotCommand[];
-    folders: string[];
+    suggestions: PaletteSuggestion[];
     highlighted: number | null;
     onHighlight: (index: number | null) => void;
     onSelectCommand: (command: BotCommand) => void;
-    onSelectFolder: (path: string) => void;
+    onSelectSuggestion: (suggestion: PaletteSuggestion) => void;
 }): React.ReactElement {
     const highlightedRow = useRef<HTMLDivElement>(null);
 
@@ -6600,47 +8646,74 @@ function SlashCommandPalette({
         if (highlighted !== null) highlightedRow.current?.scrollIntoView({ block: "nearest" });
     }, [highlighted]);
 
+    const rowProps = (
+        index: number,
+        onClick: () => void,
+    ): React.HTMLAttributes<HTMLDivElement> & {
+        ref?: React.Ref<HTMLDivElement>;
+    } => ({
+        className: `mj_SlashPalette_row${highlighted === index ? " mj_SlashPalette_row_highlighted" : ""}`,
+        id: slashRowId(index),
+        ref: highlighted === index ? highlightedRow : undefined,
+        role: "option",
+        "aria-selected": highlighted === index,
+        onMouseEnter: () => onHighlight(index),
+        onMouseDown: (event) => event.preventDefault(),
+        onClick,
+    });
+
     return (
-        <div className="mx_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox">
-            {folders.length > 0
-                ? folders.map((folder, index) => (
-                      <div
-                          className={`mx_SlashPalette_row${
-                              highlighted === index ? " mx_SlashPalette_row_highlighted" : ""
-                          }`}
-                          id={slashRowId(index)}
-                          key={`${folder}-${index}`}
-                          ref={highlighted === index ? highlightedRow : undefined}
-                          role="option"
-                          aria-selected={highlighted === index}
-                          onMouseEnter={() => onHighlight(index)}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => onSelectFolder(folder)}
-                      >
-                          <span className="mx_SlashPalette_trigger">{folder}</span>
-                      </div>
-                  ))
+        <div className="mj_SlashPalette" id={SLASH_LISTBOX_ID} role="listbox" aria-label="Suggestions">
+            {suggestions.length > 0
+                ? suggestions.map((suggestion, index) =>
+                      suggestion.kind === "argument" ? (
+                          <div
+                              key={`arg:${suggestion.argument.value}`}
+                              {...rowProps(index, () => onSelectSuggestion(suggestion))}
+                          >
+                              <span className="mj_SlashPalette_trigger">
+                                  {suggestion.argument.label ?? suggestion.argument.value}
+                              </span>
+                              {suggestion.argument.summary && (
+                                  <span className="mj_SlashPalette_summary">{suggestion.argument.summary}</span>
+                              )}
+                          </div>
+                      ) : (
+                          <div
+                              key={`dir:${suggestion.path}-${index}`}
+                              {...rowProps(index, () => onSelectSuggestion(suggestion))}
+                          >
+                              <span className="mj_SlashPalette_trigger">{suggestion.path}</span>
+                          </div>
+                      ),
+                  )
                 : commands.map((command, index) => (
-                      <div
-                          className={`mx_SlashPalette_row${
-                              highlighted === index ? " mx_SlashPalette_row_highlighted" : ""
-                          }`}
-                          id={slashRowId(index)}
-                          key={command.trigger}
-                          ref={highlighted === index ? highlightedRow : undefined}
-                          role="option"
-                          aria-selected={highlighted === index}
-                          onMouseEnter={() => onHighlight(index)}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => onSelectCommand(command)}
-                      >
-                          <span className="mx_SlashPalette_trigger">{command.trigger}</span>
-                          {command.argHint && <span className="mx_SlashPalette_argHint">{command.argHint}</span>}
-                          <span className="mx_SlashPalette_summary">{command.summary}</span>
+                      <div key={command.trigger} {...rowProps(index, () => onSelectCommand(command))}>
+                          <span className="mj_SlashPalette_trigger">{command.trigger}</span>
+                          {command.argHint && <span className="mj_SlashPalette_argHint">{command.argHint}</span>}
+                          <span className="mj_SlashPalette_summary">{command.summary}</span>
                       </div>
                   ))}
         </div>
     );
+}
+
+/**
+ * A conversation's voice note finished while no composer is mounted (stopped from the app-wide bar
+ * on another page): it goes out on its own. Resolves to why it didn't, for the bar's Retry row.
+ */
+async function sendVoiceNoteAway(
+    client: MatronJournalClient,
+    blob: Blob,
+    { contextKey, sessionGen }: VoiceRecordingContext,
+): Promise<string | null> {
+    try {
+        const outcome = await client.sendVoiceNote(blob, contextKey, sessionGen);
+        if (outcome === "sent" || outcome === "persisted-terminal") return null;
+        return outcome === "skipped" ? "This conversation can't take it now." : "Couldn't save the recording.";
+    } catch {
+        return "Couldn't save the recording.";
+    }
 }
 
 function Composer({
@@ -6651,6 +8724,7 @@ function Composer({
     reloadDraft,
     sendingConvos,
     draftRevisions,
+    sentHistory,
 }: {
     client: MatronJournalClient;
     state: ClientState;
@@ -6659,6 +8733,7 @@ function Composer({
     reloadDraft: (conversationId: string) => void;
     sendingConvos: React.RefObject<Set<string>>;
     draftRevisions: React.RefObject<Map<string, number>>;
+    sentHistory: SentMessageHistory;
 }): React.ReactElement {
     const [body, setBody] = useState("");
     // The voice-note path reads the draft from a callback that outlives renders.
@@ -6680,9 +8755,15 @@ function Composer({
     const prevConvoIdRef = useRef(convoId);
     const draftTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const draftTimerConvoRef = useRef<string | undefined>(undefined);
-    const folders = folderSuggestions(body, store);
+    const suggestions: PaletteSuggestion[] = [
+        ...argSuggestions(body, CLAUDE_BRIDGE_COMMANDS, state.sessionStatus).map((argument): PaletteSuggestion => ({
+            kind: "argument",
+            argument,
+        })),
+        ...folderSuggestions(body, store).map((path): PaletteSuggestion => ({ kind: "folder", path })),
+    ];
     const commands = filterCommands(CLAUDE_BRIDGE_COMMANDS, body);
-    const open = body !== dismissed && (folders.length > 0 || (isCommandMode(body) && commands.length > 0));
+    const open = body !== dismissed && (suggestions.length > 0 || (isCommandMode(body) && commands.length > 0));
 
     // A finished voice note goes to the conversation it was recorded in. The typed draft goes with
     // it as its caption, so the agent gets both in one turn — unless a text send of it is already
@@ -6694,6 +8775,9 @@ function Composer({
                 ? bodyRef.current.trim()
                 : "";
         if (caption) {
+            // The caption leaves the field now, so it joins sent history now (ending any walk) rather
+            // than after the upload: a failed note puts it back in the field anyway.
+            sentHistory.record(caption, capturedConvo);
             clearSentDraftRef.current(capturedConvo, draftRevisions.current.get(capturedConvo) ?? 0);
         }
         const failed = (): void => {
@@ -6707,7 +8791,19 @@ function Composer({
             })
             .catch(failed);
     };
-    const voice = useVoiceRecorder({ contextKey: convoId, client, onRecorded: onVoiceRecorded });
+    const deliverVoiceNoteAway = (blob: Blob, context: VoiceRecordingContext): Promise<string | null> =>
+        sendVoiceNoteAway(client, blob, context);
+    // The note outlives this composer: it keeps recording across conversation switches and pages,
+    // and one finished while no composer is mounted goes out on its own, the draft left in place.
+    const voiceConversation = state.conversations.find((conversation) => conversation.id === convoId);
+    const voice = useVoiceRecorder({
+        contextKey: convoId,
+        client,
+        onRecorded: onVoiceRecorded,
+        kind: "conversation",
+        title: voiceConversation ? displayTitle(voiceConversation) : "this conversation",
+        deliverAway: deliverVoiceNoteAway,
+    });
     const { voiceState } = voice;
 
     // Mirror the store's canonical per-convo durability flag into React state, but only for the
@@ -6752,6 +8848,8 @@ function Composer({
 
     const setBodyDraft = useCallback(
         (next: string) => {
+            // Any edit — typing, a palette pick, a restored draft — ends a sent-message walk.
+            sentHistory.endRecall();
             setBody(next);
             const cid = convoIdRef.current;
             if (!cid) return;
@@ -6766,7 +8864,7 @@ function Composer({
                 draftTimerConvoRef.current = undefined;
             }, 250);
         },
-        [draftRevisions, drafts, syncDurability],
+        [draftRevisions, drafts, syncDurability, sentHistory],
     );
 
     useEffect(() => {
@@ -6789,6 +8887,9 @@ function Composer({
         setBody(ok ? text : "");
         setDismissed(null);
         setHighlighted(null);
+        // A recalled sent line is shown but never written to the draft store, so the real draft
+        // is what loads here; just drop the walk.
+        sentHistory.endRecall();
         // Sync the badge FROM the store for the newly-selected convo — never a blind reset, so a
         // still-non-durable convo keeps its warning across switch-away/back (and a clear-failure flag surfaces).
         setNonDurable(convoId ? drafts.durability(convoId) === "non-durable" : false);
@@ -6800,10 +8901,28 @@ function Composer({
         setHighlighted(null);
         textarea.current?.focus();
     };
-    const selectFolder = (path: string): void => {
-        const nextBody = applyFolder(body, path);
-        setBodyDraft(nextBody);
-        setDismissed(nextBody);
+    // Tab and Enter pick the row at `index`. A status frame can shorten the argument list under a
+    // held highlight, so a row that is no longer there picks nothing (and Enter then sends).
+    const pickRow = (index: number): boolean => {
+        if (suggestions.length > 0) {
+            if (!suggestions[index]) return false;
+            selectSuggestion(suggestions[index]);
+        } else {
+            if (!commands[index]) return false;
+            selectCommand(commands[index]);
+        }
+        return true;
+    };
+    // A folder completes the line, so the palette closes on it; an argument leaves a space after
+    // it, and the palette goes on to offer whatever the command still accepts.
+    const selectSuggestion = (suggestion: PaletteSuggestion): void => {
+        if (suggestion.kind === "folder") {
+            const nextBody = applyFolder(body, suggestion.path);
+            setBodyDraft(nextBody);
+            setDismissed(nextBody);
+        } else {
+            setBodyDraft(applyArgument(body, suggestion.argument.value));
+        }
         setHighlighted(null);
         textarea.current?.focus();
     };
@@ -6841,14 +8960,67 @@ function Composer({
     };
     const restoreDraftRef = useRef(restoreDraft);
     restoreDraftRef.current = restoreDraft;
+    // Terminal-style recall of this conversation's sent messages. A recalled line is only
+    // shown — not written to the draft store — so the stored draft stays the real one, and
+    // leaving mid-walk can't save a recalled line as the draft. Editing it makes it the draft.
+    const showRecalled = (text: string | undefined): void => {
+        if (text === undefined) return;
+        setBody(text);
+        setHighlighted(null);
+        setDismissed(null);
+        resizeAfterRecall.current = true;
+    };
+    const resizeAfterRecall = useRef(false);
+    useLayoutEffect(() => {
+        if (!resizeAfterRecall.current || !textarea.current) return;
+        resizeAfterRecall.current = false;
+        const node = textarea.current;
+        node.style.height = "auto";
+        node.style.height = `${Math.min(node.scrollHeight, 144)}px`;
+        node.setSelectionRange(node.value.length, node.value.length);
+    }, [body]);
+    const tray = convoId ? (state.composerAttachments[convoId] ?? []) : [];
+    // A send already uploading, or a file that can never upload, holds the send until it's done or removed.
+    const trayHeld = tray.some((item) => item.unsendable || item.state === "queued" || item.state === "uploading");
+    // With files in the tray the text leaves with them, as one turn: it rides on the first file.
+    const sendStaged = async (cid: string, submitted: string): Promise<void> => {
+        const staged = client.getSnapshot().composerAttachments[cid] ?? [];
+        if (staged.some((item) => item.unsendable || item.state === "queued" || item.state === "uploading")) return;
+        const caption = submitted.trim();
+        const submittedRevision = draftRevisions.current.get(cid) ?? 0;
+        sendingConvos.current.add(cid);
+        // Like a voice note: the text leaves the field as the send starts (the uploads take a while)
+        // and comes back if it didn't go out.
+        if (caption) {
+            sentHistory.record(caption, cid);
+            clearSentDraft(cid, submittedRevision);
+        }
+        try {
+            const { captionDelivered } = await client.sendStagedFiles(cid, caption);
+            if (caption && !captionDelivered) restoreDraft(cid, submitted);
+            const folder = captionDelivered ? recentFolderArgument(submitted) : undefined;
+            if (folder) store.record(folder);
+        } catch (error) {
+            console.warn("matron: attachments not sent", error);
+            if (caption) restoreDraft(cid, submitted);
+        } finally {
+            sendingConvos.current.delete(cid);
+        }
+    };
     const send = async (): Promise<void> => {
         const cid = convoIdRef.current;
         const submitted = body;
-        if (state.viewingHistoryWindow || !cid || !submitted.trim() || sendingConvos.current.has(cid)) return;
+        if (!cid || sendingConvos.current.has(cid)) return;
+        if ((client.getSnapshot().composerAttachments[cid] ?? []).length > 0) {
+            await sendStaged(cid, submitted);
+            return;
+        }
+        if (!submitted.trim()) return;
         const submittedRevision = draftRevisions.current.get(cid) ?? 0;
         sendingConvos.current.add(cid);
         try {
             if (await client.sendMessage(submitted, cid)) {
+                sentHistory.record(submitted.trim(), cid);
                 const folder = recentFolderArgument(submitted);
                 if (folder) store.record(folder);
                 clearSentDraft(cid, submittedRevision);
@@ -6860,8 +9032,8 @@ function Composer({
         }
     };
     return (
-        <div className="mx_MessageComposer" role="region" aria-label="Message composer" ref={voice.containerRef}>
-            <div className="mx_MessageComposer_wrapper">
+        <div className="mj_Composer" role="region" aria-label="Message composer" ref={voice.containerRef}>
+            <div className="mj_Composer_wrapper">
                 {state.connectionError && state.connectionErrorSeq !== dismissedSeq && (
                     <div className="mj_ConnectionError">
                         <span role="status">{state.connectionError}</span>
@@ -6885,11 +9057,22 @@ function Composer({
                 {open && (
                     <SlashCommandPalette
                         commands={commands}
-                        folders={folders}
+                        suggestions={suggestions}
                         highlighted={highlighted}
                         onHighlight={setHighlighted}
                         onSelectCommand={selectCommand}
-                        onSelectFolder={selectFolder}
+                        onSelectSuggestion={selectSuggestion}
+                    />
+                )}
+                {convoId && tray.length > 0 && (
+                    <AttachmentTray
+                        attachments={tray}
+                        onRemove={(id) => {
+                            client.removeStagedFile(convoId, id);
+                            // The pressed button goes with its chip; keep keyboard focus in the composer.
+                            textarea.current?.focus();
+                        }}
+                        onRetry={() => void send()}
                     />
                 )}
                 {voiceState === "recording" ? (
@@ -6899,9 +9082,8 @@ function Composer({
                         {/* Mac composer: attach outside the field on the left; mic and the send glyph on the right. */}
                         <button
                             className="mj_ComposerControl mj_ComposerAttach"
-                            title={state.viewingHistoryWindow ? "Jump to latest to send" : "Attach a file"}
+                            title="Attach a file"
                             aria-label="Attach a file"
-                            disabled={state.viewingHistoryWindow}
                             onClick={() => fileInput.current?.click()}
                         >
                             <PlusCircleIcon />
@@ -6917,9 +9099,9 @@ function Composer({
                             }}
                         />
                         <div className="mj_ComposerField" onClick={() => textarea.current?.focus()}>
-                            <div className="mx_BasicMessageComposer">
+                            <div className="mj_ComposerInput">
                                 <textarea
-                                    className="mx_BasicMessageComposer_input"
+                                    className="mj_ComposerInput_input"
                                     ref={textarea}
                                     rows={1}
                                     value={body}
@@ -6935,8 +9117,34 @@ function Composer({
                                     }}
                                     onKeyDown={(event) => {
                                         if (isImeComposing(event)) return;
+                                        // An active walk owns Up/Down outright: a recalled one-word
+                                        // command opens the palette, and letting it take the arrows
+                                        // would trap the walk there. Otherwise the palette's arrows
+                                        // come first, and Up starts a walk only from an empty field
+                                        // (in a draft it moves the caret).
+                                        // Plain arrows only: with a modifier they keep their usual
+                                        // caret and selection meaning (the desktop app's moveUp:/moveDown:).
+                                        const plainArrow =
+                                            (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+                                            !event.shiftKey &&
+                                            !event.altKey &&
+                                            !event.metaKey &&
+                                            !event.ctrlKey;
+                                        if (convoId && plainArrow) {
+                                            const walking = sentHistory.isNavigating;
+                                            if (event.key === "ArrowUp" && (walking || (!open && body === ""))) {
+                                                event.preventDefault();
+                                                showRecalled(sentHistory.recallOlder(convoId, body));
+                                                return;
+                                            }
+                                            if (event.key === "ArrowDown" && walking) {
+                                                event.preventDefault();
+                                                showRecalled(sentHistory.recallNewer(convoId));
+                                                return;
+                                            }
+                                        }
                                         if (open) {
-                                            const count = folders.length || commands.length;
+                                            const count = suggestions.length || commands.length;
                                             if (event.key === "ArrowDown") {
                                                 event.preventDefault();
                                                 setHighlighted((current) =>
@@ -6953,9 +9161,7 @@ function Composer({
                                             }
                                             if (event.key === "Tab") {
                                                 event.preventDefault();
-                                                const index = highlighted ?? 0;
-                                                if (folders.length > 0) selectFolder(folders[index]);
-                                                else selectCommand(commands[index]);
+                                                pickRow(highlighted ?? 0);
                                                 return;
                                             }
                                             if (event.key === "Escape") {
@@ -6964,10 +9170,13 @@ function Composer({
                                                 setHighlighted(null);
                                                 return;
                                             }
-                                            if (event.key === "Enter" && !event.shiftKey && highlighted !== null) {
+                                            if (
+                                                event.key === "Enter" &&
+                                                !event.shiftKey &&
+                                                highlighted !== null &&
+                                                pickRow(highlighted)
+                                            ) {
                                                 event.preventDefault();
-                                                if (folders.length > 0) selectFolder(folders[highlighted]);
-                                                else selectCommand(commands[highlighted]);
                                                 return;
                                             }
                                         }
@@ -6977,7 +9186,6 @@ function Composer({
                                         }
                                     }}
                                     onPaste={(event) => {
-                                        if (state.stagedUploads) return;
                                         const files = [...event.clipboardData.files];
                                         if (files.length > 0) {
                                             // preventDefault() marks this paste as consumed; the upload
@@ -7007,15 +9215,15 @@ function Composer({
                             </div>
                         </div>
                         <VoiceMicButton recorder={voice} className="mj_ComposerControl mj_ComposerMic" />
-                        {/* Mac: the send glyph (arrow.up.circle.fill) appears only once there is text. */}
-                        {body.trim() && (
+                        {/* Mac: the send glyph (arrow.up.circle.fill) appears only once there is
+                            something to send — text, or a file in the tray. */}
+                        {(body.trim() || tray.length > 0) && (
                             <button
                                 className="mj_ComposerSend"
                                 type="button"
+                                disabled={trayHeld}
                                 onClick={() => void send()}
-                                disabled={state.viewingHistoryWindow || !body.trim()}
                                 aria-label="Send message"
-                                title={state.viewingHistoryWindow ? "Jump to latest to send" : undefined}
                             >
                                 <ArrowUpCircleIcon />
                             </button>
@@ -7024,14 +9232,133 @@ function Composer({
                 )}
                 {/* The old hint row's instructions, kept for assistive tech only (the Mac shows none). */}
                 <span id="mj-composer-hint" className="mj_ScreenReaderOnly">
-                    {state.viewingHistoryWindow ? "Jump to latest to send" : "/ commands · shift+enter for newline"}
+                    / commands · shift+enter for newline
                 </span>
-                {state.viewingHistoryWindow && (
-                    <div className="mj_ComposerHint" role="status">
-                        <span className="mj_ComposerHint_keys">Jump to latest to send</span>
-                    </div>
-                )}
             </div>
+        </div>
+    );
+}
+
+/**
+ * The files waiting above the composer between attaching and sending: a thumbnail for an image, a
+ * named chip for anything else, each with a remove button. While a send uploads them each shows
+ * its progress; one that failed says why and offers a retry, which sends again with the text.
+ */
+function AttachmentTray({
+    attachments,
+    onRemove,
+    onRetry,
+}: {
+    attachments: ComposerAttachment[];
+    onRemove: (id: string) => void;
+    onRetry: () => void;
+}): React.ReactElement {
+    // A failed send says so out loud too: the chip's label changes, but a label change isn't announced.
+    const failure = attachments.find((item) => item.state === "failed" && !item.unsendable);
+    return (
+        <>
+            <div className="mj_AttachmentTray" role="list" aria-label="Attachments">
+                {attachments.map((attachment) => (
+                    <StagedAttachmentChip
+                        key={attachment.id}
+                        attachment={attachment}
+                        onRemove={() => onRemove(attachment.id)}
+                        onRetry={onRetry}
+                    />
+                ))}
+            </div>
+            <span className="mj_AttachmentTray_status" role="status">
+                {failure ? `${failure.file.name} was not sent: ${failure.error ?? "upload failed"}` : ""}
+            </span>
+        </>
+    );
+}
+
+function StagedAttachmentChip({
+    attachment,
+    onRemove,
+    onRetry,
+}: {
+    attachment: ComposerAttachment;
+    onRemove: () => void;
+    onRetry: () => void;
+}): React.ReactElement {
+    const { file, state } = attachment;
+    const isImage = file.type.startsWith("image/") && !attachment.unsendable;
+    const [previewUrl, setPreviewUrl] = useState<string>();
+    useEffect(() => {
+        if (!isImage || typeof URL.createObjectURL !== "function") return undefined;
+        const url = URL.createObjectURL(file);
+        setPreviewUrl(url);
+        return () => URL.revokeObjectURL(url);
+    }, [file, isImage]);
+    const busy = state === "queued" || state === "uploading";
+    // A failed image shows as a named chip, so the reason it failed is on screen, not only in a tooltip.
+    const thumbnail = isImage && state !== "failed" ? previewUrl : undefined;
+    const percent = Math.round(Math.min(Math.max(attachment.progress ?? 0, 0), 1) * 100);
+    const size = formatBytes(file.size) ?? "";
+    const status =
+        state === "uploading"
+            ? `uploading, ${percent} percent`
+            : state === "queued"
+              ? "waiting to upload"
+              : state === "failed"
+                ? `not sent: ${attachment.error ?? "upload failed"}`
+                : undefined;
+    const KindIcon = FILE_KIND_ICON[fileKindFromMime(file.type)];
+    return (
+        <div
+            role="listitem"
+            className={[
+                "mj_StagedAttachment",
+                thumbnail ? "mj_StagedAttachment_image" : "mj_StagedAttachment_file",
+                `mj_StagedAttachment_${state}`,
+            ].join(" ")}
+            aria-label={[`${isImage ? "Image" : "File"} attachment, ${file.name}, ${size}`, status]
+                .filter(Boolean)
+                .join(", ")}
+            title={attachment.error ? `${file.name}: ${attachment.error}` : file.name}
+        >
+            {thumbnail ? (
+                <img className="mj_StagedAttachment_thumb" src={thumbnail} alt="" />
+            ) : (
+                <>
+                    <KindIcon className="mj_StagedAttachment_icon" aria-hidden />
+                    <span className="mj_StagedAttachment_meta">
+                        <span className="mj_StagedAttachment_name">{file.name}</span>
+                        <span className="mj_StagedAttachment_detail">
+                            {state === "failed" ? (attachment.error ?? "Upload failed") : size}
+                        </span>
+                    </span>
+                </>
+            )}
+            {busy && (
+                <span className="mj_StagedAttachment_progress" aria-hidden="true">
+                    <span className="mj_StagedAttachment_progressFill" style={{ width: `${percent}%` }} />
+                </span>
+            )}
+            {state === "failed" && !attachment.unsendable && (
+                <button
+                    type="button"
+                    className="mj_StagedAttachment_retry"
+                    aria-label={`Retry sending ${file.name}`}
+                    title="Retry"
+                    onClick={onRetry}
+                >
+                    <RefreshIcon aria-hidden />
+                </button>
+            )}
+            {!busy && (
+                <button
+                    type="button"
+                    className="mj_StagedAttachment_remove"
+                    aria-label={`Remove ${file.name}`}
+                    title="Remove"
+                    onClick={onRemove}
+                >
+                    <CloseIcon aria-hidden />
+                </button>
+            )}
         </div>
     );
 }
@@ -7170,224 +9497,6 @@ function formatEventTimestamp(ts: number): string {
     return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
 }
 
-function UploadConfirmDialog({
-    client,
-    staged,
-}: {
-    client: MatronJournalClient;
-    staged: StagedUploads;
-}): React.ReactElement {
-    useEffect(() => {
-        const onPaste = (event: ClipboardEvent): void => {
-            // Ignore the bootstrap paste the composer already consumed. On the first paste
-            // (modal closed) the composer stages + calls preventDefault(), which opens this
-            // modal; React 19 flushes that mount synchronously, so this document listener is
-            // registered WITHIN the same paste dispatch and would stage the file a second time
-            // ("1 of 2"). defaultPrevented is set by the composer's preventDefault() and is
-            // timing-independent — it holds regardless of propagation order. Once the modal is
-            // open the composer is inert (no preventDefault), so subsequent pastes append here.
-            if (event.defaultPrevented) return;
-            const files = [...(event.clipboardData?.files ?? [])];
-            if (files.length > 0) {
-                event.preventDefault();
-                client.stageFiles(files);
-            }
-        };
-        const preventDropNavigation = (event: DragEvent): void => event.preventDefault();
-        document.addEventListener("paste", onPaste);
-        document.addEventListener("dragover", preventDropNavigation);
-        document.addEventListener("drop", preventDropNavigation);
-        return () => {
-            document.removeEventListener("paste", onPaste);
-            document.removeEventListener("dragover", preventDropNavigation);
-            document.removeEventListener("drop", preventDropNavigation);
-        };
-    }, [client]);
-
-    if (staged.error) {
-        return (
-            <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-label="Upload error">
-                <div className="mj_UploadConfirm">
-                    <p className="mj_UploadConfirm_error">
-                        This conversation was archived in another tab. Attachment(s) were not sent.
-                    </p>
-                    <div className="mj_UploadConfirm_actions">
-                        <button aria-label="Close" onClick={() => client.cancelStagedFiles()}>
-                            Close
-                        </button>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    const head = staged.items[0];
-    if (!head) return <></>;
-    return (
-        <div className="mj_UploadConfirm_scrim" role="dialog" aria-modal="true" aria-label={head.file.name}>
-            <UploadConfirmPage key={head.id} client={client} staged={staged} head={head} />
-        </div>
-    );
-}
-
-function UploadConfirmPage({
-    client,
-    staged,
-    head,
-}: {
-    client: MatronJournalClient;
-    staged: StagedUploads;
-    head: StagedUploadItem;
-}): React.ReactElement {
-    const isImage = head.file.type.startsWith("image/");
-    const preflight =
-        head.file.size === 0
-            ? "That file is empty."
-            : head.file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES
-              ? "This file is too large for this browser to upload safely."
-              : undefined;
-    const canSend = !preflight && !staged.confirming;
-    const [caption, setCaption] = useState("");
-    const textarea = useRef<HTMLTextAreaElement>(null);
-    const [previewUrl, setPreviewUrl] = useState<string>();
-    const position = staged.total - staged.items.length + 1;
-
-    useEffect(() => {
-        textarea.current?.focus();
-        if (!isImage || preflight) return undefined;
-        const url = URL.createObjectURL(head.file);
-        setPreviewUrl(url);
-        return () => {
-            URL.revokeObjectURL(url);
-        };
-        // Mounted once per page (keyed by head.id at the call site).
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    const send = (): void => {
-        if (!canSend) return;
-        void client.confirmStagedFile(head.id, caption);
-    };
-
-    return (
-        <div className="mj_UploadConfirm mj_UploadConfirm_queue">
-            <header className="mj_UploadConfirm_header">
-                {/* §10.1/§10.2: the title is ALWAYS "Send file" (never the filename — the
-                    filename lives in the file-info row below). "n of N" is a chip. */}
-                <UploadTrayIcon className="mj_UploadConfirm_uploadIcon" aria-hidden />
-                <h2 className="mj_UploadConfirm_title">Send file</h2>
-                {staged.total > 1 && (
-                    <span className="mj_UploadConfirm_count">
-                        {position} of {staged.total}
-                    </span>
-                )}
-                <span className="mj_UploadConfirm_headerSpacer" />
-                {/* ✕ is DESTRUCTIVE: cancelStagedFiles() irreversibly clears the ENTIRE staged
-                    queue (every file + all typed captions), not just this page. Its accessible
-                    name must disclose that — count-aware, so a SR user hears what is discarded.
-                    Same handler + semantics as the footer "Cancel all" (hidden for a lone file). */}
-                <button
-                    className="mj_UploadConfirm_close"
-                    aria-label={staged.total > 1 ? "Cancel all uploads" : "Cancel upload"}
-                    disabled={staged.confirming}
-                    onClick={() => client.cancelStagedFiles()}
-                >
-                    <CloseIcon />
-                </button>
-            </header>
-            <div className="mj_UploadConfirm_body">
-                {/* Preview + file-info are ONE card: a real image fills the top, otherwise a
-                    hatched "image preview" placeholder; the file-info row sits under a hairline. */}
-                <div className="mj_UploadConfirm_previewCard">
-                    {isImage && previewUrl ? (
-                        <img className="mj_UploadConfirm_preview" src={previewUrl} alt={head.file.name} />
-                    ) : (
-                        <div className="mj_UploadConfirm_previewPlaceholder" aria-hidden="true">
-                            <span>image preview</span>
-                        </div>
-                    )}
-                    <div className="mj_UploadConfirm_fileMeta">
-                        <FileIcon className="mj_UploadConfirm_fileIcon" aria-hidden />
-                        <span className="mj_UploadConfirm_fileName">{head.file.name}</span>
-                        <span className="mj_FileSize">{formatBytes(head.file.size)}</span>
-                    </div>
-                </div>
-                {staged.total > 1 && (
-                    <div className="mj_UploadConfirm_strip" role="list" aria-label="Queued files">
-                        {staged.items.map((item) => {
-                            const active = item.id === head.id;
-                            return (
-                                <span
-                                    key={item.id}
-                                    role="listitem"
-                                    className={active ? "mj_UploadThumb mj_UploadThumb_active" : "mj_UploadThumb"}
-                                    title={item.file.name}
-                                >
-                                    {active && isImage && previewUrl ? (
-                                        <img src={previewUrl} alt="" />
-                                    ) : (
-                                        <AttachmentIcon aria-hidden />
-                                    )}
-                                </span>
-                            );
-                        })}
-                        {staged.items.length > 1 && (
-                            <span className="mj_UploadConfirm_more">{staged.items.length - 1} more file queued</span>
-                        )}
-                    </div>
-                )}
-                {preflight && <p className="mj_UploadConfirm_error">{preflight}</p>}
-                {staged.persistError && (
-                    <p className="mj_UploadConfirm_error">Couldn&apos;t save this attachment — try Send again.</p>
-                )}
-                <textarea
-                    ref={textarea}
-                    className="mj_UploadConfirm_caption"
-                    placeholder="Add a caption…"
-                    maxLength={4096}
-                    value={caption}
-                    onChange={(event) => setCaption(event.target.value)}
-                    onKeyDown={(event) => {
-                        if (isImeComposing(event)) return;
-                        if (isSendKey(event)) {
-                            event.preventDefault();
-                            send();
-                        } else if (event.key === "Escape" && !staged.confirming) {
-                            event.preventDefault();
-                            client.skipStagedFile(head.id);
-                        }
-                    }}
-                    aria-label="Caption"
-                />
-            </div>
-            <footer className="mj_UploadConfirm_footer mj_UploadConfirm_actions">
-                {staged.total > 1 && (
-                    <button
-                        className="mj_TextButton"
-                        aria-label="Cancel all"
-                        disabled={staged.confirming}
-                        onClick={() => client.cancelStagedFiles()}
-                    >
-                        Cancel all
-                    </button>
-                )}
-                <button
-                    className="mj_UploadConfirm_skip"
-                    aria-label="Skip"
-                    disabled={staged.confirming}
-                    onClick={() => client.skipStagedFile(head.id)}
-                >
-                    Skip
-                </button>
-                <button className="mj_UploadConfirm_send" aria-label="Send" disabled={!canSend} onClick={send}>
-                    <SendIcon />
-                    Send
-                </button>
-            </footer>
-        </div>
-    );
-}
-
 export function SubagentStrip({
     client,
     state,
@@ -7412,6 +9521,8 @@ export function SubagentStrip({
         ...conversations.filter((conversation) => conversation.session_state !== "running"),
     ];
     const ordered = runningFirst(siblingOrChildren);
+    // What the slot beside the chat shows: the pill of a subagent open there is marked current.
+    const sidePane = chatSidePane(state);
     return (
         // §10.11: a non-scrolling row — the back chip + hairline stay PINNED while only the
         // pill run scrolls, so the escape never scrolls off among many siblings.
@@ -7440,12 +9551,15 @@ export function SubagentStrip({
                     </span>
                     {ordered.map((child) => {
                         const isCurrent = mode === "child" && child.id === state.selectedConversationId;
+                        // In a parent, the subagent open in the pane beside it.
+                        const inPane =
+                            mode === "parent" && sidePane?.kind === "subchat" && sidePane.childId === child.id;
                         const isRunning = child.session_state === "running";
                         const outcomeStatus = accessibleOutcome(classifyOutcome(child));
                         const className = [
                             "mj_SubagentPill",
                             !isRunning && "mj_SubagentPill_finished",
-                            isCurrent && "mj_SubagentPill_current",
+                            (isCurrent || inPane) && "mj_SubagentPill_current",
                         ]
                             .filter(Boolean)
                             .join(" ");
@@ -7454,9 +9568,9 @@ export function SubagentStrip({
                                 <button
                                     className={className}
                                     aria-label={`Open subagent ${conversationTitle(child)}, ${outcomeStatus}`}
-                                    aria-current={isCurrent ? "true" : undefined}
+                                    aria-current={isCurrent || inPane ? "true" : undefined}
                                     disabled={isCurrent}
-                                    onClick={() => void client.selectConversation(child.id)}
+                                    onClick={() => client.openSubChat(child.id)}
                                 >
                                     <WorkerMark conversation={child} className="mj_WorkerMark mj_SubagentPill_icon" />
                                     <OutcomeGlyph conversation={child} className="mj_SubagentPill_icon" />
@@ -7592,6 +9706,74 @@ export function PinnedSummary({ summary }: { summary: ConversationSummary | null
     );
 }
 
+// The subagent pane's rows: what the chat's own transcript shows for a read-only subagent, with
+// the same folding (answered prompts, released queue items, decided permissions, restated item
+// cards, spawn and chat-request outcomes).
+function subChatTranscript(events: JournalEvent[], client: MatronJournalClient): SubChatRow[] {
+    const queuedReleasePromptSeqs = new Set<number>();
+    const legacyQueuePromptSeqs = new Set<number>();
+    const permissionRequestSeqs = new Set<number>();
+    const answeredPromptReplies = new Map<string, { choice?: string }>();
+    const spawnOutcomes = new Map<string, EventPayload>();
+    const releasedActions = new Map<string, "send" | "cancel">();
+    for (const event of events) {
+        if (event.type === "permission_request") permissionRequestSeqs.add(event.seq);
+        else if (event.type === "prompt") {
+            if (asString(event.payload.kind) === "queued_release") queuedReleasePromptSeqs.add(event.seq);
+            else if (isLegacyQueuePrompt(event)) legacyQueuePromptSeqs.add(event.seq);
+        } else if (event.type === "prompt_reply") {
+            const targetSeq = asNumber(event.payload.target_seq, Number.NaN);
+            if (Number.isSafeInteger(targetSeq) && targetSeq >= 0) {
+                const choice = asString(event.payload.choice, asString(event.payload.label)) || undefined;
+                answeredPromptReplies.set(`${event.convo_id}:${targetSeq}`, { choice });
+            }
+            const action = asString(event.payload.action);
+            if (
+                asString(event.payload.kind) === "queued_release" &&
+                Array.isArray(event.payload.released) &&
+                (action === "send" || action === "cancel")
+            ) {
+                for (const releasedId of event.payload.released) {
+                    const itemId = asString(releasedId);
+                    if (itemId) releasedActions.set(itemId, action);
+                }
+            }
+        } else if (event.type === "spawn_outcome" && typeof event.payload.request_id === "string") {
+            spawnOutcomes.set(event.payload.request_id, event.payload);
+        }
+    }
+    const itemCards = foldItemCards(events);
+    const agentChatResolutions = readAgentChatResolutions(events);
+    const coordinatorDecisions = readCoordinatorDecisions(events);
+    const resolvedAction = (itemId: string): "send" | "cancel" | undefined => releasedActions.get(itemId);
+    return events
+        .filter(
+            (event) =>
+                !isFoldedTranscriptEvent(event, {
+                    queuedReleasePromptSeqs,
+                    legacyQueuePromptSeqs,
+                    permissionRequestSeqs,
+                    itemCards,
+                }),
+        )
+        .map((event) => ({
+            event,
+            content: (
+                <EventContent
+                    client={client}
+                    event={event}
+                    answeredPromptReplies={answeredPromptReplies}
+                    spawnOutcomes={spawnOutcomes}
+                    agentChatResolutions={agentChatResolutions}
+                    coordinatorDecisions={coordinatorDecisions}
+                    itemCards={itemCards}
+                    isReadOnly
+                    resolvedAction={resolvedAction}
+                />
+            ),
+        }));
+}
+
 function SignedInApp({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
     const leftPanel = useLeftPanelResize();
     const [dragActive, setDragActive] = useState(state.dragActive);
@@ -7610,18 +9792,28 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
         state.hostVitals,
     ).filter((meter) => meter.label.trim()).length;
     const collapse = useAdaptiveHeader(bodyEl, meterCount);
+    // The command palette puts the caret back in the composer on screen after a pick.
     const appContent = useRef<HTMLDivElement>(null);
-    const uploadDialogWasOpen = useRef(Boolean(state.stagedUploads));
+    // Desktop notifications and the unread count in the title / app badge, while signed in.
+    useEffect(() => notificationsFor(client).start(), [client]);
+    // A voice note outlives every page but not the signed-in app: leaving it releases the microphone.
+    useEffect(() => () => voiceNoteSessionFor(client).reset(), [client]);
+    const voiceNoteBarVisible = useVoiceNoteBarVisible(client);
+    const openVoiceNoteTarget = useCallback(
+        (kind: string, contextKey: string): void => {
+            if (kind === "conversation") void client.selectConversation(contextKey);
+            else if (kind === "item") client.openTrackerItem(Number(contextKey));
+        },
+        [client],
+    );
+    // Settings, the tracker and the other sheets load in their own chunks: fetch them once the
+    // first screen is up, so they open instantly later.
+    useEffect(() => preloadDeferredUi(), []);
     const drafts = useMemo(() => makeDraftStore(state.session), [state.session]);
     const sendingConvos = useRef<Set<string>>(new Set());
     const draftRevisions = useRef<Map<string, number>>(new Map());
-
-    useEffect(() => {
-        if (uploadDialogWasOpen.current && !state.stagedUploads) {
-            appContent.current?.querySelector<HTMLTextAreaElement>(".mx_BasicMessageComposer_input")?.focus();
-        }
-        uploadDialogWasOpen.current = Boolean(state.stagedUploads);
-    }, [state.stagedUploads]);
+    // Sent-message recall is per account, like the drafts; it lives for the page session only.
+    const sentHistory = useMemo(() => new SentMessageHistory(), [state.session]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Markdown attachment preview: a side panel to the right of the conversation or item.
     const markdownPreview = useMarkdownPreviewPanel();
@@ -7655,11 +9847,10 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
         if (!hasParent || !parentId) return undefined;
         const onKey = (event: KeyboardEvent): void => {
             if (event.key !== "Escape" || event.defaultPrevented) return;
-            if (state.stagedUploads) return; // upload / new-session modal owns Escape
             // Any inner overlay still mounted → it owns this press; defer.
             if (
                 document.querySelector(
-                    ".mj_MediaViewer_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_EventRowMenu, .mj_RoomItemMenu, .mj_HeaderMenu, .mj_MdPreview, [role='menu']",
+                    ".mj_MediaViewer_scrim, .mj_MediaBrowser_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_EventRowMenu, .mj_ConversationMenu, .mj_HeaderMenu, .mj_MdPreview, [role='menu']",
                 )
             ) {
                 return;
@@ -7669,23 +9860,68 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
         };
         document.addEventListener("keydown", onKey);
         return () => document.removeEventListener("keydown", onKey);
-    }, [hasParent, parentId, state.stagedUploads, client]);
+    }, [hasParent, parentId, client]);
+
+    useGoToNumberShortcut(client, true);
+    // Ctrl/⌘F finds in the conversation on screen; with none open the browser keeps the key.
+    useFindInChatShortcut(client, Boolean(state.selectedConversationId) && !state.trackerView?.open);
+
+    const reloadDraft = useCallback(
+        (conversationId: string) =>
+            setDraftReloadTicks((ticks) => ({ ...ticks, [conversationId]: (ticks[conversationId] ?? 0) + 1 })),
+        [],
+    );
+    // ⌘K: the slash palette, for a conversation with a composer on screen (Mac: the chat view's).
+    const [paletteOpen, setPaletteOpen] = useState(false);
+    const composerConvo =
+        state.selectedConversationId && !state.trackerView?.open && !childMode ? state.selectedConversationId : null;
+    useEffect(() => setPaletteOpen(false), [composerConvo]);
+    useAppShortcuts(client, {
+        enabled: true,
+        onCommandPalette: composerConvo ? () => setPaletteOpen((open) => !open) : undefined,
+    });
+    // A pick replaces the draft with the command, ready for arguments, as the composer's own palette does.
+    const pickCommand = (command: BotCommand): void => {
+        setPaletteOpen(false);
+        if (!composerConvo) return;
+        const text = applyCommand(command.trigger);
+        sentHistory.endRecall();
+        draftRevisions.current.set(composerConvo, (draftRevisions.current.get(composerConvo) ?? 0) + 1);
+        drafts.setDraft(composerConvo, text);
+        drafts.persist(composerConvo);
+        reloadDraft(composerConvo);
+        requestAnimationFrame(() => {
+            const input = appContent.current?.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
+            input?.focus();
+            input?.setSelectionRange(text.length, text.length);
+        });
+    };
+
+    // The one pane beside the chat: a subagent (opened from a Subtask line or a subagent pill) or
+    // the chat's Tasks & decisions. Only the subagent pane measures the chat area; the Tasks pane
+    // decides from its own media query whether it covers the chat.
+    const sidePane = chatSidePane(state);
+    const chatAreaRef = useRef<HTMLDivElement>(null);
+    const chatArea = useChatArea(appContent, chatAreaRef, sidePane?.kind === "subchat");
 
     return (
         <MarkdownPreviewContext.Provider value={markdownPreview.context}>
-            <div className="mx_MatrixChat_wrapper">
+            <div className="mj_App_wrapper">
                 <ConnectionBanner client={client} state={state} />
-                <div ref={appContent} className="mx_MatrixChat" inert={state.stagedUploads ? true : undefined}>
+                <div ref={appContent} className="mj_App">
                     <ConversationList client={client} state={state} width={leftPanel.width} />
                     <div
-                        className="mx_ResizeHandle mx_ResizeHandle--horizontal"
+                        className="mj_ResizeHandle mj_ResizeHandle--horizontal"
                         data-id="lp-resizer"
                         onPointerDown={leftPanel.onPointerDown}
                     >
                         <div />
                     </div>
                     <div
-                        className={`mx_RoomView_wrapper ${mainSurfaceOpen(state, !isElectronRuntime()) ? "" : "mj_Chat_mobileHidden"}`}
+                        ref={chatAreaRef}
+                        // Covered by the subagent pane, the chat stays mounted but out of reach.
+                        inert={sidePane?.kind === "subchat" && paneCoversChat(chatArea)}
+                        className={`mj_ChatView_wrapper ${mainSurfaceOpen(state, !isElectronRuntime()) ? "" : "mj_Chat_mobileHidden"}${voiceNoteBarVisible ? " mj_ChatView_wrapper_voiceNote" : ""}`}
                     >
                         {state.trackerView?.open ? (
                             <TrackerPane client={client} state={state} />
@@ -7695,7 +9931,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                             <FilesPane client={client} state={state} />
                         ) : state.selectedConversationId ? (
                             <div
-                                className={`mx_RoomView${dragActive ? " mj_RoomView_dragActive" : ""}`}
+                                className={`mj_ChatView${dragActive ? " mj_ChatView_dragActive" : ""}`}
                                 onDragOver={(event) => {
                                     if (!isFileDrag(event)) return;
                                     event.preventDefault();
@@ -7706,7 +9942,6 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                     event.preventDefault();
                                     setDragActive(false);
                                     if (childMode) return;
-                                    if (state.stagedUploads) return;
                                     const files = [...event.dataTransfer.files];
                                     if (files.length > 0) client.stageFiles(files);
                                 }}
@@ -7722,15 +9957,20 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                         Drop files to attach
                                     </div>
                                 )}
-                                <div
-                                    ref={setBodyEl}
-                                    className="mx_RoomView_body mx_MainSplit_timeline"
-                                    data-layout="bubble"
-                                >
+                                <div ref={setBodyEl} className="mj_ChatView_body" data-layout="bubble">
                                     {childMode ? (
                                         <SubChatHeader client={client} state={state} collapse={collapse} />
                                     ) : (
                                         <ChatHeader client={client} state={state} collapse={collapse} />
+                                    )}
+                                    {!childMode && (
+                                        <CompactNudge
+                                            key={state.selectedConversationId}
+                                            context={state.sessionStatus?.context}
+                                            send={(command) =>
+                                                client.sendMessage(command, state.selectedConversationId)
+                                            }
+                                        />
                                     )}
                                     <SubagentStrip
                                         client={client}
@@ -7741,13 +9981,16 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                         nothing when the conversation has no digest. The conversation-id key
                                         remounts on a room switch so disclosure state never carries across. */}
                                     <PinnedSummary
-                                        key={state.selectedConversationId ?? "no-convo"}
+                                        key={`summary:${state.selectedConversationId ?? "no-convo"}`}
                                         summary={conversationSummary(
                                             state.conversations.find(
                                                 (conversation) => conversation.id === state.selectedConversationId,
                                             ),
                                         )}
                                     />
+                                    {state.chatSearch?.conversationId === state.selectedConversationId && (
+                                        <FindInChatBar client={client} search={state.chatSearch} />
+                                    )}
                                     <Timeline client={client} state={state} isReadOnly={childMode} />
                                     {childMode ? (
                                         <ReadOnlyHint />
@@ -7757,27 +10000,43 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                             state={state}
                                             drafts={drafts}
                                             draftReloadTick={draftReloadTicks[state.selectedConversationId] ?? 0}
-                                            reloadDraft={(conversationId) =>
-                                                setDraftReloadTicks((ticks) => ({
-                                                    ...ticks,
-                                                    [conversationId]: (ticks[conversationId] ?? 0) + 1,
-                                                }))
-                                            }
+                                            reloadDraft={reloadDraft}
                                             sendingConvos={sendingConvos}
                                             draftRevisions={draftRevisions}
+                                            sentHistory={sentHistory}
                                         />
                                     )}
                                 </div>
                             </div>
                         ) : (
-                            <main className="mx_HomePage mx_HomePage_default">
-                                <div className="mx_HomePage_default_wrapper">
+                            <main className="mj_HomePage mj_HomePage_default">
+                                <div className="mj_HomePage_default_wrapper">
                                     <img src={matronLogo} alt={state.config.brand || "Matron"} />
                                     <h1>Welcome to {state.config.brand || "Matron"}</h1>
                                 </div>
                             </main>
                         )}
+                        <VoiceNoteBar client={client} onOpen={openVoiceNoteTarget} />
                     </div>
+                    {/* One slot beside the chat, decided by chatSidePane: never both panes at once. */}
+                    {sidePane?.kind === "subchat" ? (
+                        <SubChatPane
+                            key={sidePane.parentId}
+                            client={client}
+                            conversations={state.conversations}
+                            parentId={sidePane.parentId}
+                            childId={sidePane.childId}
+                            area={chatArea}
+                            transcript={subChatTranscript}
+                        />
+                    ) : sidePane?.kind === "tasks" && state.chatTasks ? (
+                        <ChatTasksPane
+                            client={client}
+                            pane={state.chatTasks}
+                            convoId={sidePane.convoId}
+                            conversations={state.conversations}
+                        />
+                    ) : null}
                     {markdownPreview.target ? (
                         <MarkdownPreviewPanel
                             client={client}
@@ -7786,7 +10045,10 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                         />
                     ) : null}
                 </div>
-                {state.stagedUploads && <UploadConfirmDialog client={client} staged={state.stagedUploads} />}
+                {state.goToNumberOpen && <GoToNumberDialog client={client} />}
+                {paletteOpen && composerConvo && (
+                    <CommandPalette onPick={pickCommand} onClose={() => setPaletteOpen(false)} />
+                )}
             </div>
         </MarkdownPreviewContext.Provider>
     );
@@ -7796,7 +10058,7 @@ export function MatronApp({ client }: { client: MatronJournalClient }): React.Re
     const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
     if (state.phase === "loading")
         return (
-            <div className="mx_MatrixChat_splash mj_Loading">
+            <div className="mj_App_splash mj_Loading">
                 <img src={matronLogo} alt="Matron" />
             </div>
         );

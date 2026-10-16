@@ -198,11 +198,11 @@ describe("Codex and Claude pill non-text contrast", () => {
 
         const pills = container.querySelectorAll<HTMLElement>(".mj_SubagentPill");
         expect(pills).toHaveLength(conversations.length - 1);
-        expect(declaredValue(".mj_SubagentPill", "background", style)).toBe("var(--cpd-state-selected)");
+        expect(declaredValue(".mj_SubagentPill", "background", style)).toBe("var(--mj-state-selected)");
         expect(declaredValue(".mj_SubagentPill_finished", "background", style)).toBe(
-            "var(--cpd-color-bg-subtle-primary)",
+            "var(--mj-color-bg-subtle-primary)",
         );
-        const canvas = resolveColor("var(--cpd-color-bg-canvas-default)");
+        const canvas = resolveColor("var(--mj-color-bg-canvas-default)");
         const violations: Array<{ pill: string | null; glyph: string | null; ratio: number }> = [];
         for (const pill of pills) {
             // jsdom preserves custom properties in computed colors but does not resolve a
@@ -261,7 +261,7 @@ describe("Codex and Claude pill non-text contrast", () => {
             ].map(resolveColor);
             expect(new Set(borderColors).size).toBeGreaterThan(1);
 
-            const canvas = resolveColor("var(--cpd-color-bg-canvas-default)");
+            const canvas = resolveColor("var(--mj-color-bg-canvas-default)");
             const backgrounds = [".mj_SubagentPill", ".mj_SubagentPill_finished"].map((selector) =>
                 composite(declaredColor(selector, "background", style), canvas),
             );

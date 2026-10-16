@@ -28,14 +28,15 @@ import React, {
     type ComponentPropsWithoutRef,
     type ReactNode,
 } from "react";
+import { createLowlight } from "lowlight";
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps } from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
 import { copyText } from "./clipboard";
 import { filesDeepLinkHash, handleFilesLinkClick } from "./files-link";
+import { parseOwnTrackerUrl } from "./link-path";
 import type { MatronLinkKind, TrackerLinkHandler } from "./types";
 
 export const MARKDOWN_MAX = 200_000;
@@ -67,7 +68,8 @@ const ALIASES = {
     markdown: ["md"],
 };
 
-const HIGHLIGHT_OPTIONS = { languages: CURATED, aliases: ALIASES };
+const lowlight = createLowlight(CURATED);
+lowlight.registerAlias(ALIASES);
 
 /**
  * Shared resource guard: above this size/line budget the parser is skipped and the raw text
@@ -219,6 +221,52 @@ function capCodeBlockHighlighting() {
     };
 }
 
+/** A fenced block's language from its `language-x` / `lang-x` class; false when marked `no-highlight`. */
+function codeLanguage(className: unknown): string | false | undefined {
+    if (!Array.isArray(className)) return undefined;
+    let name: string | undefined;
+    for (const entry of className) {
+        const value = String(entry);
+        if (value === "no-highlight" || value === "nohighlight") return false;
+        if (!name && value.startsWith("lang-")) name = value.slice(5);
+        if (!name && value.startsWith("language-")) name = value.slice(9);
+    }
+    return name;
+}
+
+/**
+ * Highlights fenced code that names a language, as rehype-highlight did, against the curated
+ * grammars only. rehype-highlight imports lowlight's whole `common` set even when it is handed
+ * its own list, which kept about 35 unused grammars in the first download. Blocks that name no
+ * language, or one that isn't curated, stay plain.
+ */
+function highlightCodeBlocks() {
+    return (tree: HighlightNode): void => {
+        const pending = [tree];
+        while (pending.length > 0) {
+            const current = pending.pop()!;
+            if (current.tagName === "pre") {
+                for (const child of current.children ?? []) {
+                    if (child.tagName === "code") highlightCodeBlock(child);
+                }
+            }
+            if (current.children) pending.push(...current.children);
+        }
+    };
+}
+
+function highlightCodeBlock(code: HighlightNode): void {
+    code.properties ??= {};
+    const lang = codeLanguage(code.properties.className);
+    if (!lang) return;
+    const classes = Array.isArray(code.properties.className) ? code.properties.className : [];
+    if (!classes.includes("hljs")) classes.unshift("hljs");
+    code.properties.className = classes;
+    if (!lowlight.registered(lang)) return;
+    const result = lowlight.highlight(lang, toString(code as Parameters<typeof toString>[0]));
+    if (result.children.length > 0) code.children = result.children as HighlightNode[];
+}
+
 interface MarkdownBodyProps {
     text: string;
     streaming?: boolean;
@@ -264,9 +312,11 @@ export function parseTrackerHref(href: string): { kind: "item" | "mission"; num:
  * parseTrackerHref accepts, plus `matron://project/<N>` (same number rule) and
  * `matron://convo/<id>` — the Coordinator's briefings link conversations heavily. A conversation
  * id is one path segment of id characters (letters, digits, `_ . : ~ -`, or %-escapes that decode
- * to them); nothing else may follow it. Anything non-conforming returns null.
+ * to them); nothing else may follow it. An https `/u/<name>/<n>` link to this deployment's own
+ * origin is a `link` (parseOwnTrackerUrl), so it opens in-app too. Anything else returns null.
  */
 export function parseMatronHref(href: string): { kind: MatronLinkKind; target: number | string } | null {
+    if (parseOwnTrackerUrl(href)) return { kind: "link", target: href };
     const tracker = parseTrackerHref(href);
     if (tracker) return { kind: tracker.kind, target: tracker.num };
     const project = /^matron:\/\/project\/([0-9]+)$/.exec(href);
@@ -476,6 +526,9 @@ function documentComponentsFor(source: string): Components {
     };
 }
 
+const isModifiedClick = (event: React.MouseEvent): boolean =>
+    event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+
 function componentsFor(source: string, onTrackerLink?: TrackerLinkHandler): Components {
     return {
         pre(props) {
@@ -491,7 +544,9 @@ function componentsFor(source: string, onTrackerLink?: TrackerLinkHandler): Comp
         },
         a({ node: _node, href, children, ...props }) {
             const tracker = href !== undefined ? parseMatronHref(href) : null;
-            if (tracker) {
+            // An https link is a working web link where there is no in-app handler; only the
+            // custom scheme has to render inert.
+            if (tracker && (onTrackerLink || tracker.kind !== "link")) {
                 // With a handler, a matron:// link becomes a real in-app link (tap opens the
                 // tracker surface). Without one it renders inert — never navigate the browser to
                 // the custom scheme.
@@ -502,6 +557,9 @@ function componentsFor(source: string, onTrackerLink?: TrackerLinkHandler): Comp
                         href={href}
                         className="mj_TrackerLink"
                         onClick={(clickEvent) => {
+                            // A modified click on an https link keeps the browser's own meaning
+                            // (new tab, new window).
+                            if (tracker.kind === "link" && isModifiedClick(clickEvent)) return;
                             clickEvent.preventDefault();
                             onTrackerLink(tracker.kind, tracker.target);
                         }}
@@ -594,7 +652,7 @@ function MarkdownBodyComponent({
         <MarkdownErrorBoundary text={text} streaming={streaming} label={label}>
             <ReactMarkdown
                 remarkPlugins={onTrackerLink && !isDocument ? [remarkGfm, remarkBareItemLinks] : [remarkGfm]}
-                rehypePlugins={streaming ? [] : [capCodeBlockHighlighting, [rehypeHighlight, HIGHLIGHT_OPTIONS]]}
+                rehypePlugins={streaming ? [] : [capCodeBlockHighlighting, highlightCodeBlocks]}
                 urlTransform={onTrackerLink && !isDocument ? trackerUrlTransform : defaultUrlTransform}
                 components={isDocument ? documentComponentsFor(text) : componentsFor(text, onTrackerLink)}
             >

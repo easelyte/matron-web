@@ -10,7 +10,7 @@ import { resolve } from "node:path";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { ToolStream } from "../../../src/journal/components";
+import { collapsedToolStreamSlice, TOOL_STREAM_COLLAPSED_CAP_CHARS, ToolStream } from "../../../src/journal/components";
 import type { ToolStreamState } from "../../../src/journal/types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
@@ -82,11 +82,108 @@ describe("ToolStream ANSI rendering", () => {
         );
         // unify step 4: the terminal surface is the Mac's fixed dark block, via tokens.
         const terminalRule = stylesheet.match(
-            /\.mj_LiveTool pre,\s*\.mj_ToolCard pre,\s*\.mj_Unknown pre\s*\{[^}]*background:\s*var\(--cpd-color-terminal-bg\);[^}]*color:\s*var\(--cpd-color-terminal-fg\);[^}]*\}/,
+            /\.mj_LiveTool pre,\s*\.mj_ToolCard pre,\s*\.mj_Unknown pre\s*\{[^}]*background:\s*var\(--mj-color-terminal-bg\);[^}]*color:\s*var\(--mj-color-terminal-fg\);[^}]*\}/,
         );
 
         expect(sharedRule).not.toBeNull();
         expect(terminalRule).not.toBeNull();
         expect(terminalRule!.index).toBeGreaterThan(sharedRule!.index!);
+    });
+});
+
+describe("ToolStream collapse", () => {
+    it("starts collapsed to the tail and expands to the full output", async () => {
+        const long = `${"early line\n".repeat(600)}last line`;
+        const { container } = await mountStream(makeStream(long));
+        const pre = container.querySelector("pre")!;
+        const toggle = container.querySelector<HTMLButtonElement>("button[aria-label='Expand output']")!;
+        expect(pre.classList.contains("mj_LiveTool_collapsed")).toBe(true);
+        expect(toggle.getAttribute("aria-expanded")).toBe("false");
+        expect(pre.textContent!.startsWith("… earlier output omitted …\nearly line\n")).toBe(true);
+        expect(pre.textContent!.length).toBeLessThan(long.length);
+        expect(pre.textContent!.endsWith("last line")).toBe(true);
+
+        await act(async () => toggle.click());
+        expect(pre.classList.contains("mj_LiveTool_expanded")).toBe(true);
+        expect(toggle.getAttribute("aria-label")).toBe("Collapse output");
+        expect(pre.textContent).toBe(long);
+    });
+
+    it("follows new output unless scrolled up, and re-pins when toggled", async () => {
+        const { container, root } = await mountStream(makeStream("one"));
+        const pre = container.querySelector("pre")!;
+        Object.defineProperty(pre, "scrollHeight", { configurable: true, value: 500 });
+        Object.defineProperty(pre, "clientHeight", { configurable: true, value: 76 });
+        await act(async () => root.render(React.createElement(ToolStream, { stream: makeStream("one\ntwo") })));
+        expect(pre.scrollTop).toBe(500);
+
+        pre.scrollTop = 100;
+        pre.dispatchEvent(new Event("scroll"));
+        await act(async () => root.render(React.createElement(ToolStream, { stream: makeStream("one\ntwo\nthree") })));
+        expect(pre.scrollTop).toBe(100);
+
+        await act(async () =>
+            container.querySelector<HTMLButtonElement>("button[aria-label='Expand output']")!.click(),
+        );
+        expect(pre.scrollTop).toBe(500);
+    });
+
+    it("keeps short output whole when collapsed", async () => {
+        const { container } = await mountStream(makeStream("one\ntwo"));
+        expect(container.querySelector("pre")?.textContent).toBe("one\ntwo");
+    });
+});
+
+describe("collapsedToolStreamSlice", () => {
+    it("cuts long output at a line boundary within the cap", () => {
+        const sliced = collapsedToolStreamSlice(`${"line 1234\n".repeat(1000)}tail line`);
+        expect(sliced.cut).toBe(true);
+        expect(sliced.text.length).toBeLessThanOrEqual(TOOL_STREAM_COLLAPSED_CAP_CHARS);
+        expect(sliced.text.startsWith("line 1234\n")).toBe(true);
+        expect(sliced.text.endsWith("tail line")).toBe(true);
+    });
+
+    it("keeps one giant line whole rather than trimming through its only newline", () => {
+        const sliced = collapsedToolStreamSlice(`${"x".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS)}\ntail`);
+        expect(sliced.text.length).toBe(TOOL_STREAM_COLLAPSED_CAP_CHARS);
+    });
+
+    it("keeps a real line that starts with SGR-like text after a line-boundary cut", () => {
+        // The cut lands in the first line; the next line begins with literal "[42m".
+        const text = `${"a".repeat(10)}\n[42m line\n${"b".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 15)}`;
+        const sliced = collapsedToolStreamSlice(text);
+        expect(sliced.cut).toBe(true);
+        expect(sliced.text.startsWith("[42m line\n")).toBe(true);
+    });
+
+    it("drops a leading SGR fragment left by the cut", () => {
+        // The cut lands just after ESC, leaving "[32m" at the start of the tail.
+        const sliced = collapsedToolStreamSlice(`a\x1b[32m${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 4)}`);
+        expect(sliced.cut).toBe(true);
+        expect(sliced.text).toBe("z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 4));
+    });
+
+    it("drops the rest of an escape when the cut lands right after ESC[", () => {
+        // The cut keeps only "32m" of "\x1b[32m".
+        const sliced = collapsedToolStreamSlice(`ab\x1b[32m${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 3)}`);
+        expect(sliced.text).toBe("z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 3));
+    });
+
+    it("drops the rest of a non-SGR CSI the cut lands inside", () => {
+        // The cut keeps "K" of an erase-line "\x1b[2K".
+        const sliced = collapsedToolStreamSlice(`ab\x1b[2K${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 1)}`);
+        expect(sliced.text).toBe("z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 1));
+    });
+
+    it("never opens on half a surrogate pair", () => {
+        // "😀" is two UTF-16 units; the cut lands between them.
+        const sliced = collapsedToolStreamSlice(`a😀${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 1)}`);
+        expect(sliced.text).toBe("z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 1));
+        expect(sliced.text.charCodeAt(0)).toBe("z".charCodeAt(0));
+    });
+
+    it("keeps a complete escape that ends before the cut", () => {
+        const sliced = collapsedToolStreamSlice(`\x1b[32mab${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 1)}`);
+        expect(sliced.text).toBe(`b${"z".repeat(TOOL_STREAM_COLLAPSED_CAP_CHARS - 1)}`);
     });
 });

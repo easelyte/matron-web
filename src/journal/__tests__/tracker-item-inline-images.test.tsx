@@ -11,10 +11,11 @@ import { createRoot, type Root } from "react-dom/client";
 import type { MatronJournalClient } from "../client";
 import { ItemDetail } from "../tracker/ItemDetail";
 import type { TrackerAttachment } from "../types";
-import { trackerComment, trackerItem } from "./tracker-fixtures";
+import { fakeSeen, type FakeSeen, trackerComment, trackerItem } from "./tracker-fixtures";
 
-function fakeClient(): { mediaUrl: jest.Mock; openTrackerLink: jest.Mock; getSnapshot: jest.Mock } {
+function fakeClient(): { seen: FakeSeen; mediaUrl: jest.Mock; openTrackerLink: jest.Mock; getSnapshot: jest.Mock } {
     return {
+        seen: fakeSeen(),
         mediaUrl: jest.fn((id: string) => Promise.resolve(`blob:test/${id}`)),
         openTrackerLink: jest.fn(),
         getSnapshot: jest.fn().mockReturnValue({ selectedConversationId: "c1", conversations: [] }),

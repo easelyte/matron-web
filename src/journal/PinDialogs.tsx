@@ -43,7 +43,15 @@ export function PinDialog({
     return createPortal(sheet, document.body);
 }
 
-function SheetHead({ id, title, onClose }: { id: string; title: string; onClose: () => void }): React.ReactElement {
+export function SheetHead({
+    id,
+    title,
+    onClose,
+}: {
+    id: string;
+    title: string;
+    onClose: () => void;
+}): React.ReactElement {
     return (
         <div className="mj_NewSessionSheet_head">
             <h2 className="mj_UploadConfirm_title" id={id}>
@@ -69,7 +77,7 @@ function SheetHead({ id, title, onClose }: { id: string; title: string; onClose:
 }
 
 /** Escape closes the sheet; the mounted flag keeps a late response from touching an unmounted sheet. */
-function useSheetLifecycle(onClose: () => void): React.RefObject<boolean> {
+export function useSheetLifecycle(onClose: () => void): React.RefObject<boolean> {
     const mountedRef = useRef(true);
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
@@ -233,10 +241,10 @@ function MovePinSheet({
                     />
                 </div>
                 {view.boxes.length > 0 && (
-                    <div className="mj_RoomListTabs mj_PinSheet_boxes" role="group" aria-label="Filter by box">
+                    <div className="mj_ConversationListTabs mj_PinSheet_boxes" role="group" aria-label="Filter by box">
                         <button
                             type="button"
-                            className={`mj_RoomListTab${view.box === null ? " mj_RoomListTab_active" : ""}`}
+                            className={`mj_ConversationListTab${view.box === null ? " mj_ConversationListTab_active" : ""}`}
                             aria-pressed={view.box === null}
                             onClick={() => setBox(null)}
                         >
@@ -246,7 +254,7 @@ function MovePinSheet({
                             <button
                                 key={option.name}
                                 type="button"
-                                className={`mj_RoomListTab${view.box === option.name ? " mj_RoomListTab_active" : ""}`}
+                                className={`mj_ConversationListTab${view.box === option.name ? " mj_ConversationListTab_active" : ""}`}
                                 aria-pressed={view.box === option.name}
                                 onClick={() => setBox(view.box === option.name ? null : option.name)}
                             >

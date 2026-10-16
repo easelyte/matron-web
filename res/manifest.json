@@ -2,7 +2,7 @@
     "name": "Matron",
     "short_name": "Matron",
     "display": "standalone",
-    "theme_color": "#76CFA6",
+    "theme_color": "#ffffff",
     "start_url": "index.html",
     "icons": [
         {
@@ -44,13 +44,8 @@
     "related_applications": [
         {
             "platform": "play",
-            "url": "https://play.google.com/store/apps/details?id=chat.matron.app",
-            "id": "chat.matron.app"
-        },
-        {
-            "platform": "f-droid",
-            "url": "https://f-droid.org/repository/browse/?fdid=chat.matron.app",
-            "id": "chat.matron.app"
+            "url": "https://play.google.com/store/apps/details?id=chat.matron.android",
+            "id": "chat.matron.android"
         }
     ]
 }

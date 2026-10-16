@@ -6,29 +6,44 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * Mission detail — header (with close-summary when closed), milestones newest-first with jump-to-
- * conversation, the mission's open items (awaiting-user first, ordered by the server), its
- * conversations, and a close-with-summary affordance for an open mission. Mutations route through
- * the client; the store refetch keeps the view live.
+ * Mission detail, after the Mac's mission page — a "Projects › project › #N" breadcrumb, the header
+ * (with close-summary when closed), the status card (hidden when the mission has none),
+ * milestones newest-first with jump-to-conversation (20 at a time), the mission's open items split
+ * into "Needs you" and "Open tasks & decisions", its closed items (fetched on demand, a page at a
+ * time), its conversations, and a close-with-summary affordance for an open mission. An open
+ * mission's header offers "Move to project…". Mutations route through the client; the store
+ * refetch keeps the view live.
  */
 
 import React, { useMemo, useState } from "react";
 
 import { sessionTagForBox } from "../boxes";
-import type { MatronJournalClient } from "../client";
+import { MISSION_CLOSED_PAGE, type MatronJournalClient } from "../client";
 import { ChevronLeftIcon } from "../icons";
 import { MarkdownBody } from "../markdown";
 import { displayRawTitle, SessionTagMark } from "../SessionTag";
 import type {
     AgentRosterEntry,
+    Mission,
     MissionConversation,
     MissionDetail as MissionDetailData,
     MissionItemRef,
     Milestone,
+    Project,
+    TrackerItem,
     TrackerLinkHandler,
 } from "../types";
-import { formatRelativeTime, kindLabel, missionLabel, oneLine } from "./format";
+import {
+    closedStatusLabel,
+    formatRelativeTime,
+    kindLabel,
+    missionItemGroups,
+    missionLabel,
+    oneLine,
+    statusByline,
+} from "./format";
 import { JumpGlyph, MilestoneGlyph, TrackerGlyph } from "./glyphs";
+import { MoveToProjectSheet, moveTargets } from "./ProjectFiling";
 
 function MilestoneRow({
     milestone,
@@ -88,6 +103,87 @@ function OpenItemRow({ item, onOpen }: { item: MissionItemRef; onOpen: (num: num
     );
 }
 
+function ClosedItemRow({ item, onOpen }: { item: TrackerItem; onOpen: (num: number) => void }): React.ReactElement {
+    const status = closedStatusLabel(item);
+    return (
+        <button
+            type="button"
+            className="mj_TrackerMiniItem mj_TrackerMiniItem_closed"
+            aria-label={`${kindLabel(item.kind)} number ${item.num}, ${item.title}, ${status}`}
+            onClick={() => onOpen(item.num)}
+        >
+            <span className="mj_TrackerMiniItem_glyph" aria-hidden="true">
+                <TrackerGlyph kind={item.kind} />
+            </span>
+            <span className="mj_TrackerMiniItem_num">#{item.num}</span>
+            <span className="mj_TrackerMiniItem_title">{item.title}</span>
+            <span className="mj_TrackerMiniItem_status">{status}</span>
+        </button>
+    );
+}
+
+/** Milestones show this many at first, and "Show more" adds as many again (the Mac's page size). */
+export const MILESTONE_PAGE = 20;
+
+/**
+ * The mission's closed items, most recently updated first, fetched only when asked for: the
+ * journal can only list them by walking the closed items updated since the mission began, so a
+ * page open never pays for it.
+ * Keyed by mission, so another mission starts over.
+ */
+function ClosedItems({
+    mission,
+    client,
+    onOpen,
+}: {
+    mission: Pick<Mission, "id" | "created_at">;
+    client: MatronJournalClient;
+    onOpen: (num: number) => void;
+}): React.ReactElement {
+    const [items, setItems] = useState<TrackerItem[] | null>(null);
+    const [cursor, setCursor] = useState<string | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [failed, setFailed] = useState(false);
+
+    const load = async (from: string | null): Promise<void> => {
+        if (loading) return;
+        setLoading(true);
+        setFailed(false);
+        try {
+            const page = await client.fetchMissionClosedItems(mission, from, MISSION_CLOSED_PAGE);
+            setItems((current) => [...(from ? (current ?? []) : []), ...page.items]);
+            setCursor(page.cursor);
+        } catch {
+            setFailed(true);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <section className="mj_TrackerSection" aria-label="Closed items">
+            <h2 className="mj_TrackerSection_header">Closed</h2>
+            {items?.map((item) => (
+                <ClosedItemRow key={item.id} item={item} onOpen={onOpen} />
+            ))}
+            {items && items.length === 0 ? (
+                <p className="mj_TrackerCaption">{cursor ? "None found yet." : "No closed items."}</p>
+            ) : null}
+            {failed ? <p className="mj_TrackerCaption">Couldn't load closed items.</p> : null}
+            {items === null || cursor ? (
+                <button
+                    type="button"
+                    className="mj_TrackerTextButton mj_TrackerShowMore"
+                    disabled={loading}
+                    onClick={() => void load(items === null ? null : cursor)}
+                >
+                    {loading ? "Loading…" : items !== null ? "Show more" : failed ? "Try again" : "Show closed items"}
+                </button>
+            ) : null}
+        </section>
+    );
+}
+
 /**
  * The line a mission's conversation row reads. On a mission the journal names every conversation
  * after the mission, so the titles would all read alike; the bridge's own title (`auto_title`, the
@@ -127,17 +223,37 @@ export function MissionDetail({
     detail,
     client,
     agents,
+    project,
+    rootLabel = "Projects",
     onOpenItem,
     onBack,
+    onOpenRoot,
+    onOpenProject,
+    projects,
+    now,
 }: {
     detail: MissionDetailData | null | undefined;
     client: MatronJournalClient;
     /** The box roster, for the `A:bc` session tag on conversation rows (shown with two or more boxes). */
     agents?: AgentRosterEntry[];
+    /** The project the mission is filed in, when it is known on this device: the breadcrumb's
+     *  middle crumb. */
+    project?: Pick<Project, "num" | "title"> | null;
+    /** The breadcrumb's first crumb: "Projects", or "Missions" on a journal without projects. */
+    rootLabel?: string;
     onOpenItem: (num: number) => void;
     onBack: () => void;
+    /** The first crumb's target (the Projects dashboard); `onBack` when not given. */
+    onOpenRoot?: () => void;
+    onOpenProject?: (num: number) => void;
+    /** Every known project, for "Move to project…" (its open ones). Without any, no move. */
+    projects?: Project[];
+    /** Injectable for tests. */
+    now?: number;
 }): React.ReactElement {
+    const [moving, setMoving] = useState(false);
     const [inputsOnly, setInputsOnly] = useState(false);
+    const [milestoneLimit, setMilestoneLimit] = useState(MILESTONE_PAGE);
     const [summary, setSummary] = useState("");
     const [confirming, setConfirming] = useState(false);
     const [busy, setBusy] = useState(false);
@@ -152,6 +268,10 @@ export function MissionDetail({
         const list = detail?.milestones ?? [];
         return inputsOnly ? list.filter((milestone) => milestone.kind === "user_input") : list;
     }, [detail?.milestones, inputsOnly]);
+    const shownMilestones = milestones.slice(0, milestoneLimit);
+    const moreMilestones = milestones.length - shownMilestones.length;
+
+    const itemGroups = useMemo(() => missionItemGroups(detail?.items ?? []), [detail?.items]);
 
     if (!detail || !detail.mission) {
         return (
@@ -180,11 +300,16 @@ export function MissionDetail({
 
     const { mission } = detail;
     const closed = mission.state === "closed";
+    const status = mission.status?.trim() ? mission.status : null;
+    const byline = status ? statusByline(mission.status_updated_at, mission.status_by, now) : null;
 
+    // Every open project; the button only when there is one besides the mission's own.
+    const targets = moveTargets(projects);
+    const canMove = !closed && targets.some((target) => target.id !== mission.project_id);
+
+    // A milestone opens its conversation on the message it was posted at, not at the tail.
     const jump = (milestone: Milestone): void => {
-        client.closeTrackerView();
-        if (milestone.seq > 0) void client.selectConversationAtSeq(milestone.convo_id, milestone.seq);
-        else void client.selectConversation(milestone.convo_id);
+        void client.focusMessage(milestone.convo_id, milestone.seq);
     };
 
     // matron://item / matron://mission deep links inside the mission body + close summary open the
@@ -208,11 +333,42 @@ export function MissionDetail({
     return (
         <div className="mj_TrackerDetail">
             <div className="mj_TrackerDetail_head">
-                <button type="button" className="mj_TrackerBack" aria-label="Back to missions" onClick={onBack}>
-                    <ChevronLeftIcon />
-                </button>
+                <nav className="mj_TrackerCrumbs" aria-label="Breadcrumb">
+                    <button type="button" className="mj_TrackerCrumb" onClick={onOpenRoot ?? onBack}>
+                        ‹ {rootLabel}
+                    </button>
+                    {project ? (
+                        <>
+                            <span className="mj_TrackerCrumbs_sep" aria-hidden="true">
+                                ›
+                            </span>
+                            <button
+                                type="button"
+                                className="mj_TrackerCrumb"
+                                onClick={() => (onOpenProject ? onOpenProject(project.num) : onBack())}
+                            >
+                                {project.title}
+                            </button>
+                        </>
+                    ) : null}
+                    <span className="mj_TrackerCrumbs_sep" aria-hidden="true">
+                        ›
+                    </span>
+                    <span className="mj_TrackerCrumb mj_TrackerCrumb_current" aria-current="page">
+                        #{mission.num}
+                    </span>
+                </nav>
             </div>
 
+            {moving ? (
+                <MoveToProjectSheet
+                    missionLabel={`#${mission.num}`}
+                    currentProjectId={mission.project_id}
+                    targets={targets}
+                    onMove={(projectId) => client.moveTrackerMission(mission.id, projectId)}
+                    onClose={() => setMoving(false)}
+                />
+            ) : null}
             <div className="mj_TrackerDetail_scroll">
                 <header className="mj_TrackerMissionHead">
                     <div className="mj_TrackerMissionHead_title">
@@ -225,6 +381,15 @@ export function MissionDetail({
                         >
                             {closed ? "Closed" : "Open"}
                         </span>
+                        {canMove ? (
+                            <button
+                                type="button"
+                                className="mj_TrackerTextButton mj_TrackerMissionHead_move"
+                                onClick={() => setMoving(true)}
+                            >
+                                Move to project…
+                            </button>
+                        ) : null}
                     </div>
                     {mission.body.trim() ? (
                         <div className="mj_TrackerProse">
@@ -256,6 +421,22 @@ export function MissionDetail({
                     ) : null}
                 </header>
 
+                {status ? (
+                    <section className="mj_ProjectCardSection mj_TrackerMissionStatus" aria-label="Status">
+                        <div className="mj_TrackerMissionStatus_head">
+                            <span className="mj_TrackerMissionStatus_label">Status</span>
+                            {byline ? <span className="mj_TrackerMissionStatus_by">{byline}</span> : null}
+                        </div>
+                        <div className="mj_TrackerMissionStatus_text">
+                            <MarkdownBody
+                                text={status}
+                                label={`mission-status-${mission.num}`}
+                                onTrackerLink={onTrackerLink}
+                            />
+                        </div>
+                    </section>
+                ) : null}
+
                 <section className="mj_TrackerSection">
                     <div className="mj_TrackerSection_headRow">
                         <h2 className="mj_TrackerSection_header">Milestones</h2>
@@ -264,7 +445,10 @@ export function MissionDetail({
                                 <input
                                     type="checkbox"
                                     checked={inputsOnly}
-                                    onChange={(event) => setInputsOnly(event.target.checked)}
+                                    onChange={(event) => {
+                                        setInputsOnly(event.target.checked);
+                                        setMilestoneLimit(MILESTONE_PAGE);
+                                    }}
                                 />
                                 My inputs only
                             </label>
@@ -273,7 +457,7 @@ export function MissionDetail({
                     {milestones.length === 0 ? (
                         <p className="mj_TrackerCaption">No milestones yet.</p>
                     ) : (
-                        milestones.map((milestone) => (
+                        shownMilestones.map((milestone) => (
                             <MilestoneRow
                                 key={milestone.id}
                                 milestone={milestone}
@@ -282,16 +466,38 @@ export function MissionDetail({
                             />
                         ))
                     )}
+                    {moreMilestones > 0 ? (
+                        <button
+                            type="button"
+                            className="mj_TrackerTextButton mj_TrackerShowMore"
+                            onClick={() => setMilestoneLimit((limit) => limit + MILESTONE_PAGE)}
+                        >
+                            Show more ({moreMilestones})
+                        </button>
+                    ) : null}
                 </section>
 
-                {detail.items.length > 0 ? (
-                    <section className="mj_TrackerSection">
-                        <h2 className="mj_TrackerSection_header">Open items</h2>
-                        {detail.items.map((item) => (
+                {itemGroups.needsYou.length > 0 ? (
+                    <section className="mj_TrackerSection mj_TrackerMissionNeedsYou">
+                        <h2 className="mj_TrackerSection_header">Needs you</h2>
+                        {itemGroups.needsYou.map((item) => (
                             <OpenItemRow key={item.id} item={item} onOpen={onOpenItem} />
                         ))}
                     </section>
                 ) : null}
+
+                <section className="mj_TrackerSection">
+                    <h2 className="mj_TrackerSection_header">Open tasks &amp; decisions</h2>
+                    {itemGroups.others.length === 0 ? (
+                        <p className="mj_TrackerCaption">
+                            {itemGroups.needsYou.length > 0 ? "Nothing else open." : "Nothing open."}
+                        </p>
+                    ) : (
+                        itemGroups.others.map((item) => <OpenItemRow key={item.id} item={item} onOpen={onOpenItem} />)
+                    )}
+                </section>
+
+                <ClosedItems key={mission.id} mission={mission} client={client} onOpen={onOpenItem} />
 
                 {detail.conversations.length > 0 ? (
                     <section className="mj_TrackerSection">

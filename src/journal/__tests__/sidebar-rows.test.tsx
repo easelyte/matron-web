@@ -85,7 +85,7 @@ describe("sidebar rows", () => {
         await act(async () => root.render(<MatronApp client={client} />));
     }
 
-    const row = (): HTMLElement => container.querySelector<HTMLElement>(".mj_RoomListItem")!;
+    const row = (): HTMLElement => container.querySelector<HTMLElement>(".mj_ConversationListItem")!;
 
     it("leads the title with the box letter and session short when there are two boxes", async () => {
         await render(
@@ -97,7 +97,9 @@ describe("sidebar rows", () => {
         expect(
             (tag.querySelector(".mj_SessionTag_letter") as HTMLElement).style.getPropertyValue("--mj-box-light"),
         ).toMatch(/^#[0-9a-f]{6}$/);
-        expect(row().querySelector('[data-testid="room-name"]')?.textContent).toBe("A:53 🐣 Restart of mission");
+        expect(row().querySelector('[data-testid="conversation-name"]')?.textContent).toBe(
+            "A:53 🐣 Restart of mission",
+        );
     });
 
     it("shows the bare title with no tag for a single box, still without the [short] prefix", async () => {
@@ -105,17 +107,17 @@ describe("sidebar rows", () => {
             signedInClient([convo("c1", { title: "🐣 [53] Restart of mission", agent_device_id: 1 })], [TWO_BOXES[0]]),
         );
         expect(row().querySelector(".mj_SessionTag")).toBeNull();
-        expect(row().querySelector('[data-testid="room-name"]')?.textContent).toBe("🐣 Restart of mission");
+        expect(row().querySelector('[data-testid="conversation-name"]')?.textContent).toBe("🐣 Restart of mission");
     });
 
     it("puts the snippet and the relative time on one meta line", async () => {
         await render(signedInClient([convo("c1")], TWO_BOXES));
-        const meta = row().querySelector(".mj_RoomListMeta")!;
+        const meta = row().querySelector(".mj_ConversationListMeta")!;
         expect(meta.textContent).toMatch(/^Restarted nginx · .+/);
-        expect(row().querySelector(".mj_RoomListPreview")).toBeNull();
+        expect(row().querySelector(".mj_ConversationListPreview")).toBeNull();
         // The snippet is its own truncating span so a long snippet never eats the time.
-        expect(meta.querySelector(".mj_RoomListSnippet")?.textContent).toBe("Restarted nginx");
-        expect(meta.querySelector(".mj_RoomListTime")).not.toBeNull();
+        expect(meta.querySelector(".mj_ConversationListSnippet")?.textContent).toBe("Restarted nginx");
+        expect(meta.querySelector(".mj_ConversationListTime")).not.toBeNull();
     });
 
     it("keeps day labels out of the list semantics: each group is its own list of listitems", async () => {
@@ -123,10 +125,12 @@ describe("sidebar rows", () => {
         await render(
             signedInClient([convo("c1"), convo("c2", { created_at: yesterday, last_ts: yesterday })], TWO_BOXES),
         );
-        expect(container.querySelector(".mj_RoomListGroup h3")).toBeNull();
-        expect(container.querySelectorAll('.mj_RoomListGroup [role="list"]').length).toBeGreaterThanOrEqual(2);
-        expect(container.querySelectorAll('.mj_RoomListGroup [role="list"] > :not([role="listitem"])').length).toBe(0);
-        expect(container.querySelector('[data-testid="room-list"]')?.getAttribute("role")).toBeNull();
+        expect(container.querySelector(".mj_ConversationListGroup h3")).toBeNull();
+        expect(container.querySelectorAll('.mj_ConversationListGroup [role="list"]').length).toBeGreaterThanOrEqual(2);
+        expect(
+            container.querySelectorAll('.mj_ConversationListGroup [role="list"] > :not([role="listitem"])').length,
+        ).toBe(0);
+        expect(container.querySelector('[data-testid="conversation-list"]')?.getAttribute("role")).toBeNull();
     });
 
     it("uses the same tag and stripped title in the chat header and subagent pills", async () => {
@@ -144,7 +148,7 @@ describe("sidebar rows", () => {
                 TWO_BOXES,
             ),
         );
-        const heading = container.querySelector(".mx_RoomHeader_heading")!;
+        const heading = container.querySelector(".mj_ChatHeader_heading")!;
         expect(heading.textContent).toContain("🐣 matron-web · deploy");
         expect(heading.textContent).not.toContain("[dc]");
         expect(heading.querySelector(".mj_SessionTag_short")?.textContent).toBe("dc");
@@ -158,7 +162,7 @@ describe("sidebar rows", () => {
         await render(
             signedInClient([convo("c1"), convo("c2", { created_at: yesterday, last_ts: yesterday })], TWO_BOXES),
         );
-        const labels = [...container.querySelectorAll(".mj_RoomListGroup_label")].map((el) => el.textContent);
+        const labels = [...container.querySelectorAll(".mj_ConversationListGroup_label")].map((el) => el.textContent);
         expect(labels[0]).toBe("Today");
         expect(labels.length).toBeGreaterThanOrEqual(2);
     });

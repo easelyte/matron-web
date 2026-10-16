@@ -11,6 +11,7 @@ Please see LICENSE files in the repository root for full details.
  * sorted row list; `now` is injected so tests are stable across midnight.
  */
 
+import { dateTimeFormat } from "./date-format";
 import type { Conversation } from "./types";
 
 const DAY_MS = 86_400_000;
@@ -26,9 +27,9 @@ export function dayLabel(timestamp: number, now: number = Date.now(), locale?: s
     if (daysAgo <= 0) return "Today";
     if (daysAgo === 1) return "Yesterday";
     const then = new Date(timestamp);
-    if (daysAgo <= 6) return new Intl.DateTimeFormat(locale, { weekday: "long" }).format(then);
+    if (daysAgo <= 6) return dateTimeFormat(locale, { weekday: "long" }).format(then);
     const sameYear = then.getFullYear() === new Date(now).getFullYear();
-    return new Intl.DateTimeFormat(
+    return dateTimeFormat(
         locale,
         sameYear ? { day: "numeric", month: "long" } : { day: "numeric", month: "long", year: "numeric" },
     ).format(then);

@@ -20,3 +20,5 @@
 package-lock.json
 .codex-session-tmp/
 .fixtures-dist/
+/.perf/
+perf-results.json

@@ -96,6 +96,8 @@ describe("Settings sheet (Mac grouped form)", () => {
         expect([...dialog.querySelectorAll(".mj_SettingsSheet_groupTitle")].map((el) => el.textContent)).toEqual([
             "Account",
             "Appearance",
+            "Devices",
+            "Notifications",
             "Developer",
             "New chats",
         ]);
@@ -241,6 +243,132 @@ describe("Settings sheet (Mac grouped form)", () => {
             expect(toggle()).toBeNull();
             expect(sheet()!.textContent).not.toContain("For you");
         });
+    });
+});
+
+describe("Settings sheet: Coordinator consent approval", () => {
+    let root: Root;
+    let container: HTMLDivElement;
+
+    type CoordinatorApi = { coordinator: jest.Mock; putCoordinatorConsent: jest.Mock };
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+        Object.defineProperty(globalThis, "TextEncoder", { value: NodeTextEncoder, configurable: true });
+        Object.defineProperty(window, "matchMedia", {
+            configurable: true,
+            value: () => ({ matches: false, addEventListener: () => undefined, removeEventListener: () => undefined }),
+        });
+    });
+
+    beforeEach(() => {
+        localStorage.clear();
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+    });
+
+    afterEach(async () => {
+        await act(async () => root.unmount());
+        container.remove();
+    });
+
+    function withApi(api: Partial<CoordinatorApi>): MatronJournalClient {
+        const client = signedInClient();
+        (client as unknown as { api: Partial<CoordinatorApi> }).api = api;
+        return client;
+    }
+
+    async function openSettings(client: MatronJournalClient): Promise<void> {
+        await act(async () => root.render(<MatronApp client={client} />));
+        await act(async () => container.querySelector<HTMLButtonElement>(".mj_NavRail_settings")!.click());
+    }
+
+    const toggle = (): HTMLButtonElement | null =>
+        document.querySelector<HTMLButtonElement>('.mj_SettingsSheet button[data-setting="coordinator-consent"]');
+
+    it("loads the switch with GET /coordinator and shows it under Coordinator", async () => {
+        const coordinator = jest.fn().mockResolvedValue({ convo_id: "c9", consent: true });
+        await openSettings(withApi({ coordinator }));
+
+        expect(coordinator).toHaveBeenCalled();
+        expect(toggle()?.getAttribute("aria-checked")).toBe("true");
+        expect(toggle()?.getAttribute("role")).toBe("switch");
+        const group = toggle()!.closest("section")!;
+        expect(group.querySelector(".mj_SettingsSheet_groupTitle")?.textContent).toBe("Coordinator");
+        expect(group.textContent).toContain("Let the Coordinator approve chats and spawns");
+    });
+
+    it("saves a flip with PUT /coordinator {consent}", async () => {
+        const putCoordinatorConsent = jest.fn().mockResolvedValue({ convo_id: "c9", consent: false });
+        await openSettings(
+            withApi({
+                coordinator: jest.fn().mockResolvedValue({ convo_id: "c9", consent: true }),
+                putCoordinatorConsent,
+            }),
+        );
+
+        await act(async () => toggle()!.click());
+        expect(putCoordinatorConsent).toHaveBeenCalledWith(false);
+        expect(toggle()?.getAttribute("aria-checked")).toBe("false");
+    });
+
+    it("moves at once, and puts the switch back with an error when the write fails", async () => {
+        let reject!: (error: unknown) => void;
+        const putCoordinatorConsent = jest.fn().mockReturnValue(new Promise((_, fail) => (reject = fail)));
+        await openSettings(
+            withApi({
+                coordinator: jest.fn().mockResolvedValue({ convo_id: null, consent: true }),
+                putCoordinatorConsent,
+            }),
+        );
+
+        await act(async () => toggle()!.click());
+        expect(toggle()?.getAttribute("aria-checked")).toBe("false");
+
+        await act(async () => reject(new JournalApiError("The journal refused the change.", 500)));
+        expect(toggle()?.getAttribute("aria-checked")).toBe("true");
+        expect(toggle()!.closest("section")!.querySelector('[role="alert"]')?.textContent).toBe(
+            "Couldn't save: The journal refused the change.",
+        );
+    });
+
+    it("sends taps one at a time, so the journal ends on the last one", async () => {
+        const answers: Array<(body: unknown) => void> = [];
+        const putCoordinatorConsent = jest.fn(() => new Promise((resolve) => answers.push(resolve)));
+        await openSettings(
+            withApi({
+                coordinator: jest.fn().mockResolvedValue({ convo_id: null, consent: true }),
+                putCoordinatorConsent,
+            }),
+        );
+
+        await act(async () => toggle()!.click());
+        await act(async () => toggle()!.click());
+        expect(putCoordinatorConsent).toHaveBeenCalledTimes(1);
+        expect(toggle()?.getAttribute("aria-checked")).toBe("true");
+
+        await act(async () => answers[0]({ convo_id: null, consent: false }));
+        // The first answer is not the latest tap's: the switch stays where the user left it.
+        expect(toggle()?.getAttribute("aria-checked")).toBe("true");
+        expect(putCoordinatorConsent).toHaveBeenLastCalledWith(true);
+        await act(async () => answers[1]({ convo_id: null, consent: true }));
+        expect(toggle()?.getAttribute("aria-checked")).toBe("true");
+    });
+
+    it("hides the switch on a journal that returns no consent", async () => {
+        await openSettings(withApi({ coordinator: jest.fn().mockResolvedValue({ convo_id: "c9" }) }));
+
+        expect(toggle()).toBeNull();
+        expect(document.querySelector(".mj_SettingsSheet")?.textContent).not.toContain("Let the Coordinator approve");
+    });
+
+    it("hides the switch when GET /coordinator fails", async () => {
+        await openSettings(
+            withApi({ coordinator: jest.fn().mockRejectedValue(new JournalApiError("Not found", 404)) }),
+        );
+
+        expect(toggle()).toBeNull();
     });
 });
 
@@ -519,7 +647,7 @@ describe("Settings sheet: Boxes defaults", () => {
             [...document.querySelectorAll(".mj_SettingsSheet .mj_SettingsSheet_groupTitle")].map(
                 (el) => el.textContent,
             ),
-        ).toEqual(["Account", "Appearance", "Developer", "New chats", "Boxes"]);
+        ).toEqual(["Account", "Appearance", "Devices", "Notifications", "Developer", "New chats", "Boxes"]);
         expect(box(10).querySelector(".mj_SettingsSheet_boxName")?.textContent).toBe("elm");
         expect(optionValues(10, "agent")).toEqual(["", "claude", "codex"]);
         expect([...field(10, "agent").options].map((option) => option.textContent)).toEqual([
