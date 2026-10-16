@@ -21,6 +21,36 @@ function jsonResponse(body: unknown, status = 200): Pick<Response, "status" | "h
     };
 }
 
+describe("JournalApi settings", () => {
+    beforeEach(() => {
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    it("reads the full settings view", async () => {
+        const view = { notices: true, auto_approve_coordinator_spawns: false };
+        fetchMock.mockResolvedValue(jsonResponse(view));
+        await expect(new JournalApi("https://journal.example", "token").settings()).resolves.toEqual(view);
+        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/settings");
+        expect(fetchMock.mock.calls[0][1].method).toBe("GET");
+    });
+
+    it.each([true, false])("patches spawn auto-approval to %s and returns the full view", async (enabled) => {
+        const view = { notices: true, auto_approve_coordinator_spawns: enabled };
+        fetchMock.mockResolvedValue(jsonResponse(view));
+        await expect(
+            new JournalApi("https://journal.example", "token").patchSettings({
+                auto_approve_coordinator_spawns: enabled,
+            }),
+        ).resolves.toEqual(view);
+        expect(String(fetchMock.mock.calls[0][0])).toBe("https://journal.example/settings");
+        expect(fetchMock.mock.calls[0][1].method).toBe("PATCH");
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ auto_approve_coordinator_spawns: enabled });
+    });
+});
+
 describe("JournalApi uploadMedia", () => {
     beforeAll(() => {
         globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;

@@ -1861,6 +1861,77 @@ describe("MatronJournalClient notices and user settings", () => {
         expect(client.getSnapshot().userSettings).toEqual({ notices: false });
     });
 
+    it("keeps both settings during a save and adopts the full response", async () => {
+        const initial = { notices: true, auto_approve_coordinator_spawns: false };
+        const { client, state } = makeClient({ userSettings: initial });
+        let finish!: (view: typeof initial) => void;
+        const patchSettings = jest.fn().mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    finish = resolve;
+                }),
+        );
+        (state as SettingsInternals).api = { patchSettings };
+        const saving = client.setAutoApproveCoordinatorSpawnsSetting(true);
+        expect(client.getSnapshot().userSettings).toEqual({ ...initial, auto_approve_coordinator_spawns: true });
+        finish({ notices: false, auto_approve_coordinator_spawns: true });
+        await expect(saving).resolves.toBe(true);
+        expect(patchSettings).toHaveBeenCalledWith({ auto_approve_coordinator_spawns: true });
+        expect(client.getSnapshot().userSettings).toEqual({ notices: false, auto_approve_coordinator_spawns: true });
+
+        const savingNotices = client.setNoticesSetting(true);
+        expect(client.getSnapshot().userSettings).toEqual({ notices: true, auto_approve_coordinator_spawns: true });
+        finish({ notices: true, auto_approve_coordinator_spawns: true });
+        await savingNotices;
+    });
+
+    it("a live settings frame supersedes a pending save failure", async () => {
+        const { client, state } = makeClient({
+            userSettings: { notices: true, auto_approve_coordinator_spawns: false },
+        });
+        let fail!: (error: Error) => void;
+        const internal = state as SettingsInternals;
+        internal.api = {
+            patchSettings: jest.fn().mockReturnValue(
+                new Promise((_, reject) => {
+                    fail = reject;
+                }),
+            ),
+        };
+        const saving = client.setAutoApproveCoordinatorSpawnsSetting(true);
+        await internal.handleFrame({
+            kind: "control",
+            op: "settings",
+            settings: {
+                notices: false,
+                auto_approve_coordinator_spawns: true,
+            },
+        });
+        fail(new Error("offline"));
+        await expect(saving).resolves.toBe(false);
+        expect(client.getSnapshot().userSettings).toEqual({ notices: false, auto_approve_coordinator_spawns: true });
+        expect(client.getSnapshot().userSettingsError).toBeUndefined();
+    });
+
+    it("validates spawn auto-approval independently and hides unsupported values", async () => {
+        const { client, state } = makeClient();
+        const internal = state as SettingsInternals;
+        internal.api = {
+            settings: jest.fn().mockResolvedValue({ notices: "bad", auto_approve_coordinator_spawns: false }),
+        };
+        await client.loadSettings();
+        expect(client.getSnapshot().userSettings).toEqual({ auto_approve_coordinator_spawns: false });
+        await internal.handleFrame({
+            kind: "control",
+            op: "settings",
+            settings: {
+                notices: true,
+                auto_approve_coordinator_spawns: "true",
+            },
+        });
+        expect(client.getSnapshot().userSettings).toEqual({ notices: true });
+    });
+
     it("setNoticesSetting puts the old value back and reports a failed save", async () => {
         const { client, state } = makeClient({ userSettings: { notices: true } });
         (state as SettingsInternals).api = { patchSettings: jest.fn().mockRejectedValue(new Error("offline")) };
@@ -1889,10 +1960,14 @@ describe("MatronJournalClient notices and user settings", () => {
         internal.connection = { send: jest.fn() };
         internal.api = { items: jest.fn().mockResolvedValue({ items: [item()], next_cursor: null }) };
 
-        await internal.handleReady({ kind: "control", op: "hello_ok", settings: { notices: false } });
+        await internal.handleReady({
+            kind: "control",
+            op: "hello_ok",
+            settings: { notices: false, auto_approve_coordinator_spawns: false },
+        });
         await flush();
 
-        expect(client.getSnapshot().userSettings).toEqual({ notices: false });
+        expect(client.getSnapshot().userSettings).toEqual({ notices: false, auto_approve_coordinator_spawns: false });
         expect(internal.api.items).toHaveBeenCalledWith({ state: "open", limit: 500 });
         expect(client.getSnapshot().inboxItems).toHaveLength(1);
     });

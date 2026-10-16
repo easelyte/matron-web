@@ -2959,6 +2959,12 @@ function ConversationListView({
                     connection={state.connection}
                     notices={state.userSettingsUnsupported ? undefined : state.userSettings?.notices}
                     noticesError={state.userSettingsError}
+                    autoApproveCoordinatorSpawns={
+                        state.userSettingsUnsupported ? undefined : state.userSettings?.auto_approve_coordinator_spawns
+                    }
+                    onAutoApproveCoordinatorSpawnsChange={(value) =>
+                        void client.setAutoApproveCoordinatorSpawnsSetting(value)
+                    }
                     onLoadSettings={() => void client.loadSettings()}
                     onNoticesChange={(value) => void client.setNoticesSetting(value)}
                     onChooseCoordinator={() => {

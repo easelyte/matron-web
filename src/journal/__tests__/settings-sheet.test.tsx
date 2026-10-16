@@ -238,10 +238,64 @@ describe("Settings sheet (Mac grouped form)", () => {
             const { JournalApiError } = await import("../api");
             const client = withApi({ settings: jest.fn().mockRejectedValue(new JournalApiError("Not found", 404)) });
             // Even a value from hello_ok gives way to the 404.
-            (client as unknown as { state: ClientState }).state.userSettings = { notices: true };
+            (client as unknown as { state: ClientState }).state.userSettings = {
+                notices: true,
+                auto_approve_coordinator_spawns: true,
+            };
             await openSettings(client);
             expect(toggle()).toBeNull();
             expect(sheet()!.textContent).not.toContain("For you");
+            expect(spawnToggle()).toBeNull();
+        });
+
+        const spawnToggle = (): HTMLButtonElement | null =>
+            sheet()?.querySelector('button[data-setting="auto_approve_coordinator_spawns"]') ?? null;
+
+        it("shows spawn auto-approval off and saves both directions with the exact setting key", async () => {
+            const patchSettings = jest.fn().mockImplementation(async (patch) => ({ notices: true, ...patch }));
+            await openSettings(
+                withApi({
+                    settings: jest.fn().mockResolvedValue({ notices: true, auto_approve_coordinator_spawns: false }),
+                    patchSettings,
+                }),
+            );
+            expect(spawnToggle()?.getAttribute("aria-checked")).toBe("false");
+            expect(sheet()!.textContent).toContain("Auto-approve spawns the Coordinator requests");
+            expect(sheet()!.textContent).toContain(
+                "When on, a session the Coordinator starts on one of your own online boxes starts at once, without a consent card. Other requests still ask you.",
+            );
+            await act(async () => spawnToggle()!.click());
+            expect(patchSettings).toHaveBeenLastCalledWith({ auto_approve_coordinator_spawns: true });
+            expect(spawnToggle()?.getAttribute("aria-checked")).toBe("true");
+            expect(toggle()?.getAttribute("aria-checked")).toBe("true");
+            await act(async () => spawnToggle()!.click());
+            expect(patchSettings).toHaveBeenLastCalledWith({ auto_approve_coordinator_spawns: false });
+            expect(spawnToggle()?.getAttribute("aria-checked")).toBe("false");
+        });
+
+        it("hides spawn auto-approval on an older journal", async () => {
+            await openSettings(withApi({ settings: jest.fn().mockResolvedValue({ notices: true }) }));
+            expect(spawnToggle()).toBeNull();
+            expect(toggle()).not.toBeNull();
+        });
+
+        it("updates spawn auto-approval live and rolls back a failed save with an error", async () => {
+            const client = withApi({
+                settings: jest.fn().mockResolvedValue({ notices: true, auto_approve_coordinator_spawns: false }),
+                patchSettings: jest.fn().mockRejectedValue(new Error("offline")),
+            });
+            await openSettings(client);
+            await act(async () => {
+                await (client as unknown as { handleFrame(frame: unknown): Promise<void> }).handleFrame({
+                    kind: "control",
+                    op: "settings",
+                    settings: { notices: false, auto_approve_coordinator_spawns: true },
+                });
+            });
+            expect(spawnToggle()?.getAttribute("aria-checked")).toBe("true");
+            await act(async () => spawnToggle()!.click());
+            expect(spawnToggle()?.getAttribute("aria-checked")).toBe("true");
+            expect(sheet()!.textContent).toContain("Couldn't save: offline");
         });
     });
 });
