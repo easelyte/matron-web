@@ -12,17 +12,40 @@ Please see LICENSE files in the repository root for full details.
  * New chats holds the user's default model and effort (journal GET/PUT /defaults), which every
  * bridge applies to a chat started without a choice of its own.
  * Boxes holds each agent box's own defaults (journal PUT /devices/:id/defaults): the agent, model
- * and effort a session started there gets when nobody names them. Web has no Devices screen, so
- * the per-box editor lives here.
+ * and effort a session started there gets when nobody names them.
+ * Devices (DevicesSettings.tsx) is the Mac's Devices tab: rename, tag and revoke each device, and
+ * the Add Agent and Link a Device pairing flows.
  *
  * For you: the journal's per-user `notices` setting (agents file things to read as items with a
  * Seen button instead of leaving them in chat). The sheet asks the client to load it on open; the
  * switch is hidden until the value is known and on a journal without settings (GET /settings 404).
+ *
+ * Coordinator: the Coordinator conversation (`convo_id` on GET/PUT /coordinator) with Change…
+ * and Clear, the journal's consent-approval switch (`consent`, hidden on a journal that does not
+ * return it), and Routines…, as on the Mac.
+ *
+ * Notifications: desktop notifications in this browser while a tab is open (notifications.ts).
+ * Turning them on asks the browser for permission, so it must happen on the click itself.
  */
 
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import type { MatronJournalClient } from "./client";
+import { DevicesSettings } from "./DevicesSettings";
+import {
+    activeOverrides,
+    convoNotifyState,
+    convoNotifySummary,
+    type DesktopNotificationsState,
+    NOTIFY_DEVICE_LEVEL_TITLES,
+    NOTIFY_EVENT_TITLES,
+    NOTIFY_EVENTS,
+    NOTIFY_MODE_TITLES,
+    notificationsFor,
+    type NotifyDeviceLevel,
+    type NotifyMode,
+} from "./notifications";
+import { displayTitle } from "./SessionTag";
 import { useShowTheWork } from "./show-the-work";
 import { getSnapshot, setTheme, subscribe, type ThemePref } from "./theme";
 import type { BoxDefaults, BoxDefaultsState, DefaultsState, Session, UserDefaultKey } from "./types";
@@ -310,6 +333,355 @@ function BoxesDefaults({ client }: { client: MatronJournalClient }): React.React
     );
 }
 
+// Coordinator, as on the Mac: the Coordinator conversation with Change… and Clear (or Choose…
+// when none is set), the journal's consent-approval switch, and Routines…. The conversation row
+// shows once GET /coordinator answers; the switch is hidden on a journal without it. The chooser
+// and the Routines sheet are the parent's to open: they replace this sheet while they show.
+function CoordinatorSettings({
+    client,
+    onChooseCoordinator,
+    onOpenRoutines,
+}: {
+    client: MatronJournalClient;
+    onChooseCoordinator?: () => void;
+    onOpenRoutines?: () => void;
+}): React.ReactElement | null {
+    const state = useSyncExternalStore(client.subscribe, () => client.getSnapshot().coordinatorConsent);
+    const convoId = useSyncExternalStore(client.subscribe, () => client.getSnapshot().coordinatorConvoId);
+    const conversations = useSyncExternalStore(client.subscribe, () => client.getSnapshot().conversations);
+    const [saveError, setSaveError] = useState<string>();
+
+    useEffect(() => void client.loadCoordinatorConsent(), [client]);
+
+    const enabled = state?.enabled;
+    const known = convoId !== undefined;
+    if (enabled === undefined && !known) return null;
+    const conversation = convoId ? conversations.find((candidate) => candidate.id === convoId) : undefined;
+    const title = convoId ? (conversation ? displayTitle(conversation) : convoId) : undefined;
+    const clear = async (): Promise<void> => {
+        setSaveError(await client.setCoordinator(null));
+    };
+    return (
+        <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-coordinator">
+            <h3 id="mj-settings-coordinator" className="mj_SettingsSheet_groupTitle">
+                Coordinator
+            </h3>
+            <div className="mj_SettingsSheet_rows">
+                {known && (
+                    <div className="mj_SettingsSheet_row mj_SettingsSheet_coordinatorRow" data-setting="coordinator">
+                        {title ? (
+                            <>
+                                <span className="mj_SettingsSheet_switchText">
+                                    <span>Conversation</span>
+                                    <span className="mj_SettingsSheet_help mj_SettingsSheet_coordinatorTitle">
+                                        {title}
+                                    </span>
+                                </span>
+                                <span className="mj_SettingsSheet_rowActions">
+                                    {onChooseCoordinator && (
+                                        <button
+                                            type="button"
+                                            className="mj_SettingsSheet_rowButton"
+                                            onClick={onChooseCoordinator}
+                                        >
+                                            Change…
+                                        </button>
+                                    )}
+                                    <button
+                                        type="button"
+                                        className="mj_SettingsSheet_rowButton mj_SettingsSheet_rowButton_critical"
+                                        onClick={() => void clear()}
+                                    >
+                                        Clear
+                                    </button>
+                                </span>
+                            </>
+                        ) : (
+                            <>
+                                <span className="mj_SettingsSheet_help">No coordinator conversation yet.</span>
+                                {onChooseCoordinator && (
+                                    <button
+                                        type="button"
+                                        className="mj_SettingsSheet_rowButton"
+                                        onClick={onChooseCoordinator}
+                                    >
+                                        Choose…
+                                    </button>
+                                )}
+                            </>
+                        )}
+                    </div>
+                )}
+                {enabled !== undefined && (
+                    <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                        <span className="mj_SettingsSheet_switchText">
+                            <span id="mj-settings-coordinator-consent">
+                                Let the Coordinator approve chats and spawns
+                            </span>
+                            <span id="mj-settings-coordinator-consent-help" className="mj_SettingsSheet_help">
+                                Each request it answers says so on its card, with the reason.
+                            </span>
+                        </span>
+                        <button
+                            type="button"
+                            role="switch"
+                            className="mj_SettingsSheet_switch"
+                            data-setting="coordinator-consent"
+                            aria-checked={enabled}
+                            aria-labelledby="mj-settings-coordinator-consent"
+                            aria-describedby="mj-settings-coordinator-consent-help"
+                            onClick={() => void client.setCoordinatorConsent(!enabled)}
+                        />
+                    </div>
+                )}
+                {onOpenRoutines && (
+                    <div className="mj_SettingsSheet_row">
+                        <span>Routines</span>
+                        <button
+                            type="button"
+                            className="mj_SettingsSheet_rowButton"
+                            data-setting="routines"
+                            onClick={onOpenRoutines}
+                        >
+                            Routines…
+                        </button>
+                    </div>
+                )}
+            </div>
+            {state?.error ? (
+                <p className="mj_SettingsSheet_error" role="alert">
+                    Couldn't save: {state.error}
+                </p>
+            ) : null}
+            {saveError ? (
+                <p className="mj_SettingsSheet_error" role="alert">
+                    {saveError}
+                </p>
+            ) : null}
+        </section>
+    );
+}
+
+const PERMISSION_HELP: Record<DesktopNotificationsState["permission"], string> = {
+    unsupported: "This browser can't show notifications.",
+    default: "Your browser will ask to allow notifications from Matron.",
+    granted: "Allowed in this browser.",
+    denied: "Blocked in this browser. Allow notifications for this site in the browser's settings to turn them on.",
+};
+
+function DesktopNotifications({ client }: { client: MatronJournalClient }): React.ReactElement {
+    const notifier = notificationsFor(client);
+    const state = useSyncExternalStore(notifier.subscribe, notifier.getSnapshot);
+    const blocked = state.permission === "unsupported" || state.permission === "denied";
+    return (
+        <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-notifications">
+            <h3 id="mj-settings-notifications" className="mj_SettingsSheet_groupTitle">
+                Notifications
+            </h3>
+            <div className="mj_SettingsSheet_rows">
+                <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                    <span className="mj_SettingsSheet_switchText">
+                        <span id="mj-settings-desktop-notifications">Desktop notifications</span>
+                        <span
+                            id="mj-settings-desktop-notifications-help"
+                            className="mj_SettingsSheet_help"
+                            data-permission={state.permission}
+                        >
+                            {PERMISSION_HELP[state.permission]}
+                        </span>
+                    </span>
+                    <button
+                        type="button"
+                        role="switch"
+                        className="mj_SettingsSheet_switch"
+                        data-setting="desktop-notifications"
+                        aria-checked={state.enabled}
+                        aria-labelledby="mj-settings-desktop-notifications"
+                        aria-describedby="mj-settings-desktop-notifications-help"
+                        disabled={blocked}
+                        onClick={() => (state.enabled ? notifier.disable() : void notifier.enable())}
+                    />
+                </div>
+                <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                    <span className="mj_SettingsSheet_switchText">
+                        <span id="mj-settings-notification-sound">Play sound</span>
+                    </span>
+                    <button
+                        type="button"
+                        role="switch"
+                        className="mj_SettingsSheet_switch"
+                        data-setting="notification-sound"
+                        aria-checked={state.enabled && state.sound}
+                        aria-labelledby="mj-settings-notification-sound"
+                        disabled={!state.enabled}
+                        onClick={() => notifier.setSound(!state.sound)}
+                    />
+                </div>
+            </div>
+            <p className="mj_SettingsSheet_help">
+                Shown while Matron is open in a tab, for what your notification settings send to this device. Nothing
+                shows for the conversation you are looking at.
+            </p>
+            <NotifySettingsRows client={client} />
+        </section>
+    );
+}
+
+const NOTIFY_MODES: readonly NotifyMode[] = ["coordinator", "all", "custom"];
+const NOTIFY_DEVICE_LEVELS: readonly NotifyDeviceLevel[] = ["all", "needs_me", "off"];
+
+/**
+ * What may notify the user, as the Mac's Settings → Notifications edits it (journal GET/PUT
+ * /notify): the mode, the event switches and the per-conversation overrides are synced per user,
+ * so a change here reaches the phone and the Mac at once; "On this device" is this browser's own.
+ * Every change shows at once and is taken back if the journal refuses it.
+ */
+function NotifySettingsRows({ client }: { client: MatronJournalClient }): React.ReactElement | null {
+    const notifier = notificationsFor(client);
+    const { view, error, now } = useSyncExternalStore(notifier.subscribeSettings, notifier.getSettingsSnapshot);
+    const conversations = useSyncExternalStore(client.subscribe, () => client.getSnapshot().conversations);
+    // On opening as well as on every connect: a change missed while the socket was down is caught here.
+    useEffect(() => {
+        void notifier.refreshSettings();
+    }, [notifier]);
+
+    if (view === null) {
+        return <p className="mj_SettingsSheet_help">This server doesn't support notification settings yet.</p>;
+    }
+    if (view === undefined) {
+        // Not read yet, or the read failed: a note, not an alert — nothing was lost.
+        return error ? <p className="mj_SettingsSheet_help">{error}.</p> : null;
+    }
+    const overrides = activeOverrides(view, now);
+    const titleOf = (convoId: string): string => {
+        const conversation = conversations.find((candidate) => candidate.id === convoId);
+        return conversation ? displayTitle(conversation) : convoId;
+    };
+    return (
+        <>
+            <h4 id="mj-settings-notify-mode" className="mj_SettingsSheet_groupTitle">
+                Notify me about
+            </h4>
+            <div className="mj_SettingsSheet_rows" role="radiogroup" aria-labelledby="mj-settings-notify-mode">
+                {NOTIFY_MODES.map((mode) => (
+                    <label key={mode} className="mj_SettingsSheet_row mj_SettingsSheet_radioRow">
+                        <input
+                            type="radio"
+                            name="mj-settings-notify-mode"
+                            data-notify-mode={mode}
+                            checked={view.mode === mode}
+                            onChange={() => void notifier.changeSettings({ kind: "mode", mode })}
+                        />
+                        <span className="mj_SettingsSheet_switchText">
+                            <span>{NOTIFY_MODE_TITLES[mode].title}</span>
+                            <span className="mj_SettingsSheet_help">{NOTIFY_MODE_TITLES[mode].subtitle}</span>
+                        </span>
+                    </label>
+                ))}
+            </div>
+            {view.mode === "coordinator" && !view.has_coordinator && (
+                <p className="mj_SettingsSheet_help">
+                    Until a Coordinator is set, Coordinator mode acts as Every session.
+                </p>
+            )}
+            <h4 className="mj_SettingsSheet_groupTitle">Events</h4>
+            <div className="mj_SettingsSheet_rows">
+                {NOTIFY_EVENTS.map((event) => {
+                    const id = `mj-settings-notify-event-${event}`;
+                    const locked = event === "prompts";
+                    return (
+                        <div key={event} className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                            <span className="mj_SettingsSheet_switchText">
+                                <span id={id}>{NOTIFY_EVENT_TITLES[event]}</span>
+                                {locked && (
+                                    <span className="mj_SettingsSheet_help">
+                                        Always on: an unanswered prompt blocks an agent.
+                                    </span>
+                                )}
+                            </span>
+                            <button
+                                type="button"
+                                role="switch"
+                                className="mj_SettingsSheet_switch"
+                                data-notify-event={event}
+                                aria-checked={locked || view.events[event]}
+                                aria-labelledby={id}
+                                disabled={locked}
+                                onClick={() =>
+                                    void notifier.changeSettings({ kind: "event", event, on: !view.events[event] })
+                                }
+                            />
+                        </div>
+                    );
+                })}
+            </div>
+            {view.mode !== "custom" && <p className="mj_SettingsSheet_help">Changing a switch moves you to Custom.</p>}
+            <div className="mj_SettingsSheet_rows">
+                <label className="mj_SettingsSheet_row">
+                    <span>On this device</span>
+                    <select
+                        className="mj_SettingsSheet_select"
+                        data-setting="notify-device-level"
+                        value={view.device_level}
+                        onChange={(event) =>
+                            void notifier.changeSettings({
+                                kind: "device_level",
+                                level: event.target.value as NotifyDeviceLevel,
+                            })
+                        }
+                    >
+                        {NOTIFY_DEVICE_LEVELS.map((level) => (
+                            <option key={level} value={level}>
+                                {NOTIFY_DEVICE_LEVEL_TITLES[level]}
+                            </option>
+                        ))}
+                    </select>
+                </label>
+            </div>
+            {overrides.length > 0 && (
+                <>
+                    <h4 className="mj_SettingsSheet_groupTitle">Conversation overrides</h4>
+                    <div className="mj_SettingsSheet_rows">
+                        {overrides.map((row) => (
+                            <div
+                                key={row.convo_id}
+                                className="mj_SettingsSheet_row mj_SettingsSheet_switchRow"
+                                data-notify-override={row.convo_id}
+                            >
+                                <span className="mj_SettingsSheet_switchText">
+                                    <span className="mj_SettingsSheet_overrideTitle">{titleOf(row.convo_id)}</span>
+                                    <span className="mj_SettingsSheet_help">
+                                        {convoNotifySummary(convoNotifyState(view, row.convo_id, now), now)}
+                                    </span>
+                                </span>
+                                <button
+                                    type="button"
+                                    className="mj_SettingsSheet_clear"
+                                    aria-label={`Clear the override for ${titleOf(row.convo_id)}`}
+                                    onClick={() =>
+                                        void notifier.changeSettings({ kind: "clear_convo", convoId: row.convo_id })
+                                    }
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </>
+            )}
+            <p className="mj_SettingsSheet_help">
+                Events that don't notify still update the lists and unread dots. Each conversation's own level and mute
+                are in the bell menu in its header.
+            </p>
+            {error && (
+                <p className="mj_SettingsSheet_error" role="alert">
+                    {error}
+                </p>
+            )}
+        </>
+    );
+}
+
 export function SettingsSheet({
     client,
     session,
@@ -318,6 +690,8 @@ export function SettingsSheet({
     noticesError,
     onLoadSettings,
     onNoticesChange,
+    onChooseCoordinator,
+    onOpenRoutines,
     onSignOut,
     onClose,
 }: {
@@ -331,6 +705,10 @@ export function SettingsSheet({
     /** Fetch the settings (on open). */
     onLoadSettings?: () => void;
     onNoticesChange?: (notices: boolean) => void;
+    /** Settings → Coordinator → Change… / Choose…: the parent opens the chooser in this sheet's place. */
+    onChooseCoordinator?: () => void;
+    /** Settings → Coordinator → Routines…: the parent opens the Routines sheet in this sheet's place. */
+    onOpenRoutines?: () => void;
     onSignOut: () => void;
     onClose: () => void;
 }): React.ReactElement {
@@ -455,6 +833,8 @@ export function SettingsSheet({
                         ))}
                     </div>
                 </section>
+                <DevicesSettings client={client} session={session} />
+                <DesktopNotifications client={client} />
                 <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-developer">
                     <h3 id="mj-settings-developer" className="mj_SettingsSheet_groupTitle">
                         Developer
@@ -482,6 +862,11 @@ export function SettingsSheet({
                 </section>
                 <NewChatDefaults client={client} />
                 <BoxesDefaults client={client} />
+                <CoordinatorSettings
+                    client={client}
+                    onChooseCoordinator={onChooseCoordinator}
+                    onOpenRoutines={onOpenRoutines}
+                />
                 {notices !== undefined && onNoticesChange ? (
                     <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-foryou">
                         <h3 id="mj-settings-foryou" className="mj_SettingsSheet_groupTitle">

@@ -5,7 +5,8 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { type SessionStatus } from "./types";
+import { dateTimeFormat } from "./date-format";
+import { type SessionStatus, type SessionStatusOption } from "./types";
 
 export function normalizePercent(p: number): number | null {
     return Number.isFinite(p) ? Math.min(Math.max(p, 0), 100) : null;
@@ -226,8 +227,8 @@ function renderReset(resetTime: number, now: number): string {
     }
 
     const date = new Date(resetTime);
-    const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(date);
-    const hour = new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: true })
+    const weekday = dateTimeFormat("en-US", { weekday: "short" }).format(date);
+    const hour = dateTimeFormat("en-US", { hour: "numeric", hour12: true })
         .format(date)
         .replaceAll(" ", "")
         .toLocaleLowerCase();
@@ -253,6 +254,21 @@ function mergeExtras(current: SessionStatus | undefined, update: SessionStatus):
     return current?.extras;
 }
 
+// The /model and /effort offers are remote input. Absent (or anything that is not a list) says
+// nothing, and an empty list is the agent offering nothing. A non-empty list with no readable
+// entry is a garbled frame, not a statement, so it leaves the held list alone (as the desktop
+// app's decoder does).
+function mergeOptions(
+    update: SessionStatusOption[] | undefined,
+    current: SessionStatusOption[] | undefined,
+): SessionStatusOption[] | undefined {
+    if (!Array.isArray(update)) return current;
+    const parsed = update.filter(
+        (option): option is SessionStatusOption => typeof option?.value === "string" && option.value.trim() !== "",
+    );
+    return update.length === 0 || parsed.length > 0 ? parsed : current;
+}
+
 export function mergeSessionStatus(current: SessionStatus | undefined, update: SessionStatus): SessionStatus {
     return {
         model: update.model ?? current?.model,
@@ -274,6 +290,11 @@ export function mergeSessionStatus(current: SessionStatus | undefined, update: S
         // deploy window: a bridge that sends both still sets `update.vitals`, which is used.
         vitals: update.vitals ?? (suppliesLegacyHostMeters(update) ? undefined : current?.vitals),
         email: update.email ?? current?.email,
+        // Effort is tri-state on the wire: a string sets it, an explicit null is the bridge
+        // disowning the level it was tracking, and an absent key leaves the held value alone.
+        effort: "effort" in update ? (update.effort ?? undefined) : current?.effort,
+        model_options: mergeOptions(update.model_options, current?.model_options),
+        effort_levels: mergeOptions(update.effort_levels, current?.effort_levels),
     };
 }
 
@@ -314,4 +335,34 @@ export function helperContextStatus(
         ...child,
         context: { tokens: context.tokens, window, pct: Math.min(100, Math.round((context.tokens / window) * 100)) },
     };
+}
+
+// "opus" / "opus · high": the session's model with its effort level beside it, as the Mac
+// header's model line. An unknown effort adds nothing (no separator, no placeholder): the
+// bridge publishes no effort rather than a guess, so absent is the normal state.
+export function modelLine(model: string, effort: string | null | undefined): string {
+    const level = effort?.trim();
+    return level ? `${model} · ${level}` : model;
+}
+
+// Absolute context size (tokens) past which the chat offers to compact. Absolute, not a
+// fraction of the window: the concern is cost, latency and recall at large sizes, which a
+// 1M-window model shares. Same threshold as the Apple clients.
+export const COMPACT_NUDGE_TOKENS = 400_000;
+
+// No status frame yet, and exactly-at-threshold, do not nudge; strictly above does.
+export function shouldNudgeCompact(context: SessionStatus["context"]): boolean {
+    return context !== undefined && context.tokens > COMPACT_NUDGE_TOKENS;
+}
+
+export function compactNudgeTitle(tokens: number): string {
+    return `Large conversation (${compactTokens(tokens)})`;
+}
+
+// Screen-reader variant of compactTokens: "265 thousand", "1.2 million".
+export function spokenTokens(tokens: number): string {
+    if (tokens < 1_000) return String(tokens);
+    if (tokens < 1_000_000) return `${Math.round(tokens / 1_000)} thousand`;
+    const millions = Math.round((tokens / 1_000_000) * 10) / 10;
+    return `${millions.toLocaleString("en-US", { maximumFractionDigits: 1 })} million`;
 }

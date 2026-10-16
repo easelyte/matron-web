@@ -14,25 +14,34 @@ import {
     type DeviceDTO,
     type DevicesResponse,
     endpointUrl,
+    type LinkStart,
+    type LinkStatus,
+    type PairPreview,
     type LoginResponse,
     type MatronConfig,
     type MessagesResponse,
+    type ConversationMissionLink,
     type Mission,
     type MissionDetail,
+    type NumberLookup,
     type SearchResponse,
     type SnapshotResponse,
     type TrackerAwaiting,
     type TrackerComment,
     type TrackerCommentWrite,
     type TrackerItem,
+    type TrackerItemCreate,
     type TrackerItemKind,
     type TrackerItemState,
+    type TrackerRankChange,
     type TrackerLink,
     type TrackerResolution,
     type Memory,
     type MemoryWrite,
     type Project,
     type ProjectDetail,
+    type ProjectFeedKind,
+    type ProjectFeedPage,
     type UserDefaults,
 } from "./types";
 import { parseMetrics, type JournalMetrics } from "./ops/model";
@@ -70,11 +79,16 @@ type TrackerMissionListState = "open" | "closed";
 
 /** `GET /items` query params (all optional; server clamps `limit` to ≤500). */
 interface ItemsFilter {
-    state?: TrackerItemState;
-    kind?: TrackerItemKind;
+    /** Only the items filed from this conversation. */
+    convo?: string;
+    /** `done` is For you's Done view: closed, or answered and no longer waiting on the user. */
+    state?: TrackerItemState | "done";
+    /** One kind, or several: any of them (a journal that predates the list form answers 400). */
+    kind?: TrackerItemKind | readonly TrackerItemKind[];
     awaiting?: TrackerAwaiting;
     label?: string;
-    sort?: "rank" | "updated";
+    /** `acted`: the user's last action on the item first, falling back to its close time. */
+    sort?: "rank" | "updated" | "acted";
     since?: number;
     limit?: number;
     cursor?: string;
@@ -101,6 +115,73 @@ export class JournalApiError extends Error {
     ) {
         super(message);
     }
+}
+
+/**
+ * Whether a media fetch failed because the blob is gone for good: the server's media reaper
+ * deletes old blobs, and a 404 for a blob id is permanent (ids are never reused).
+ */
+export function isMediaExpiredError(error: unknown): boolean {
+    return error instanceof JournalApiError && error.status === 404;
+}
+
+/**
+ * One request over XMLHttpRequest, for its upload progress events, answered as a fetch Response so
+ * the caller's status and error handling stay the same. Rejects like fetch: an AbortError when
+ * `signal` aborts, a TypeError when the network fails.
+ */
+function xhrRequest(
+    url: URL,
+    options: {
+        method: string;
+        headers: Record<string, string>;
+        body: ArrayBuffer;
+        signal?: AbortSignal;
+        onUploadProgress: (fraction: number) => void;
+    },
+): Promise<Response> {
+    return new Promise((resolve, reject) => {
+        const { signal } = options;
+        if (signal?.aborted) {
+            reject(new DOMException("The upload was aborted.", "AbortError"));
+            return;
+        }
+        const xhr = new XMLHttpRequest();
+        const onAbort = (): void => xhr.abort();
+        xhr.open(options.method, url.toString());
+        xhr.responseType = "arraybuffer";
+        for (const [name, value] of Object.entries(options.headers)) xhr.setRequestHeader(name, value);
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable && event.total > 0) options.onUploadProgress(event.loaded / event.total);
+        };
+        xhr.onload = () => {
+            signal?.removeEventListener("abort", onAbort);
+            const headers = new Headers();
+            for (const line of xhr
+                .getAllResponseHeaders()
+                .trim()
+                .split(/[\r\n]+/)) {
+                const colon = line.indexOf(":");
+                if (colon > 0) headers.append(line.slice(0, colon).trim(), line.slice(colon + 1).trim());
+            }
+            const status = xhr.status;
+            resolve({
+                status,
+                headers,
+                arrayBuffer: async () => (xhr.response as ArrayBuffer | null) ?? new ArrayBuffer(0),
+            } as Response);
+        };
+        xhr.onerror = () => {
+            signal?.removeEventListener("abort", onAbort);
+            reject(new TypeError("Could not reach the journal server."));
+        };
+        xhr.onabort = () => {
+            signal?.removeEventListener("abort", onAbort);
+            reject(new DOMException("The upload was aborted.", "AbortError"));
+        };
+        signal?.addEventListener("abort", onAbort);
+        xhr.send(options.body);
+    });
 }
 
 function electronBridge(): JournalElectron | undefined {
@@ -250,7 +331,8 @@ function parseDevice(raw: unknown): DeviceParseResult {
     if (typeof device.kind !== "string") reasons.push("invalid_kind");
     if (typeof device.connected !== "boolean") reasons.push("invalid_connected");
     if (device.name !== undefined && typeof device.name !== "string") reasons.push("invalid_name");
-    if (device.last_seen_at !== undefined && typeof device.last_seen_at !== "number") {
+    // null: a device that has never connected (an agent box enrolled but not yet online).
+    if (device.last_seen_at !== undefined && device.last_seen_at !== null && typeof device.last_seen_at !== "number") {
         reasons.push("invalid_last_seen_at");
     }
     if (typeof device.is_self !== "boolean") reasons.push("invalid_is_self");
@@ -265,9 +347,12 @@ function parseDevice(raw: unknown): DeviceParseResult {
             device_id: device.device_id,
             kind: device.kind,
             name: device.name,
-            last_seen_at: device.last_seen_at,
+            last_seen_at: device.last_seen_at ?? undefined,
             connected: device.connected,
             is_self: device.is_self,
+            ...(typeof device.tag_char === "string" || device.tag_char === null ? { tag_char: device.tag_char } : {}),
+            ...(typeof device.created_at === "number" ? { created_at: device.created_at } : {}),
+            ...(typeof device.lag === "number" ? { lag: device.lag } : {}),
             ...(status ? { status } : {}),
             ...(defaults ? { defaults } : {}),
         } as DeviceDTO,
@@ -283,7 +368,7 @@ export async function loadMatronConfig(): Promise<MatronConfig> {
     }
 
     try {
-        const response = await fetch("config.json", { cache: "no-store" });
+        const response = await fetch(`${process.env.PUBLIC_PATH ?? ""}config.json`, { cache: "no-store" });
         if (!response.ok) return {};
         return (await response.json()) as MatronConfig;
     } catch {
@@ -291,7 +376,18 @@ export async function loadMatronConfig(): Promise<MatronConfig> {
     }
 }
 
+/**
+ * The most attachments the journal takes on one item or comment; a write with more is refused
+ * (HTTP 400). Mirrors the journal's own limit, so a client that has more to send splits them.
+ */
+export const JOURNAL_ATTACHMENTS_MAX = 20;
+
 function messageForCode(code: string | undefined, status: number): string {
+    return knownErrorMessage(code) ?? `The journal server returned HTTP ${status}.`;
+}
+
+/** The sentence for a journal error code this client knows, or undefined for any other code. */
+export function knownErrorMessage(code: string | undefined): string | undefined {
     switch (code) {
         case "bad_credentials":
             return "The username or password is incorrect.";
@@ -318,7 +414,7 @@ function messageForCode(code: string | undefined, status: number): string {
         case "not_agent_device":
             return "That device is not an agent box.";
         default:
-            return `The journal server returned HTTP ${status}.`;
+            return undefined;
     }
 }
 
@@ -426,6 +522,24 @@ export class JournalApi {
         });
     }
 
+    // Answers one parked agent-chat ask — the ONLY path that resolves an agent-chat consent card
+    // (a prompt_reply never reaches the parked row). Keyed on the room and the device the row is
+    // filed under. Resolves to the server's `delivered` flag; 409 (no longer awaiting an answer)
+    // and 404 (not this user's room) surface as a typed JournalApiError.
+    public async answerAgentChat(
+        roomId: string,
+        targetDeviceId: number,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<boolean> {
+        const response = await this.json<{ delivered?: boolean }>("/agent-chat/answer", {
+            method: "POST",
+            body: { room_id: roomId, target_device_id: targetDeviceId, decision },
+            signal,
+        });
+        return response?.delivered === true;
+    }
+
     // ── Tracker: missions / milestones / items (all at journal root, Bearer-auth, user-global) ──
 
     /** GET /missions?state= — the mission list rows (counts + last-milestone digest baked in). */
@@ -444,16 +558,68 @@ export class JournalApi {
         return this.json<ProjectDetail>(`/projects/${encodeTrackerId(id)}`);
     }
 
+    /** POST /projects — a new project (the Projects home's "New project"). A blank body is left out. */
+    public createProject(fields: { title: string; body?: string }, idemKey?: string): Promise<{ project: Project }> {
+        const body: { title: string; body?: string } = { title: fields.title };
+        if (fields.body?.trim()) body.body = fields.body;
+        return this.json<{ project: Project }>("/projects", { method: "POST", body, ...idempotencyHeader(idemKey) });
+    }
+
+    /** POST /projects/:id/merge — every mission of `id` moves to `into`, and `id` closes as merged. */
+    public mergeProject(id: string | number, into: string | number): Promise<{ project: Project; merged: Project }> {
+        return this.json<{ project: Project; merged: Project }>(`/projects/${encodeTrackerId(id)}/merge`, {
+            method: "POST",
+            body: { into },
+        });
+    }
+
+    /** GET /projects/:id/feed — the next (older) page of one roll-up kind, from a `next_before` cursor. */
+    public projectFeed<Row = unknown>(
+        id: string | number,
+        kind: ProjectFeedKind,
+        before: string,
+    ): Promise<ProjectFeedPage<Row>> {
+        const query = new URLSearchParams({ kind, before });
+        return this.json<ProjectFeedPage<Row>>(`/projects/${encodeTrackerId(id)}/feed?${query.toString()}`);
+    }
+
     /** GET /missions/:id — full detail (mission + milestones newest-first + open items + convos). */
     public mission(id: string | number): Promise<MissionDetail> {
         return this.json<MissionDetail>(`/missions/${encodeTrackerId(id)}`);
     }
 
+    /** GET /conversations/:id/missions — every mission the conversation is or was on, current
+     *  first. A row spreads the mission flat beside the link fields; a nested `mission` object is
+     *  accepted too, so either journal shape reads the same. */
+    public async conversationMissions(convoId: string): Promise<ConversationMissionLink[]> {
+        const body = await this.json<{ missions?: unknown }>(`/conversations/${encodeURIComponent(convoId)}/missions`);
+        const rows = Array.isArray(body.missions) ? body.missions : [];
+        return rows.flatMap((row): ConversationMissionLink[] => {
+            if (!row || typeof row !== "object") return [];
+            const record = row as Record<string, unknown>;
+            const nested = record.mission && typeof record.mission === "object" ? record.mission : {};
+            const mission = { ...record, ...nested } as Record<string, unknown>;
+            if (typeof mission.id !== "string" || typeof mission.num !== "number") return [];
+            const endedAt = typeof record.ended_at === "number" ? record.ended_at : null;
+            return [
+                {
+                    ...(mission as unknown as Mission),
+                    current: record.current === true,
+                    active: typeof record.active === "boolean" ? record.active : endedAt == null,
+                    how: typeof record.how === "string" ? record.how : null,
+                    joined_at: typeof record.joined_at === "number" ? record.joined_at : null,
+                    ended_at: endedAt,
+                },
+            ];
+        });
+    }
+
     /** GET /items — the filtered/sorted item list (`next_cursor` paginates; server clamps limit ≤500). */
     public items(filter: ItemsFilter = {}): Promise<{ items: TrackerItem[]; next_cursor: string | null }> {
         const query = new URLSearchParams();
+        if (filter.convo) query.set("convo", filter.convo);
         if (filter.state) query.set("state", filter.state);
-        if (filter.kind) query.set("kind", filter.kind);
+        if (filter.kind) query.set("kind", typeof filter.kind === "string" ? filter.kind : filter.kind.join(","));
         if (filter.awaiting) query.set("awaiting", filter.awaiting);
         if (filter.label) query.set("label", filter.label);
         if (filter.sort) query.set("sort", filter.sort);
@@ -487,6 +653,16 @@ export class JournalApi {
     /** GET /items/:id — the item plus its comment thread (status rows carry `meta.from`/`meta.to`). */
     public item(id: string | number): Promise<{ item: TrackerItem; comments: TrackerComment[] }> {
         return this.json<{ item: TrackerItem; comments: TrackerComment[] }>(`/items/${encodeTrackerId(id)}`);
+    }
+
+    /** POST /items — file a new item from the user into a conversation. */
+    public createItem(body: TrackerItemCreate, idemKey?: string): Promise<{ item: TrackerItem }> {
+        return this.json<{ item: TrackerItem }>("/items", { method: "POST", body, ...idempotencyHeader(idemKey) });
+    }
+
+    /** POST /items/:id/rank — move an open task in the ordered list. */
+    public rankItem(id: string | number, change: TrackerRankChange): Promise<{ item: TrackerItem }> {
+        return this.json<{ item: TrackerItem }>(`/items/${encodeTrackerId(id)}/rank`, { method: "POST", body: change });
     }
 
     /** PATCH /items/:id — edit title/body/labels/links/awaiting or move the item to a mission. */
@@ -551,6 +727,74 @@ export class JournalApi {
         return this.json<{ memory: Memory }>(`/memories/${encodeURIComponent(name)}`, { method: "DELETE" });
     }
 
+    // ── Notification settings (journal /notify, /coordinator; Bearer-auth, per user) ──
+
+    /**
+     * GET /notify — what may notify the user: the synced mode, event switches and per-conversation
+     * overrides, plus this device's own level. Unvalidated (notifications.ts parses it); a journal
+     * that predates the route answers 404, which throws a JournalApiError.
+     */
+    public async notifySettings(): Promise<unknown> {
+        return this.json<unknown>("/notify");
+    }
+
+    /**
+     * PUT /notify — changes any part of the settings: `mode`, `events`, this device's
+     * `device_level`, or one conversation's `convo` level or mute (an explicit null clears it).
+     * Answers the whole view, as GET does; client tokens only.
+     */
+    public async updateNotify(body: Record<string, unknown>): Promise<unknown> {
+        return this.json<unknown>("/notify", { method: "PUT", body });
+    }
+
+    /**
+     * GET /coordinator — `{convo_id, consent}`: the user's Coordinator conversation (null for none)
+     * and whether the Coordinator may answer chat and spawn asks. Unvalidated.
+     */
+    public async coordinator(): Promise<unknown> {
+        return this.json<unknown>("/coordinator");
+    }
+
+    /** PUT /coordinator {consent} — the Coordinator consent-approval switch. Unvalidated `{convo_id, consent}`. */
+    public async putCoordinatorConsent(consent: boolean): Promise<unknown> {
+        return this.json<unknown>("/coordinator", { method: "PUT", body: { consent } });
+    }
+
+    /**
+     * PUT /coordinator {convo_id} — make a conversation the Coordinator, or clear it with null.
+     * 404 for a conversation the user does not own. Unvalidated `{convo_id, consent}`.
+     */
+    public async putCoordinator(convoId: string | null): Promise<unknown> {
+        return this.json<unknown>("/coordinator", { method: "PUT", body: { convo_id: convoId } });
+    }
+
+    // ── Coordinator routines (journal /routines; 404 on the collection = a journal without them) ──
+
+    /** GET /routines — `{routines}` by name. Unvalidated (routines.ts parses it). */
+    public routines(): Promise<unknown> {
+        return this.json<unknown>("/routines");
+    }
+
+    /** POST /routines — 201 `{routine}`; 409 `{blocked_by: 'name' | 'cap'}`, 400 for a bad field. */
+    public createRoutine(body: Record<string, unknown>): Promise<unknown> {
+        return this.json<unknown>("/routines", { method: "POST", body });
+    }
+
+    /** PATCH /routines/:key — any subset of the fields (never `name`); 200 `{routine}`. */
+    public patchRoutine(key: string, body: Record<string, unknown>): Promise<unknown> {
+        return this.json<unknown>(`/routines/${encodeURIComponent(key)}`, { method: "PATCH", body });
+    }
+
+    /** DELETE /routines/:key — 200 `{ok: true}`; 404 when it is already gone. */
+    public deleteRoutine(key: string): Promise<unknown> {
+        return this.json<unknown>(`/routines/${encodeURIComponent(key)}`, { method: "DELETE", body: {} });
+    }
+
+    /** POST /routines/:key/run — 202 `{accepted: true}` or `{delivered: false, reason}`. */
+    public runRoutine(key: string): Promise<unknown> {
+        return this.json<unknown>(`/routines/${encodeURIComponent(key)}/run`, { method: "POST", body: {} });
+    }
+
     // ── New-chat defaults (journal /defaults; Bearer-auth, per user) ──
 
     /** GET /defaults — the user's default model and effort for new chats (null = box default). */
@@ -589,6 +833,87 @@ export class JournalApi {
         const state = parseBoxDefaultsState(raw);
         if (!state) throw new JournalApiError("The journal server returned malformed box defaults.", 200);
         return state;
+    }
+
+    // ── Device admin (Settings → Devices; client tokens only, 404 = not yours or gone) ──
+
+    /** POST /devices/:id/rename — the journal trims and sanitises the name and caps it at 40. */
+    public async renameDevice(deviceId: number, name: string): Promise<void> {
+        await this.json<unknown>(`/devices/${encodeURIComponent(String(deviceId))}/rename`, {
+            method: "POST",
+            body: { name },
+        });
+    }
+
+    /** POST /devices/:id/tag — set the tag character, or clear it back to automatic with null. */
+    public async setDeviceTag(deviceId: number, tagChar: string | null): Promise<void> {
+        await this.json<unknown>(`/devices/${encodeURIComponent(String(deviceId))}/tag`, {
+            method: "POST",
+            body: { tag_char: tagChar },
+        });
+    }
+
+    /** POST /devices/:id/revoke — immediate and permanent; revoking this device signs it out. */
+    public async revokeDevice(deviceId: number): Promise<void> {
+        await this.json<unknown>(`/devices/${encodeURIComponent(String(deviceId))}/revoke`, {
+            method: "POST",
+            body: {},
+        });
+    }
+
+    /** POST /pair/preview — who is asking to pair with a box's code. 404: unknown, expired or used. */
+    public async pairPreview(pairCode: string): Promise<PairPreview> {
+        const raw = await this.json<Record<string, unknown>>("/pair/preview", {
+            method: "POST",
+            body: { pair_code: pairCode },
+        });
+        if (typeof raw?.requester_ip !== "string" || typeof raw.expires_in !== "number") {
+            throw new JournalApiError("The journal server returned a malformed pair preview.", 200);
+        }
+        return { requester_ip: raw.requester_ip, expires_in: raw.expires_in };
+    }
+
+    /** POST /pair/approve — bind the box's code to this user; 409 when already approved. */
+    public async pairApprove(pairCode: string, agentName: string, tagChar: string | null): Promise<void> {
+        await this.json<unknown>("/pair/approve", {
+            method: "POST",
+            body: { pair_code: pairCode, agent_name: agentName, ...(tagChar ? { tag_char: tagChar } : {}) },
+        });
+    }
+
+    /** POST /link/start — mint (or replace) this device's sign-in code for a second device. */
+    public async linkStart(): Promise<LinkStart> {
+        const raw = await this.json<Record<string, unknown>>("/link/start", { method: "POST", body: {} });
+        if (typeof raw?.link_code !== "string" || typeof raw.expires_in !== "number") {
+            throw new JournalApiError("The journal server returned a malformed link code.", 200);
+        }
+        return { link_code: raw.link_code, expires_in: raw.expires_in };
+    }
+
+    /** POST /link/status — 404 when this device has no live code (expired or resolved). */
+    public async linkStatus(): Promise<LinkStatus> {
+        const raw = await this.json<Record<string, unknown>>("/link/status", { method: "POST", body: {} });
+        const expiresIn = typeof raw?.expires_in === "number" ? raw.expires_in : 0;
+        if (raw?.status === "waiting") return { status: "waiting", expires_in: expiresIn };
+        if (raw?.status === "claimed" && typeof raw.device_name === "string" && typeof raw.requester_ip === "string") {
+            return {
+                status: "claimed",
+                device_name: raw.device_name,
+                requester_ip: raw.requester_ip,
+                expires_in: expiresIn,
+            };
+        }
+        throw new JournalApiError("The journal server returned a malformed link status.", 200);
+    }
+
+    /** POST /link/approve — 409: nothing claimed yet or already resolved; 404: expired. */
+    public async linkApprove(linkCode: string): Promise<void> {
+        await this.json<unknown>("/link/approve", { method: "POST", body: { link_code: linkCode } });
+    }
+
+    /** POST /link/deny — 404: expired. */
+    public async linkDeny(linkCode: string): Promise<void> {
+        await this.json<unknown>("/link/deny", { method: "POST", body: { link_code: linkCode } });
     }
 
     // ── Pinned desk chats (journal /pins; every route answers with the whole list) ──
@@ -657,10 +982,10 @@ export class JournalApi {
         return this.json<BriefingLatest>("/briefings/refresh", { method: "POST" });
     }
 
-    /** PATCH /missions/:id — edit the mission title/body. */
+    /** PATCH /missions/:id — edit the mission title/body, or move it to another project. */
     public patchMission(
         id: string | number,
-        body: { title?: string; body?: string },
+        body: { title?: string; body?: string; project?: string | number },
         idemKey?: string,
     ): Promise<{ mission: Mission }> {
         return this.json<{ mission: Mission }>(`/missions/${encodeTrackerId(id)}`, {
@@ -711,6 +1036,36 @@ export class JournalApi {
         return this.json<SearchResponse>(`/search?${params.toString()}`, { signal });
     }
 
+    /**
+     * Find in chat: every message in one conversation matching `query`, newest first
+     * (`GET /search?mode=recent&convo_id=…`). Hits carry only convo_id/seq/ts/sender. A journal
+     * scoped to one conversation returns up to 500; one that predates the mode ignores it and
+     * answers its ranked list (up to 50, best match first), so callers order by seq themselves.
+     */
+    public searchConversation(
+        conversationId: string,
+        query: string,
+        limit = 500,
+        signal?: AbortSignal,
+    ): Promise<{ hits?: unknown }> {
+        const params = new URLSearchParams({
+            q: query,
+            limit: String(limit),
+            mode: "recent",
+            convo_id: conversationId,
+        });
+        return this.json<{ hits?: unknown }>(`/search?${params.toString()}`, { signal });
+    }
+
+    /**
+     * GET /lookup — which of `user`'s tracker rows carries number `num` (item, mission, milestone
+     * or project). 404 when there is none, or the caller may not see it.
+     */
+    public lookup(user: string, num: number, signal?: AbortSignal): Promise<NumberLookup> {
+        const params = new URLSearchParams({ user, num: String(num) });
+        return this.json<NumberLookup>(`/lookup?${params.toString()}`, { signal });
+    }
+
     public async media(mediaId: string): Promise<Blob> {
         const response = await this.request(`/media/${encodeURIComponent(mediaId)}`);
         const contentType = response.headers.get("content-type") ?? "application/octet-stream";
@@ -721,12 +1076,16 @@ export class JournalApi {
         bytes: ArrayBuffer,
         contentType: string,
         signal?: AbortSignal,
+        /** Uploaded fraction (0…1) as the bytes leave. Only reported where the browser can see
+         *  upload progress; without it the upload still completes, just silently. */
+        onProgress?: (fraction: number) => void,
     ): Promise<UploadMediaResponse> {
         const response = await this.request("/media", {
             method: "POST",
             rawBody: bytes,
             contentType,
             signal,
+            onUploadProgress: onProgress,
         });
         const text = new TextDecoder().decode(response.body);
         let parsed: unknown;
@@ -786,6 +1145,7 @@ export class JournalApi {
             contentType?: string;
             signal?: AbortSignal;
             headers?: Record<string, string>;
+            onUploadProgress?: (fraction: number) => void;
         } = {},
     ): Promise<{ status: number; headers: Headers; body: ArrayBuffer }> {
         const method = options.method ?? "GET";
@@ -820,24 +1180,36 @@ export class JournalApi {
             headers = new Headers(response.headers);
             responseBody = response.body;
         } else {
+            const requestHeaders: Record<string, string> = {
+                ...(options.rawBody !== undefined
+                    ? options.contentType
+                        ? { "Content-Type": options.contentType }
+                        : {}
+                    : jsonBody
+                      ? { "Content-Type": "application/json" }
+                      : {}),
+                ...(authenticated ? { Authorization: `Bearer ${this.token}` } : {}),
+                ...(extraHeaders ?? {}),
+            };
             let response: Response;
             try {
-                response = await fetch(endpointUrl(this.serverUrl, path), {
-                    method,
-                    headers: {
-                        ...(options.rawBody !== undefined
-                            ? options.contentType
-                                ? { "Content-Type": options.contentType }
-                                : {}
-                            : jsonBody
-                              ? { "Content-Type": "application/json" }
-                              : {}),
-                        ...(authenticated ? { Authorization: `Bearer ${this.token}` } : {}),
-                        ...(extraHeaders ?? {}),
-                    },
-                    body,
-                    signal: options.signal,
-                });
+                // fetch() cannot report upload progress, so a binary body whose caller wants it goes
+                // over XMLHttpRequest instead; everything after the response is shared.
+                response =
+                    options.rawBody !== undefined && options.onUploadProgress && typeof XMLHttpRequest === "function"
+                        ? await xhrRequest(endpointUrl(this.serverUrl, path), {
+                              method,
+                              headers: requestHeaders,
+                              body: options.rawBody,
+                              signal: options.signal,
+                              onUploadProgress: options.onUploadProgress,
+                          })
+                        : await fetch(endpointUrl(this.serverUrl, path), {
+                              method,
+                              headers: requestHeaders,
+                              body,
+                              signal: options.signal,
+                          });
             } catch (error) {
                 throw new JournalApiError(
                     error instanceof Error ? error.message : "Could not reach the journal server.",

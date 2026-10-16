@@ -1,0 +1,340 @@
+/*
+Copyright 2026 Matron Contributors.
+
+SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
+Please see LICENSE files in the repository root for full details.
+*/
+
+/* The Coordinator's sheets (CoordinatorSheets.tsx) and its rows in Settings. The sheets reuse the
+   new-session sheet's shell (journal.pcss); this adds the routine rows and the routine editor.
+   Imported after tracker.pcss (src/journal/index.tsx, fixtures/index.tsx). */
+
+/* ── Settings → Coordinator ── */
+
+.mj_SettingsSheet_coordinatorRow {
+    align-items: center;
+}
+
+.mj_SettingsSheet_coordinatorTitle {
+    overflow: hidden;
+    margin: 0;
+    color: var(--mj-color-text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_SettingsSheet_rowActions {
+    display: inline-flex;
+    flex: none;
+    gap: 6px;
+}
+
+.mj_SettingsSheet_rowButton {
+    flex: none;
+    border: 1px solid var(--mj-color-border-interactive-secondary);
+    border-radius: var(--mj-radius-md);
+    background: transparent;
+    color: var(--mj-color-text-primary);
+    cursor: pointer;
+    padding: 3px 10px;
+    font: 500 12px/16px var(--mj-font-family-ui);
+}
+
+.mj_SettingsSheet_rowButton:hover {
+    background: var(--mj-color-bg-subtle-primary);
+}
+
+.mj_SettingsSheet_rowButton:focus-visible {
+    outline: 2px solid var(--mj-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_SettingsSheet_rowButton_critical {
+    color: var(--mj-color-text-critical-primary);
+}
+
+/* ── Coordinator chooser ── */
+
+.mj_CoordinatorChooser_new span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--mj-color-text-action-accent);
+    font-weight: 500;
+}
+
+.mj_CoordinatorChooser_new svg {
+    width: 15px;
+    height: 15px;
+}
+
+.mj_CoordinatorChooser_current {
+    color: var(--mj-color-text-action-accent);
+    font: 500 11.5px/15px var(--mj-font-family-ui);
+}
+
+/* ── Routines sheet ── */
+
+.mj_RoutinesSheet {
+    width: min(560px, 94vw);
+}
+
+.mj_RoutinesSheet_body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+}
+
+.mj_RoutinesSheet_list {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    border-radius: var(--mj-radius-composer);
+    background: var(--mj-color-bg-canvas-default);
+    box-shadow: var(--mj-shadow-sm);
+    list-style: none;
+}
+
+.mj_RoutinesSheet_note,
+.mj_RoutinesSheet_caption,
+.mj_RoutinesSheet_message,
+.mj_RoutinesSheet_spinner {
+    margin: 0;
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
+}
+
+.mj_RoutinesSheet_message {
+    color: var(--mj-color-text-primary);
+}
+
+.mj_RoutineRow {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+}
+
+.mj_RoutineRow + .mj_RoutineRow {
+    border-top: 1px solid var(--mj-color-border-subtle);
+}
+
+.mj_RoutineRow_main {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    border: 0;
+    border-radius: var(--mj-radius-sm);
+    background: transparent;
+    color: var(--mj-color-text-primary);
+    cursor: pointer;
+    padding: 0;
+    font: 400 12px/16px var(--mj-font-family-ui);
+    text-align: left;
+}
+
+.mj_RoutineRow_main:focus-visible {
+    outline: 2px solid var(--mj-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+.mj_RoutineRow_title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: 500 13.5px/18px var(--mj-font-family-ui);
+}
+
+.mj_RoutineRow[data-paused] .mj_RoutineRow_title {
+    color: var(--mj-color-text-secondary);
+}
+
+.mj_RoutineRow_paused {
+    border-radius: 999px;
+    background: var(--mj-color-bg-subtle-primary);
+    color: var(--mj-color-text-secondary);
+    padding: 1px 6px;
+    font: 600 10.5px/14px var(--mj-font-family-ui);
+}
+
+.mj_RoutineRow_name {
+    color: var(--mj-color-text-secondary);
+    font: 400 11.5px/15px var(--mj-font-family-mono);
+}
+
+.mj_RoutineRow_when {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.mj_RoutineRow_when svg {
+    width: 13px;
+    height: 13px;
+    flex: none;
+    color: var(--mj-color-icon-secondary);
+}
+
+.mj_RoutineRow_status {
+    color: var(--mj-color-text-secondary);
+}
+
+.mj_RoutineRow_failed {
+    color: var(--mj-color-text-critical-primary);
+}
+
+.mj_RoutineRow_actions {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+}
+
+.mj_RoutineRow_run {
+    border: 1px solid var(--mj-color-border-interactive-secondary);
+    border-radius: var(--mj-radius-md);
+    background: transparent;
+    color: var(--mj-color-text-primary);
+    cursor: pointer;
+    padding: 2px 8px;
+    font: 500 11.5px/15px var(--mj-font-family-ui);
+}
+
+.mj_RoutineRow_run:hover:not(:disabled) {
+    background: var(--mj-color-bg-subtle-primary);
+}
+
+.mj_RoutineRow_run:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.mj_RoutineRow_run:focus-visible {
+    outline: 2px solid var(--mj-color-text-action-accent);
+    outline-offset: 2px;
+}
+
+/* ── Routine editor ── */
+
+.mj_RoutineEditor fieldset {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 14px;
+    margin: 0;
+    border: 0;
+    padding: 0;
+}
+
+.mj_RoutineEditor_heading h3 {
+    margin: 0;
+    font: 600 15px/20px var(--mj-font-family-ui);
+}
+
+.mj_RoutineEditor_label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--mj-color-text-secondary);
+    font: 500 12px/16px var(--mj-font-family-ui);
+}
+
+.mj_RoutineEditor_help,
+.mj_RoutineEditor .mj_RoutineEditor_help {
+    margin: 4px 0 0;
+    color: var(--mj-color-text-tertiary);
+    font: 400 11.5px/15px var(--mj-font-family-ui);
+}
+
+.mj_RoutineEditor_count {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_RoutineEditor_preview {
+    margin: 8px 0;
+    color: var(--mj-color-text-primary);
+    font: 400 13px/18px var(--mj-font-family-ui);
+}
+
+.mj_RoutineEditor input.mj_RoutineEditor_mono {
+    font-family: var(--mj-font-family-mono);
+}
+
+.mj_RoutineEditor textarea,
+.mj_RoutineEditor select,
+.mj_RoutineEditor input[type="number"] {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--mj-color-border-interactive-secondary);
+    border-radius: var(--mj-radius-field);
+    background: var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-primary);
+    padding: 7px 12px;
+    font: 400 13.5px/20px var(--mj-font-family-ui);
+}
+
+.mj_RoutineEditor textarea {
+    resize: vertical;
+}
+
+.mj_RoutineEditor textarea:focus,
+.mj_RoutineEditor select:focus,
+.mj_RoutineEditor input[type="number"]:focus {
+    border-color: var(--mj-color-border-interactive-primary);
+    outline: none;
+}
+
+.mj_RoutineEditor_cron {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.mj_RoutineEditor_cronField {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    color: var(--mj-color-text-tertiary);
+    font: 400 11px/14px var(--mj-font-family-ui);
+}
+
+.mj_NewSessionSheet .mj_RoutineEditor_cronField input[type="text"] {
+    padding: 0 6px;
+    text-align: center;
+}
+
+.mj_RoutineEditor_threshold {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.mj_RoutineEditor .mj_RoutineEditor_threshold input[type="number"] {
+    width: 96px;
+    flex: none;
+}
+
+.mj_RoutineEditor_check {
+    align-self: flex-start;
+}
+
+.mj_RoutineEditor_confirm p {
+    margin: 0 0 8px;
+}
+
+.mj_UploadConfirm_actions button.mj_RoutineEditor_delete {
+    color: var(--mj-color-text-critical-primary);
+}
+
+.mj_UploadConfirm_actions button.mj_RoutineEditor_leading {
+    margin-right: auto;
+}

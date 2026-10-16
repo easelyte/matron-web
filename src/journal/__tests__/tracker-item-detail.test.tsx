@@ -8,14 +8,25 @@ Please see LICENSE files in the repository root for full details.
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+import { JournalApiError } from "../api";
 import type { MatronJournalClient } from "../client";
-import type { StatusSnapshot } from "../types";
+import { resetSessionStops } from "../coordinator-consent";
+import type {
+    JournalEvent,
+    SpawnConsentRows,
+    StatusSnapshot,
+    TrackerComment,
+    TrackerHandover,
+    TrackerItem,
+} from "../types";
 import { ItemDetail } from "../tracker/ItemDetail";
-import { trackerComment, trackerItem, trackerMission } from "./tracker-fixtures";
+import { fakeSeen, type FakeSeen, trackerComment, trackerItem, trackerMission } from "./tracker-fixtures";
 
 interface FakeClient {
+    seen: FakeSeen;
     getSnapshot: jest.Mock;
     commentItem: jest.Mock;
+    postTrackerComment: jest.Mock;
     closeTrackerItem: jest.Mock;
     reopenTrackerItem: jest.Mock;
     setItemLabels: jest.Mock;
@@ -24,12 +35,18 @@ interface FakeClient {
     openTrackerLink: jest.Mock;
     openTrackerMission: jest.Mock;
     loadMissions: jest.Mock;
+    loadItem: jest.Mock;
+    spawnConsentRows: jest.Mock;
+    answerSpawnConsent: jest.Mock;
+    sendMessage: jest.Mock;
 }
 
 function fakeClient(): FakeClient {
     return {
+        seen: fakeSeen(),
         getSnapshot: jest.fn().mockReturnValue({ selectedConversationId: "c1", conversations: [] }),
         commentItem: jest.fn().mockResolvedValue(true),
+        postTrackerComment: jest.fn().mockResolvedValue({ ok: true }),
         closeTrackerItem: jest.fn().mockResolvedValue(true),
         reopenTrackerItem: jest.fn().mockResolvedValue(true),
         setItemLabels: jest.fn().mockResolvedValue(true),
@@ -38,6 +55,10 @@ function fakeClient(): FakeClient {
         openTrackerLink: jest.fn(),
         openTrackerMission: jest.fn(),
         loadMissions: jest.fn().mockResolvedValue(undefined),
+        loadItem: jest.fn().mockResolvedValue(undefined),
+        spawnConsentRows: jest.fn().mockResolvedValue({ request: null, outcome: null }),
+        answerSpawnConsent: jest.fn().mockResolvedValue(undefined),
+        sendMessage: jest.fn().mockResolvedValue(true),
     };
 }
 
@@ -65,6 +86,28 @@ async function openMenu(container: HTMLElement): Promise<void> {
 describe("ItemDetail", () => {
     beforeAll(() => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("reports the open item as seen through its newest comment, and lets it go on close", async () => {
+        const client = fakeClient();
+        const asClient = client as unknown as MatronJournalClient;
+        const item = trackerItem({ id: "it_9" });
+        const { root } = await mount(<ItemDetail item={item} comments={[]} client={asClient} onBack={jest.fn()} />);
+        expect(client.seen.setItemOnScreen).toHaveBeenLastCalledWith("it_9", 0);
+
+        const comments = [
+            trackerComment({ id: "cm_1", created_at: 5_000 }),
+            trackerComment({ id: "cm_2", created_at: 9_000 }),
+            trackerComment({ id: "cm_3", created_at: 7_000 }),
+        ];
+        await act(async () => {
+            root.render(<ItemDetail item={item} comments={comments} client={asClient} onBack={jest.fn()} />);
+        });
+        expect(client.seen.setItemOnScreen).toHaveBeenLastCalledWith("it_9", 9_000);
+        expect(client.seen.removeItem).not.toHaveBeenCalled();
+
+        await act(async () => root.unmount());
+        expect(client.seen.removeItem).toHaveBeenCalledWith("it_9");
     });
 
     it("shows the needs-you status pill for an open awaiting-user item", async () => {
@@ -172,6 +215,48 @@ describe("ItemDetail", () => {
         expect(menuLabels(container)).toEqual(["Reopen", "Route elsewhere"]);
     });
 
+    it("offers no Reopen for a closed consent item", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({
+                    state: "closed",
+                    awaiting: null,
+                    resolution: "decided",
+                    kind: "decision",
+                    links: [{ url: "matron://consent/spawn/sp_1", title: "Spawn request" }],
+                })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+
+        expect(container.querySelector(".mj_TrackerMenu_button")).toBeNull();
+        expect(client.reopenTrackerItem).not.toHaveBeenCalled();
+    });
+
+    it("still offers Reopen for a closed item whose links are not consent links", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <ItemDetail
+                item={trackerItem({
+                    state: "closed",
+                    awaiting: null,
+                    resolution: "done",
+                    kind: "task",
+                    links: [{ url: "https://example.com/pull/1" }, { url: "matron://item/4" }],
+                })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+
+        await openMenu(container);
+        expect(menuLabels(container)).toEqual(["Reopen", "Route elsewhere"]);
+    });
+
     it("routes a resolve click through client.closeTrackerItem", async () => {
         const client = fakeClient();
         const { container } = await mount(
@@ -193,7 +278,7 @@ describe("ItemDetail", () => {
         expect(client.closeTrackerItem).toHaveBeenCalledWith(12, "done");
     });
 
-    it("sends a reply through client.commentItem", async () => {
+    it("sends a reply through client.postTrackerComment", async () => {
         const client = fakeClient();
         const { container } = await mount(
             <ItemDetail
@@ -214,14 +299,18 @@ describe("ItemDetail", () => {
             container.querySelector<HTMLButtonElement>(".mj_TrackerComposer_send")!.click();
         });
 
-        expect(client.commentItem).toHaveBeenCalledWith(12, { body: "on it, deploying now" }, expect.any(String));
+        expect(client.postTrackerComment).toHaveBeenCalledWith(
+            12,
+            { body: "on it, deploying now" },
+            expect.any(String),
+        );
     });
 
     // F1: a failed send keeps the draft; retrying the SAME text must reuse the idempotency key so the
     // server can dedupe a comment that committed before its response was lost. New text → new key.
     it("reuses the idempotency key across retries of the same draft, mints a new one when it changes", async () => {
         const client = fakeClient();
-        client.commentItem.mockResolvedValue(false); // every send fails → draft (and key) persist
+        client.postTrackerComment.mockResolvedValue({ ok: false }); // every send fails → draft (and key) persist
         const { container } = await mount(
             <ItemDetail
                 item={trackerItem({ num: 12 })}
@@ -248,13 +337,13 @@ describe("ItemDetail", () => {
         await type("please retry cleanly");
         await clickSend();
         await clickSend(); // retry of identical text
-        const key1a = client.commentItem.mock.calls[0][2];
-        const key1b = client.commentItem.mock.calls[1][2];
+        const key1a = client.postTrackerComment.mock.calls[0][2];
+        const key1b = client.postTrackerComment.mock.calls[1][2];
         expect(key1a).toBe(key1b);
 
         await type("actually a different comment");
         await clickSend();
-        const key2 = client.commentItem.mock.calls[2][2];
+        const key2 = client.postTrackerComment.mock.calls[2][2];
         expect(key2).not.toBe(key1a);
     });
 
@@ -262,7 +351,7 @@ describe("ItemDetail", () => {
     // user's only copy, and destroying it on offline/auth/5xx is silent data loss.
     it("keeps the reply draft intact when the send fails", async () => {
         const client = fakeClient();
-        client.commentItem.mockResolvedValue(false);
+        client.postTrackerComment.mockResolvedValue({ ok: false });
         const { container } = await mount(
             <ItemDetail
                 item={trackerItem({ num: 12 })}
@@ -282,7 +371,7 @@ describe("ItemDetail", () => {
             container.querySelector<HTMLButtonElement>(".mj_TrackerComposer_send")!.click();
         });
 
-        expect(client.commentItem).toHaveBeenCalledWith(
+        expect(client.postTrackerComment).toHaveBeenCalledWith(
             12,
             { body: "important context I do not want to lose" },
             expect.any(String),
@@ -725,14 +814,14 @@ describe("ItemDetail reply box keyboard (the chat composer's send key)", () => {
         const { client, textarea } = await mountReply();
         const event = await keydown(textarea, { shiftKey: true });
         expect(event.defaultPrevented).toBe(false);
-        expect(client.commentItem).not.toHaveBeenCalled();
+        expect(client.postTrackerComment).not.toHaveBeenCalled();
     });
 
     it.each([{ metaKey: true }, { ctrlKey: true }])("still sends on %o + Enter", async (modifier) => {
         const { client, textarea } = await mountReply();
         const event = await keydown(textarea, modifier);
         expect(event.defaultPrevented).toBe(true);
-        expect(client.commentItem).toHaveBeenCalledTimes(1);
+        expect(client.postTrackerComment).toHaveBeenCalledTimes(1);
     });
 
     it("does not send an Enter that commits an IME composition", async () => {
@@ -741,19 +830,19 @@ describe("ItemDetail reply box keyboard (the chat composer's send key)", () => {
         const legacyComposing = await keydown(textarea, { keyCode: 229 } as KeyboardEventInit);
         expect(composing.defaultPrevented).toBe(false);
         expect(legacyComposing.defaultPrevented).toBe(false);
-        expect(client.commentItem).not.toHaveBeenCalled();
+        expect(client.postTrackerComment).not.toHaveBeenCalled();
     });
 
     it("leaves the focus where the operator moved it while the reply was posting", async () => {
         const { client, textarea } = await mountReply();
-        let settle!: (ok: boolean) => void;
-        client.commentItem.mockReturnValueOnce(new Promise<boolean>((resolve) => (settle = resolve)));
+        let settle!: (outcome: { ok: boolean }) => void;
+        client.postTrackerComment.mockReturnValueOnce(new Promise<{ ok: boolean }>((resolve) => (settle = resolve)));
         textarea.focus();
         await keydown(textarea, {});
         const elsewhere = document.createElement("button");
         document.body.append(elsewhere);
         elsewhere.focus();
-        await act(async () => settle(true));
+        await act(async () => settle({ ok: true }));
         expect(document.activeElement).toBe(elsewhere);
         elsewhere.remove();
     });
@@ -763,7 +852,7 @@ describe("ItemDetail reply box keyboard (the chat composer's send key)", () => {
         const button = textarea.parentElement!.querySelector<HTMLButtonElement>(".mj_TrackerComposer_send")!;
         button.focus();
         await act(async () => button.click());
-        expect(client.commentItem).toHaveBeenCalledTimes(1);
+        expect(client.postTrackerComment).toHaveBeenCalledTimes(1);
         expect(document.activeElement).not.toBe(textarea);
     });
 });
@@ -970,6 +1059,178 @@ describe("ItemDetail origin line", () => {
     });
 });
 
+describe("ItemDetail buttons on the item itself", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    const question = (over: Partial<TrackerItem> = {}): TrackerItem =>
+        trackerItem({
+            num: 12,
+            kind: "question",
+            state: "open",
+            awaiting: "user",
+            body: "Which layout?",
+            actions: ["Option A", "Option B"],
+            chosen_action: null,
+            ...over,
+        });
+    const itemButtons = (container: HTMLElement): HTMLButtonElement[] =>
+        Array.from(container.querySelectorAll<HTMLButtonElement>(".mj_TrackerItemActions .mj_TrackerAction"));
+    const detail = (client: FakeClient, item: TrackerItem, comments: TrackerComment[] = []): React.ReactElement => (
+        <ItemDetail
+            item={item}
+            comments={comments}
+            client={client as unknown as MatronJournalClient}
+            onBack={jest.fn()}
+        />
+    );
+
+    it("draws the item's buttons under the body, before the thread", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            detail(client, question(), [trackerComment({ id: "ic_1", author: "agent", body: "More context" })]),
+        );
+
+        expect(itemButtons(container).map((b) => b.textContent)).toEqual(["Option A", "Option B"]);
+        expect(itemButtons(container).every((b) => b.getAttribute("aria-pressed") === "false" && !b.disabled)).toBe(
+            true,
+        );
+        const group = container.querySelector(".mj_TrackerItemActions")!;
+        const body = container.querySelector(".mj_TrackerItemBody")!;
+        const thread = container.querySelector(".mj_TrackerThread")!;
+        expect(body.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(group.compareDocumentPosition(thread) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("draws them while the item is with the agent too, so the answer can be changed", async () => {
+        const client = fakeClient();
+        const { container } = await mount(detail(client, question({ awaiting: "agent", chosen_action: "Option A" })));
+        expect(itemButtons(container).map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([
+            ["Option A", "true"],
+            ["Option B", "false"],
+        ]);
+        expect(itemButtons(container).every((b) => !b.disabled)).toBe(true);
+    });
+
+    it("draws none on an item that offers none, or on a journal that predates item actions", async () => {
+        const client = fakeClient();
+        const { container, root } = await mount(detail(client, question({ actions: [] })));
+        expect(container.querySelector(".mj_TrackerItemActions")).toBeNull();
+        await act(async () => root.render(detail(client, question({ actions: undefined }))));
+        expect(container.querySelector(".mj_TrackerItemActions")).toBeNull();
+    });
+
+    it("hides them once the item is closed", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            detail(
+                client,
+                question({ state: "closed", resolution: "answered", awaiting: null, chosen_action: "Option B" }),
+            ),
+        );
+        expect(container.querySelector(".mj_TrackerItemActions")).toBeNull();
+    });
+
+    it("a tap posts the label as the item's answer, with no reply_to", async () => {
+        const client = fakeClient();
+        const { container } = await mount(detail(client, question()));
+
+        await act(async () => {
+            itemButtons(container)[1].click();
+        });
+
+        expect(client.commentItem).toHaveBeenCalledTimes(1);
+        const [num, body, key] = client.commentItem.mock.calls[0];
+        expect(num).toBe(12);
+        expect(body).toEqual({ action: "Option B", body: "Option B" });
+        expect(typeof key).toBe("string");
+    });
+
+    it("marks the tap as chosen and disables every button while it is on its way", async () => {
+        const client = fakeClient();
+        let settle!: (ok: boolean) => void;
+        client.commentItem.mockReturnValueOnce(new Promise<boolean>((resolve) => (settle = resolve)));
+        const { container } = await mount(detail(client, question()));
+
+        await act(async () => {
+            itemButtons(container)[0].click();
+        });
+        expect(itemButtons(container).map((b) => b.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
+        expect(itemButtons(container).every((b) => b.disabled)).toBe(true);
+
+        await act(async () => settle(true));
+        expect(itemButtons(container).every((b) => !b.disabled)).toBe(true);
+    });
+
+    it("does nothing when the chosen button is tapped again", async () => {
+        const client = fakeClient();
+        const { container } = await mount(detail(client, question({ awaiting: "agent", chosen_action: "Option A" })));
+        await act(async () => {
+            itemButtons(container)[0].click();
+        });
+        expect(client.commentItem).not.toHaveBeenCalled();
+    });
+
+    it("never marks a label the item no longer offers", async () => {
+        const client = fakeClient();
+        const { container } = await mount(detail(client, question({ chosen_action: "Withdrawn" })));
+        expect(container.querySelector(".mj_TrackerItemActions .mj_TrackerAction_chosen")).toBeNull();
+    });
+
+    it("a failed tap reuses its key on the retry; a different label gets a new one", async () => {
+        const client = fakeClient();
+        client.commentItem.mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+        const { container } = await mount(detail(client, question()));
+
+        for (const index of [0, 0, 1]) {
+            await act(async () => {
+                itemButtons(container)[index].click();
+            });
+        }
+
+        const keys = client.commentItem.mock.calls.map((call) => call[2]);
+        expect(keys[1]).toBe(keys[0]);
+        expect(keys[2]).not.toBe(keys[1]);
+    });
+
+    it("never reuses one item's failed-tap key for the same label on another item", async () => {
+        const client = fakeClient();
+        client.commentItem.mockResolvedValueOnce(false);
+        const { container, root } = await mount(detail(client, question({ id: "it_12", num: 12 })));
+        await act(async () => {
+            itemButtons(container)[0].click();
+        });
+        await act(async () => root.render(detail(client, question({ id: "it_13", num: 13 }))));
+        await act(async () => {
+            itemButtons(container)[0].click();
+        });
+
+        expect(client.commentItem.mock.calls.map((call) => call[0])).toEqual([12, 13]);
+        expect(client.commentItem.mock.calls[1][2]).not.toBe(client.commentItem.mock.calls[0][2]);
+    });
+
+    it("keeps the item's buttons apart from a comment offering the same label", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            detail(client, question({ chosen_action: "Option A" }), [
+                trackerComment({
+                    id: "ic_q",
+                    author: "agent",
+                    body: "Sure?",
+                    actions: ["Option A"],
+                    chosen_action: null,
+                }),
+            ]),
+        );
+        expect(container.querySelectorAll(".mj_TrackerAction_chosen")).toHaveLength(1);
+        await act(async () => {
+            container.querySelector<HTMLButtonElement>(".mj_TrackerComment .mj_TrackerAction")!.click();
+        });
+        expect(client.commentItem.mock.calls[0][1]).toEqual({ action: "Option A", reply_to: "ic_q" });
+    });
+});
+
 describe("ItemDetail context block", () => {
     beforeAll(() => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -1111,5 +1372,420 @@ describe("ItemDetail context block", () => {
         await act(async () => container.querySelector<HTMLButtonElement>(".mj_TrackerOrigin")!.click());
         expect(client.closeTrackerView).toHaveBeenCalled();
         expect(client.selectConversation).toHaveBeenCalledWith("c-old");
+    });
+
+    it("updates the offer caption below the current owner and clears it when settled", async () => {
+        const client = fakeClient();
+        const item = trackerItem({ origin_convo_id: "c-old", origin_convo_title: "Original chat" });
+        const handover: TrackerHandover = {
+            state: "awaiting_user",
+            to_convo_id: "c-target",
+            to_convo_title: "Review changes",
+            expires_at: Date.now() + 60_000,
+        };
+        const { container, root } = await mount(detail(client, item));
+        expect(container.querySelector(".mj_TrackerHandover")).toBeNull();
+        await act(async () => root.render(detail(client, { ...item, handover })));
+        const caption = container.querySelector(".mj_TrackerHandover")!;
+        expect(caption.textContent).toBe("Offered to Review changes · waiting for your OK");
+        expect(caption.previousElementSibling?.textContent).toBe("Opened from Original chat");
+
+        await act(async () => root.render(detail(client, { ...item, handover: { ...handover, state: "offered" } })));
+        expect(container.querySelector(".mj_TrackerHandover")?.textContent).toBe(
+            "Offered to Review changes · waiting for them to accept",
+        );
+        expect(container.querySelector(".mj_TrackerOrigin")?.textContent).toBe("Opened from Original chat");
+        await act(async () => root.render(detail(client, { ...item, handover: null })));
+        expect(container.querySelector(".mj_TrackerHandover")).toBeNull();
+        await act(async () => root.unmount());
+    });
+
+    it.each([null, "", "   "])("shows an unnamed offer inside its owner's chat (title %p)", async (title) => {
+        const client = fakeClient();
+        const item = trackerItem({
+            handover: {
+                state: "offered",
+                to_convo_id: "c-target",
+                to_convo_title: title,
+                expires_at: Date.now() + 60_000,
+            },
+        });
+        const { container, root } = await mount(detail(client, item));
+        expect(container.querySelector(".mj_TrackerOrigin")).toBeNull();
+        expect(container.querySelector(".mj_TrackerHandover")?.textContent).toBe(
+            "Offered to Conversation · waiting for them to accept",
+        );
+        await act(async () => root.unmount());
+    });
+
+    it("clears an offer that expires between render and the timer effect", async () => {
+        jest.useFakeTimers();
+        try {
+            const client = fakeClient();
+            const expiresAt = Date.now() + 1_000;
+            const item = trackerItem({
+                handover: {
+                    state: "offered",
+                    to_convo_id: "c-target",
+                    to_convo_title: "Review changes",
+                    expires_at: expiresAt,
+                },
+            });
+            function ExpiringDetail(): React.ReactElement {
+                React.useLayoutEffect(() => jest.setSystemTime(expiresAt), []);
+                return detail(client, item);
+            }
+            const { container, root } = await mount(<ExpiringDetail />);
+            await act(async () => jest.runOnlyPendingTimers());
+            expect(container.querySelector(".mj_TrackerHandover")).toBeNull();
+            await act(async () => root.unmount());
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("removes an expired offer while the detail stays open", async () => {
+        jest.useFakeTimers();
+        try {
+            const client = fakeClient();
+            const item = trackerItem({
+                handover: {
+                    state: "offered",
+                    to_convo_id: "c-target",
+                    to_convo_title: "Review changes",
+                    expires_at: Date.now() + 1_000,
+                },
+            });
+            const { container, root } = await mount(detail(client, item));
+            expect(container.querySelector(".mj_TrackerHandover")).not.toBeNull();
+            await act(async () => jest.advanceTimersByTime(1_000));
+            expect(container.querySelector(".mj_TrackerHandover")).toBeNull();
+            expect(container.querySelector(".mj_TrackerContext")).toBeNull();
+            await act(async () => root.unmount());
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+});
+
+describe("ItemDetail spawn consent", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    const spawnCard = (over: Record<string, unknown> = {}): JournalEvent => ({
+        seq: 40,
+        convo_id: "c1",
+        ts: 1700000000000,
+        sender: "agent:box-b",
+        type: "permission_request",
+        payload: {
+            kind: "agent_spawn",
+            request_id: "sp_1",
+            from_name: "box-b",
+            from_convo_title: "Fix the flaky tests",
+            target_name: "box-a",
+            workdir: "/srv/app",
+            task: "Run the suite and fix flakes",
+            topic: "Flake hunt",
+            model: "opus",
+            effort: "high",
+            ...over,
+        },
+    });
+    const consentItem = (over: Partial<TrackerItem> = {}): TrackerItem =>
+        trackerItem({
+            num: 31,
+            kind: "question",
+            title: "Start a session on box-a?",
+            links: [{ url: "matron://consent/spawn/sp_1", title: "Spawn request" }],
+            ...over,
+        });
+    const rows = (over: Partial<SpawnConsentRows> = {}): SpawnConsentRows => ({
+        request: spawnCard(),
+        outcome: null,
+        ...over,
+    });
+
+    function render(client: FakeClient, item: TrackerItem): Promise<{ container: HTMLDivElement; root: Root }> {
+        return mount(
+            <ItemDetail
+                item={item}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+    }
+
+    const button = (container: HTMLElement, label: string): HTMLButtonElement | undefined =>
+        Array.from(container.querySelectorAll<HTMLButtonElement>(".mj_TrackerConsent button")).find(
+            (node) => node.textContent === label,
+        );
+
+    it("shows the card's own details inside the item, from the conversation that asked", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const { container } = await render(client, consentItem());
+
+        expect(client.spawnConsentRows).toHaveBeenCalledWith("c1", "sp_1");
+        const card = container.querySelector(".mj_TrackerConsent .mj_PromptCard_spawn")!;
+        expect(card.querySelector(".mj_SpawnHeadline")?.textContent).toBe("Flake hunt");
+        expect(card.querySelector(".mj_SpawnDetail_target .mj_SpawnDetail_value")?.textContent).toBe("box-a");
+        expect(card.querySelector(".mj_SpawnDetail_folder .mj_SpawnDetail_value")?.textContent).toBe("/srv/app");
+        expect(card.querySelector(".mj_SpawnDetail_runs .mj_SpawnDetail_value")?.textContent).toBe("opus · high");
+        expect(card.querySelector(".mj_SpawnTask")?.textContent).toBe("Run the suite and fix flakes");
+        expect(button(container, "Approve")).toBeDefined();
+        expect(button(container, "Deny")).toBeDefined();
+    });
+
+    it("sits between the links and the body", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const { container } = await render(client, consentItem({ body: "Box rules allow it." }));
+
+        const order = Array.from(
+            container.querySelectorAll(".mj_TrackerLinks, .mj_TrackerConsent, .mj_TrackerItemBody"),
+        ).map((node) => node.className);
+        expect(order).toEqual(["mj_TrackerLinks", "mj_TrackerConsent", expect.stringContaining("mj_TrackerItemBody")]);
+    });
+
+    it("approves through the client's consent answer for this item", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const { container } = await render(client, consentItem());
+
+        await act(async () => button(container, "Approve")!.click());
+
+        expect(client.answerSpawnConsent).toHaveBeenCalledWith(31, "sp_1", "approve", expect.any(AbortSignal));
+    });
+
+    it("shows sending while the answer is on its way", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        client.answerSpawnConsent.mockReturnValue(new Promise(() => undefined));
+        const { container } = await render(client, consentItem());
+
+        await act(async () => button(container, "Deny")!.click());
+
+        expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_pending")?.textContent).toBe("Sending…");
+        expect(button(container, "Approve")!.disabled).toBe(true);
+    });
+
+    it("says what the user did once the journal closes the item after an accepted approval", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const { container, root } = await render(client, consentItem());
+        await act(async () => button(container, "Approve")!.click());
+
+        await act(async () => {
+            root.render(
+                <ItemDetail
+                    item={consentItem({ state: "closed", awaiting: null, resolution: "decided" })}
+                    comments={[]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+        });
+
+        expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_approved")?.textContent).toBe(
+            "Approved — starting the session",
+        );
+        expect(button(container, "Approve")).toBeUndefined();
+    });
+
+    it("reads a closed item with no outcome and no answer from here as answered elsewhere", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+        expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_expired")?.textContent).toBe(
+            "Already answered or expired",
+        );
+        expect(button(container, "Approve")).toBeUndefined();
+    });
+
+    it("shows the journal's outcome and opens a started session's room", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(
+            rows({ outcome: { request_id: "sp_1", outcome: "started", room_id: "room_9" } }),
+        );
+        const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+        expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_started .mj_Answered")?.textContent).toBe(
+            "Started",
+        );
+        await act(async () => button(container, "Open")!.click());
+        expect(client.closeTrackerView).toHaveBeenCalled();
+        expect(client.selectConversation).toHaveBeenCalledWith("room_9", { suppressNotFound: true });
+    });
+
+    it("settles a 409 as already answered", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        client.answerSpawnConsent.mockRejectedValue(new JournalApiError("Already resolved", 409));
+        const { container } = await render(client, consentItem());
+
+        await act(async () => button(container, "Deny")!.click());
+
+        expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_expired")?.textContent).toBe(
+            "Already answered or expired",
+        );
+    });
+
+    it("offers no buttons when the card has not reached this browser", async () => {
+        const client = fakeClient();
+        const { container } = await render(client, consentItem());
+
+        const waiting = container.querySelector(".mj_TrackerConsent_waiting");
+        expect(waiting?.textContent).toContain("hasn't reached this browser yet");
+        expect(container.querySelectorAll(".mj_TrackerConsent button")).toHaveLength(0);
+    });
+
+    it("shows how the ask ended when only its outcome is here, with Open for a started session", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(
+            rows({ request: null, outcome: { request_id: "sp_1", outcome: "started", room_id: "room_9" } }),
+        );
+        const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+        expect(container.querySelector(".mj_TrackerConsent_note")?.textContent).toBe("🚀 Spawned session started");
+        await act(async () => button(container, "Open")!.click());
+        expect(client.selectConversation).toHaveBeenCalledWith("room_9", { suppressNotFound: true });
+        expect(button(container, "Approve")).toBeUndefined();
+    });
+
+    it("says a closed item's ask is no longer waiting when neither card nor outcome is here", async () => {
+        const client = fakeClient();
+        const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+        expect(container.querySelector(".mj_TrackerConsent_note")?.textContent).toBe(
+            "This request is no longer waiting for an answer.",
+        );
+        expect(container.querySelectorAll(".mj_TrackerConsent button")).toHaveLength(0);
+    });
+
+    it("reads the ask again when the asking conversation moves", async () => {
+        const client = fakeClient();
+        const conversation = { id: "c1", title: "Fix the flaky tests", last_seq: 40 };
+        client.getSnapshot.mockReturnValue({ selectedConversationId: "c2", conversations: [conversation] });
+        const { container, root } = await render(client, consentItem());
+        expect(container.querySelector(".mj_TrackerConsent_waiting")).not.toBeNull();
+
+        client.spawnConsentRows.mockResolvedValue(rows());
+        client.getSnapshot.mockReturnValue({
+            selectedConversationId: "c2",
+            conversations: [{ ...conversation, last_seq: 41 }],
+        });
+        await act(async () => {
+            root.render(
+                <ItemDetail
+                    item={consentItem()}
+                    comments={[]}
+                    client={client as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+        });
+
+        expect(client.spawnConsentRows).toHaveBeenCalledTimes(2);
+        expect(button(container, "Approve")).toBeDefined();
+    });
+
+    it("offers no close while the ask waits, and the usual ones once its outcome is in", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const waiting = await render(client, consentItem());
+        expect(waiting.container.querySelector(".mj_TrackerMenu_button")).toBeNull();
+
+        client.spawnConsentRows.mockResolvedValue(rows({ outcome: { request_id: "sp_1", outcome: "expired" } }));
+        const done = await render(client, consentItem());
+        await openMenu(done.container);
+        expect(menuLabels(done.container)).toEqual(["Dismiss"]);
+    });
+
+    describe("answered by the Coordinator", () => {
+        const decision = { kind: "spawn" as const, approved: true, reason: "Fine", askId: "sp_1" };
+
+        afterEach(() => resetSessionStops());
+
+        it("carries the badge and offers no Approve / Deny before the session starts", async () => {
+            const client = fakeClient();
+            client.spawnConsentRows.mockResolvedValue(rows({ coordinatorDecision: decision }));
+            const { container } = await render(client, consentItem());
+
+            const card = container.querySelector(".mj_TrackerConsent .mj_PromptCard_spawn")!;
+            expect(card.querySelector(".mj_CoordinatorBadge_text")?.textContent).toBe(
+                "Approved by the Coordinator — Fine",
+            );
+            expect(card.querySelector(".mj_PromptResolved_approved")?.textContent).toBe(
+                "Approved — starting the session",
+            );
+            expect(button(container, "Approve")).toBeUndefined();
+            expect(button(container, "Deny")).toBeUndefined();
+            expect(button(container, "Stop session")).toBeUndefined();
+        });
+
+        it("names the Coordinator over a closed item's plain settle", async () => {
+            const client = fakeClient();
+            client.spawnConsentRows.mockResolvedValue(rows({ coordinatorDecision: { ...decision, approved: false } }));
+            const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+            expect(container.querySelector(".mj_TrackerConsent .mj_CoordinatorBadge_text")?.textContent).toBe(
+                "Declined by the Coordinator — Fine",
+            );
+            expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_declined")?.textContent).toBe(
+                "Denied",
+            );
+            expect(container.querySelector(".mj_TrackerConsent .mj_PromptResolved_expired")).toBeNull();
+        });
+
+        it("stops the spawned session, not the conversation that asked", async () => {
+            const client = fakeClient();
+            client.spawnConsentRows.mockResolvedValue(
+                rows({
+                    coordinatorDecision: decision,
+                    outcome: { request_id: "sp_1", outcome: "started", room_id: "room_9", child_convo_id: "child-9" },
+                }),
+            );
+            const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+            expect(
+                container.querySelector(".mj_TrackerConsent .mj_PromptResolved_started .mj_Answered")?.textContent,
+            ).toBe("Started");
+            await act(async () => button(container, "Stop session")!.click());
+
+            expect(client.sendMessage).toHaveBeenCalledTimes(1);
+            expect(client.sendMessage).toHaveBeenCalledWith("/stop", "child-9");
+            expect(container.querySelector(".mj_TrackerConsent .mj_CoordinatorBadge_sent")?.textContent).toBe(
+                "Stop sent to the session",
+            );
+        });
+
+        it("offers no Stop session for a spawn the Coordinator declined", async () => {
+            const client = fakeClient();
+            client.spawnConsentRows.mockResolvedValue(
+                rows({
+                    coordinatorDecision: { ...decision, approved: false },
+                    outcome: { request_id: "sp_1", outcome: "started", child_convo_id: "child-9" },
+                }),
+            );
+            const { container } = await render(client, consentItem({ state: "closed", awaiting: null }));
+
+            expect(container.querySelector(".mj_TrackerConsent .mj_CoordinatorBadge")).not.toBeNull();
+            expect(button(container, "Stop session")).toBeUndefined();
+        });
+    });
+
+    it("draws no spawn card for an agent-chat consent item", async () => {
+        const client = fakeClient();
+        const { container } = await render(
+            client,
+            trackerItem({ links: [{ url: "matron://consent/chat/room_1/7", title: "Chat request" }] }),
+        );
+
+        expect(client.spawnConsentRows).not.toHaveBeenCalled();
+        expect(container.querySelector(".mj_TrackerConsent")).toBeNull();
     });
 });

@@ -7,9 +7,9 @@
         <meta name="description" content="Matron — chat with agents" />
         <meta property="og:title" content="Matron" />
         <meta property="og:description" content="Chat with agents" />
-        <meta property="og:image" content="opengraph.png" />
-        <link rel="manifest" href="manifest.json" />
-        <link rel="icon" href="icons/24.png" />
+        <meta property="og:image" content="<%= htmlWebpackPlugin.files.publicPath %>opengraph.png" />
+        <link rel="manifest" href="<%= htmlWebpackPlugin.files.publicPath %>manifest.json" />
+        <link rel="icon" href="<%= htmlWebpackPlugin.files.publicPath %>icons/24.png" />
         <script>
             (() => {
                 let preference = null;

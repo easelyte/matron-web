@@ -28,23 +28,23 @@ Please see LICENSE files in the repository root for full details.
     min-height: 0;
     flex-direction: column;
     width: 100%;
-    background: var(--cpd-color-bg-room-canvas, var(--cpd-color-bg-canvas-default));
+    background: var(--mj-color-bg-chat-canvas, var(--mj-color-bg-canvas-default));
 }
 
 .mj_OpsBoxSwitch {
-    margin-left: var(--cpd-space-2x);
+    margin-left: var(--mj-space-2x);
 }
 
 .mj_OpsPane_updated {
     margin-left: auto;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-tertiary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-tertiary);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
 }
 
 .mj_OpsPane_refresh {
-    margin-left: var(--cpd-space-1x);
+    margin-left: var(--mj-space-1x);
 }
 
 .mj_OpsPane_body {
@@ -58,18 +58,18 @@ Please see LICENSE files in the repository root for full details.
 .mj_OpsPane_column {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-6x);
+    gap: var(--mj-space-6x);
     box-sizing: border-box;
     width: 100%;
     max-width: 1080px;
     margin: 0 auto;
-    padding: var(--cpd-space-5x) var(--cpd-space-6x) var(--cpd-space-12x);
+    padding: var(--mj-space-5x) var(--mj-space-6x) var(--mj-space-12x);
 }
 
 @container ops (max-width: 560px) {
     .mj_OpsPane_column {
-        gap: var(--cpd-space-5x);
-        padding: var(--cpd-space-4x) var(--cpd-space-3x) var(--cpd-space-10x);
+        gap: var(--mj-space-5x);
+        padding: var(--mj-space-4x) var(--mj-space-3x) var(--mj-space-10x);
     }
 }
 
@@ -77,28 +77,28 @@ Please see LICENSE files in the repository root for full details.
 .mj_OpsSummary {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
-    padding: var(--cpd-space-3x) var(--cpd-space-4x);
+    gap: var(--mj-space-2x);
+    padding: var(--mj-space-3x) var(--mj-space-4x);
     border: 1px solid transparent;
-    border-radius: var(--cpd-radius-lg);
-    font: var(--cpd-font-body-strong);
+    border-radius: var(--mj-radius-lg);
+    font: var(--mj-font-body-strong);
 }
 .mj_OpsSummary_glyph {
     display: inline-flex;
     flex: none;
     align-items: center;
     justify-content: center;
-    width: var(--cpd-icon-md);
-    height: var(--cpd-icon-md);
+    width: var(--mj-icon-md);
+    height: var(--mj-icon-md);
 }
 .mj_OpsSummary_glyph svg {
-    width: var(--cpd-icon-md);
-    height: var(--cpd-icon-md);
+    width: var(--mj-icon-md);
+    height: var(--mj-icon-md);
 }
 .mj_OpsSummary_ok {
     border-color: var(--mj-accent-border);
-    background: var(--cpd-state-selected);
-    color: var(--cpd-color-text-action-accent);
+    background: var(--mj-state-selected);
+    color: var(--mj-color-text-action-accent);
 }
 .mj_OpsSummary_warn {
     border-color: var(--mj-warn-tint);
@@ -109,18 +109,18 @@ Please see LICENSE files in the repository root for full details.
     background: var(--mj-warn-dot);
 }
 .mj_OpsSummary_unknown {
-    border-color: var(--cpd-color-border-subtle);
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body);
+    border-color: var(--mj-color-border-subtle);
+    background: var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body);
 }
 .mj_OpsSummary_unknown .mj_OpsDot {
-    background: var(--cpd-color-text-tertiary);
+    background: var(--mj-color-text-tertiary);
 }
 .mj_OpsSummary_critical {
     border-color: var(--mj-critical-border);
     background: var(--mj-critical-tint);
-    color: var(--cpd-color-text-critical-primary);
+    color: var(--mj-color-text-critical-primary);
 }
 
 /* — Section frame — */
@@ -128,18 +128,18 @@ Please see LICENSE files in the repository root for full details.
     display: flex;
     min-width: 0;
     flex-direction: column;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
 }
 .mj_OpsSection_title {
     display: flex;
     align-items: baseline;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     margin: 0;
-    padding: 0 var(--cpd-space-1x);
-    font: var(--cpd-font-body-xs-semibold);
+    padding: 0 var(--mj-space-1x);
+    font: var(--mj-font-body-xs-semibold);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
 }
 .mj_OpsSection_meta {
     min-width: 0;
@@ -156,22 +156,22 @@ Please see LICENSE files in the repository root for full details.
     display: flex;
     min-width: 0;
     flex-direction: column;
-    gap: var(--cpd-space-4x);
+    gap: var(--mj-space-4x);
     box-sizing: border-box;
-    padding: var(--cpd-space-4x);
-    border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: var(--cpd-radius-lg);
-    background: var(--cpd-color-bg-canvas-default);
+    padding: var(--mj-space-4x);
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-lg);
+    background: var(--mj-color-bg-canvas-default);
 }
 .mj_OpsCard_loading {
-    gap: var(--cpd-space-3x);
+    gap: var(--mj-space-3x);
 }
 .mj_OpsSkeleton {
     display: block;
     width: 100%;
     height: 12px;
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-subtle-secondary);
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-subtle-secondary);
     animation: mj_OpsPulse 1.4s ease-in-out infinite;
 }
 .mj_OpsSkeleton_short {
@@ -191,31 +191,31 @@ Please see LICENSE files in the repository root for full details.
 /* — Notes (degrade states) — */
 .mj_OpsNote {
     margin: 0;
-    padding: var(--cpd-space-3x) var(--cpd-space-4x);
-    border: 1px dashed var(--cpd-color-border-interactive-secondary);
-    border-radius: var(--cpd-radius-lg);
-    font: var(--cpd-font-body-sm-regular);
-    color: var(--cpd-color-text-secondary);
+    padding: var(--mj-space-3x) var(--mj-space-4x);
+    border: 1px dashed var(--mj-color-border-interactive-secondary);
+    border-radius: var(--mj-radius-lg);
+    font: var(--mj-font-body-sm-regular);
+    color: var(--mj-color-text-secondary);
 }
 .mj_OpsNote strong {
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
     font-weight: 600;
 }
 .mj_OpsNote_update {
     border-style: solid;
     border-color: var(--mj-accent-border);
-    background: var(--cpd-state-selected);
+    background: var(--mj-state-selected);
 }
 .mj_OpsNote_error {
     border-style: solid;
     border-color: var(--mj-critical-border);
     background: var(--mj-critical-tint);
-    color: var(--cpd-color-text-critical-primary);
+    color: var(--mj-color-text-critical-primary);
 }
 .mj_OpsFootnote {
-    margin: var(--cpd-space-1x) var(--cpd-space-1x) 0;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-tertiary);
+    margin: var(--mj-space-1x) var(--mj-space-1x) 0;
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-tertiary);
 }
 
 /* — Shared small pieces — */
@@ -233,24 +233,24 @@ Please see LICENSE files in the repository root for full details.
     align-items: center;
     gap: 6px;
     flex: none;
-    padding: 2px var(--cpd-space-2x);
-    border-radius: var(--cpd-radius-pill);
+    padding: 2px var(--mj-space-2x);
+    border-radius: var(--mj-radius-pill);
     font: var(--mj-font-label-sm);
     white-space: nowrap;
 }
 .mj_OpsState_online {
-    background: var(--cpd-state-selected);
-    color: var(--cpd-color-text-action-accent);
+    background: var(--mj-state-selected);
+    color: var(--mj-color-text-action-accent);
 }
 .mj_OpsState_online .mj_OpsDot {
-    background: var(--cpd-color-usage-low);
+    background: var(--mj-color-usage-low);
 }
 .mj_OpsState_asleep {
-    background: var(--cpd-color-bg-subtle-secondary);
-    color: var(--cpd-color-text-secondary);
+    background: var(--mj-color-bg-subtle-secondary);
+    color: var(--mj-color-text-secondary);
 }
 .mj_OpsState_asleep .mj_OpsDot {
-    background: var(--cpd-color-text-tertiary);
+    background: var(--mj-color-text-tertiary);
 }
 
 .mj_OpsSev {
@@ -258,9 +258,9 @@ Please see LICENSE files in the repository root for full details.
     align-items: center;
     gap: 5px;
     flex: none;
-    padding: 1px var(--cpd-space-2x);
-    border-radius: var(--cpd-radius-pill);
-    font: var(--cpd-font-meta);
+    padding: 1px var(--mj-space-2x);
+    border-radius: var(--mj-radius-pill);
+    font: var(--mj-font-meta);
     font-weight: 600;
     white-space: nowrap;
 }
@@ -274,7 +274,7 @@ Please see LICENSE files in the repository root for full details.
 }
 .mj_OpsSev_critical {
     background: var(--mj-critical-tint);
-    color: var(--cpd-color-text-critical-primary);
+    color: var(--mj-color-text-critical-primary);
 }
 .mj_OpsSev_warn {
     background: var(--mj-warn-tint);
@@ -284,25 +284,25 @@ Please see LICENSE files in the repository root for full details.
     background: var(--mj-warn-dot);
 }
 .mj_OpsSev_info {
-    background: var(--cpd-color-bg-subtle-secondary);
-    color: var(--cpd-color-text-secondary);
+    background: var(--mj-color-bg-subtle-secondary);
+    color: var(--mj-color-text-secondary);
 }
 .mj_OpsSev_ok {
-    background: var(--cpd-state-selected);
-    color: var(--cpd-color-text-action-accent);
+    background: var(--mj-state-selected);
+    color: var(--mj-color-text-action-accent);
 }
 
 .mj_OpsTag {
-    margin-left: var(--cpd-space-2x);
+    margin-left: var(--mj-space-2x);
     padding: 0 6px;
-    border-radius: var(--cpd-radius-xs);
-    font: var(--cpd-font-micro);
+    border-radius: var(--mj-radius-xs);
+    font: var(--mj-font-micro);
     font-weight: 600;
     vertical-align: 1px;
 }
 .mj_OpsTag_critical {
     background: var(--mj-critical-tint);
-    color: var(--cpd-color-text-critical-primary);
+    color: var(--mj-color-text-critical-primary);
 }
 .mj_OpsTag_warn {
     background: var(--mj-warn-tint);
@@ -312,22 +312,22 @@ Please see LICENSE files in the repository root for full details.
 .mj_OpsEmpty {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     margin: 0;
-    font: var(--cpd-font-body-sm-regular);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+    color: var(--mj-color-text-secondary);
 }
 .mj_OpsEmpty svg {
-    width: var(--cpd-icon-sm);
-    height: var(--cpd-icon-sm);
-    color: var(--cpd-color-usage-low);
+    width: var(--mj-icon-sm);
+    height: var(--mj-icon-sm);
+    color: var(--mj-color-usage-low);
 }
 
 /* — Boxes — */
 .mj_OpsBoxes {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: var(--cpd-space-3x);
+    gap: var(--mj-space-3x);
 }
 @container ops (max-width: 560px) {
     .mj_OpsBoxes {
@@ -335,7 +335,7 @@ Please see LICENSE files in the repository root for full details.
     }
 }
 .mj_OpsBox {
-    gap: var(--cpd-space-3x);
+    gap: var(--mj-space-3x);
 }
 .mj_OpsBox_selected {
     border-color: var(--mj-accent-border);
@@ -343,55 +343,55 @@ Please see LICENSE files in the repository root for full details.
 .mj_OpsBox_head {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     min-width: 0;
 }
 .mj_OpsBox_name {
     min-width: 0;
     margin: 0;
     overflow: hidden;
-    font: var(--cpd-font-title);
-    color: var(--cpd-color-text-primary);
+    font: var(--mj-font-title);
+    color: var(--mj-color-text-primary);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 .mj_OpsBox_seen {
     margin-left: auto;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-tertiary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-tertiary);
     white-space: nowrap;
 }
 .mj_OpsBox_sub {
-    margin: calc(-1 * var(--cpd-space-2x)) 0 0;
+    margin: calc(-1 * var(--mj-space-2x)) 0 0;
     overflow: hidden;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 .mj_OpsBox_empty {
     margin: 0;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-tertiary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-tertiary);
 }
 .mj_OpsBox_group {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-2x);
-    padding-top: var(--cpd-space-3x);
-    border-top: 1px solid var(--cpd-color-border-subtle);
+    gap: var(--mj-space-2x);
+    padding-top: var(--mj-space-3x);
+    border-top: 1px solid var(--mj-color-border-subtle);
 }
 .mj_OpsBox_groupTitle {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     margin: 0;
-    font: var(--cpd-font-body-xs-semibold);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-body-xs-semibold);
+    color: var(--mj-color-text-secondary);
 }
 .mj_OpsBox_groupMeta {
-    font: var(--cpd-font-meta);
+    font: var(--mj-font-meta);
     color: var(--mj-warn-ink);
 }
 .mj_OpsBox_host_stale .mj_OpsMeter_track {
@@ -400,7 +400,7 @@ Please see LICENSE files in the repository root for full details.
 .mj_OpsBox_folders {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
     margin: 0;
     padding: 0;
     list-style: none;
@@ -408,19 +408,19 @@ Please see LICENSE files in the repository root for full details.
 .mj_OpsBox_folders li {
     display: flex;
     justify-content: space-between;
-    gap: var(--cpd-space-2x);
-    font: var(--cpd-font-meta);
+    gap: var(--mj-space-2x);
+    font: var(--mj-font-meta);
 }
 .mj_OpsBox_folder {
     min-width: 0;
     overflow: hidden;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 .mj_OpsBox_folderCount {
     flex: none;
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
     font-variant-numeric: tabular-nums;
 }
 
@@ -429,12 +429,12 @@ Please see LICENSE files in the repository root for full details.
     display: grid;
     grid-template-columns: minmax(64px, 96px) minmax(48px, 1fr) 4ch minmax(0, 13ch);
     align-items: center;
-    gap: var(--cpd-space-3x);
-    font: var(--cpd-font-meta);
+    gap: var(--mj-space-3x);
+    font: var(--mj-font-meta);
 }
 .mj_OpsMeter_label {
     overflow: hidden;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -445,8 +445,8 @@ Please see LICENSE files in the repository root for full details.
     display: block;
     height: 6px;
     overflow: hidden;
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-usage-track);
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-usage-track);
 }
 .mj_OpsMeter_value {
     font-weight: 600;
@@ -455,7 +455,7 @@ Please see LICENSE files in the repository root for full details.
 }
 .mj_OpsMeter_detail {
     overflow: hidden;
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -464,7 +464,7 @@ Please see LICENSE files in the repository root for full details.
 .mj_OpsTiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
 }
 .mj_OpsTiles_three {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -474,29 +474,29 @@ Please see LICENSE files in the repository root for full details.
     min-width: 0;
     flex-direction: column;
     gap: 2px;
-    padding: var(--cpd-space-3x);
-    border-radius: var(--cpd-radius-md);
-    background: var(--cpd-color-bg-canvas-raised);
+    padding: var(--mj-space-3x);
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-canvas-raised);
 }
 .mj_OpsTile_label {
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
 }
 .mj_OpsTile_value {
-    font: var(--cpd-font-heading);
-    color: var(--cpd-color-text-primary);
+    font: var(--mj-font-heading);
+    color: var(--mj-color-text-primary);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
 }
 .mj_OpsTile_sub {
     overflow: hidden;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-tertiary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-tertiary);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 .mj_OpsTile_track {
-    margin-top: var(--cpd-space-2x);
+    margin-top: var(--mj-space-2x);
 }
 @container ops (max-width: 420px) {
     .mj_OpsTiles {
@@ -506,7 +506,7 @@ Please see LICENSE files in the repository root for full details.
         grid-template-columns: repeat(3, minmax(0, 1fr));
     }
     .mj_OpsTiles_three .mj_OpsTile_value {
-        font: var(--cpd-font-title);
+        font: var(--mj-font-title);
     }
     .mj_OpsTiles_three .mj_OpsTile_sub {
         white-space: normal;
@@ -517,27 +517,27 @@ Please see LICENSE files in the repository root for full details.
 .mj_OpsTable {
     width: 100%;
     border-collapse: collapse;
-    font: var(--cpd-font-meta);
+    font: var(--mj-font-meta);
     font-variant-numeric: tabular-nums;
     table-layout: fixed;
 }
 .mj_OpsTable_caption {
-    padding-bottom: var(--cpd-space-2x);
-    font: var(--cpd-font-body-xs-semibold);
-    color: var(--cpd-color-text-secondary);
+    padding-bottom: var(--mj-space-2x);
+    font: var(--mj-font-body-xs-semibold);
+    color: var(--mj-color-text-secondary);
     text-align: left;
 }
 .mj_OpsTable th {
-    padding: 0 var(--cpd-space-2x) var(--cpd-space-1x);
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    padding: 0 var(--mj-space-2x) var(--mj-space-1x);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
     font-weight: 400;
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
     text-align: left;
 }
 .mj_OpsTable td {
-    padding: var(--cpd-space-1-5x) var(--cpd-space-2x);
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
-    color: var(--cpd-color-text-secondary);
+    padding: var(--mj-space-1-5x) var(--mj-space-2x);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+    color: var(--mj-color-text-secondary);
     white-space: nowrap;
 }
 .mj_OpsTable th:first-child,
@@ -566,23 +566,23 @@ Please see LICENSE files in the repository root for full details.
 }
 .mj_OpsProcs_name {
     overflow: hidden;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
     text-overflow: ellipsis;
 }
 td.mj_OpsProcs_name {
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
 }
 .mj_OpsBarCell {
     display: grid;
     grid-template-columns: minmax(24px, 1fr) 7ch;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
 }
 .mj_OpsBarCell_fill {
     display: block;
     height: 100%;
     border-radius: inherit;
-    background: var(--cpd-color-icon-accent-primary);
+    background: var(--mj-color-icon-accent-primary);
 }
 .mj_OpsBarCell_value {
     text-align: right;
@@ -598,16 +598,16 @@ td.mj_OpsProcs_name {
 
 /* — Rows (alerts, timers, sessions) — */
 .mj_OpsList {
-    gap: var(--cpd-space-3x);
-    padding-top: var(--cpd-space-2x);
-    padding-bottom: var(--cpd-space-2x);
+    gap: var(--mj-space-3x);
+    padding-top: var(--mj-space-2x);
+    padding-bottom: var(--mj-space-2x);
 }
 .mj_OpsList > .mj_OpsEmpty {
-    padding: var(--cpd-space-2x) 0;
+    padding: var(--mj-space-2x) 0;
 }
 .mj_OpsList_toolbar {
     display: flex;
-    padding-top: var(--cpd-space-2x);
+    padding-top: var(--mj-space-2x);
 }
 .mj_OpsRows {
     display: flex;
@@ -619,10 +619,10 @@ td.mj_OpsProcs_name {
 .mj_OpsRow {
     display: flex;
     align-items: flex-start;
-    gap: var(--cpd-space-3x);
+    gap: var(--mj-space-3x);
     min-width: 0;
-    padding: var(--cpd-space-3x) 0;
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    padding: var(--mj-space-3x) 0;
+    border-bottom: 1px solid var(--mj-color-border-subtle);
 }
 .mj_OpsRow:last-child {
     border-bottom: 0;
@@ -638,20 +638,20 @@ td.mj_OpsProcs_name {
     gap: 2px;
 }
 .mj_OpsRow_lead {
-    font: var(--cpd-font-body-sm-regular);
-    color: var(--cpd-color-text-primary);
+    font: var(--mj-font-body-sm-regular);
+    color: var(--mj-color-text-primary);
     overflow-wrap: anywhere;
 }
 .mj_OpsRow_meta {
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-tertiary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-tertiary);
     overflow-wrap: anywhere;
     font-variant-numeric: tabular-nums;
 }
 .mj_OpsRow_aside {
     flex: none;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
     text-align: right;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -660,14 +660,14 @@ td.mj_OpsProcs_name {
     display: flex;
     flex-direction: column;
     font-weight: 600;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
 }
 .mj_OpsRow_asideSub {
     font-weight: 400;
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
 }
 .mj_OpsRows_quiet .mj_OpsRow_lead {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 
 .mj_OpsTimer_dot {
@@ -676,16 +676,16 @@ td.mj_OpsProcs_name {
     height: 8px;
     margin-top: 6px;
     border-radius: 50%;
-    background: var(--cpd-color-usage-low);
+    background: var(--mj-color-usage-low);
 }
 .mj_OpsTimer_dot_critical {
-    background: var(--cpd-color-usage-high);
+    background: var(--mj-color-usage-high);
 }
 .mj_OpsTimer_dot_warn {
     background: var(--mj-warn-dot);
 }
 .mj_OpsTimer_dot_run {
-    background: var(--cpd-color-icon-accent-primary);
+    background: var(--mj-color-icon-accent-primary);
 }
 .mj_OpsTimer_name {
     font-weight: 500;
@@ -696,7 +696,7 @@ td.mj_OpsProcs_name {
     }
     .mj_OpsTimer .mj_OpsRow_aside {
         flex-basis: 100%;
-        padding-left: calc(8px + var(--cpd-space-3x));
+        padding-left: calc(8px + var(--mj-space-3x));
         text-align: left;
     }
 }
@@ -708,33 +708,33 @@ td.mj_OpsProcs_name {
     flex: none;
     min-width: 13ch;
     font: var(--mj-font-mono);
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 
 /* — Disclosure — */
 .mj_OpsDisclosure {
-    border-top: 1px solid var(--cpd-color-border-subtle);
-    padding-top: var(--cpd-space-1x);
+    border-top: 1px solid var(--mj-color-border-subtle);
+    padding-top: var(--mj-space-1x);
 }
 .mj_OpsDisclosure_toggle {
     display: inline-flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     margin: 0;
-    padding: var(--cpd-space-2x) 0;
+    padding: var(--mj-space-2x) 0;
     border: 0;
     background: none;
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-label);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-label);
     cursor: pointer;
 }
 .mj_OpsDisclosure_toggle:hover {
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
 }
 .mj_OpsDisclosure_toggle:focus-visible {
     outline: var(--mj-focus-ring);
     outline-offset: var(--mj-focus-offset);
-    border-radius: var(--cpd-radius-xs);
+    border-radius: var(--mj-radius-xs);
 }
 .mj_OpsChevron {
     width: 6px;
@@ -742,7 +742,7 @@ td.mj_OpsProcs_name {
     border-right: 1.5px solid currentColor;
     border-bottom: 1.5px solid currentColor;
     transform: rotate(-45deg);
-    transition: transform var(--cpd-dur-fast) var(--cpd-ease);
+    transition: transform var(--mj-dur-fast) var(--mj-ease);
 }
 .mj_OpsDisclosure_toggle[aria-expanded="true"] .mj_OpsChevron {
     transform: rotate(45deg);
@@ -750,25 +750,25 @@ td.mj_OpsProcs_name {
 
 /* — Usage — */
 .mj_OpsUsage {
-    gap: var(--cpd-space-5x);
+    gap: var(--mj-space-5x);
 }
 .mj_OpsChart {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     margin: 0;
 }
 .mj_OpsChart_caption {
     display: flex;
     flex-wrap: wrap;
     justify-content: space-between;
-    gap: var(--cpd-space-1x) var(--cpd-space-3x);
-    font: var(--cpd-font-body-xs-semibold);
-    color: var(--cpd-color-text-secondary);
+    gap: var(--mj-space-1x) var(--mj-space-3x);
+    font: var(--mj-font-body-xs-semibold);
+    color: var(--mj-color-text-secondary);
 }
 .mj_OpsChart_readout {
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-primary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-primary);
     font-variant-numeric: tabular-nums;
 }
 .mj_OpsChart_plot {
@@ -776,7 +776,7 @@ td.mj_OpsProcs_name {
     align-items: stretch;
     gap: 2px;
     height: 96px;
-    border-bottom: 1px solid var(--cpd-color-border-strong);
+    border-bottom: 1px solid var(--mj-color-border-strong);
 }
 .mj_OpsChart_bar {
     display: flex;
@@ -791,7 +791,7 @@ td.mj_OpsProcs_name {
 }
 .mj_OpsChart_bar:hover,
 .mj_OpsChart_bar_on {
-    background: var(--cpd-state-hover);
+    background: var(--mj-state-hover);
 }
 .mj_OpsChart_bar:focus-visible {
     outline: var(--mj-focus-ring);
@@ -800,8 +800,8 @@ td.mj_OpsProcs_name {
 .mj_OpsChart_fill {
     display: block;
     width: 100%;
-    border-radius: var(--cpd-radius-xs) var(--cpd-radius-xs) 0 0;
-    background: var(--cpd-color-icon-accent-primary);
+    border-radius: var(--mj-radius-xs) var(--mj-radius-xs) 0 0;
+    background: var(--mj-color-icon-accent-primary);
     opacity: 0.85;
 }
 .mj_OpsChart_bar_on .mj_OpsChart_fill {
@@ -810,31 +810,31 @@ td.mj_OpsProcs_name {
 .mj_OpsChart_axis {
     display: flex;
     justify-content: space-between;
-    font: var(--cpd-font-micro);
-    color: var(--cpd-color-text-tertiary);
+    font: var(--mj-font-micro);
+    color: var(--mj-color-text-tertiary);
 }
 
 .mj_OpsBars_pair {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--cpd-space-6x);
+    gap: var(--mj-space-6x);
 }
 @container ops (max-width: 640px) {
     .mj_OpsBars_pair {
         grid-template-columns: minmax(0, 1fr);
-        gap: var(--cpd-space-5x);
+        gap: var(--mj-space-5x);
     }
 }
 .mj_OpsBars {
     display: flex;
     min-width: 0;
     flex-direction: column;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
 }
 .mj_OpsBars ul {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     margin: 0;
     padding: 0;
     list-style: none;
@@ -843,41 +843,41 @@ td.mj_OpsProcs_name {
     display: grid;
     grid-template-columns: minmax(0, 17ch) minmax(40px, 1fr) 7ch 5ch;
     align-items: center;
-    gap: var(--cpd-space-2x);
-    font: var(--cpd-font-meta);
+    gap: var(--mj-space-2x);
+    font: var(--mj-font-meta);
     font-variant-numeric: tabular-nums;
 }
 .mj_OpsBars_name {
     overflow: hidden;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 .mj_OpsBars_value {
     font-weight: 600;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
     text-align: right;
 }
 .mj_OpsBars_sub {
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
     text-align: right;
 }
 .mj_OpsRecent {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
 }
 
 /* — Posture — */
 .mj_OpsPosture {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--cpd-space-6x);
+    gap: var(--mj-space-6x);
 }
 @container ops (max-width: 640px) {
     .mj_OpsPosture {
         grid-template-columns: minmax(0, 1fr);
-        gap: var(--cpd-space-5x);
+        gap: var(--mj-space-5x);
     }
 }
 .mj_OpsPosture_security,
@@ -885,51 +885,51 @@ td.mj_OpsProcs_name {
     display: flex;
     min-width: 0;
     flex-direction: column;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
 }
 .mj_OpsPosture_status {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     margin: 0;
 }
 .mj_OpsPosture_actions {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
     margin: 0;
-    padding-left: var(--cpd-space-4x);
-    font: var(--cpd-font-body-sm-regular);
-    color: var(--cpd-color-text-primary);
+    padding-left: var(--mj-space-4x);
+    font: var(--mj-font-body-sm-regular);
+    color: var(--mj-color-text-primary);
 }
 .mj_OpsPosture_actions li::marker {
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
 }
 
 /* — Agents without a box report — */
 .mj_OpsAgents {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-1x);
-    margin: var(--cpd-space-1x) 0 0;
-    padding: 0 var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
+    margin: var(--mj-space-1x) 0 0;
+    padding: 0 var(--mj-space-1x);
     list-style: none;
 }
 .mj_OpsAgents_row {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     min-width: 0;
-    font: var(--cpd-font-meta);
+    font: var(--mj-font-meta);
 }
 .mj_OpsAgents_name {
-    font: var(--cpd-font-label);
-    color: var(--cpd-color-text-primary);
+    font: var(--mj-font-label);
+    color: var(--mj-color-text-primary);
 }
 .mj_OpsAgents_meta {
     min-width: 0;
     overflow: hidden;
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -945,11 +945,11 @@ td.mj_OpsProcs_name {
 .mj_OpsCount {
     display: flex;
     justify-content: space-between;
-    gap: var(--cpd-space-3x);
-    font: var(--cpd-font-meta);
+    gap: var(--mj-space-3x);
+    font: var(--mj-font-meta);
 }
 .mj_OpsCount_value {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
     font-variant-numeric: tabular-nums;
     text-align: right;
 }

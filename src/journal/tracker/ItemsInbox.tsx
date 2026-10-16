@@ -13,23 +13,31 @@ Please see LICENSE files in the repository root for full details.
  * (origin_convo_title); an unresolved origin reads "Another chat". Rows filed from the conversation
  * being viewed carry no origin note. An open notice carries a one-tap Seen button on its row; the
  * tap closes it, so it leaves "Needs you" (and the rail badge) as soon as the write lands.
+ *
+ * "Done" is where it goes next: questions, decisions and notices that are closed or that the user
+ * has answered, the one they last acted on first, so something answered or read can be found
+ * again. It is loaded when the tab is first
+ * opened and a page at a time after that; tasks stay out, as they are the agents' work list.
  */
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import type { MatronJournalClient } from "../client";
-import type { TrackerItem } from "../types";
+import type { InboxDone, TrackerItem } from "../types";
 import { itemOriginTitle, needsUser } from "./format";
 import { ItemRow } from "./ItemRow";
 
-type InboxFilter = "needs-you" | "all-open";
+type InboxFilter = "needs-you" | "all-open" | "done";
 
 export function ItemsInbox({
     items,
+    done,
     client,
     onOpenItem,
 }: {
     items: TrackerItem[];
+    /** The Done tab's rows; undefined until the tab is first opened. */
+    done?: InboxDone;
     client: MatronJournalClient;
     onOpenItem: (num: number) => void;
 }): React.ReactElement {
@@ -59,12 +67,18 @@ export function ItemsInbox({
         return map;
     }, [conversations]);
 
+    // Every visit to the tab refreshes it: a notice seen a moment ago must already be there.
+    useEffect(() => {
+        if (filter === "done") void client.loadInboxDone();
+    }, [client, filter]);
+
     const shown = useMemo(() => {
+        if (filter === "done") return done?.items ?? [];
         if (filter === "needs-you") {
             return items.filter(needsUser).sort((a, b) => b.updated_at - a.updated_at);
         }
         return items.filter((item) => item.state === "open").sort((a, b) => b.updated_at - a.updated_at);
-    }, [items, filter]);
+    }, [items, done, filter]);
 
     return (
         <div className="mj_TrackerList">
@@ -87,7 +101,22 @@ export function ItemsInbox({
                 >
                     All open
                 </button>
+                <button
+                    type="button"
+                    role="tab"
+                    aria-selected={filter === "done"}
+                    className={`mj_TrackerToggleTab${filter === "done" ? " mj_TrackerToggleTab_active" : ""}`}
+                    onClick={() => setFilter("done")}
+                >
+                    Done
+                </button>
             </div>
+
+            {filter === "done" && done?.error ? (
+                <p className="mj_TrackerStaleNotice" role="alert">
+                    Couldn't load the Done list: {done.error}
+                </p>
+            ) : null}
 
             {shown.length === 0 ? (
                 filter === "needs-you" ? (
@@ -97,6 +126,20 @@ export function ItemsInbox({
                             Questions, things to read and secret requests from every conversation appear here.
                         </p>
                     </div>
+                ) : filter === "done" ? (
+                    done && !done.loading && !done.error ? (
+                        <div className="mj_TrackerEmpty">
+                            <p className="mj_TrackerEmpty_title">Nothing done yet</p>
+                            <p className="mj_TrackerEmpty_hint">
+                                Questions and decisions move here once they are closed, and notices once you have seen
+                                them.
+                            </p>
+                        </div>
+                    ) : done?.error ? null : (
+                        <div className="mj_TrackerEmpty">
+                            <p className="mj_TrackerEmpty_hint">Loading…</p>
+                        </div>
+                    )
                 ) : (
                     <div className="mj_TrackerEmpty">
                         <p className="mj_TrackerEmpty_title">No open items</p>
@@ -118,6 +161,16 @@ export function ItemsInbox({
                             seenBusy={seenBusy.has(item.num)}
                         />
                     ))}
+                    {filter === "done" && done?.nextCursor ? (
+                        <button
+                            type="button"
+                            className="mj_TrackerShowMore"
+                            disabled={done.loading}
+                            onClick={() => void client.loadMoreInboxDone()}
+                        >
+                            {done.loading ? "Loading…" : "Show more"}
+                        </button>
+                    ) : null}
                 </section>
             )}
         </div>

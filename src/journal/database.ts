@@ -27,6 +27,27 @@ const OUTCOME_BACKFILL_ATTEMPT_KEY = "session_outcome_backfill_attempt_v1";
 const OUTCOME_BACKFILL_ATTEMPT_VERSION = 1;
 const OUTCOME_BACKFILL_RETRY_MS = 24 * 60 * 60 * 1_000;
 const BACKFILL_ERROR_KEY = "subchat_backfill_error";
+// Set once this store holds every room's membership: by any full snapshot, or by the one-off
+// backfill for a store that synced before membership was kept.
+const MEMBERSHIP_BACKFILL_KEY = "room_membership_backfill_v1";
+
+/** The room-membership keys a snapshot row or a membership `convo_meta` frame carries, cleaned;
+ *  a key that is absent (not a room, or not a membership change) stays absent. */
+function membershipFrom(source: {
+    participants?: unknown;
+    participant_convos?: unknown;
+}): Pick<Conversation, "participants" | "participant_convos"> {
+    const membership: Pick<Conversation, "participants" | "participant_convos"> = {};
+    if (Array.isArray(source.participants)) {
+        membership.participants = source.participants.filter((id): id is number => Number.isSafeInteger(id));
+    }
+    if (Array.isArray(source.participant_convos)) {
+        membership.participant_convos = source.participant_convos.filter(
+            (id): id is string => typeof id === "string" && id !== "",
+        );
+    }
+    return membership;
+}
 
 function hasValidSessionOutcome(value: unknown): value is Conversation["session_outcome"] {
     return value === null || typeof value === "string";
@@ -135,6 +156,12 @@ async function applyEventToConversation(
         if (conversation.parent_convo_id == null && incomingParent) {
             conversation.parent_convo_id = incomingParent;
         }
+        // The owning box rides the meta (the journal always stamps the connection's device), so a
+        // conversation born live knows its box before the next snapshot.
+        const box = event.payload.agent_device_id;
+        if (typeof box === "number" && Number.isFinite(box)) conversation.agent_device_id = box;
+        // Room membership: a present value replaces the stored one; an absent key keeps it.
+        Object.assign(conversation, membershipFrom(event.payload));
         // agent_kind rides convo_meta so a live-created codex/claude row is
         // marked immediately. Mutable last-write-wins (a
         // claude<->codex switch re-emits it); an omitted/blank value leaves
@@ -405,8 +432,51 @@ export class JournalDatabase {
                 read_up_to_seq: row.read_up_to_seq ?? (row.unread_count === 0 ? row.last_seq : 0),
             } satisfies Conversation);
         }
-        transaction.objectStore("meta").put(snapshot.seq, CURSOR_KEY);
+        const meta = transaction.objectStore("meta");
+        meta.put(snapshot.seq, CURSOR_KEY);
+        meta.put(true, MEMBERSHIP_BACKFILL_KEY);
         await transactionDone(transaction);
+    }
+
+    /** Whether this store synced before room membership was kept and has not had it filled in. */
+    public async roomMembershipBackfillDue(): Promise<boolean> {
+        const transaction = this.database.transaction("meta", "readonly");
+        const done = Boolean(await requestResult(transaction.objectStore("meta").get(MEMBERSHIP_BACKFILL_KEY)));
+        await transactionDone(transaction);
+        return !done;
+    }
+
+    /**
+     * Copies each room's membership from a snapshot onto the stored rows, once. Nothing else on a
+     * row changes. A row that already holds membership from a live frame newer than the snapshot
+     * row keeps it.
+     */
+    public async backfillRoomMembership(snapshot: SnapshotResponse): Promise<void> {
+        validateSnapshotRows(snapshot);
+        const transaction = this.database.transaction(["conversations", "meta"], "readwrite");
+        try {
+            const conversations = transaction.objectStore("conversations");
+            for (const summary of snapshot.conversations) {
+                const membership = membershipFrom(summary);
+                if (membership.participants === undefined && membership.participant_convos === undefined) continue;
+                const existing = (await requestResult(conversations.get(summary.id))) as Conversation | undefined;
+                if (!existing) continue;
+                const storedIsNewer =
+                    existing.participant_convos !== undefined &&
+                    !(typeof summary.last_seq === "number" && summary.last_seq >= existing.last_seq);
+                if (storedIsNewer) continue;
+                conversations.put({ ...existing, ...membership });
+            }
+            transaction.objectStore("meta").put(true, MEMBERSHIP_BACKFILL_KEY);
+            await transactionDone(transaction);
+        } catch (error) {
+            try {
+                transaction.abort();
+            } catch {
+                // The transaction is already aborting or complete.
+            }
+            throw error;
+        }
     }
 
     public async reset(): Promise<void> {

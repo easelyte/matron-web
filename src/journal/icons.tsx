@@ -93,6 +93,18 @@ export function SearchIcon(props: IconProps): React.ReactElement {
     );
 }
 
+/** A number sign: the "Go to number" action. */
+export function NumberSignIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M5 9h14" />
+            <path d="M4 15h14" />
+            <path d="M10 4 8 20" />
+            <path d="m16 4-2 16" />
+        </Icon>
+    );
+}
+
 export function MarkAllReadIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>
@@ -327,6 +339,15 @@ export function ChevronUpIcon(props: IconProps): React.ReactElement {
     return (
         <Icon {...props}>
             <path d="m18 15-6-6-6 6" />
+        </Icon>
+    );
+}
+
+// "Jump to my last message": an arrow rising to a bar.
+export function ArrowUpToLineIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M5 4h14M12 20V9M7 13l5-5 5 5" />
         </Icon>
     );
 }
@@ -611,6 +632,105 @@ export function ArrowUpCircleIcon(props: IconProps): React.ReactElement {
         <Icon {...props}>
             <circle cx="12" cy="12" r="9" />
             <path d="M12 16V8M8.5 11.5 12 8l3.5 3.5" />
+        </Icon>
+    );
+}
+
+/* Coordinator notice glyphs (Mac: person.crop.circle.badge.checkmark, alarm, exclamationmark.triangle,
+   checkmark.shield / xmark.shield), drawn as outlines in this set. */
+export function PersonCheckIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <circle cx="10" cy="8" r="3.5" />
+            <path d="M3.5 20a6.5 6.5 0 0 1 11-4.7" />
+            <path d="m15 18.5 2 2 4-4.5" />
+        </Icon>
+    );
+}
+
+export function AlarmIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <circle cx="12" cy="13" r="7" />
+            <path d="M12 9.5V13l2.5 1.5M4 5l3-2.5M20 5l-3-2.5" />
+        </Icon>
+    );
+}
+
+export function WarningTriangleIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M10.3 4.2 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z" />
+            <path d="M12 9.5v4M12 17h.01" />
+        </Icon>
+    );
+}
+
+export function ShieldCheckIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6z" />
+            <path d="m9 12 2 2 4-4.5" />
+        </Icon>
+    );
+}
+
+export function ShieldXIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6z" />
+            <path d="m9.5 9.5 5 5M14.5 9.5l-5 5" />
+        </Icon>
+    );
+}
+
+export function MediaBrowserIcon(props: IconProps): React.ReactElement {
+    // The conversation's Media / Files / Links browser: a photo over a second, offset frame.
+    return (
+        <Icon {...props}>
+            <rect x="7" y="3" width="14" height="12" rx="2" />
+            <path d="M17 19H5a2 2 0 0 1-2-2V8" />
+            <circle cx="11.5" cy="7.5" r="1.3" />
+            <path d="m8 14 4-4 3 3 2-2 4 4" />
+        </Icon>
+    );
+}
+
+export function BranchIcon(props: IconProps): React.ReactElement {
+    // A subagent: one line splitting into two.
+    return (
+        <Icon {...props}>
+            <path d="M6 3v12" />
+            <circle cx="6" cy="18" r="2.5" />
+            <circle cx="18" cy="6" r="2.5" />
+            <path d="M18 8.5a9 9 0 0 1-9 9" />
+        </Icon>
+    );
+}
+
+export function LinkIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
+            <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+        </Icon>
+    );
+}
+
+export function BellIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z" />
+            <path d="M10 20.5a2 2 0 0 0 4 0" />
+        </Icon>
+    );
+}
+
+export function BellSlashIcon(props: IconProps): React.ReactElement {
+    return (
+        <Icon {...props}>
+            <path d="M8.5 5.9A6 6 0 0 1 18 11v4M6 11v5l-1.5 2H17" />
+            <path d="M10 20.5a2 2 0 0 0 4 0M3 3l18 18" />
         </Icon>
     );
 }

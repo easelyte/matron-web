@@ -16,6 +16,8 @@ import {
     pinnedStore,
     unreadStore,
 } from "../../../src/journal/client";
+import { AgentSpawnCard } from "../../../src/journal/agent-spawn-card";
+import { resetSessionStops } from "../../../src/journal/coordinator-consent";
 import { EventContent, MatronApp } from "../../../src/journal/components";
 import { eventSnippet } from "../../../src/journal/types";
 import type { ClientState, Conversation, JournalEvent, Session } from "../../../src/journal/types";
@@ -791,5 +793,208 @@ describe("agent_spawn Open / deep-link", () => {
         await act(async () => openButton?.click());
 
         expect(selectConversation).toHaveBeenCalledWith("r1", { suppressNotFound: true });
+    });
+});
+
+describe("agent_spawn card answered by the Coordinator", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    const decisionEvent = (decision = "approve", seq = 42): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: 1700000050,
+        sender: "journal",
+        type: "consent_decision",
+        payload: {
+            kind: "spawn",
+            request_id: "spawn-1",
+            decision,
+            by: "coordinator",
+            convo_id: "c1",
+            reason: "Test triage follows the box rules",
+        },
+    });
+
+    const card = (): Element => rendered!.container.querySelector(".mj_PromptCard_spawn")!;
+    const stopButton = (): HTMLButtonElement | null =>
+        card().querySelector<HTMLButtonElement>('button[data-action="stop-session"]');
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+        resetSessionStops();
+        jest.restoreAllMocks();
+    });
+
+    it("shows the badge and no Approve / Deny before the session starts", async () => {
+        rendered = await renderClient(signedInClient({ events: [spawnCardEvent(), decisionEvent()] }));
+
+        expect(card().querySelector(".mj_CoordinatorBadge_text")?.textContent).toBe(
+            "Approved by the Coordinator — Test triage follows the box rules",
+        );
+        expect(card().querySelector(".mj_PromptOptions")).toBeNull();
+        expect(card().querySelector(".mj_PromptResolved .mj_Answered")?.textContent).toBe(
+            "Approved — starting the session",
+        );
+        expect(stopButton()).toBeNull();
+    });
+
+    it("says a declined card was declined by the Coordinator", async () => {
+        rendered = await renderClient(signedInClient({ events: [spawnCardEvent(), decisionEvent("decline")] }));
+
+        expect(card().querySelector(".mj_CoordinatorBadge")?.getAttribute("data-decision")).toBe("decline");
+        expect(card().querySelector(".mj_CoordinatorBadge_text")?.textContent).toBe(
+            "Declined by the Coordinator — Test triage follows the box rules",
+        );
+        expect(card().querySelector(".mj_PromptOptions")).toBeNull();
+        expect(card().querySelector(".mj_PromptResolved .mj_Answered")?.textContent).toBe("Denied");
+    });
+
+    it("offers Stop session once the session started, sends /stop into it, then says so", async () => {
+        const client = signedInClient({
+            events: [
+                spawnCardEvent(),
+                decisionEvent(),
+                spawnOutcomeEvent("started", { room_id: "r1", child_convo_id: "child-1" }, 43),
+            ],
+        });
+        let finish!: (sent: boolean) => void;
+        const sendMessage = jest
+            .spyOn(client, "sendMessage")
+            .mockReturnValue(new Promise<boolean>((resolve) => (finish = resolve)));
+        rendered = await renderClient(client);
+
+        expect(card().querySelector(".mj_PromptResolved .mj_Answered")?.textContent).toBe("Started");
+        expect(stopButton()?.textContent).toBe("Stop session");
+
+        await act(async () => stopButton()!.click());
+        expect(sendMessage).toHaveBeenCalledWith("/stop", "child-1");
+        expect(stopButton()).toBeNull();
+        expect(card().querySelector(".mj_CoordinatorBadge_stop")?.textContent).toBe("Stopping…");
+
+        await act(async () => finish(true));
+        expect(stopButton()).toBeNull();
+        expect(card().querySelector(".mj_CoordinatorBadge_sent")?.textContent).toBe("Stop sent to the session");
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("lets a failed stop be tried again", async () => {
+        const client = signedInClient({
+            events: [
+                spawnCardEvent(),
+                decisionEvent(),
+                spawnOutcomeEvent("started", { child_convo_id: "child-1" }, 43),
+            ],
+        });
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+        rendered = await renderClient(client);
+
+        await act(async () => stopButton()!.click());
+        expect(card().querySelector(".mj_CoordinatorBadge_error")?.textContent).toBe(
+            "Couldn't send the stop. Try again.",
+        );
+        await act(async () => stopButton()!.click());
+        expect(card().querySelector(".mj_CoordinatorBadge_sent")).not.toBeNull();
+        expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it("offers no Stop session for a session the Coordinator did not start, or one it does not name", async () => {
+        rendered = await renderClient(
+            signedInClient({
+                events: [spawnCardEvent(), spawnOutcomeEvent("started", { child_convo_id: "child-1" }, 43)],
+            }),
+        );
+        expect(card().querySelector(".mj_CoordinatorBadge")).toBeNull();
+        expect(stopButton()).toBeNull();
+        await act(async () => rendered?.root.unmount());
+        rendered.container.remove();
+
+        rendered = await renderClient(
+            signedInClient({ events: [spawnCardEvent(), decisionEvent(), spawnOutcomeEvent("started", {}, 43)] }),
+        );
+        expect(card().querySelector(".mj_CoordinatorBadge")).not.toBeNull();
+        expect(stopButton()).toBeNull();
+    });
+
+    it("offers no Stop session in a read-only transcript", async () => {
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        await act(async () => {
+            root.render(
+                React.createElement(EventContent, {
+                    client: signedInClient(),
+                    event: spawnCardEvent(),
+                    answeredPromptReplies: new Map(),
+                    spawnOutcomes: new Map([
+                        ["spawn-1", { request_id: "spawn-1", outcome: "started", child_convo_id: "child-1" }],
+                    ]),
+                    coordinatorDecisions: new Map([
+                        ["c1:40", { kind: "spawn" as const, approved: true, reason: "Fine", askId: "spawn-1" }],
+                    ]),
+                    isReadOnly: true,
+                }),
+            );
+        });
+        rendered = { container, root };
+
+        expect(card().querySelector(".mj_CoordinatorBadge_text")?.textContent).toBe(
+            "Approved by the Coordinator — Fine",
+        );
+        expect(stopButton()).toBeNull();
+    });
+});
+
+describe("agent_spawn card settled by its consent item", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    async function renderCard(props: Partial<React.ComponentProps<typeof AgentSpawnCard>>): Promise<Element> {
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        await act(async () => {
+            root.render(React.createElement(AgentSpawnCard, { event: spawnCardEvent(), outcome: null, ...props }));
+        });
+        rendered = { container, root };
+        return container.querySelector(".mj_PromptCard_spawn")!;
+    }
+
+    it("says the Coordinator answered when the item closed for its decision", async () => {
+        const card = await renderCard({
+            settled: true,
+            coordinatorDecision: { kind: "spawn", approved: true, reason: "Fine", askId: "spawn-1" },
+        });
+
+        expect(card.querySelectorAll("button")).toHaveLength(0);
+        expect(card.querySelector(".mj_CoordinatorBadge_text")?.textContent).toBe("Approved by the Coordinator — Fine");
+        expect(card.querySelector(".mj_PromptResolved_approved")?.textContent).toBe("Approved — starting the session");
+        expect(card.querySelector(".mj_PromptResolved_expired")).toBeNull();
+    });
+
+    it("reads as answered elsewhere when settled without a Coordinator decision", async () => {
+        const card = await renderCard({ settled: true });
+
+        expect(card.querySelectorAll("button")).toHaveLength(0);
+        expect(card.querySelector(".mj_CoordinatorBadge")).toBeNull();
+        expect(card.querySelector(".mj_PromptResolved_expired")?.textContent).toBe("Already answered or expired");
     });
 });

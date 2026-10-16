@@ -13,7 +13,7 @@ Please see LICENSE files in the repository root for full details.
  * via webpack.fixtures.mjs) — in every state, both themes, without a login or live server.
  *
  * Playwright reaches the client via window.__matron to drive states (stage a file →
- * upload modal, etc.). Theme comes from ?theme=dark on <html data-theme>.
+ * attachment tray, etc.). Theme comes from ?theme=dark on <html data-theme>.
  */
 
 import React from "react";
@@ -24,10 +24,11 @@ import "@fontsource/inter/latin-400.css";
 import "@fontsource/inter/latin-500.css";
 import "@fontsource/inter/latin-600.css";
 
-import { JournalApiError } from "../src/journal/api";
+import { JournalApi, JournalApiError } from "../src/journal/api";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
 import type { FileEntry, FileListing, FileMeta, FilesApiLike } from "../src/journal/files/filesApi";
+import type { Routine } from "../src/journal/routines";
 import type {
     ClientState,
     Conversation,
@@ -53,6 +54,7 @@ import "../src/journal/work.pcss";
 import "../src/journal/ops.pcss";
 import "../src/journal/subagents.pcss";
 import "../src/journal/mobile.pcss";
+import "../src/journal/coordinator.pcss";
 
 const SESSION: Session = {
     serverUrl: "https://journal.example",
@@ -302,11 +304,333 @@ const events: JournalEvent[] = [
         type: "spawn_outcome",
         payload: { request_id: "spawn-fixture-1", outcome: "started", room_id: "s1", child_convo_id: "s1" },
     },
+    // Coordinator notices: one quiet line each, never the raw-JSON fallback. The rolling
+    // `summary` event is bookkeeping and never occupies a row.
     {
-        // Surface B — an inline message from another AI session (durable .mj_PeerMessage block).
-        seq: 20,
+        seq: 16,
+        convo_id: "c1",
+        ts: T + 800,
+        sender: "journal",
+        type: "coordinator",
+        payload: { role: "assigned" },
+    },
+    {
+        seq: 17,
+        convo_id: "c1",
+        ts: T + 810,
+        sender: "journal",
+        type: "consent_decision",
+        payload: {
+            kind: "spawn",
+            decision: "approve",
+            request_id: "spawn-fixture-1",
+            reason: "Test triage on box-a follows the box rules",
+        },
+    },
+    {
+        seq: 18,
         convo_id: "c1",
         ts: T + 820,
+        sender: "journal",
+        type: "routine",
+        payload: { routine_id: "r-1", name: "morning-sweep", action: "fired", outcome: "applied now" },
+    },
+    {
+        seq: 19,
+        convo_id: "c1",
+        ts: T + 830,
+        sender: "journal",
+        type: "routine",
+        payload: { routine_id: "r-2", name: "evening-sweep", action: "fired", outcome: "failed agent_unreachable" },
+    },
+    {
+        seq: 20,
+        convo_id: "c1",
+        ts: T + 835,
+        sender: "journal",
+        type: "summary",
+        payload: { text: "Rolling summary of this conversation" },
+    },
+    {
+        // File events as the bridge and the native apps send them: the name rides in `name`
+        // (the media-send key), not the older `filename`.
+        seq: 21,
+        convo_id: "c1",
+        ts: T + 840,
+        sender: "agent:claude",
+        type: "file",
+        payload: { blob_ref: "fixture-log", name: "deploy-2026-07-25.log", content_type: "text/plain", size: 18_432 },
+    },
+    {
+        seq: 22,
+        convo_id: "c1",
+        ts: T + 860,
+        sender: "agent:claude",
+        type: "file",
+        payload: { blob_ref: "fixture-pdf", name: "rollback-runbook.pdf", size: 96_256 },
+    },
+    // Tracker item markers. Each item shows ONE card, at its latest created/closed marker, in its
+    // latest state: #41 was asked, answered and closed, so only the closing "Closed · Answered"
+    // card shows (no stale "Needs you" card above it); #42 was filed for the agent and then handed
+    // to the user in a reply, so its one card now reads "Needs you".
+    {
+        seq: 23,
+        convo_id: "c1",
+        ts: T + 870,
+        sender: "journal",
+        type: "item",
+        payload: {
+            item_id: "it_41",
+            num: 41,
+            kind: "question",
+            title: "Which region should the staging bucket use?",
+            action: "created",
+            by: "agent",
+            awaiting: "user",
+        },
+    },
+    {
+        seq: 24,
+        convo_id: "c1",
+        ts: T + 875,
+        sender: "journal",
+        type: "item",
+        payload: {
+            item_id: "it_42",
+            num: 42,
+            kind: "task",
+            title: "Rotate the staging deploy key",
+            action: "created",
+            by: "agent",
+            awaiting: "agent",
+        },
+    },
+    {
+        seq: 25,
+        convo_id: "c1",
+        ts: T + 880,
+        sender: "journal",
+        type: "item",
+        payload: {
+            item_id: "it_41",
+            num: 41,
+            kind: "question",
+            title: "Which region should the staging bucket use?",
+            action: "commented",
+            by: "user",
+            awaiting: "agent",
+            comment: { id: "cm_1", body: "Same region as production." },
+        },
+    },
+    {
+        seq: 26,
+        convo_id: "c1",
+        ts: T + 890,
+        sender: "journal",
+        type: "item",
+        payload: {
+            item_id: "it_41",
+            num: 41,
+            kind: "question",
+            title: "Which region should the staging bucket use?",
+            action: "closed",
+            by: "agent",
+            resolution: "answered",
+            comment: { id: "cm_2", body: "Created the bucket in the production region." },
+        },
+    },
+    {
+        seq: 27,
+        convo_id: "c1",
+        ts: T + 900,
+        sender: "journal",
+        type: "item",
+        payload: {
+            item_id: "it_42",
+            num: 42,
+            kind: "task",
+            title: "Rotate the staging deploy key",
+            action: "commented",
+            by: "agent",
+            awaiting: "user",
+            comment: { id: "cm_3", body: "Needs an admin to approve the new key." },
+        },
+    },
+    // Agent-chat consent card, waiting on the user: who asks whom, about what and why, with
+    // Decline / Approve answered over the journal's answer route.
+    {
+        seq: 28,
+        convo_id: "c1",
+        ts: T + 910,
+        sender: "agent:claude",
+        type: "permission_request",
+        payload: {
+            kind: "agent_chat",
+            request: "invite",
+            room_id: "room-fixture-1",
+            from_device_id: 1,
+            from_name: "box-a",
+            from_convo_id: "c1",
+            from_convo_title: "matron-web · deploy",
+            target_device_id: 2,
+            to_name: "box-b",
+            to_convo_id: "c2",
+            to_convo_title: "infra: backup rotation",
+            topic: "Rotate the backup credentials",
+            justification: "box-b owns the backup job and needs the new nginx config path.",
+        },
+    },
+    // A chat card already decided — settled by its consent item's closing marker (seq 30).
+    {
+        seq: 29,
+        convo_id: "c1",
+        ts: T + 960,
+        sender: "agent:claude",
+        type: "permission_request",
+        payload: {
+            kind: "agent_chat",
+            request: "invite",
+            room_id: "room-fixture-2",
+            from_device_id: 1,
+            from_name: "box-a",
+            from_convo_id: "c1",
+            from_convo_title: "matron-web · deploy",
+            target_device_id: 2,
+            to_name: "box-b",
+            to_convo_id: "c2",
+            to_convo_title: "infra: backup rotation",
+            topic: "Share the deploy checklist",
+            justification: "",
+        },
+    },
+    {
+        seq: 30,
+        convo_id: "c1",
+        ts: T + 990,
+        sender: "agent:claude",
+        type: "item",
+        payload: {
+            item_id: "it_fixture_chat",
+            num: 12,
+            kind: "question",
+            title: "box-a wants to start a chat with box-b",
+            action: "closed",
+            by: "user",
+            resolution: "decided",
+            consent: "chat",
+            consent_ask: "room-fixture-2/2",
+            consent_outcome: "denied",
+            comment: { id: "cm_fixture_chat", body: "Declined." },
+        },
+    },
+    {
+        // A malformed agent-chat payload (no room_id) → an inert notice, never dead buttons.
+        seq: 31,
+        convo_id: "c1",
+        ts: T + 1020,
+        sender: "agent:claude",
+        type: "permission_request",
+        payload: { kind: "agent_chat", request: "invite", topic: "Compare the test logs" },
+    },
+    {
+        // A voice note: plays in the inline audio player (blob stubbed below).
+        seq: 32,
+        convo_id: "c1",
+        ts: T + 1040,
+        sender: "user:operator",
+        type: "file",
+        payload: { blob_ref: "fixture-voice", filename: "voice-note.m4a", content_type: "audio/mp4", size: 48_128 },
+    },
+    {
+        // Reaped by the server's media reaper: payload tombstone.
+        seq: 33,
+        convo_id: "c1",
+        ts: T + 1060,
+        sender: "agent:claude",
+        type: "image",
+        payload: { blob_ref: "fixture-reaped-image", content_type: "image/png", expired: true },
+    },
+    {
+        seq: 34,
+        convo_id: "c1",
+        ts: T + 1080,
+        sender: "agent:claude",
+        type: "file",
+        payload: { blob_ref: null, filename: "deploy-2026-07-01.log", size: 18_432, expired: true },
+    },
+    {
+        // Synced before the reap (no tombstone): the 404 on fetch flips it to expired.
+        seq: 35,
+        convo_id: "c1",
+        ts: T + 1100,
+        sender: "agent:claude",
+        type: "image",
+        payload: { blob_ref: "fixture-gone", content_type: "image/png" },
+    },
+    {
+        // Multi-select question (mode: pick_many): options toggle, one Send answers with them all.
+        seq: 36,
+        convo_id: "c1",
+        ts: T + 1120,
+        sender: "agent:claude",
+        type: "prompt",
+        payload: {
+            question: "Which checks should I run before the deploy?",
+            mode: "pick_many",
+            options: [
+                { id: "opt_a", label: "Lint", value: "Lint" },
+                { id: "opt_b", label: "Unit tests", value: "Unit tests" },
+                { id: "opt_c", label: "Visual screenshots", value: "Visual screenshots" },
+                { id: "opt_d", label: "Smoke test on staging", value: "Smoke test on staging" },
+            ],
+        },
+    },
+    // A chat card the Coordinator answered: the consent_decision (seq 38) settles it, and the
+    // card's outcome line carries the Coordinator's reason. (The spawn card at seq 14 is answered
+    // the same way by seq 17, and offers Stop session for the session it started.)
+    {
+        seq: 37,
+        convo_id: "c1",
+        ts: T + 1140,
+        sender: "agent:claude",
+        type: "permission_request",
+        payload: {
+            kind: "agent_chat",
+            request: "invite",
+            room_id: "room-fixture-3",
+            from_device_id: 1,
+            from_name: "box-a",
+            from_convo_id: "c1",
+            from_convo_title: "matron-web · deploy",
+            target_device_id: 2,
+            to_name: "box-b",
+            to_convo_id: "c2",
+            to_convo_title: "infra: backup rotation",
+            topic: "Compare the nginx configs",
+            justification: "box-b runs the same proxy and changed its timeouts last week.",
+        },
+    },
+    {
+        seq: 38,
+        convo_id: "c1",
+        ts: T + 1160,
+        sender: "journal",
+        type: "consent_decision",
+        payload: {
+            kind: "chat",
+            room_id: "room-fixture-3",
+            target_device_id: 2,
+            decision: "approve",
+            by: "coordinator",
+            convo_id: "c1",
+            reason: "Both boxes work on the same deploy",
+        },
+    },
+    {
+        // Surface B — an inline message from another AI session (durable .mj_PeerMessage block).
+        seq: 39,
+        convo_id: "c1",
+        ts: T + 1180,
         sender: "peer:design",
         type: "peer_message",
         payload: {
@@ -319,9 +643,9 @@ const events: JournalEvent[] = [
     {
         // Same peer session speaking again — each peer message keeps its own full header
         // (from_convo-aware continuation grouping is a follow-up; see journal.pcss note).
-        seq: 21,
+        seq: 40,
         convo_id: "c1",
-        ts: T + 840,
+        ts: T + 1200,
         sender: "peer:design",
         type: "peer_message",
         payload: {
@@ -333,9 +657,9 @@ const events: JournalEvent[] = [
     },
     {
         // Surface B priority variant — louder marker, never a focus steal.
-        seq: 22,
+        seq: 41,
         convo_id: "c1",
-        ts: T + 860,
+        ts: T + 1220,
         sender: "peer:release",
         type: "peer_message",
         payload: {
@@ -347,6 +671,71 @@ const events: JournalEvent[] = [
         },
     },
 ];
+
+// ?notices swaps c1's thread for a Coordinator-style one: the bridge's tagged notices about the
+// turns it injected (payload.notice) between the agent's own replies.
+if (new URLSearchParams(window.location.search).has("notices")) {
+    const at = (
+        seq: number,
+        minutes: number,
+        payload: Record<string, unknown>,
+        sender = "agent:ash",
+    ): JournalEvent => ({
+        seq,
+        convo_id: "c1",
+        ts: T + minutes * 60_000,
+        sender,
+        type: "text",
+        payload: { from: "assistant", ...payload },
+    });
+    events.splice(
+        0,
+        events.length,
+        at(1, 0, { body: "Run the morning sweep when it fires.", from: "user" }, "user:operator"),
+        at(2, 1, {
+            body: "🔔 Routine morning-sweep: Morning status sweep",
+            notice: { kind: "routine", icon: "🔔", summary: "Routine morning-sweep: Morning status sweep" },
+        }),
+        at(3, 2, { body: "Sweep done: two missions moved, nothing waiting on you." }),
+        at(4, 5, {
+            body:
+                "🤝 A consent request is waiting for the user: \n" +
+                'chat ch_8f2 (tracker #12) — just now: alice — session "Release prep" [c_9] asks to chat with birch about "artwork render" (box awake)\n' +
+                "  why, in alice's words: needs the render settings before the export\n" +
+                '  consent_decide(kind: "chat", id: "ch_8f2", decision: approve|decline, reason: …)\n' +
+                "The user has the card too and may answer first. Decide with consent_decide if it follows your rules and give your reason; otherwise leave it, or decline with a reason. Say in one line what you did.",
+            notice: { kind: "consent", icon: "🤝", summary: "alice → birch chat · artwork render · #12" },
+        }),
+        at(5, 6, { body: "Approved alice's chat with birch: both boxes are ours and the topic is the release." }),
+        at(6, 9, {
+            body: '💬 "birch" in "ash ↔️ birch — disk": Disk clean-up done: 41 GB free, nothing in use was touched.',
+            notice: {
+                kind: "room",
+                icon: "💬",
+                summary: "birch: Disk clean-up done: 41 GB free, nothing in use was touched.",
+            },
+        }),
+        at(7, 10, {
+            body: "🚀 Spawn approved — started a session on birch (detached).",
+            notice: { kind: "spawn", icon: "🚀", summary: "Spawn approved — started a session on birch (detached)." },
+        }),
+        at(8, 11, { body: "Noted: the clean-up on birch finished and the new session is running." }),
+    );
+}
+
+// ?toolstream adds a running tool_stream tile with more output than its collapsed pane shows.
+const toolStreams: ClientState["toolStreams"] = {};
+if (new URLSearchParams(window.location.search).has("toolstream")) {
+    toolStreams["stream-1"] = {
+        messageRef: "stream-1",
+        command: "pnpm lint",
+        content: Array.from({ length: 40 }, (_, i) => `\x1b[90m[${i + 1}/40]\x1b[0m checked src/file-${i + 1}.ts`).join(
+            "\n",
+        ),
+        offset: 0,
+        headTruncated: false,
+    };
+}
 
 const client = new MatronJournalClient();
 const state: ClientState = {
@@ -361,6 +750,7 @@ const state: ClientState = {
     ],
     selectedConversationId: "c1",
     events,
+    toolStreams,
     pendingMessages: [],
     connection: "online",
     // Needs-you badge on the header tracker button (desktop) and the mobile nav Tracker tab.
@@ -369,17 +759,53 @@ const state: ClientState = {
         model: "claude-sonnet",
         // A current bridge reporting no MCP extras: the browser-tools row shows "Enable".
         extras: [],
+        effort: "high",
+        // The composer's /model and /effort arguments, as the bridge offers them.
+        model_options: [
+            { value: "default", label: "Default" },
+            { value: "opus", label: "Opus" },
+            { value: "opus[1m]", label: "Opus 1M" },
+            { value: "sonnet", label: "Sonnet" },
+            { value: "haiku", label: "Haiku" },
+        ],
+        effort_levels: [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+            { value: "xhigh", label: "X-High" },
+            { value: "max", label: "Max" },
+        ],
+        workdir: "/srv/app/web",
+        email: "alice@example.com",
         context: { tokens: 144_000, window: 200_000, pct: 72 },
         // id-driven limits (v5+ bridge): ctx is synthesized from context; the rest carry
         // stable ids → short tags 5h/fbl/wk/cpu/ram + column-first 3×2 grid order.
         limits: [
-            { id: "week_all", label: "Week (all models)", percent: 63, resets: "4d" },
-            { id: "session_5h", label: "Session", percent: 41, resets: "3h20" },
+            {
+                id: "week_all",
+                label: "Week (all models)",
+                percent: 63,
+                resets: "4d",
+                resets_at: new Date(Date.now() + 4 * 86_400_000).toISOString(),
+            },
+            {
+                id: "session",
+                label: "Session",
+                percent: 41,
+                resets: "3h20",
+                resets_at: new Date(Date.now() + 200 * 60_000 + 30_000).toISOString(),
+            },
             // host_ram: FRESH sample (10s old) → renders normally. host_cpu: STALE (4m old,
             // past HOST_VITALS_STALE_MS=60s) → renders dimmed with "last sampled 4m ago" in the
             // accessible name. Contact sheet shows the fresh vs stale host-vital states together.
             { id: "host_ram", label: "Host RAM", percent: 55, unit: "%", sampled_at_ms: Date.now() - 10_000 },
-            { id: "week_fable", label: "Week (Fable)", percent: 22, resets: "4d" },
+            {
+                id: "week_fable",
+                label: "Week (Fable)",
+                percent: 22,
+                resets: "4d",
+                resets_at: new Date(Date.now() + 4 * 86_400_000).toISOString(),
+            },
             { id: "host_cpu", label: "Host CPU", percent: 34, unit: "%", sampled_at_ms: Date.now() - 240_000 },
         ],
     },
@@ -470,10 +896,161 @@ const signedOutState: ClientState = {
 // The client keeps its state private; mirror the test harness's internal override.
 (client as unknown as { state: ClientState }).state = fixtureParams.get("screen") === "login" ? signedOutState : state;
 
+// ?missions=1 puts the selected conversation on missions, so the header shows its mission chip
+// (current one, +2 for an also-on and an earlier one).
+{
+    const stub = client as unknown as Record<string, unknown>;
+    stub.loadConversationMissions = async () => undefined;
+    if (fixtureParams.get("missions") === "1") {
+        const now = Date.now();
+        const link = (
+            num: number,
+            title: string,
+            over: { current?: boolean; active?: boolean; state?: string; joinedDaysAgo: number; endedDaysAgo?: number },
+        ) => ({
+            id: `ms_${num}`,
+            num,
+            state: over.state ?? "open",
+            title,
+            body: "",
+            close_summary: null,
+            closed_by: null,
+            closed_over_open_items: 0,
+            origin_convo_id: "c1",
+            created_by: "agent",
+            created_at: now - 30 * 86_400_000,
+            updated_at: now,
+            last_milestone_at: now,
+            closed_at:
+                over.endedDaysAgo != null && over.state === "closed" ? now - over.endedDaysAgo * 86_400_000 : null,
+            open_items: 1,
+            needs_you: 0,
+            conversations: 1,
+            milestones: 3,
+            last_milestone: null,
+            current: over.current ?? false,
+            active: over.active ?? true,
+            how: "joined",
+            joined_at: now - over.joinedDaysAgo * 86_400_000,
+            ended_at: over.active === false && over.endedDaysAgo != null ? now - over.endedDaysAgo * 86_400_000 : null,
+        });
+        (state as unknown as Record<string, unknown>).conversationMissions = {
+            convoId: "c1",
+            links: [
+                link(1594, "Deploy matron-web to chat.example.com", { current: true, joinedDaysAgo: 2 }),
+                link(1706, "Unify matron-web and the Mac app design", { joinedDaysAgo: 6 }),
+                link(1311, "Log retention clean-up", { active: false, joinedDaysAgo: 20, endedDaysAgo: 12 }),
+            ],
+        };
+    }
+}
+
+// ?tasks=1 opens the chat's Tasks & decisions pane beside the conversation on canned items
+// (?tasks=all on the All scope, ?tasks=empty with nothing filed yet).
+{
+    const tasksMode = fixtureParams.get("tasks");
+    if (tasksMode) {
+        const hour = 3_600_000;
+        const now = Date.now();
+        const base = {
+            state: "open",
+            resolution: null,
+            body: "",
+            labels: [],
+            links: [],
+            supersedes: null,
+            origin_convo_id: "c1",
+            created_by: "agent",
+            closed_at: null,
+            mission_id: null,
+            mission_num: null,
+            comment_count: 0,
+            last_comment_at: null,
+            attachments: [],
+            has_image: false,
+            created_at: now - 5 * hour,
+            updated_at: now - 2 * hour,
+        } as const;
+        const task = (num: number, rank: number, title: string, over: Record<string, unknown> = {}) => ({
+            ...base,
+            id: `it_${num}`,
+            num,
+            kind: "task",
+            awaiting: "agent",
+            rank,
+            title,
+            ...over,
+        });
+        const items =
+            tasksMode === "empty"
+                ? []
+                : [
+                      {
+                          ...base,
+                          id: "it_214",
+                          num: 214,
+                          kind: "question",
+                          awaiting: "user",
+                          rank: 0,
+                          title: "Keep the old redirect for a week?",
+                          body: "The new route is live; the old one can go now or after the weekly report.",
+                          comment_count: 1,
+                      },
+                      task(210, 100, "Add a health check to the deploy script"),
+                      task(211, 200, "Roll the staging certificate", { body: "Expires in nine days." }),
+                      task(212, 300, "Write the rollback runbook", { awaiting: null }),
+                      {
+                          ...base,
+                          id: "it_208",
+                          num: 208,
+                          kind: "decision",
+                          awaiting: null,
+                          rank: 0,
+                          title: "Deploy from tags, not from main",
+                          created_at: now - 26 * hour,
+                      },
+                      ...(tasksMode === "all"
+                          ? [
+                                task(305, 150, "Prune backups older than 30 days", { origin_convo_id: "c2" }),
+                                {
+                                    ...base,
+                                    id: "it_306",
+                                    num: 306,
+                                    kind: "question",
+                                    awaiting: "user",
+                                    rank: 0,
+                                    title: "Run the dry-run against a copy of last night's dump?",
+                                    origin_convo_id: "c3",
+                                    updated_at: now - hour,
+                                },
+                            ]
+                          : []),
+                      task(205, 50, "Tag the release", {
+                          state: "closed",
+                          resolution: "done",
+                          awaiting: null,
+                          closed_at: now - 30 * hour,
+                      }),
+                  ];
+        const stub = client as unknown as Record<string, unknown>;
+        stub.loadChatTasks = async () => undefined;
+        stub.createChatItem = async () => ({ ok: true });
+        (state as unknown as Record<string, unknown>).chatTasks = {
+            open: true,
+            scope: tasksMode === "all" ? "all" : "c1",
+            ...(tasksMode === "all" ? { allFor: "c1" } : {}),
+            items,
+        };
+        (state as unknown as Record<string, unknown>).inboxItems = items.filter(
+            (item) => item.state === "open" && item.awaiting === "user",
+        );
+    }
+}
+
 // ?tracker=inbox | ?tracker=item opens the tracker pane on canned data (unify step 5); the
 // network loads are stubbed so the fixture stays offline.
 const trackerMode = fixtureParams.get("tracker");
-if (trackerMode === "projects" || trackerMode === "project") {
+if (trackerMode === "projects" || trackerMode === "project" || trackerMode === "mission") {
     const now = Date.now();
     const project = (
         num: number,
@@ -554,12 +1131,91 @@ if (trackerMode === "projects" || trackerMode === "project") {
     }
     const tracker = state as unknown as Record<string, unknown>;
     tracker.projects = projects;
-    // One mission filed in no project, shown below the cards.
-    tracker.missions = [{ ...mission(1311, "Log retention clean-up", null, "idle", 0), project_id: null }];
+    // Missions filed in no project, shown below the cards: one active, two quiet for over a week
+    // (folded under "Quiet for over a week").
+    tracker.missions = [
+        { ...mission(1311, "Log retention clean-up", null, "idle", 0), project_id: null },
+        { ...mission(1187, "Try a smaller base image", null, "quiet", 0), project_id: null },
+        { ...mission(1102, "Archive the old status page", null, "quiet", 0), project_id: null },
+    ];
     tracker.trackerView =
         trackerMode === "project"
             ? { open: true, view: "missions", selectedProjectId: 2645 }
             : { open: true, view: "missions" };
+    // ?tracker=mission: a mission page with a status, both item groups and enough milestones to page.
+    if (trackerMode === "mission") {
+        tracker.trackerView = { open: true, view: "missions", selectedMissionId: 1706 };
+        const steps = [
+            "Projects dashboard and project page merged",
+            "Settings sheet follows the Mac layout",
+            "User: run phase 2 all the way through, missions included",
+            "Tracker pane restyled with the new tokens",
+            "Chat header and composer aligned",
+            "Sidebar groups and session tags landed",
+        ];
+        const milestones = Array.from({ length: 24 }, (_, index) => ({
+            id: `ml_${index}`,
+            mission_id: "ms_1706",
+            num: 3990 - index,
+            kind: index % 6 === 2 ? "user_input" : "progress",
+            title: index < steps.length ? steps[index] : `Review round ${24 - index} addressed`,
+            body: index === 0 ? "Both pages read from the same project rollups." : "",
+            convo_id: "c1",
+            seq: 24 - index,
+            device_id: 1,
+            created_by: "agent",
+            created_at: now - (index + 1) * 3 * 3_600_000,
+        }));
+        const ref = (num: number, kind: string, awaiting: string | null, title: string) => ({
+            id: `it_${num}`,
+            num,
+            kind,
+            state: "open",
+            awaiting,
+            title,
+            origin_convo_id: "c1",
+            updated_at: now - 3_600_000,
+        });
+        tracker.trackerMission = {
+            mission: {
+                ...mission(1706, "Unify matron-web and the Mac app design", null, "running", 1),
+                body: "Bring the web client in line with the Mac app, one surface at a time.",
+                status: "Step 7 (projects) in progress; steps 2 to 6 are open PRs waiting on **review**.",
+                status_by: "agent",
+                status_updated_at: now - 12 * 60_000,
+                project_id: "pj_2645",
+                project_num: 2645,
+                open_items: 3,
+                milestones: milestones.length,
+            },
+            milestones,
+            items: [
+                ref(3939, "question", "user", "Merge unify step 2: sign-in follows the Mac app?"),
+                ref(3951, "task", "agent", "Screenshot every themed surface in dark mode"),
+                ref(3944, "decision", null, "Tokens come from the Mac palette, not the old theme"),
+            ],
+            conversations: [
+                { id: "c1", title: "Unify matron-web and the Mac app design", state: "running", box: "box-a" },
+            ],
+        };
+        stub.fetchMissionClosedItems = async () => ({
+            items: [
+                { num: 3901, kind: "task", resolution: "done", title: "Audit every web surface against the Mac app" },
+                { num: 3912, kind: "question", resolution: "answered", title: "Keep the old accent colour?" },
+                { num: 3920, kind: "decision", resolution: "decided", title: "One design token file for both themes" },
+            ].map((row) => ({
+                id: `it_${row.num}`,
+                state: "closed",
+                awaiting: null,
+                mission_id: "ms_1706",
+                mission_num: 1706,
+                origin_convo_id: "c1",
+                updated_at: now - 86_400_000,
+                ...row,
+            })),
+            cursor: null,
+        });
+    }
     if (trackerMode === "project") {
         tracker.trackerProject = {
             project: { ...projects[0], body: "Audit first, then the Mac app sets the direction and the web follows." },
@@ -771,8 +1427,28 @@ if (trackerMode === "inbox" || trackerMode === "item") {
     tracker.trackerView =
         trackerMode === "item" ? { open: true, view: "inbox", selectedItemId: 1755 } : { open: true, view: "inbox" };
     if (trackerMode === "item") {
+        // ?working=running|queued: the indicator at the foot of the thread while the owning
+        // session is mid-turn, or between the user's tap and the turn starting.
+        const workingParam = fixtureParams.get("working");
+        const working =
+            workingParam === "running"
+                ? { state: "running", since: now - 20_000, until: null }
+                : workingParam === "queued"
+                  ? { state: "queued", since: now - 2_000, until: now + 10 * 60_000 }
+                  : null;
+        // ?actions=offered|chosen: the item's own one-tap answers under its body, untapped or with
+        // the user's choice marked (the item then waits on the agent).
+        const actionsParam = fixtureParams.get("actions");
+        const itemActions =
+            actionsParam === "offered" || actionsParam === "chosen"
+                ? {
+                      actions: ["Confirm the order", "Discuss first"],
+                      chosen_action: actionsParam === "chosen" ? "Confirm the order" : null,
+                      awaiting: actionsParam === "chosen" ? "agent" : "user",
+                  }
+                : {};
         tracker.trackerItem = {
-            item: items[0],
+            item: { ...items[0], working, ...itemActions },
             comments: [
                 {
                     id: "cm_1",
@@ -828,6 +1504,60 @@ if (trackerMode === "inbox" || trackerMode === "item") {
                 },
             ],
         };
+        // ?consent=waiting|missing|started|elsewhere: a spawn consent item with the ask's card
+        // answerable inside it, its card not synced yet, started (closed, with the outcome), or
+        // closed with no outcome here (answered on another device). Approve never settles, so a
+        // click shows the sending state.
+        const consentParam = fixtureParams.get("consent");
+        if (consentParam) {
+            const closed = consentParam === "started" || consentParam === "elsewhere";
+            const consentItem = {
+                ...baseItem,
+                id: "it_42",
+                num: 42,
+                kind: "question",
+                state: closed ? "closed" : "open",
+                resolution: closed ? "decided" : null,
+                awaiting: closed ? null : "user",
+                title: "Start a session on box-a to run the test suite?",
+                body: "box-b asks to start a session on **box-a** in `/srv/app`. Sessions in this folder follow the box rules.",
+                labels: ["consent"],
+                links: [{ url: "matron://consent/spawn/sp_42", title: "Spawn request" }],
+                origin_convo_id: "c2",
+                origin_device_id: 2,
+                created_at: now - 6 * 60_000,
+                updated_at: now - 5 * 60_000,
+                closed_at: closed ? now - 60_000 : null,
+            };
+            const request = {
+                seq: 900,
+                convo_id: "c2",
+                ts: now - 6 * 60_000,
+                sender: "agent:box-b",
+                type: "permission_request",
+                payload: {
+                    kind: "agent_spawn",
+                    request_id: "sp_42",
+                    from_name: "box-b",
+                    from_convo_title: "Fix the flaky tests",
+                    target_name: "box-a",
+                    workdir: "/srv/app",
+                    topic: "Run the suite and fix flakes",
+                    task: "Run the full test suite on box-a, find the three flaky tests in the sync module and fix them.\nOpen a pull request with the fixes.",
+                    agent: "claude",
+                    model: "opus",
+                    effort: "high",
+                    effort_source: "box_default",
+                },
+            };
+            const outcome =
+                consentParam === "started" ? { request_id: "sp_42", outcome: "started", room_id: "c1" } : null;
+            stub.spawnConsentRows = async () => ({ request: consentParam === "missing" ? null : request, outcome });
+            stub.answerAgentSpawn = () => new Promise(() => undefined);
+            tracker.inboxItems = [consentItem, ...items];
+            tracker.trackerView = { open: true, view: "inbox", selectedItemId: 42 };
+            tracker.trackerItem = { item: consentItem, comments: [] };
+        }
     }
 }
 
@@ -844,6 +1574,103 @@ if (subScenario === "real-claude" || subScenario === "real-tests") {
         typeof internals.statusFor !== "function" || new URLSearchParams(location.search).has("rawctx")
             ? REAL_STATUS.child
             : internals.statusFor.call(client, state.selectedConversationId!);
+}
+
+// ?rooms=1 puts the selected conversation in two agent-chat rooms (the header's "Rooms · 2") and
+// answers the journal's notification settings: one room silenced, the selected chat muted for an
+// hour, so the bell, the rooms list and Settings → Notifications show their states.
+if (fixtureParams.get("rooms") === "1") {
+    const now = Date.now();
+    state.conversations = [
+        ...state.conversations,
+        {
+            id: "r1",
+            title: "↔️ [r1] Release checklist",
+            agent_device_id: 1,
+            session_state: "running",
+            last_seq: 9,
+            unread_count: 0,
+            snippet: "box-b: migrations are green on staging",
+            created_at: now - 3 * 3600_000,
+            last_ts: now - 4 * 60_000,
+            read_up_to_seq: 9,
+            participants: [1, 2],
+            participant_convos: ["c1", "c3"],
+        },
+        {
+            id: "r2",
+            title: "🔗 [r2] Schema review",
+            agent_device_id: 2,
+            session_state: "waiting",
+            last_seq: 4,
+            unread_count: 0,
+            snippet: "Agreed: keep the old column for one release",
+            created_at: now - 26 * 3600_000,
+            last_ts: now - 5 * 3600_000,
+            read_up_to_seq: 4,
+            participants: [1, 2],
+            participant_convos: ["c2", "c1"],
+        },
+    ];
+    const notify = {
+        mode: "coordinator",
+        events: {
+            prompts: true,
+            questions: true,
+            notices: true,
+            coordinator_done: true,
+            other_done: false,
+            stopped: false,
+            rooms: false,
+            activity: false,
+        },
+        has_coordinator: true,
+        device_level: "all",
+        convos: [
+            { convo_id: "c1", level: "needs_me", mute_until: now + 3600_000 },
+            { convo_id: "r2", level: "none", mute_until: null },
+        ],
+    };
+    const api = JournalApi.prototype as unknown as Record<string, unknown>;
+    api.notifySettings = async () => notify;
+    api.coordinator = async () => ({ convo_id: "c2", consent: true });
+    // A save is accepted; the shots do not change anything.
+    api.updateNotify = async () => notify;
+}
+
+// ?badges=1: the conversation list's needs-you counts and "New" marker, and the Projects badge in
+// the rail. Two questions from c2 and one from c1 wait on the user (two of them on a mission), and
+// c3 arrived without the user starting it and has not been opened.
+if (fixtureParams.get("badges") === "1") {
+    const now = Date.now();
+    const question = (id: string, origin: string, missionId: string | null): Record<string, unknown> => ({
+        id,
+        num: 0,
+        kind: "question",
+        state: "open",
+        resolution: null,
+        awaiting: "user",
+        rank: 0,
+        title: "Pick one",
+        body: "",
+        labels: [],
+        links: [],
+        supersedes: null,
+        origin_convo_id: origin,
+        created_by: "agent",
+        created_at: now,
+        updated_at: now,
+        closed_at: null,
+        mission_id: missionId,
+        mission_num: null,
+        comment_count: 0,
+        last_comment_at: null,
+        attachments: [],
+        has_image: false,
+    });
+    const tracker = state as unknown as Record<string, unknown>;
+    tracker.inboxItems = [question("it_a", "c2", "ms_a"), question("it_b", "c2", null), question("it_c", "c1", "ms_b")];
+    state.newConversationIds = new Set(["c3"]);
 }
 
 // Stub the new-session data path so a driver click on "New session" reaches the folders
@@ -877,10 +1704,436 @@ let opsMode: OpsFixtureMode | null = null;
     id,
     section,
 ) => sectionStateFromReply(section, await opsReply(opsMode ?? "ok", id, section));
-(client as unknown as { recentFolders: () => Promise<unknown[]> }).recentFolders = async () => [
-    { path: "/srv/app/web" },
-    { path: "/srv/app/api" },
-];
+// The offer carries the agent switch and the model / effort pickers; `?newSessionAgents=1`
+// offers Claude only (no switch), as a box without Codex does.
+(client as unknown as { newSessionOffer: () => Promise<unknown> }).newSessionOffer = async () => ({
+    folders: [
+        { path: "/srv/app/web", last_used: Date.now() - 150 * 60_000 },
+        { path: "/srv/app/api", last_used: Date.now() - 3 * 24 * 60 * 60_000 },
+        { path: "/srv/app", last_used: null },
+    ],
+    agentOptions:
+        new URLSearchParams(window.location.search).get("newSessionAgents") === "1"
+            ? [{ value: "claude", label: "Claude" }]
+            : [
+                  { value: "claude", label: "Claude" },
+                  { value: "codex", label: "Codex" },
+              ],
+    defaultAgent: "claude",
+    modelOptions: [
+        { value: "opus", label: "Opus" },
+        { value: "sonnet", label: "Sonnet" },
+        { value: "haiku", label: "Haiku" },
+    ],
+    defaultModel: "opus",
+    effortOptions: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High" },
+        { value: "xhigh", label: "X-High" },
+        { value: "max", label: "Max" },
+    ],
+    defaultEffort: "high",
+});
+
+// Settings → Coordinator shows the consent-approval switch (on); a flip just moves it. Stop session
+// on a Coordinator-approved spawn "sends" at once, or fails with ?stop=fail.
+{
+    const stub = client as unknown as Record<string, unknown>;
+    const patch = (update: Partial<ClientState>): void =>
+        (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch(update);
+    state.coordinatorConsent = { enabled: true };
+    stub.loadCoordinatorConsent = async () => undefined;
+    stub.setCoordinatorConsent = async (enabled: boolean) => patch({ coordinatorConsent: { enabled } });
+    const stopFails = fixtureParams.get("stop") === "fail";
+    stub.sendMessage = async () => !stopFails;
+}
+
+// The Coordinator is c2 (its unread count badges the rail entry); ?coordinator=none leaves it
+// unset, so the rail entry and Settings offer the chooser. The Routines sheet lists the starter
+// set: a pause flips the row, Run now is accepted, and saves and deletes land in the list.
+{
+    const stub = client as unknown as Record<string, unknown>;
+    const patch = (update: Partial<ClientState>): void =>
+        (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch(update);
+    const now = Date.now();
+    const day = new Date(now);
+    const at = (offsetDays: number, hour: number, minute: number): number =>
+        new Date(day.getFullYear(), day.getMonth(), day.getDate() + offsetDays, hour, minute).getTime();
+    const base = { tz: "Europe/London", origin: "seed", created_at: now - 9 * 86_400_000, updated_at: now };
+    const routines: Routine[] = [
+        {
+            ...base,
+            id: "rt_1",
+            name: "daily-sweep",
+            title: "Daily sweep",
+            schedule: "5 7 * * *",
+            trigger: null,
+            prompt: "Follow the daily-sweep section of the playbook.",
+            enabled: true,
+            next_at: at(1, 7, 5),
+            last_fired_at: now - 5 * 3_600_000,
+            last_outcome: "applied now",
+        },
+        {
+            ...base,
+            id: "rt_2",
+            name: "deploy-window",
+            title: "Deploy window",
+            schedule: "30 18 * * 1-5",
+            trigger: null,
+            prompt: "Follow the deploy-window section of the playbook.",
+            enabled: false,
+            next_at: null,
+            last_fired_at: now - 2 * 86_400_000,
+            last_outcome: "applied deferred",
+        },
+        {
+            ...base,
+            id: "rt_3",
+            name: "disk-low",
+            title: "Disk low",
+            schedule: null,
+            trigger: { kind: "disk_under", threshold: 20 },
+            prompt: "Follow the disk-low section of the playbook.",
+            enabled: true,
+            next_at: null,
+            last_fired_at: now - 40 * 60_000,
+            last_outcome: "failed agent_unreachable",
+        },
+        {
+            ...base,
+            id: "rt_4",
+            name: "project-status",
+            title: "Project status",
+            schedule: "0 8,17 * * *",
+            trigger: null,
+            prompt: "Follow the project-status section of the playbook.",
+            enabled: true,
+            next_at: at(0, 17, 0) > now ? at(0, 17, 0) : at(1, 8, 0),
+            last_fired_at: null,
+            last_outcome: null,
+        },
+        {
+            ...base,
+            id: "rt_5",
+            name: "stalled-session",
+            title: "Stalled session",
+            schedule: null,
+            trigger: { kind: "stalled", threshold: 120 },
+            prompt: "Follow the stalled-session section of the playbook.",
+            enabled: true,
+            next_at: null,
+            last_fired_at: null,
+            last_outcome: null,
+        },
+    ];
+    state.coordinatorConvoId = fixtureParams.get("coordinator") === "none" ? null : "c2";
+    const current = (): Routine[] => client.getSnapshot().routines?.list ?? routines;
+    const setList = (list: Routine[]): void =>
+        patch({ routines: { list: [...list].sort((a, b) => a.name.localeCompare(b.name)), unsupported: false } });
+    stub.coordinatorConversationId = async () => client.getSnapshot().coordinatorConvoId ?? null;
+    stub.setCoordinator = async (convoId: string | null) => {
+        patch({ coordinatorConvoId: convoId });
+        return undefined;
+    };
+    stub.loadRoutines = async () => setList(current());
+    stub.watchRoutines = () => {
+        setList(current());
+        return () => undefined;
+    };
+    stub.setRoutineEnabled = async (id: string, enabled: boolean) => {
+        setList(
+            current().map((row) => (row.id === id ? { ...row, enabled, next_at: enabled ? row.next_at : null } : row)),
+        );
+        return undefined;
+    };
+    stub.runRoutine = async () => null;
+    stub.deleteRoutine = async (id: string) => {
+        setList(current().filter((row) => row.id !== id));
+        return undefined;
+    };
+}
+
+// Settings → Devices: a made-up roster (this browser, a phone, two agent boxes). Rename, tag and
+// revoke edit it in place. Add Agent previews any full code as a request from a fixture host and
+// the box "connects" on the first poll; Link a Device shows a fixed code, and with ?link=claimed a
+// device asks to sign in on the first poll.
+{
+    const stub = client as unknown as Record<string, unknown>;
+    const now = Date.now();
+    let roster = [
+        {
+            device_id: 1,
+            kind: "client",
+            name: "Browser",
+            created_at: now - 9 * DAY_MS,
+            lag: 0,
+            last_seen_at: now,
+            connected: true,
+            is_self: true,
+        },
+        {
+            device_id: 3,
+            kind: "client",
+            name: "Phone",
+            created_at: now - 4 * DAY_MS,
+            lag: 12,
+            last_seen_at: now - 2 * 3600_000,
+            connected: false,
+            is_self: false,
+        },
+        {
+            device_id: 2,
+            kind: "agent",
+            name: "box-a",
+            tag_char: "a",
+            created_at: now - 30 * DAY_MS,
+            lag: 0,
+            last_seen_at: now - 60_000,
+            connected: true,
+            is_self: false,
+        },
+        {
+            device_id: 4,
+            kind: "agent",
+            name: "box-b",
+            tag_char: null,
+            created_at: now - 20 * DAY_MS,
+            lag: 0,
+            last_seen_at: now - 3 * DAY_MS,
+            connected: false,
+            is_self: false,
+        },
+    ];
+    const edit = (id: number, change: Record<string, unknown>): void => {
+        roster = roster.map((device) => (device.device_id === id ? { ...device, ...change } : device));
+    };
+    stub.listDevices = async () => roster;
+    stub.renameDevice = async (id: number, name: string) => edit(id, { name });
+    stub.setDeviceTag = async (id: number, tag: string | null) => edit(id, { tag_char: tag });
+    stub.revokeDevice = async (device: { device_id: number }) => {
+        roster = roster.filter((entry) => entry.device_id !== device.device_id);
+    };
+    stub.pairPreview = async () => ({ requester_ip: "box-c.example.com", expires_in: 540 });
+    stub.pairApprove = async (_code: string, name: string, tag: string | null) => {
+        roster = [
+            ...roster,
+            {
+                device_id: 5,
+                kind: "agent",
+                name,
+                tag_char: tag,
+                created_at: Date.now(),
+                lag: 0,
+                last_seen_at: Date.now(),
+                connected: true,
+                is_self: false,
+            },
+        ];
+    };
+    stub.linkStart = async () => ({ link_code: "KTNM-3VQ8", expires_in: 300 });
+    stub.linkStatus = async () =>
+        fixtureParams.get("link") === "claimed"
+            ? { status: "claimed", device_name: "Laptop", requester_ip: "laptop.example.com", expires_in: 280 }
+            : { status: "waiting", expires_in: 290 };
+    stub.linkApprove = async () => undefined;
+    stub.linkDeny = async () => undefined;
+}
+
+// Media stubs: a short generated tone for the voice note, a 404 for the reaped blob.
+function toneWav(seconds = 2, rate = 8000): Blob {
+    const samples = seconds * rate;
+    const view = new DataView(new ArrayBuffer(44 + samples * 2));
+    const text = (offset: number, value: string): void =>
+        [...value].forEach((ch, i) => view.setUint8(offset + i, ch.charCodeAt(0)));
+    text(0, "RIFF");
+    view.setUint32(4, 36 + samples * 2, true);
+    text(8, "WAVEfmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, rate, true);
+    view.setUint32(28, rate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    text(36, "data");
+    view.setUint32(40, samples * 2, true);
+    for (let i = 0; i < samples; i++) view.setInt16(44 + i * 2, Math.sin((i / rate) * 2 * Math.PI * 440) * 8000, true);
+    return new Blob([view.buffer], { type: "audio/wav" });
+}
+// A generated "photo" (a gradient with a few shapes) for the media browser's thumbnails.
+function fixturePhoto(seed: number): Promise<Blob> {
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 240;
+    const ctx = canvas.getContext("2d")!;
+    const hue = (seed * 47) % 360;
+    const gradient = ctx.createLinearGradient(0, 0, 320, 240);
+    gradient.addColorStop(0, `hsl(${hue} 60% 62%)`);
+    gradient.addColorStop(1, `hsl(${(hue + 60) % 360} 55% 38%)`);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 320, 240);
+    ctx.fillStyle = "rgb(255 255 255 / 35%)";
+    for (let i = 0; i < 4; i++) {
+        ctx.beginPath();
+        ctx.arc(((seed + 1) * 70 * (i + 1)) % 320, ((seed + 3) * 40 * (i + 2)) % 240, 18 + i * 9, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob!), "image/png"));
+}
+
+// ?subchats=1: a "Subtask" line in the deploy chat that opens its subagent, which has a transcript
+// of its own for the pane beside the chat. ?media=1: photos, files and links for the media
+// browser. ?pane=1 opens the subagent pane on load.
+const subagentEvents: JournalEvent[] = [];
+if (fixtureParams.get("subchats") === "1") {
+    conversations.push({
+        id: "s3",
+        title: "audit auth call sites",
+        agent_device_id: 1,
+        session_state: "running",
+        last_seq: 3,
+        unread_count: 0,
+        snippet: "11 of 14 handlers checked",
+        created_at: 2,
+        parent_convo_id: "c1",
+        read_up_to_seq: 3,
+    });
+    const at = events[events.length - 1].ts;
+    events.push(
+        {
+            seq: 900,
+            convo_id: "c1",
+            ts: at + 60_000,
+            sender: "agent:claude",
+            type: "text",
+            payload: { body: "Checking every handler before the swap." },
+        },
+        {
+            seq: 901,
+            convo_id: "c1",
+            ts: at + 61_000,
+            sender: "agent:claude",
+            type: "text",
+            payload: { body: "🔀 Subtask: audit auth call sites" },
+        },
+        {
+            seq: 902,
+            convo_id: "c1",
+            ts: at + 62_000,
+            sender: "agent:claude",
+            type: "text",
+            payload: { body: "🔀 Subtask: docs sweep" },
+        },
+    );
+    subagentEvents.push(
+        {
+            seq: 1,
+            convo_id: "s3",
+            ts: at + 61_500,
+            sender: "agent:claude",
+            type: "text",
+            payload: { body: "Listing every route that reads the session cookie." },
+        },
+        {
+            seq: 2,
+            convo_id: "s3",
+            ts: at + 62_500,
+            sender: "agent:claude",
+            type: "tool_output",
+            payload: {
+                command: "rg -l 'requireSession' src/routes",
+                exit_code: 0,
+                snippet: "src/routes/admin.ts\nsrc/routes/export.ts\nsrc/routes/upload.ts",
+            },
+        },
+        {
+            seq: 3,
+            convo_id: "s3",
+            ts: at + 63_500,
+            sender: "agent:claude",
+            type: "text",
+            payload: {
+                body: "11 of 14 handlers checked. `export.ts` skips the check on its **HEAD** route — flagging it for the parent.",
+            },
+        },
+    );
+}
+if (fixtureParams.get("media") === "1") {
+    const at = events[0].ts;
+    for (let i = 0; i < 7; i++) {
+        events.push({
+            seq: 800 + i,
+            convo_id: "c1",
+            ts: at + i * 3_600_000,
+            sender: i % 3 ? "agent:claude" : "user:operator",
+            type: "image",
+            payload: { blob_ref: `fixture-photo-${i}`, content_type: "image/png", caption: `Screenshot ${i + 1}` },
+        });
+    }
+    events.push(
+        {
+            seq: 810,
+            convo_id: "c1",
+            ts: at + 8 * 3_600_000,
+            sender: "agent:claude",
+            type: "text",
+            payload: {
+                body: "Release notes are up: https://example.com/releases/1.12 — and the status page is https://status.example.com.",
+            },
+        },
+        {
+            seq: 811,
+            convo_id: "c1",
+            ts: at + 9 * 3_600_000,
+            sender: "user:operator",
+            type: "text",
+            payload: { body: "Compare with [last week's run](https://example.com/runs/412)." },
+        },
+    );
+    events.sort((left, right) => left.ts - right.ts);
+}
+{
+    const stub = client as unknown as Record<string, unknown>;
+    stub.conversationEvents = async (convoId: string): Promise<JournalEvent[]> =>
+        convoId === "s3" ? subagentEvents : convoId === "c1" ? events : [];
+    if (fixtureParams.get("pane") === "1") state.subChatPane = { parentId: "c1", childId: "s3" };
+}
+
+const realMediaUrl = client.mediaUrl.bind(client);
+client.mediaUrl = async (mediaId: string): Promise<string> => {
+    const photo = /^fixture-photo-(\d+)$/.exec(mediaId);
+    if (photo) return URL.createObjectURL(await fixturePhoto(Number(photo[1])));
+    if (mediaId === "fixture-voice") return URL.createObjectURL(toneWav());
+    if (mediaId === "fixture-gone") throw new JournalApiError("Not found", 404);
+    return realMediaUrl(mediaId);
+};
+
+// ?notify=default|granted|denied: a stand-in for the browser's Notification API, so the
+// Settings → Notifications group can be shot in each permission state.
+const notifyParam = new URLSearchParams(window.location.search).get("notify");
+if (notifyParam === "default" || notifyParam === "granted" || notifyParam === "denied") {
+    class FixtureNotification {
+        public static permission: NotificationPermission = notifyParam as NotificationPermission;
+        public static requestPermission = async (): Promise<NotificationPermission> => {
+            FixtureNotification.permission = "granted";
+            return "granted";
+        };
+        public onclick: (() => void) | null = null;
+        public close(): void {}
+    }
+    Object.defineProperty(window, "Notification", { value: FixtureNotification, configurable: true });
+}
+
+// ?context=large puts the open conversation past the compact threshold, so the
+// "Large conversation" nudge shows under the header.
+if (new URLSearchParams(window.location.search).get("context") === "large") {
+    state.sessionStatus = {
+        ...state.sessionStatus,
+        context: { tokens: 512_300, window: 1_000_000, pct: 51 },
+    };
+}
 
 // v6 options sheet: the box's start options (bridge recent_folders reply, parsed).
 (client as unknown as { sessionOptions: () => Promise<unknown> }).sessionOptions = async () => ({
@@ -1333,6 +2586,8 @@ let workMode: WorkFixtureMode = "ok";
 (client as unknown as { work: (groupBy: "repo" | "domain") => Promise<unknown> }).work = (groupBy) =>
     workFixture(workMode, groupBy);
 
+const runbook = (): File => new File([new Uint8Array(1024)], "deploy-runbook.pdf", { type: "application/pdf" });
+const errorLog = (): File => new File([new Uint8Array(512)], "error-log.txt", { type: "text/plain" });
 (window as unknown as { __matron: unknown }).__matron = {
     client,
     openFiles: (path: string = FILES_ROOT) => {
@@ -1397,21 +2652,39 @@ let workMode: WorkFixtureMode = "ok";
         patchState({ filesView: undefined, trackerView: undefined, opsView: { open: true } });
     },
     stageImage: (name = "screenshot.png") => client.stageFiles([imageFile(name)]),
-    // Single NON-image file → hatched "image preview" placeholder + the single-file case
-    // (no thumbnail strip, no "n of N" pill).
-    stageDoc: () =>
-        client.stageFiles([new File([new Uint8Array(1024)], "deploy-runbook.pdf", { type: "application/pdf" })]),
-    stageTwo: () =>
-        client.stageFiles([
-            imageFile("Screenshot 2026-07-25 at 10.12.05.png"),
-            new File([new Uint8Array(512)], "error-log.txt", { type: "text/plain" }),
-        ]),
+    stageDoc: () => client.stageFiles([runbook()]),
+    stageTwo: () => client.stageFiles([imageFile("Screenshot 2026-07-25 at 10.12.05.png"), errorLog()]),
+    // A send in flight: the first file uploading, the rest waiting their turn.
+    trayUploading: () =>
+        patchState({
+            composerAttachments: {
+                c1: [
+                    { id: "t1", file: imageFile("screenshot.png"), state: "uploading", progress: 0.62 },
+                    { id: "t2", file: runbook(), state: "queued" },
+                    { id: "t3", file: errorLog(), state: "queued" },
+                ],
+            },
+        }),
+    // A send that stopped at a failed upload: the reason on the chip, a retry beside remove.
+    trayFailed: () =>
+        patchState({
+            composerAttachments: {
+                c1: [
+                    { id: "t2", file: runbook(), state: "failed", error: "File too large." },
+                    { id: "t3", file: errorLog(), state: "staged" },
+                ],
+            },
+        }),
     setTheme: (t: string) => document.documentElement.setAttribute("data-theme", t),
+    // Switch conversation (or none, for the home page) the way the client's own select would.
+    // A voice note recording in one conversation keeps going, with the app-wide bar elsewhere.
+    selectConversation: (id?: string) =>
+        patchState({ selectedConversationId: id, events: id === "c1" ? state.events : [], pendingMessages: [] }),
     // Drive the child (subagent) view: select the running child s1 of parent c1 → back chip +
     // ↳ header + ringed current pill. The fixture client has no database, so selectConversation
     // no-ops; patch the state directly (mirrors the client's own patch()).
     selectChild: () =>
-        (client as unknown as { patch: (update: Partial<ClientState>) => void }).patch({
+        patchState({
             selectedConversationId: "s1",
             events: [],
             pendingMessages: [],

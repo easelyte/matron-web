@@ -9,6 +9,14 @@ Please see LICENSE files in the repository root for full details.
 
 import type { Mission, MissionDetail, Project, ProjectDetail, TrackerComment, TrackerItem } from "../types";
 
+/** The read-state tracker a component reaches through `client.seen`; a fake client's stand-in. */
+export interface FakeSeen {
+    setItemOnScreen: jest.Mock;
+    removeItem: jest.Mock;
+}
+
+export const fakeSeen = (): FakeSeen => ({ setItemOnScreen: jest.fn(), removeItem: jest.fn() });
+
 export function trackerItem(over: Partial<TrackerItem> = {}): TrackerItem {
     return {
         id: "it_1",
@@ -155,6 +163,94 @@ export function trackerProjectDetail(over: Partial<ProjectDetail> = {}): Project
             },
         ],
         sessions_by_box: { ash: 1, "build-box": 1 },
+        ...over,
+    };
+}
+
+/** `trackerProjectDetail` as a journal with the roll-up sends it: a page of decisions (an answered
+ *  question first), files and milestones, each with more pages behind a cursor. */
+export function trackerProjectDetailWithFeed(over: Partial<ProjectDetail> = {}): ProjectDetail {
+    const now = Date.now();
+    const base = trackerProjectDetail();
+    return {
+        ...base,
+        decisions: {
+            total: 9,
+            rows: [
+                {
+                    id: "it_41",
+                    num: 41,
+                    kind: "question",
+                    state: "closed",
+                    resolution: "answered",
+                    title: "Ship the sign-in change with the tokens?",
+                    created_at: now - 5 * 3_600_000,
+                    closed_at: now - 2 * 3_600_000,
+                    mission_num: 1706,
+                    answer: "Yes, both together.",
+                },
+                {
+                    id: "it_40",
+                    num: 40,
+                    kind: "decision",
+                    state: "open",
+                    resolution: null,
+                    title: "The Mac app leads the design; the web follows",
+                    created_at: now - 3 * 86_400_000,
+                    closed_at: null,
+                    mission_num: 1706,
+                },
+                {
+                    id: "it_39",
+                    num: 39,
+                    kind: "decision",
+                    state: "closed",
+                    resolution: "reversed",
+                    title: "Keep the old sign-in page",
+                    created_at: now - 4 * 86_400_000,
+                    closed_at: now - 3 * 86_400_000,
+                    mission_num: 1594,
+                },
+            ],
+            next_before: "d-cursor",
+        },
+        files: {
+            total: 2,
+            rows: [
+                {
+                    blob_id: "b1",
+                    name: "Sign-in, dark.png",
+                    content_type: "image/png",
+                    mission_num: 1706,
+                    source: { item_num: 41 },
+                    posted_at: now - 4 * 3_600_000,
+                },
+                {
+                    blob_id: "b2",
+                    name: "Token audit.csv",
+                    content_type: "text/csv",
+                    mission_num: 1706,
+                    source: { convo_id: "c1", seq: 12 },
+                    posted_at: now - 2 * 86_400_000,
+                },
+            ],
+            next_before: null,
+        },
+        milestones: {
+            total: 30,
+            rows: [
+                { ...base.recent_milestones[0] },
+                {
+                    ...base.recent_milestones[0],
+                    id: "ml_0",
+                    num: 3940,
+                    kind: "user_input",
+                    title: "Alice: tokens first, then sign-in",
+                    created_at: now - 26 * 3_600_000,
+                },
+            ],
+            next_before: "m-cursor",
+        },
         ...over,
     };
 }

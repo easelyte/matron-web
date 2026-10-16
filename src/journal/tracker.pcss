@@ -11,8 +11,8 @@ Please see LICENSE files in the repository root for full details.
 
 /* ===== Tracker (missions + item inbox) ===== */
 /* A main-region pane in the established visual language (mirrors the Files pane). Composes the
-   --cpd tokens; adds ONE urgent semantic — orange "needs you" — and a purple decision accent, both
-   authored in both themes as scoped --mj-* tokens. Orange appears ONLY where it means "needs you". */
+   shared --mj tokens; adds ONE urgent semantic — orange "needs you" — and a purple decision accent, both
+   authored in both themes here. Orange appears ONLY where it means "needs you". */
 :root {
     --mj-needsyou: #d97706;
     /* Darker for small text: #d97706 is 2.5:1 on the canvas; this is 4.6:1. */
@@ -36,30 +36,30 @@ Please see LICENSE files in the repository root for full details.
     color: var(--mj-needsyou);
 }
 .mj_TrackerGlyph_task {
-    color: var(--cpd-color-text-action-accent);
+    color: var(--mj-color-text-action-accent);
 }
 .mj_TrackerGlyph_decision {
     color: var(--mj-decision);
 }
 .mj_TrackerGlyph_notice {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 .mj_TrackerGlyph_mission_open {
-    color: var(--cpd-color-text-action-accent);
+    color: var(--mj-color-text-action-accent);
 }
 .mj_TrackerGlyph_mission_closed {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 .mj_TrackerGlyph_milestone_user_input {
     color: var(--mj-needsyou);
 }
 .mj_TrackerGlyph_milestone_progress {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 .mj_TrackerGlyph_bubble,
 .mj_TrackerGlyph_jump,
 .mj_TrackerGlyph_photo {
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
 }
 
 .mj_TrackerNeedsYouBadge {
@@ -68,11 +68,11 @@ Please see LICENSE files in the repository root for full details.
     gap: 2px;
     flex: none;
     height: 20px;
-    padding: 0 var(--cpd-space-2x);
-    border-radius: var(--cpd-radius-pill);
+    padding: 0 var(--mj-space-2x);
+    border-radius: var(--mj-radius-pill);
     background: var(--mj-needsyou);
     color: #fff;
-    font: var(--cpd-font-body-xs-semibold, 600 12px/16px var(--cpd-font-family-ui));
+    font: var(--mj-font-body-xs-semibold, 600 12px/16px var(--mj-font-family-ui));
     font-variant-numeric: tabular-nums;
 }
 .mj_TrackerNeedsYouBadge_count {
@@ -87,23 +87,23 @@ Please see LICENSE files in the repository root for full details.
     min-height: 0;
     flex-direction: column;
     width: 100%;
-    background: var(--cpd-color-bg-room-canvas, var(--cpd-color-bg-canvas-default));
+    background: var(--mj-color-bg-chat-canvas, var(--mj-color-bg-canvas-default));
 }
 
 .mj_TrackerPane_top {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     box-sizing: border-box;
     height: 56px;
-    padding: 0 var(--cpd-space-4x);
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    padding: 0 var(--mj-space-4x);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
 }
 
 .mj_TrackerPane_title {
     margin: 0;
-    font: 600 17px/22px var(--cpd-font-family-ui);
-    color: var(--cpd-color-text-primary);
+    font: 600 17px/22px var(--mj-font-family-ui);
+    color: var(--mj-color-text-primary);
 }
 
 .mj_TrackerViewSwitch {
@@ -114,8 +114,8 @@ Please see LICENSE files in the repository root for full details.
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    border: 2px solid var(--cpd-color-border-interactive-secondary);
-    border-top-color: var(--cpd-color-text-action-accent);
+    border: 2px solid var(--mj-color-border-interactive-secondary);
+    border-top-color: var(--mj-color-text-action-accent);
     animation: mj_TrackerSpin 0.7s linear infinite;
 }
 
@@ -126,19 +126,19 @@ Please see LICENSE files in the repository root for full details.
 }
 
 .mj_TrackerErrorBanner {
-    padding: var(--cpd-space-2x) var(--cpd-space-4x);
-    background: var(--cpd-color-bg-subtle-secondary);
-    color: var(--cpd-color-text-critical-primary);
-    font: var(--cpd-font-body-sm-regular);
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    padding: var(--mj-space-2x) var(--mj-space-4x);
+    background: var(--mj-color-bg-subtle-secondary);
+    color: var(--mj-color-text-critical-primary);
+    font: var(--mj-font-body-sm-regular);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
 }
 
 /* A failed refresh of the open item: the loaded record stays, with this note and a retry above it. */
 .mj_TrackerStaleNotice {
-    padding: var(--cpd-space-2x) var(--cpd-space-4x);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    padding: var(--mj-space-2x) var(--mj-space-4x);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
 }
 
 .mj_TrackerPane_body {
@@ -155,52 +155,52 @@ Please see LICENSE files in the repository root for full details.
     width: 100%;
     max-width: 720px;
     margin: 0 auto;
-    padding: var(--cpd-space-2x) 0 var(--cpd-space-8x);
+    padding: var(--mj-space-2x) 0 var(--mj-space-8x);
 }
 
 .mj_TrackerSection {
     display: flex;
     flex-direction: column;
-    padding: var(--cpd-space-2x) 0;
+    padding: var(--mj-space-2x) 0;
 }
 
 .mj_TrackerSection_header {
     margin: 0;
-    padding: var(--cpd-space-2x) var(--cpd-space-4x);
-    font: var(--cpd-font-body-xs-semibold, 600 12px/16px var(--cpd-font-family-ui));
+    padding: var(--mj-space-2x) var(--mj-space-4x);
+    font: var(--mj-font-body-xs-semibold, 600 12px/16px var(--mj-font-family-ui));
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
 }
 
 .mj_TrackerSection_headRow {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--cpd-space-2x);
-    padding-right: var(--cpd-space-4x);
+    gap: var(--mj-space-2x);
+    padding-right: var(--mj-space-4x);
 }
 
 .mj_TrackerSection_toggle {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
     border: 0;
     background: transparent;
-    padding: var(--cpd-space-2x) var(--cpd-space-4x);
-    color: var(--cpd-color-text-tertiary);
-    font: var(--cpd-font-body-xs-semibold, 600 12px/16px var(--cpd-font-family-ui));
+    padding: var(--mj-space-2x) var(--mj-space-4x);
+    color: var(--mj-color-text-tertiary);
+    font: var(--mj-font-body-xs-semibold, 600 12px/16px var(--mj-font-family-ui));
     text-transform: uppercase;
     letter-spacing: 0.04em;
     cursor: pointer;
 }
 .mj_TrackerSection_toggle:hover {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 
 .mj_TrackerSection_chevron {
     display: inline-block;
-    transition: transform var(--cpd-dur-fast) var(--cpd-ease);
+    transition: transform var(--mj-dur-fast) var(--mj-ease);
 }
 .mj_TrackerSection_chevron_open {
     transform: rotate(90deg);
@@ -209,14 +209,14 @@ Please see LICENSE files in the repository root for full details.
 .mj_TrackerToggle {
     display: inline-flex;
     align-items: center;
-    gap: var(--cpd-space-1x);
-    font: var(--cpd-font-body-sm-regular);
-    color: var(--cpd-color-text-secondary);
+    gap: var(--mj-space-1x);
+    font: var(--mj-font-body-sm-regular);
+    color: var(--mj-color-text-secondary);
     cursor: pointer;
     user-select: none;
 }
 .mj_TrackerToggle input {
-    accent-color: var(--cpd-color-bg-accent);
+    accent-color: var(--mj-color-bg-accent);
 }
 
 /* — Item row (inbox idiom) — */
@@ -230,15 +230,15 @@ Please see LICENSE files in the repository root for full details.
     box-sizing: border-box;
     text-align: left;
     border: 0;
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
     background: transparent;
     padding: 6px 12px;
     cursor: pointer;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
 }
 .mj_TrackerItemRow:hover,
 .mj_TrackerMissionRow:hover {
-    background: var(--cpd-state-hover);
+    background: var(--mj-state-hover);
 }
 .mj_TrackerItemRow:focus-visible,
 .mj_TrackerMissionRow:focus-visible {
@@ -252,7 +252,7 @@ Please see LICENSE files in the repository root for full details.
 /* A notice is something to read, not to decide: lighter than a question. */
 .mj_TrackerItemRow_notice .mj_TrackerItemRow_title {
     font-weight: 400;
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 
 /* An open notice's Seen button sits over the row's trailing edge, a sibling of the row button. */
@@ -293,26 +293,26 @@ Please see LICENSE files in the repository root for full details.
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    font: 500 13px/17px var(--cpd-font-family-ui);
-    color: var(--cpd-color-text-primary);
+    font: 500 13px/17px var(--mj-font-family-ui);
+    color: var(--mj-color-text-primary);
 }
 
 .mj_TrackerItemRow_num,
 .mj_TrackerMissionRow_num,
 .mj_TrackerMiniItem_num,
 .mj_TrackerMilestoneRow_num {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum";
-    margin-right: var(--cpd-space-1x);
+    margin-right: var(--mj-space-1x);
 }
 
 .mj_TrackerItemRow_body {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    font: 400 11px/14px var(--cpd-font-family-ui);
-    color: var(--cpd-color-text-secondary);
+    font: 400 11px/14px var(--mj-font-family-ui);
+    color: var(--mj-color-text-secondary);
 }
 
 .mj_TrackerItemRow_meta,
@@ -320,19 +320,19 @@ Please see LICENSE files in the repository root for full details.
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--cpd-space-1x) var(--cpd-space-2x);
-    font: 400 10px/14px var(--cpd-font-family-ui);
-    color: var(--cpd-color-text-secondary);
+    gap: var(--mj-space-1x) var(--mj-space-2x);
+    font: 400 10px/14px var(--mj-font-family-ui);
+    color: var(--mj-color-text-secondary);
 }
 
 .mj_TrackerItemRow_origin {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 
 /* The route-elsewhere chip is actionable, not informational — accent it so it reads apart from the
  * muted "from «chat»" origin note. */
 .mj_TrackerItemRow_routeElsewhere {
-    color: var(--cpd-color-text-action-accent);
+    color: var(--mj-color-text-action-accent);
     font-weight: 600;
 }
 
@@ -340,7 +340,7 @@ Please see LICENSE files in the repository root for full details.
     display: inline-flex;
     align-items: center;
     gap: 2px;
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
     font-variant-numeric: tabular-nums;
 }
 
@@ -352,7 +352,7 @@ Please see LICENSE files in the repository root for full details.
     font-weight: 600;
 }
 .mj_TrackerItemRow_status_muted {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 
 .mj_TrackerItemRow_comments {
@@ -370,9 +370,9 @@ Please see LICENSE files in the repository root for full details.
     align-items: center;
     justify-content: center;
     align-self: center;
-    border-radius: var(--cpd-radius-sm);
-    background: var(--cpd-color-bg-subtle-secondary);
-    color: var(--cpd-color-text-tertiary);
+    border-radius: var(--mj-radius-sm);
+    background: var(--mj-color-bg-subtle-secondary);
+    color: var(--mj-color-text-tertiary);
     font-size: 18px;
 }
 
@@ -382,7 +382,7 @@ Please see LICENSE files in the repository root for full details.
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    font: var(--cpd-font-body-strong);
+    font: var(--mj-font-body-strong);
 }
 .mj_TrackerMissionRow_meta {
     align-items: center;
@@ -391,24 +391,24 @@ Please see LICENSE files in the repository root for full details.
     font-size: 15px;
 }
 .mj_TrackerMissionRow_sep {
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
 }
 .mj_TrackerMissionRow_milestone {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
     max-width: 24ch;
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 .mj_TrackerMissionRow_age {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 .mj_TrackerMissionRow_summary {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    font: var(--cpd-font-body-sm-regular);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+    color: var(--mj-color-text-secondary);
 }
 
 /* — Empty states — */
@@ -416,26 +416,46 @@ Please see LICENSE files in the repository root for full details.
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--cpd-space-2x);
-    padding: var(--cpd-space-12x) var(--cpd-space-6x);
+    gap: var(--mj-space-2x);
+    padding: var(--mj-space-12x) var(--mj-space-6x);
     text-align: center;
 }
 .mj_TrackerEmpty_title {
     margin: 0;
-    font: var(--cpd-font-title);
-    color: var(--cpd-color-text-primary);
+    font: var(--mj-font-title);
+    color: var(--mj-color-text-primary);
 }
 .mj_TrackerEmpty_hint {
     margin: 0;
-    font: var(--cpd-font-body-sm-regular);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+    color: var(--mj-color-text-secondary);
     max-width: 40ch;
 }
 
 /* — Inbox filter toggle — */
 .mj_TrackerInboxToggle {
     align-self: center;
-    margin: var(--cpd-space-2x) 0;
+    margin: var(--mj-space-2x) 0;
+}
+
+/* The Done tab's next page: a quiet full-width row under the list. */
+.mj_TrackerShowMore {
+    display: block;
+    width: 100%;
+    padding: var(--mj-space-3x) var(--mj-space-4x);
+    border: 0;
+    background: transparent;
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+    text-align: center;
+    cursor: pointer;
+}
+.mj_TrackerShowMore:hover:not(:disabled) {
+    background: var(--mj-state-hover);
+    color: var(--mj-color-text-primary);
+}
+.mj_TrackerShowMore:disabled {
+    cursor: default;
 }
 
 /* — Detail shell — */
@@ -448,11 +468,11 @@ Please see LICENSE files in the repository root for full details.
 .mj_TrackerDetail_head {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     box-sizing: border-box;
     min-height: 48px;
-    padding: var(--cpd-space-2x) var(--cpd-space-4x);
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    padding: var(--mj-space-2x) var(--mj-space-4x);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
 }
 .mj_TrackerDetail_scroll {
     flex: 1 1 0;
@@ -463,10 +483,10 @@ Please see LICENSE files in the repository root for full details.
     box-sizing: border-box;
     width: 100%;
     /* Mac item thread: a 640pt reading column. */
-    max-width: calc(640px + 2 * var(--cpd-space-4x));
+    max-width: calc(640px + 2 * var(--mj-space-4x));
     box-sizing: border-box;
     margin: 0 auto;
-    padding: var(--cpd-space-4x) var(--cpd-space-4x) var(--cpd-space-10x);
+    padding: var(--mj-space-4x) var(--mj-space-4x) var(--mj-space-10x);
     scrollbar-color: var(--mj-scrollbar) transparent;
 }
 
@@ -476,22 +496,53 @@ Please see LICENSE files in the repository root for full details.
     justify-content: center;
     border: 0;
     background: transparent;
-    padding: var(--cpd-space-1x);
-    border-radius: var(--cpd-radius-sm);
-    color: var(--cpd-color-text-secondary);
+    padding: var(--mj-space-1x);
+    border-radius: var(--mj-radius-sm);
+    color: var(--mj-color-text-secondary);
     cursor: pointer;
     font-size: 20px;
 }
 .mj_TrackerBack:hover {
-    background: var(--cpd-state-hover);
+    background: var(--mj-state-hover);
+}
+
+/* — Breadcrumb (mission page): Projects › project › #N — */
+.mj_TrackerCrumbs {
+    display: flex;
+    align-items: baseline;
+    gap: var(--mj-space-1x);
+    min-width: 0;
+    font: var(--mj-font-body-sm-regular);
+}
+.mj_TrackerCrumb {
+    border: 0;
+    background: transparent;
+    padding: var(--mj-space-1x);
+    border-radius: var(--mj-radius-sm);
+    color: var(--mj-color-text-action-accent);
+    font: inherit;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+button.mj_TrackerCrumb:hover {
+    background: var(--mj-state-hover);
+}
+.mj_TrackerCrumb_current {
+    font-variant-numeric: tabular-nums;
+    cursor: default;
+}
+.mj_TrackerCrumbs_sep {
+    color: var(--mj-color-text-tertiary);
 }
 
 .mj_TrackerTextButton {
     border: 0;
     background: transparent;
-    padding: var(--cpd-space-1x) var(--cpd-space-2x);
-    color: var(--cpd-color-text-action-accent);
-    font: var(--cpd-font-body-sm-regular);
+    padding: var(--mj-space-1x) var(--mj-space-2x);
+    color: var(--mj-color-text-action-accent);
+    font: var(--mj-font-body-sm-regular);
     cursor: pointer;
 }
 .mj_TrackerTextButton:hover:not(:disabled) {
@@ -507,44 +558,44 @@ Please see LICENSE files in the repository root for full details.
 .mj_TrackerMissionHead {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-3x);
-    margin-bottom: var(--cpd-space-4x);
+    gap: var(--mj-space-3x);
+    margin-bottom: var(--mj-space-4x);
 }
 .mj_TrackerMissionHead_title {
     display: flex;
     align-items: baseline;
     flex-wrap: wrap;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
 }
 .mj_TrackerMissionHead_num,
 .mj_TrackerItemHead_kind {
     font-variant-numeric: tabular-nums;
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 .mj_TrackerMissionHead_name {
     margin: 0;
-    font: var(--cpd-font-heading);
-    color: var(--cpd-color-text-primary);
+    font: var(--mj-font-heading);
+    color: var(--mj-color-text-primary);
 }
 
 .mj_TrackerStateLabel {
-    padding: 2px var(--cpd-space-2x);
-    border-radius: var(--cpd-radius-pill);
-    font: var(--cpd-font-meta);
+    padding: 2px var(--mj-space-2x);
+    border-radius: var(--mj-radius-pill);
+    font: var(--mj-font-meta);
     font-weight: 600;
 }
 .mj_TrackerStateLabel_open {
-    color: var(--cpd-color-text-action-accent);
-    background: var(--cpd-state-selected);
+    color: var(--mj-color-text-action-accent);
+    background: var(--mj-state-selected);
 }
 .mj_TrackerStateLabel_closed {
-    color: var(--cpd-color-text-secondary);
-    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--mj-color-text-secondary);
+    background: var(--mj-color-bg-subtle-secondary);
 }
 
 .mj_TrackerProse {
-    font: var(--cpd-font-body);
-    color: var(--cpd-color-text-primary);
+    font: var(--mj-font-body);
+    color: var(--mj-color-text-primary);
     overflow-wrap: anywhere;
 }
 
@@ -558,25 +609,25 @@ Please see LICENSE files in the repository root for full details.
 .mj_TrackerCloseSummary {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
 }
 .mj_TrackerDivider {
     width: 100%;
     height: 0;
     border: 0;
-    border-top: 1px solid var(--cpd-color-border-subtle);
-    margin: var(--cpd-space-2x) 0 0;
+    border-top: 1px solid var(--mj-color-border-subtle);
+    margin: var(--mj-space-2x) 0 0;
 }
 .mj_TrackerCaption {
     margin: 0;
-    font: var(--cpd-font-body-xs-semibold, 600 12px/16px var(--cpd-font-family-ui));
+    font: var(--mj-font-body-xs-semibold, 600 12px/16px var(--mj-font-family-ui));
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
 }
 .mj_TrackerClosedOver {
     margin: 0;
-    font: var(--cpd-font-body-sm-regular);
+    font: var(--mj-font-body-sm-regular);
     font-weight: 600;
     color: var(--mj-needsyou);
 }
@@ -585,19 +636,19 @@ Please see LICENSE files in the repository root for full details.
 .mj_TrackerMilestoneRow {
     display: flex;
     align-items: flex-start;
-    gap: var(--cpd-space-3x);
+    gap: var(--mj-space-3x);
     width: 100%;
     box-sizing: border-box;
     text-align: left;
     border: 0;
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
     background: transparent;
-    padding: var(--cpd-space-3x) 0;
+    padding: var(--mj-space-3x) 0;
     cursor: pointer;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
 }
 .mj_TrackerMilestoneRow:hover {
-    background: var(--cpd-state-hover);
+    background: var(--mj-state-hover);
 }
 .mj_TrackerMilestoneRow_glyph {
     flex: none;
@@ -616,50 +667,50 @@ Please see LICENSE files in the repository root for full details.
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    font: var(--cpd-font-body-strong);
+    font: var(--mj-font-body-strong);
 }
 .mj_TrackerMilestoneRow_body {
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    font: var(--cpd-font-body-sm-regular);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+    color: var(--mj-color-text-secondary);
 }
 .mj_TrackerMilestoneRow_meta {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--cpd-space-1x) var(--cpd-space-2x);
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-tertiary);
+    gap: var(--mj-space-1x) var(--mj-space-2x);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-tertiary);
 }
 .mj_TrackerMilestoneRow_hint {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 .mj_TrackerMilestoneRow_jump {
     flex: none;
     align-self: center;
     font-size: 16px;
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
 }
 
 /* — Mini item row (mission open-items) — */
 .mj_TrackerMiniItem {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     width: 100%;
     box-sizing: border-box;
     text-align: left;
     border: 0;
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
     background: transparent;
-    padding: var(--cpd-space-2x) 0;
+    padding: var(--mj-space-2x) 0;
     cursor: pointer;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
 }
 .mj_TrackerMiniItem:hover {
-    background: var(--cpd-state-hover);
+    background: var(--mj-state-hover);
 }
 .mj_TrackerMiniItem_needsyou {
     box-shadow: inset 3px 0 0 var(--mj-needsyou);
@@ -674,31 +725,71 @@ Please see LICENSE files in the repository root for full details.
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    font: var(--cpd-font-body-sm-regular);
+    font: var(--mj-font-body-sm-regular);
 }
 .mj_TrackerMiniItem_needsyouTag {
     flex: none;
     color: var(--mj-needsyou);
-    font: var(--cpd-font-meta);
+    font: var(--mj-font-meta);
     font-weight: 600;
+}
+.mj_TrackerMiniItem_closed .mj_TrackerMiniItem_title {
+    color: var(--mj-color-text-secondary);
+}
+.mj_TrackerMiniItem_status {
+    flex: none;
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-meta);
+}
+.mj_TrackerShowMore {
+    align-self: flex-start;
+    margin-top: var(--mj-space-1x);
+}
+
+/* — Mission status card: the status as the page's headline, with its byline — */
+.mj_TrackerMissionStatus {
+    margin-bottom: var(--mj-space-4x);
+}
+.mj_TrackerMissionStatus_head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+}
+.mj_TrackerMissionStatus_label {
+    color: var(--mj-color-text-secondary);
+    font: 600 12px/16px var(--mj-font-family-ui);
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+}
+.mj_TrackerMissionStatus_by {
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
+}
+.mj_TrackerMissionStatus_text {
+    font: 400 17px/24px var(--mj-font-family-ui);
+    color: var(--mj-color-text-primary);
+}
+.mj_TrackerMissionStatus_text p {
+    margin: 0;
 }
 
 /* — Conversation row — */
 .mj_TrackerConvoRow {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
-    padding: var(--cpd-space-2x) 0;
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
-    font: var(--cpd-font-body-sm-regular);
+    gap: var(--mj-space-2x);
+    padding: var(--mj-space-2x) 0;
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+    font: var(--mj-font-body-sm-regular);
 }
 .mj_TrackerConvoRow_box {
     flex: none;
-    padding: 1px var(--cpd-space-2x);
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-subtle-secondary);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-meta);
+    padding: 1px var(--mj-space-2x);
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-subtle-secondary);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-meta);
 }
 .mj_TrackerConvoRow_main {
     display: flex;
@@ -712,31 +803,31 @@ Please see LICENSE files in the repository root for full details.
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
 }
 .mj_TrackerConvoRow_state {
     flex: none;
-    color: var(--cpd-color-text-tertiary);
-    font: var(--cpd-font-meta);
+    color: var(--mj-color-text-tertiary);
+    font: var(--mj-font-meta);
 }
 
 /* — Close-mission — */
 .mj_TrackerCloseMission {
-    gap: var(--cpd-space-2x);
-    padding-left: var(--cpd-space-4x);
-    padding-right: var(--cpd-space-4x);
+    gap: var(--mj-space-2x);
+    padding-left: var(--mj-space-4x);
+    padding-right: var(--mj-space-4x);
 }
 .mj_TrackerTextarea {
     width: 100%;
     box-sizing: border-box;
     resize: vertical;
     min-height: 72px;
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: var(--cpd-radius-md);
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
-    padding: var(--cpd-space-2x) var(--cpd-space-3x);
-    font: var(--cpd-font-body);
+    border: 1px solid var(--mj-color-border-interactive-secondary);
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-primary);
+    padding: var(--mj-space-2x) var(--mj-space-3x);
+    font: var(--mj-font-body);
 }
 .mj_TrackerTextarea:focus-visible {
     outline: var(--mj-focus-ring);
@@ -745,39 +836,39 @@ Please see LICENSE files in the repository root for full details.
 .mj_TrackerConfirm {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-2x);
-    padding: var(--cpd-space-3x);
-    border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: var(--cpd-radius-md);
-    background: var(--cpd-color-bg-subtle-primary);
+    gap: var(--mj-space-2x);
+    padding: var(--mj-space-3x);
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-subtle-primary);
 }
 .mj_TrackerConfirm_title {
     margin: 0;
-    font: var(--cpd-font-body-strong);
-    color: var(--cpd-color-text-primary);
+    font: var(--mj-font-body-strong);
+    color: var(--mj-color-text-primary);
 }
 .mj_TrackerConfirm_actions {
     display: flex;
     justify-content: flex-end;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
 }
 
 /* — Item detail head — */
 .mj_TrackerItemHead_kind {
     display: inline-flex;
     align-items: center;
-    gap: var(--cpd-space-1x);
-    font: var(--cpd-font-body-strong);
-    color: var(--cpd-color-text-secondary);
+    gap: var(--mj-space-1x);
+    font: var(--mj-font-body-strong);
+    color: var(--mj-color-text-secondary);
 }
 .mj_TrackerItemHead_glyph {
     font-size: 18px;
 }
 
 .mj_TrackerStatusPill {
-    padding: 2px var(--cpd-space-2x);
-    border-radius: var(--cpd-radius-pill);
-    font: var(--cpd-font-meta);
+    padding: 2px var(--mj-space-2x);
+    border-radius: var(--mj-radius-pill);
+    font: var(--mj-font-meta);
     font-weight: 600;
     white-space: nowrap;
 }
@@ -786,8 +877,8 @@ Please see LICENSE files in the repository root for full details.
     background: var(--mj-needsyou-bg);
 }
 .mj_TrackerStatusPill_muted {
-    color: var(--cpd-color-text-secondary);
-    background: var(--cpd-color-bg-subtle-secondary);
+    color: var(--mj-color-text-secondary);
+    background: var(--mj-color-bg-subtle-secondary);
 }
 
 .mj_TrackerMenu {
@@ -797,38 +888,38 @@ Please see LICENSE files in the repository root for full details.
 .mj_TrackerMenu_list {
     position: absolute;
     right: 0;
-    top: calc(100% + var(--cpd-space-1x));
+    top: calc(100% + var(--mj-space-1x));
     z-index: 20;
     display: flex;
     flex-direction: column;
     min-width: 160px;
-    padding: var(--cpd-space-1x);
-    border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: var(--cpd-radius-md);
-    background: var(--cpd-color-bg-canvas-raised);
-    box-shadow: var(--cpd-shadow-md);
+    padding: var(--mj-space-1x);
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-canvas-raised);
+    box-shadow: var(--mj-shadow-md);
 }
 .mj_TrackerMenu_item {
     text-align: left;
     border: 0;
     background: transparent;
-    padding: var(--cpd-space-2x) var(--cpd-space-3x);
-    border-radius: var(--cpd-radius-sm);
-    color: var(--cpd-color-text-primary);
-    font: var(--cpd-font-body-sm-regular);
+    padding: var(--mj-space-2x) var(--mj-space-3x);
+    border-radius: var(--mj-radius-sm);
+    color: var(--mj-color-text-primary);
+    font: var(--mj-font-body-sm-regular);
     cursor: pointer;
 }
 .mj_TrackerMenu_item:hover {
-    background: var(--cpd-state-hover);
+    background: var(--mj-state-hover);
 }
 .mj_TrackerMenu_item_danger {
-    color: var(--cpd-color-text-critical-primary);
+    color: var(--mj-color-text-critical-primary);
 }
 
 .mj_TrackerItemTitle {
-    margin: 0 0 var(--cpd-space-2x);
-    font: 600 22px/28px var(--cpd-font-family-ui);
-    color: var(--cpd-color-text-primary);
+    margin: 0 0 var(--mj-space-2x);
+    font: 600 22px/28px var(--mj-font-family-ui);
+    color: var(--mj-color-text-primary);
     user-select: text;
 }
 
@@ -839,21 +930,21 @@ Please see LICENSE files in the repository root for full details.
     flex-direction: column;
     align-items: flex-start;
     gap: 2px;
-    margin-bottom: var(--cpd-space-3x);
+    margin-bottom: var(--mj-space-3x);
     min-width: 0;
 }
 
 .mj_TrackerContext_row {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
     max-width: 100%;
     min-width: 0;
     border: 0;
     background: transparent;
     padding: 0;
-    color: var(--cpd-color-text-secondary);
-    font: 400 12px/16px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
     text-align: left;
     cursor: pointer;
 }
@@ -875,36 +966,55 @@ Please see LICENSE files in the repository root for full details.
 
 .mj_TrackerContext_row:hover .mj_TrackerContext_text,
 .mj_TrackerContext_row:focus-visible .mj_TrackerContext_text {
-    color: var(--cpd-color-text-action-accent);
+    color: var(--mj-color-text-action-accent);
     text-decoration: underline;
+}
+
+.mj_TrackerHandover {
+    max-width: 100%;
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
+    overflow-wrap: anywhere;
 }
 
 .mj_TrackerLabels,
 .mj_TrackerLinks {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--cpd-space-1x);
-    margin-bottom: var(--cpd-space-3x);
+    gap: var(--mj-space-1x);
+    margin-bottom: var(--mj-space-3x);
+}
+/* A spawn consent item's card, between the links and the body, in the timeline card's chrome. */
+.mj_TrackerConsent {
+    margin-bottom: 18px;
+}
+.mj_TrackerConsent .mj_PromptCard {
+    max-width: none;
+}
+.mj_TrackerConsent_note {
+    margin: 0;
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
 }
 .mj_TrackerLabel {
-    padding: 1px var(--cpd-space-2x);
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-subtle-secondary);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-meta);
+    padding: 1px var(--mj-space-2x);
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-subtle-secondary);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-meta);
 }
 .mj_TrackerLabel_routeElsewhere {
     background: transparent;
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    color: var(--cpd-color-text-action-accent);
+    border: 1px solid var(--mj-color-border-interactive-secondary);
+    color: var(--mj-color-text-action-accent);
     font-weight: 600;
 }
 .mj_TrackerLinkChip {
-    padding: 1px var(--cpd-space-2x);
-    border-radius: var(--cpd-radius-pill);
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    color: var(--cpd-color-text-action-accent);
-    font: var(--cpd-font-meta);
+    padding: 1px var(--mj-space-2x);
+    border-radius: var(--mj-radius-pill);
+    border: 1px solid var(--mj-color-border-interactive-secondary);
+    color: var(--mj-color-text-action-accent);
+    font: var(--mj-font-meta);
     text-decoration: none;
     max-width: 32ch;
     overflow: hidden;
@@ -913,7 +1023,7 @@ Please see LICENSE files in the repository root for full details.
 }
 /* A link whose scheme the client will not open (not http(s), not a valid in-app item link). */
 .mj_TrackerLinkChip_inert {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
     border-style: dashed;
     cursor: default;
 }
@@ -921,10 +1031,15 @@ Please see LICENSE files in the repository root for full details.
 .mj_TrackerItemBody {
     margin-bottom: 18px;
     border-radius: 10px;
-    background: var(--cpd-color-bg-canvas-default);
-    box-shadow: var(--cpd-shadow-sm);
+    background: var(--mj-color-bg-canvas-default);
+    box-shadow: var(--mj-shadow-sm);
     padding: 14px;
-    font: 400 16px/24px var(--cpd-font-family-ui);
+    font: 400 16px/24px var(--mj-font-family-ui);
+}
+
+/* — Working indicator: the chat's three dots (.mj_Activity), at the foot of the thread — */
+.mj_Activity.mj_TrackerWorking {
+    margin: 18px 0 0 14px;
 }
 
 /* — Comment thread — */
@@ -935,28 +1050,28 @@ Please see LICENSE files in the repository root for full details.
 }
 
 .mj_TrackerThread .mj_TrackerProse {
-    font: 400 16px/24px var(--cpd-font-family-ui);
+    font: 400 16px/24px var(--mj-font-family-ui);
 }
 
 .mj_TrackerComment_agent {
     border-radius: 10px;
-    background: var(--cpd-color-bg-canvas-default);
-    box-shadow: var(--cpd-shadow-sm);
+    background: var(--mj-color-bg-canvas-default);
+    box-shadow: var(--mj-shadow-sm);
     padding: 14px;
 }
 .mj_TrackerComment {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
 }
 .mj_TrackerComment_head {
     display: flex;
     align-items: baseline;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
 }
 .mj_TrackerComment_author {
-    font: var(--cpd-font-label);
-    color: var(--cpd-color-text-primary);
+    font: var(--mj-font-label);
+    color: var(--mj-color-text-primary);
 }
 /* The conversation that wrote an agent's comment is the part of the header that gives way first
    when the row is narrow; a very long box name truncates after it. The time always shows. */
@@ -979,87 +1094,92 @@ Please see LICENSE files in the repository root for full details.
     border: 0;
     background: transparent;
     padding: 0;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
     text-align: left;
     cursor: pointer;
 }
 .mj_TrackerComment_convo:hover,
 .mj_TrackerComment_convo:focus-visible {
-    color: var(--cpd-color-text-action-accent);
+    color: var(--mj-color-text-action-accent);
     text-decoration: underline;
 }
 .mj_TrackerComment_time {
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
 }
 .mj_TrackerComment_user {
     padding: 14px;
     border-radius: 10px;
-    background: var(--cpd-color-bg-self-bubble);
+    background: var(--mj-color-bg-self-bubble);
 }
 .mj_TrackerStatusRow {
     text-align: center;
-    padding: var(--cpd-space-1x) 0;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-tertiary);
+    padding: var(--mj-space-1x) 0;
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-tertiary);
 }
 
 /* One-tap answers under the comment that asks. Pills like the link chips, sized to tap. */
 .mj_TrackerActions {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--cpd-space-2x);
-    margin-top: var(--cpd-space-1x);
+    gap: var(--mj-space-2x);
+    margin-top: var(--mj-space-1x);
 }
 .mj_TrackerAction {
-    padding: var(--cpd-space-1x) var(--cpd-space-3x);
-    border-radius: var(--cpd-radius-pill);
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
+    padding: var(--mj-space-1x) var(--mj-space-3x);
+    border-radius: var(--mj-radius-pill);
+    border: 1px solid var(--mj-color-border-interactive-secondary);
     background: transparent;
-    color: var(--cpd-color-text-action-accent);
-    font: var(--cpd-font-label);
+    color: var(--mj-color-text-action-accent);
+    font: var(--mj-font-label);
     cursor: pointer;
 }
 .mj_TrackerAction:hover:not(:disabled) {
-    background: var(--cpd-state-hover);
+    background: var(--mj-state-hover);
 }
 .mj_TrackerAction:disabled {
     cursor: default;
     opacity: 0.6;
 }
+/* The item's own answers sit between the body card and the thread, the thread's distance from each. */
+.mj_TrackerItemActions {
+    margin-top: 0;
+    margin-bottom: 18px;
+}
 /* The user's answer: filled, and it stays fully legible on a closed item. */
 .mj_TrackerAction_chosen,
 .mj_TrackerAction_chosen:hover:not(:disabled),
 .mj_TrackerAction_chosen:disabled {
-    background: var(--cpd-color-bg-accent);
-    border-color: var(--cpd-color-bg-accent);
-    color: var(--cpd-color-text-on-accent);
+    background: var(--mj-color-bg-accent);
+    border-color: var(--mj-color-bg-accent);
+    color: var(--mj-color-text-on-accent);
     opacity: 1;
 }
 
 .mj_TrackerAttachments {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
 }
 .mj_TrackerAttachmentChip {
     display: inline-flex;
     align-items: center;
-    gap: var(--cpd-space-1x);
-    padding: 1px var(--cpd-space-2x);
-    border-radius: var(--cpd-radius-sm);
-    background: var(--cpd-color-bg-subtle-secondary);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-meta);
+    gap: var(--mj-space-1x);
+    padding: 1px var(--mj-space-2x);
+    border-radius: var(--mj-radius-sm);
+    background: var(--mj-color-bg-subtle-secondary);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-meta);
 }
 .mj_TrackerAttachmentChip_size {
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
 }
 
 /* — Images: inline in a body or comment, and thumbnails for the attachments no ref placed — */
 .mj_TrackerImage {
-    margin: var(--cpd-space-2x) 0;
+    margin: var(--mj-space-2x) 0;
     max-width: min(560px, 100%);
 }
 .mj_TrackerThumb {
@@ -1068,8 +1188,8 @@ Please see LICENSE files in the repository root for full details.
     overflow: hidden;
     width: 72px;
     height: 72px;
-    border-radius: var(--cpd-radius-sm);
-    background: var(--cpd-color-bg-subtle-secondary);
+    border-radius: var(--mj-radius-sm);
+    background: var(--mj-color-bg-subtle-secondary);
 }
 .mj_TrackerThumb img {
     width: 100%;
@@ -1078,59 +1198,59 @@ Please see LICENSE files in the repository root for full details.
 }
 .mj_TrackerThumb:focus-visible,
 .mj_TrackerImage .mj_ImageFrame:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline: 2px solid var(--mj-color-icon-accent-primary);
     outline-offset: 2px;
 }
 .mj_TrackerImage_failed {
     display: inline-flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
 }
 .mj_TrackerImage_failedText {
-    color: var(--cpd-color-text-critical-primary);
-    font: var(--cpd-font-meta);
+    color: var(--mj-color-text-critical-primary);
+    font: var(--mj-font-meta);
 }
 
 /* — Composer — */
 .mj_TrackerComposer {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     width: 100%;
-    max-width: calc(640px + 2 * var(--cpd-space-4x));
+    max-width: calc(640px + 2 * var(--mj-space-4x));
     margin: 0 auto;
     box-sizing: border-box;
-    padding: var(--cpd-space-3x) var(--cpd-space-4x);
-    border-top: 1px solid var(--cpd-color-border-subtle);
+    padding: var(--mj-space-3x) var(--mj-space-4x);
+    border-top: 1px solid var(--mj-color-border-subtle);
     background: transparent;
 }
 .mj_TrackerComposer_row {
     display: flex;
     align-items: flex-end;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
 }
 /* Staged attachments, above the box: a thumbnail for an image, the name and size, a remove. */
 .mj_TrackerComposer_tray {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
 }
 .mj_TrackerComposer_chip {
     display: inline-flex;
     align-items: center;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
     max-width: 220px;
-    padding: 2px 2px 2px var(--cpd-space-2x);
-    border-radius: var(--cpd-radius-sm);
-    background: var(--cpd-color-bg-subtle-secondary);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-meta);
+    padding: 2px 2px 2px var(--mj-space-2x);
+    border-radius: var(--mj-radius-sm);
+    background: var(--mj-color-bg-subtle-secondary);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-meta);
 }
 .mj_TrackerComposer_thumb {
     flex: none;
     width: 28px;
     height: 28px;
-    border-radius: var(--cpd-radius-sm);
+    border-radius: var(--mj-radius-sm);
     object-fit: cover;
 }
 .mj_TrackerComposer_chipName {
@@ -1148,60 +1268,71 @@ Please see LICENSE files in the repository root for full details.
     height: 20px;
     padding: 0;
     border: 0;
-    border-radius: var(--cpd-radius-sm);
+    border-radius: var(--mj-radius-sm);
     background: transparent;
-    color: var(--cpd-color-icon-secondary);
+    color: var(--mj-color-icon-secondary);
     cursor: pointer;
 }
 .mj_TrackerComposer_chipRemove svg {
     width: 12px;
     height: 12px;
 }
-.mj_TrackerComposer_chipRemove:hover {
-    background: var(--cpd-state-hover);
-    color: var(--cpd-color-text-primary);
+.mj_TrackerComposer_chipRemove:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+.mj_TrackerComposer_chipRemove:hover:not(:disabled) {
+    background: var(--mj-state-hover);
+    color: var(--mj-color-text-primary);
 }
 .mj_TrackerComposer_chipRemove:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline: 2px solid var(--mj-color-text-action-accent);
     outline-offset: 0;
 }
-/* A voice note that went alone and failed: held beside the box with Retry / Discard. */
-.mj_TrackerComposer_heldVoice {
+/* A voice note that went alone and failed: held beside the box with Retry / Discard. A typed reply
+   the journal did not take says so the same way, its text and files kept in the box below. */
+.mj_TrackerComposer_heldVoice,
+.mj_TrackerComposer_failure {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
-    color: var(--cpd-color-text-critical-primary);
-    font: var(--cpd-font-meta);
+    gap: var(--mj-space-2x);
+    color: var(--mj-color-text-critical-primary);
+    font: var(--mj-font-meta);
 }
-.mj_TrackerComposer_heldVoiceText {
+.mj_TrackerComposer_heldVoiceText,
+.mj_TrackerComposer_failureText {
     flex: 1 1 auto;
 }
 .mj_TrackerComposer_heldVoiceRetry,
-.mj_TrackerComposer_heldVoiceDiscard {
-    padding: 2px var(--cpd-space-2x);
-    border: 1px solid var(--cpd-color-border-subtle);
-    border-radius: var(--cpd-radius-sm);
+.mj_TrackerComposer_heldVoiceDiscard,
+.mj_TrackerComposer_failureRetry,
+.mj_TrackerComposer_failureDiscard {
+    padding: 2px var(--mj-space-2x);
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-sm);
     background: transparent;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
     font: inherit;
     cursor: pointer;
 }
 .mj_TrackerComposer_heldVoiceRetry:disabled,
-.mj_TrackerComposer_heldVoiceDiscard:disabled {
+.mj_TrackerComposer_heldVoiceDiscard:disabled,
+.mj_TrackerComposer_failureRetry:disabled,
+.mj_TrackerComposer_failureDiscard:disabled {
     opacity: 0.5;
     cursor: default;
 }
-/* The tray holds more than one reply can carry (a failed voice note came back): Send waits. */
+/* The tray holds more files than one comment can carry: Send splits them, and this says so. */
 .mj_TrackerComposer_limit {
-    color: var(--cpd-color-text-critical-primary);
-    font: var(--cpd-font-meta);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-meta);
 }
 .mj_TrackerComposer_attach:disabled {
     opacity: 0.5;
 }
 /* No attach button on the left here, so the textarea gets the same inset the send button has. */
 .mj_TrackerComposer_row {
-    padding-left: var(--cpd-space-2x);
+    padding-left: var(--mj-space-2x);
 }
 .mj_TrackerComposer_input {
     /* The chat composer's field (unify step 4): white, radius 10, shadow, accent border on focus;
@@ -1215,17 +1346,17 @@ Please see LICENSE files in the repository root for full details.
     min-width: 0;
     max-height: 160px;
     resize: none;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
     resize: none;
     border: 1px solid transparent;
-    border-radius: var(--cpd-radius-composer);
-    box-shadow: var(--cpd-shadow-sm);
+    border-radius: var(--mj-radius-composer);
+    box-shadow: var(--mj-shadow-sm);
     padding: 6px 8px;
-    font: 400 13px/18px var(--cpd-font-family-ui);
+    font: 400 13px/18px var(--mj-font-family-ui);
 }
 
 .mj_TrackerComposer_input:focus-visible {
-    border-color: var(--cpd-color-text-action-accent);
+    border-color: var(--mj-color-text-action-accent);
     outline: 0;
 }
 .mj_TrackerComposer_send {
@@ -1236,18 +1367,18 @@ Please see LICENSE files in the repository root for full details.
     width: 32px;
     height: 32px;
     border: 0;
-    border-radius: var(--cpd-radius-md);
+    border-radius: var(--mj-radius-md);
     background: transparent;
-    color: var(--cpd-color-text-action-accent);
+    color: var(--mj-color-text-action-accent);
     cursor: pointer;
     font-size: 20px;
 }
 .mj_TrackerComposer_send:hover:not(:disabled) {
-    background: var(--cpd-state-hover);
+    background: var(--mj-state-hover);
 }
 
 .mj_TrackerComposer_send:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline: 2px solid var(--mj-color-text-action-accent);
     outline-offset: 2px;
 }
 
@@ -1267,7 +1398,7 @@ Please see LICENSE files in the repository root for full details.
 .mj_TrackerCard {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     width: 100%;
     /* Mac item and milestone cards: at most 360pt wide in the timeline. */
     max-width: 360px;
@@ -1285,7 +1416,7 @@ button.mj_TrackerCard {
 .mj_TrackerCard_row {
     display: flex;
     align-items: center;
-    gap: var(--cpd-space-2x);
+    gap: var(--mj-space-2x);
     width: 100%;
     margin: 0;
     padding: 0;
@@ -1301,7 +1432,7 @@ button.mj_TrackerCard {
     font-size: 18px;
 }
 .mj_TrackerCard_num {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
     font-variant-numeric: tabular-nums;
 }
 .mj_TrackerCard_title {
@@ -1311,23 +1442,23 @@ button.mj_TrackerCard {
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    font: var(--cpd-font-body-strong);
-    color: var(--cpd-color-text-primary);
+    font: var(--mj-font-body-strong);
+    color: var(--mj-color-text-primary);
 }
 .mj_TrackerCard_chevron {
     flex: none;
     font-size: 18px;
-    color: var(--cpd-color-text-tertiary);
+    color: var(--mj-color-text-tertiary);
 }
 .mj_TrackerCard_comment {
-    padding-left: calc(18px + var(--cpd-space-2x));
-    border-top: 1px solid var(--cpd-color-border-subtle);
-    padding-top: var(--cpd-space-2x);
+    padding-left: calc(18px + var(--mj-space-2x));
+    border-top: 1px solid var(--mj-color-border-subtle);
+    padding-top: var(--mj-space-2x);
 }
 .mj_TrackerCard_attachment {
-    margin: var(--cpd-space-1x) 0 0;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-secondary);
+    margin: var(--mj-space-1x) 0 0;
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
 }
 .mj_TrackerCard_milestoneBody {
     margin: 0;
@@ -1335,31 +1466,31 @@ button.mj_TrackerCard {
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    font: var(--cpd-font-body-sm-regular);
-    color: var(--cpd-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+    color: var(--mj-color-text-secondary);
 }
 .mj_TrackerCard_subtitle {
     margin: 0;
-    font: var(--cpd-font-meta);
-    color: var(--cpd-color-text-tertiary);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-tertiary);
 }
 
 .mj_TrackerInlineNote {
     display: flex;
     flex-direction: column;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
     width: 100%;
     box-sizing: border-box;
     text-align: left;
-    padding: var(--cpd-space-1x) 0;
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
+    padding: var(--mj-space-1x) 0;
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
 }
 /* The lead line is the note's open button: reset the native button chrome. */
 .mj_TrackerInlineNote_line {
     display: inline-flex;
     align-items: center;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
     align-self: flex-start;
     margin: 0;
     padding: 0;
@@ -1374,20 +1505,20 @@ button.mj_TrackerCard {
     font-size: 15px;
 }
 .mj_TrackerInlineNote_body {
-    padding-left: calc(15px + var(--cpd-space-1x));
-    color: var(--cpd-color-text-primary);
+    padding-left: calc(15px + var(--mj-space-1x));
+    color: var(--mj-color-text-primary);
 }
 
 .mj_TrackerMissionNotice {
     display: inline-flex;
     align-items: center;
-    gap: var(--cpd-space-1x);
+    gap: var(--mj-space-1x);
     border: 0;
     background: transparent;
-    padding: var(--cpd-space-1x) 0;
+    padding: var(--mj-space-1x) 0;
     cursor: pointer;
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
 }
 .mj_TrackerMissionNotice_flag {
     font-size: 14px;
@@ -1417,7 +1548,7 @@ button.mj_TrackerCard {
 
 .mj_TrackerMemoriesHead .mj_TrackerCaption {
     margin: 0;
-    font: 400 12px/16px var(--cpd-font-family-ui);
+    font: 400 12px/16px var(--mj-font-family-ui);
     letter-spacing: 0;
     text-transform: none;
 }
@@ -1434,7 +1565,7 @@ button.mj_TrackerCard {
     box-sizing: border-box;
     padding: 6px 12px;
     border: 0;
-    border-bottom: 1px solid var(--cpd-color-border-subtle);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
     background: transparent;
     color: inherit;
     text-align: left;
@@ -1442,11 +1573,11 @@ button.mj_TrackerCard {
 }
 
 .mj_TrackerMemoryRow:hover {
-    background: var(--cpd-state-hover);
+    background: var(--mj-state-hover);
 }
 
 .mj_TrackerMemoryRow:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline: 2px solid var(--mj-color-text-action-accent);
     outline-offset: -2px;
 }
 
@@ -1465,27 +1596,27 @@ button.mj_TrackerCard {
 
 /* Mac memory row: name in mono 13pt medium, a capsule type chip, 13pt description, 10pt byline. */
 .mj_TrackerMemoryRow_name {
-    font: 500 13px/17px var(--cpd-font-family-mono);
+    font: 500 13px/17px var(--mj-font-family-mono);
 }
 
 .mj_TrackerMemoryRow_type {
     padding: 1px 6px;
-    border-radius: var(--cpd-radius-pill);
+    border-radius: var(--mj-radius-pill);
     background: rgb(128 128 128 / 0.15);
-    color: var(--cpd-color-text-secondary);
-    font: 500 10px/14px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-secondary);
+    font: 500 10px/14px var(--mj-font-family-ui);
 }
 
 .mj_TrackerMemoryRow_desc {
-    font: 400 13px/17px var(--cpd-font-family-ui);
+    font: 400 13px/17px var(--mj-font-family-ui);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .mj_TrackerMemoryRow_meta {
-    font: 400 10px/14px var(--cpd-font-family-ui);
-    color: var(--cpd-color-text-secondary);
+    font: 400 10px/14px var(--mj-font-family-ui);
+    color: var(--mj-color-text-secondary);
 }
 
 .mj_TrackerMemoryForm_field {
@@ -1496,41 +1627,41 @@ button.mj_TrackerCard {
 }
 
 .mj_TrackerMemoryForm_label {
-    font: 400 11px/15px var(--cpd-font-family-ui);
-    color: var(--cpd-color-text-secondary);
+    font: 400 11px/15px var(--mj-font-family-ui);
+    color: var(--mj-color-text-secondary);
 }
 
 .mj_TrackerInput {
     width: 100%;
     box-sizing: border-box;
     padding: 8px 10px;
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: var(--cpd-radius-composer);
-    background: var(--cpd-color-bg-canvas-default);
+    border: 1px solid var(--mj-color-border-interactive-secondary);
+    border-radius: var(--mj-radius-composer);
+    background: var(--mj-color-bg-canvas-default);
     color: inherit;
     font: inherit;
 }
 
 .mj_TrackerInput:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline: 2px solid var(--mj-color-text-action-accent);
     outline-offset: -1px;
 }
 
 .mj_TrackerMemoryForm_error {
-    color: var(--cpd-color-text-critical-primary);
-    font: 400 12px/16px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-critical-primary);
+    font: 400 12px/16px var(--mj-font-family-ui);
     margin: 0 0 8px;
 }
 
 .mj_TrackerMemoryForm_delete {
-    color: var(--cpd-color-text-critical-primary);
+    color: var(--mj-color-text-critical-primary);
 }
 
 /* Memory form (Mac grouped form): description counter, Edit/Preview segmented notes. */
 .mj_TrackerMemoryForm_counter {
     align-self: flex-end;
-    color: var(--cpd-color-text-tertiary);
-    font: 400 10px/14px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-tertiary);
+    font: 400 10px/14px var(--mj-font-family-ui);
     font-variant-numeric: tabular-nums;
 }
 
@@ -1544,24 +1675,24 @@ button.mj_TrackerCard {
 .mj_TrackerSegment {
     display: inline-flex;
     padding: 2px;
-    border-radius: var(--cpd-radius-md);
-    background: var(--cpd-color-bg-subtle-secondary);
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-subtle-secondary);
 }
 
 .mj_TrackerSegment button {
     border: 0;
-    border-radius: var(--cpd-radius-sm);
+    border-radius: var(--mj-radius-sm);
     background: transparent;
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
     cursor: pointer;
     padding: 2px 10px;
-    font: 500 11px/15px var(--cpd-font-family-ui);
+    font: 500 11px/15px var(--mj-font-family-ui);
 }
 
 .mj_TrackerSegment button[aria-pressed="true"] {
-    background: var(--cpd-color-bg-canvas-default);
-    box-shadow: var(--cpd-shadow-sm);
-    color: var(--cpd-color-text-primary);
+    background: var(--mj-color-bg-canvas-default);
+    box-shadow: var(--mj-shadow-sm);
+    color: var(--mj-color-text-primary);
 }
 
 .mj_TrackerMemoryForm_preview {
@@ -1569,15 +1700,15 @@ button.mj_TrackerCard {
     max-height: 480px;
     overflow: auto;
     box-sizing: border-box;
-    border-radius: var(--cpd-radius-composer);
-    background: var(--cpd-color-bg-canvas-default);
-    box-shadow: var(--cpd-shadow-sm);
+    border-radius: var(--mj-radius-composer);
+    background: var(--mj-color-bg-canvas-default);
+    box-shadow: var(--mj-shadow-sm);
     padding: 10px 12px;
 }
 
 .mj_TrackerMemoryForm .mj_TrackerTextarea {
     min-height: 160px;
-    font-family: var(--cpd-font-family-mono);
+    font-family: var(--mj-font-family-mono);
     font-size: 12px;
     line-height: 16px;
 }
@@ -1587,14 +1718,14 @@ button.mj_TrackerCard {
 .mj_TrackerMemoryForm .mj_TrackerSection_header {
     margin: 0;
     padding: 0;
-    color: var(--cpd-color-text-primary);
-    font: 600 17px/22px var(--cpd-font-family-mono);
+    color: var(--mj-color-text-primary);
+    font: 600 17px/22px var(--mj-font-family-mono);
     letter-spacing: 0;
     text-transform: none;
 }
 
 .mj_TrackerMemoryForm .mj_TrackerCaption {
-    font: 400 11px/15px var(--cpd-font-family-ui);
+    font: 400 11px/15px var(--mj-font-family-ui);
     letter-spacing: 0;
     text-transform: none;
 }
@@ -1606,6 +1737,32 @@ button.mj_TrackerCard {
 /* — Projects (unify step 7): the Mac's card dashboard and project page — */
 .mj_ProjectsDashboard {
     padding: 16px;
+}
+
+.mj_ProjectsFilter {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 16px;
+}
+
+.mj_ProjectsFilter_field {
+    width: 100%;
+    max-width: 360px;
+}
+
+.mj_ProjectsFilter_count {
+    flex-shrink: 0;
+    color: var(--mj-color-text-secondary);
+    font-size: 12px;
+}
+
+.mj_ProjectCard_match {
+    overflow: hidden;
+    color: var(--mj-color-text-secondary);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .mj_ProjectsGrid {
@@ -1622,9 +1779,9 @@ button.mj_TrackerCard {
     gap: 9px;
     border: 1px solid rgb(128 128 128 / 0.12);
     border-radius: 12px;
-    background: var(--cpd-color-bg-canvas-default);
-    box-shadow: var(--cpd-shadow-sm);
-    color: var(--cpd-color-text-primary);
+    background: var(--mj-color-bg-canvas-default);
+    box-shadow: var(--mj-shadow-sm);
+    color: var(--mj-color-text-primary);
     cursor: pointer;
     padding: 14px;
     text-align: left;
@@ -1635,7 +1792,7 @@ button.mj_TrackerCard {
 }
 
 .mj_ProjectCard:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline: 2px solid var(--mj-color-text-action-accent);
     outline-offset: 2px;
 }
 
@@ -1655,7 +1812,7 @@ button.mj_TrackerCard {
     overflow: hidden;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
-    font: 600 16px/20px var(--cpd-font-family-ui);
+    font: 600 16px/20px var(--mj-font-family-ui);
 }
 
 .mj_ProjectCard_status {
@@ -1663,18 +1820,18 @@ button.mj_TrackerCard {
     overflow: hidden;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 3;
-    font: 400 13px/18px var(--cpd-font-family-ui);
+    font: 400 13px/18px var(--mj-font-family-ui);
 }
 
 .mj_ProjectCard_status_empty {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 
 .mj_ProjectCard_footer {
     margin-top: auto;
     overflow: hidden;
-    color: var(--cpd-color-text-secondary);
-    font: 400 11px/15px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-secondary);
+    font: 400 11px/15px var(--mj-font-family-ui);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -1683,11 +1840,11 @@ button.mj_TrackerCard {
    white) rather than system red, which is 3.5:1 for this 10px text. */
 .mj_NeedsYouPill {
     flex: none;
-    border-radius: var(--cpd-radius-pill);
+    border-radius: var(--mj-radius-pill);
     background: #d70015;
     color: #fff;
     padding: 1px 7px;
-    font: 600 10px/16px var(--cpd-font-family-ui);
+    font: 600 10px/16px var(--mj-font-family-ui);
     white-space: nowrap;
 }
 
@@ -1721,19 +1878,19 @@ button.mj_TrackerCard {
 
 .mj_ProjectPage_title {
     margin: 0;
-    font: 700 26px/32px var(--cpd-font-family-ui);
+    font: 700 26px/32px var(--mj-font-family-ui);
 }
 
 .mj_ProjectPage_body {
     margin: 6px 0 0;
-    color: var(--cpd-color-text-secondary);
-    font: 400 15px/21px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-secondary);
+    font: 400 15px/21px var(--mj-font-family-ui);
 }
 
 .mj_ProjectPage_meta {
     margin: 4px 0 0;
-    color: var(--cpd-color-text-secondary);
-    font: 400 12px/16px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
 }
 
 .mj_ProjectCardSection {
@@ -1742,7 +1899,7 @@ button.mj_TrackerCard {
     gap: 8px;
     border: 1px solid rgb(128 128 128 / 0.12);
     border-radius: 12px;
-    background: var(--cpd-color-bg-canvas-default);
+    background: var(--mj-color-bg-canvas-default);
     padding: 16px 20px;
 }
 
@@ -1757,20 +1914,20 @@ button.mj_TrackerCard {
 }
 
 .mj_ProjectPage_statusLabel {
-    color: var(--cpd-color-text-secondary);
-    font: 600 12px/16px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-secondary);
+    font: 600 12px/16px var(--mj-font-family-ui);
     letter-spacing: 0.6px;
     text-transform: uppercase;
 }
 
 .mj_ProjectPage_statusBy {
-    color: var(--cpd-color-text-secondary);
-    font: 400 12px/16px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
 }
 
 .mj_ProjectPage_statusText {
     margin: 0;
-    font: 400 17px/24px var(--cpd-font-family-ui);
+    font: 400 17px/24px var(--mj-font-family-ui);
 }
 
 .mj_ProjectPage_columns {
@@ -1801,12 +1958,57 @@ button.mj_TrackerCard {
 }
 
 .mj_ProjectSection_title {
-    font: 600 15px/20px var(--cpd-font-family-ui);
+    font: 600 15px/20px var(--mj-font-family-ui);
 }
 
 .mj_ProjectSection_count {
-    color: var(--cpd-color-text-secondary);
-    font: 400 12px/16px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
+}
+
+/* The pulse line under the title: mission counts with their dots, then the sessions clause. */
+.mj_ProjectPulse {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+}
+
+.mj_ProjectPulse_part {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.mj_ProjectPulse_dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--mj-color-text-tertiary);
+}
+
+.mj_ProjectPulse_dot_running {
+    background: var(--mj-color-usage-low);
+}
+
+.mj_ProjectPulse_dot_waiting {
+    background: var(--mj-color-usage-medium);
+}
+
+.mj_ProjectPulse_dot_quiet,
+.mj_ProjectPulse_dot_closed {
+    opacity: 0.5;
+}
+
+.mj_ProjectPulse_sessions::before {
+    content: "·";
+    margin-right: 10px;
+}
+
+.mj_ProjectPulse_part:first-child + .mj_ProjectPulse_sessions::before,
+.mj_ProjectPulse_sessions:first-child::before {
+    content: none;
+    margin: 0;
 }
 
 /* Mac: the Needs-you card is red-tinted with white rows. */
@@ -1816,7 +2018,7 @@ button.mj_TrackerCard {
 }
 
 .mj_ProjectNeedsYou .mj_ProjectSection_title {
-    color: var(--cpd-color-text-critical-primary);
+    color: var(--mj-color-text-critical-primary);
 }
 
 .mj_ProjectNeedsYou_row {
@@ -1825,12 +2027,12 @@ button.mj_TrackerCard {
     gap: 8px;
     border: 0;
     border-radius: 8px;
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
+    background: var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-primary);
     cursor: pointer;
     padding: 8px 10px;
     text-align: left;
-    font: 400 14px/19px var(--cpd-font-family-ui);
+    font: 400 14px/19px var(--mj-font-family-ui);
 }
 
 .mj_ProjectNeedsYou_title {
@@ -1840,59 +2042,9 @@ button.mj_TrackerCard {
 
 .mj_ProjectNum {
     flex: none;
-    color: var(--cpd-color-text-action-accent);
-    font: 400 12px/16px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-action-accent);
+    font: 400 12px/16px var(--mj-font-family-ui);
     font-variant-numeric: tabular-nums;
-}
-
-.mj_ProjectNum_link {
-    border: 0;
-    background: transparent;
-    cursor: pointer;
-    padding: 0;
-}
-
-.mj_ProjectMilestones {
-    display: flex;
-    flex-direction: column;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-}
-
-.mj_ProjectMilestone {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 8px 0;
-    font: 400 14px/19px var(--cpd-font-family-ui);
-}
-
-.mj_ProjectMilestone + .mj_ProjectMilestone {
-    border-top: 1px solid var(--cpd-color-border-subtle);
-}
-
-.mj_ProjectMilestone_dot {
-    width: 7px;
-    height: 7px;
-    flex: none;
-    border-radius: 50%;
-    background: var(--cpd-color-text-action-accent);
-}
-
-.mj_ProjectMilestone_dot_user_input {
-    background: var(--mj-decision);
-}
-
-.mj_ProjectMilestone_title {
-    min-width: 0;
-    flex: 1 1 auto;
-}
-
-.mj_ProjectMilestone_time {
-    flex: none;
-    color: var(--cpd-color-text-secondary);
-    font: 400 12px/16px var(--cpd-font-family-ui);
 }
 
 .mj_ProjectMission {
@@ -1900,9 +2052,9 @@ button.mj_TrackerCard {
     align-items: flex-start;
     gap: 8px;
     border: 0;
-    border-top: 1px solid var(--cpd-color-border-subtle);
+    border-top: 1px solid var(--mj-color-border-subtle);
     background: transparent;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
     cursor: pointer;
     padding: 8px 0;
     text-align: left;
@@ -1922,19 +2074,19 @@ button.mj_TrackerCard {
     flex: none;
     margin-top: 5px;
     border-radius: 50%;
-    background: var(--cpd-color-text-tertiary);
+    background: var(--mj-color-text-tertiary);
 }
 
 .mj_ProjectMission_dot_running {
-    background: var(--cpd-color-usage-low);
+    background: var(--mj-color-usage-low);
 }
 
 .mj_ProjectMission_dot_waiting {
-    background: var(--cpd-color-usage-medium);
+    background: var(--mj-color-usage-medium);
 }
 
 .mj_ProjectMission .mj_ProjectNum {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
     line-height: 18px;
 }
 
@@ -1948,15 +2100,15 @@ button.mj_TrackerCard {
 
 .mj_ProjectMission_title {
     overflow: hidden;
-    font: 600 13px/18px var(--cpd-font-family-ui);
+    font: 600 13px/18px var(--mj-font-family-ui);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .mj_ProjectMission_status {
     overflow: hidden;
-    color: var(--cpd-color-text-secondary);
-    font: 400 12px/16px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -1966,12 +2118,308 @@ button.mj_TrackerCard {
     flex-wrap: wrap;
     gap: 6px 14px;
     margin: 0;
-    color: var(--cpd-color-text-secondary);
-    font: 400 13px/18px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-secondary);
+    font: 400 13px/18px var(--mj-font-family-ui);
+}
+
+.mj_ProjectNeedsYou_age {
+    flex: none;
+    min-width: 32px;
+    color: var(--mj-color-text-secondary);
+    text-align: right;
+    font: 400 12px/16px var(--mj-font-family-ui);
+    font-variant-numeric: tabular-nums;
+}
+
+/* — Latest: the merged feed, by day. — */
+.mj_ProjectDay_label {
+    margin: 8px 0 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+    color: var(--mj-color-text-secondary);
+    font: 600 12px/16px var(--mj-font-family-ui);
+}
+
+.mj_ProjectActivity {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.mj_ProjectActivity > li + li {
+    border-top: 1px solid var(--mj-color-border-subtle);
+}
+
+.mj_ProjectActivity_row {
+    display: flex;
+    width: 100%;
+    align-items: flex-start;
+    gap: 10px;
+    border: 0;
+    background: transparent;
+    color: var(--mj-color-text-primary);
+    cursor: pointer;
+    padding: 9px 0;
+    text-align: left;
+    font: 400 14px/19px var(--mj-font-family-ui);
+}
+
+.mj_ProjectActivity_row_static {
+    cursor: default;
+}
+
+.mj_ProjectActivity_glyph {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    font-size: 16px;
+}
+
+.mj_ProjectActivity_glyph_needsYou {
+    color: var(--mj-color-text-critical-primary);
+}
+
+.mj_ProjectActivity_glyph_answered {
+    color: var(--mj-color-text-action-accent);
+}
+
+.mj_ProjectActivity_glyph_decided {
+    color: var(--mj-color-usage-low);
+}
+
+.mj_ProjectActivity_glyph_reversed {
+    color: var(--mj-color-text-secondary);
+}
+
+.mj_ProjectActivity_fileGlyph {
+    border: 1.5px solid currentColor;
+    border-radius: 3px;
+    color: var(--mj-color-text-secondary);
+    box-sizing: border-box;
+}
+
+.mj_ProjectActivity_fileGlyph_image {
+    border-style: dashed;
+}
+
+.mj_ProjectActivity_main {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mj_ProjectActivity_title {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.mj_ProjectActivity_struck {
+    color: var(--mj-color-text-secondary);
+    text-decoration: line-through;
+}
+
+.mj_ProjectActivity_note {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    color: var(--mj-color-text-secondary);
+    font: 400 13px/18px var(--mj-font-family-ui);
+}
+
+.mj_ProjectActivity_answer {
+    padding-left: 8px;
+    border-left: 2px solid var(--mj-color-border-interactive-secondary);
+}
+
+.mj_ProjectActivity_meta {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+}
+
+.mj_ProjectActivity_time {
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
+    font-variant-numeric: tabular-nums;
+}
+
+.mj_ProjectLatest_more {
+    align-self: flex-start;
+    margin-top: 4px;
+}
+
+/* — Reference folds: a card whose heading opens it in place. — */
+.mj_ProjectFold {
+    gap: 0;
+    padding: 0;
+}
+
+.mj_ProjectFold_summary {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    cursor: pointer;
+    padding: 14px 20px;
+    list-style: none;
+}
+
+.mj_ProjectFold_summary::-webkit-details-marker {
+    display: none;
+}
+
+.mj_ProjectFold_summary .mj_ProjectSection_count {
+    margin-left: auto;
+}
+
+.mj_ProjectFold_chevron {
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-right: 1.5px solid var(--mj-color-text-secondary);
+    border-bottom: 1.5px solid var(--mj-color-text-secondary);
+    transform: translateY(-2px) rotate(-45deg);
+    transition: transform 120ms ease;
+}
+
+.mj_ProjectFold[open] .mj_ProjectFold_chevron {
+    transform: translateY(-3px) rotate(45deg);
+}
+
+.mj_ProjectFold_body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 0 20px 16px;
+}
+
+.mj_ProjectFold_body .mj_ProjectPage_body {
+    margin: 0;
+    /* Read as a paragraph here, not a caption: the secondary grey is too dim for one. */
+    color: var(--mj-color-text-primary);
 }
 
 .mj_ProjectsUnfiled {
     margin-top: 16px;
+}
+
+/* — Filing: "New project", the quiet fold, the move and merge sheets, a row's move menu. — */
+.mj_ProjectsFilter .mj_ProjectsNew {
+    flex: none;
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.mj_TrackerEmpty .mj_ProjectsNew {
+    align-self: center;
+    margin-top: 12px;
+}
+
+.mj_ProjectsQuiet {
+    margin-top: 16px;
+}
+
+.mj_ProjectsQuietToggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    background: transparent;
+    padding: 4px 0;
+    color: var(--mj-color-text-primary);
+    font: 600 15px/20px var(--mj-font-family-ui);
+    cursor: pointer;
+}
+
+.mj_ProjectsQuietToggle_chevron {
+    display: inline-block;
+    width: 10px;
+    color: var(--mj-color-text-secondary);
+    transition: transform 0.15s ease;
+}
+
+.mj_ProjectsQuietToggle[aria-expanded="true"] .mj_ProjectsQuietToggle_chevron {
+    transform: rotate(90deg);
+}
+
+.mj_ProjectsQuiet_rows {
+    margin-top: 8px;
+}
+
+.mj_ProjectSheet textarea {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--mj-color-border-interactive-secondary);
+    border-radius: var(--mj-radius-field);
+    background: var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-primary);
+    padding: 8px 12px;
+    font: 400 13.5px/20px var(--mj-font-family-ui);
+    resize: vertical;
+}
+
+.mj_ProjectSheet textarea:focus {
+    border-color: var(--mj-color-border-interactive-primary);
+    outline: none;
+}
+
+.mj_ProjectSheet .mj_ProjectSheet_note {
+    margin: 6px 0 0;
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
+}
+
+.mj_NewSessionSheet [role="listitem"].mj_ProjectSheet_target {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.mj_NewSessionSheet [role="listitem"].mj_ProjectSheet_target[aria-current="true"] {
+    opacity: 1;
+    color: var(--mj-color-text-secondary);
+}
+
+.mj_ProjectSheet_targetTitle {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_UploadConfirm_actions button.mj_UploadConfirm_send.mj_ProjectSheet_danger {
+    background: var(--mj-color-text-critical-primary);
+    color: #fff;
+}
+
+.mj_TrackerMenu_list.mj_RowMoveMenu {
+    position: fixed;
+    right: auto;
+    z-index: 1000;
+}
+
+.mj_TrackerMenu_item:disabled {
+    color: var(--mj-color-text-tertiary);
+    cursor: default;
+}
+
+.mj_TrackerMenu_item:disabled:hover {
+    background: transparent;
+}
+
+.mj_TrackerMissionHead_move {
+    margin-left: auto;
 }
 
 /* — Coordinator briefing: a full-width card heading the Projects dashboard, a sibling of the
@@ -1995,9 +2443,9 @@ button.mj_TrackerCard {
     box-sizing: border-box;
     border: 1px solid rgb(128 128 128 / 0.12);
     border-radius: 12px;
-    background: var(--cpd-color-bg-canvas-default);
-    box-shadow: var(--cpd-shadow-sm);
-    color: var(--cpd-color-text-primary);
+    background: var(--mj-color-bg-canvas-default);
+    box-shadow: var(--mj-shadow-sm);
+    color: var(--mj-color-text-primary);
     padding: 6px;
 }
 .mj_BriefingCard:hover {
@@ -2014,7 +2462,7 @@ button.mj_TrackerCard {
     min-width: 0;
     box-sizing: border-box;
     padding: 8px;
-    color: var(--cpd-color-text-primary);
+    color: var(--mj-color-text-primary);
 }
 .mj_BriefingCard_open {
     border: 0;
@@ -2025,27 +2473,27 @@ button.mj_TrackerCard {
     cursor: pointer;
 }
 .mj_BriefingCard_open:focus-visible {
-    outline: 2px solid var(--cpd-color-text-action-accent);
+    outline: 2px solid var(--mj-color-text-action-accent);
     outline-offset: 2px;
 }
 .mj_BriefingCard_title {
-    font: 600 16px/20px var(--cpd-font-family-ui);
-    color: var(--cpd-color-text-primary);
+    font: 600 16px/20px var(--mj-font-family-ui);
+    color: var(--mj-color-text-primary);
 }
 .mj_BriefingCard_age {
-    color: var(--cpd-color-text-secondary);
-    font: 400 11px/15px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-secondary);
+    font: 400 11px/15px var(--mj-font-family-ui);
 }
 .mj_BriefingCard_preview {
     display: block;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    font: 400 13px/18px var(--cpd-font-family-ui);
-    color: var(--cpd-color-text-primary);
+    font: 400 13px/18px var(--mj-font-family-ui);
+    color: var(--mj-color-text-primary);
 }
 .mj_BriefingCard_empty .mj_BriefingCard_preview {
-    color: var(--cpd-color-text-secondary);
+    color: var(--mj-color-text-secondary);
 }
 .mj_BriefingCard_refresh {
     flex: none;
@@ -2053,8 +2501,8 @@ button.mj_TrackerCard {
     font-size: 18px;
 }
 .mj_BriefingCard_refresh:hover:not(:disabled) {
-    background: var(--cpd-state-hover);
-    color: var(--cpd-color-text-primary);
+    background: var(--mj-state-hover);
+    color: var(--mj-color-text-primary);
 }
 .mj_BriefingCard_refresh:disabled,
 .mj_BriefingCard_ask:disabled {
@@ -2073,11 +2521,11 @@ button.mj_TrackerCard {
     align-items: center;
     gap: 8px;
     margin: 0;
-    color: var(--cpd-color-text-secondary);
-    font: 400 11px/15px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-secondary);
+    font: 400 11px/15px var(--mj-font-family-ui);
 }
 .mj_BriefingCard_status_error {
-    color: var(--cpd-color-text-critical-primary);
+    color: var(--mj-color-text-critical-primary);
 }
 .mj_BriefingCard_spinner {
     flex: none;
@@ -2089,22 +2537,22 @@ button.mj_TrackerCard {
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: var(--cpd-space-3x);
+    gap: var(--mj-space-3x);
 }
 .mj_BriefingHead_time {
-    color: var(--cpd-color-text-secondary);
-    font: 400 12px/16px var(--cpd-font-family-ui);
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
 }
 
 /* The "Briefing" tag on a briefing's text event in the Coordinator conversation. */
 .mj_BriefingBadge {
     display: inline-block;
-    margin-bottom: var(--cpd-space-1x);
-    padding: 0 var(--cpd-space-2x);
-    border-radius: var(--cpd-radius-pill);
-    background: var(--cpd-color-bg-accent-tint, var(--cpd-color-bg-subtle-secondary));
-    color: var(--cpd-color-text-action-accent);
-    font: var(--cpd-font-body-xs-semibold, 600 12px/16px var(--cpd-font-family-ui));
+    margin-bottom: var(--mj-space-1x);
+    padding: 0 var(--mj-space-2x);
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-accent-tint, var(--mj-color-bg-subtle-secondary));
+    color: var(--mj-color-text-action-accent);
+    font: var(--mj-font-body-xs-semibold, 600 12px/16px var(--mj-font-family-ui));
 }
 
 /* Fork-only rules. */
@@ -2113,40 +2561,40 @@ button.mj_TrackerCard {
 .mj_TrackerViewSwitch_tab {
     border: 0;
     background: transparent;
-    padding: var(--cpd-space-1x) var(--cpd-space-3x);
-    border-radius: var(--cpd-radius-pill);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
+    padding: var(--mj-space-1x) var(--mj-space-3x);
+    border-radius: var(--mj-radius-pill);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
     cursor: pointer;
 }
 
 .mj_TrackerViewSwitch_tab_active {
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
+    background: var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-primary);
     font-weight: 600;
-    box-shadow: var(--cpd-shadow-sm);
+    box-shadow: var(--mj-shadow-sm);
 }
 
 .mj_TrackerViewSwitch_tab:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline: 2px solid var(--mj-color-icon-accent-primary);
     outline-offset: 1px;
 }
 
 .mj_TrackerToggleTab {
     border: 0;
     background: transparent;
-    padding: var(--cpd-space-1x) var(--cpd-space-4x);
-    border-radius: var(--cpd-radius-pill);
-    color: var(--cpd-color-text-secondary);
-    font: var(--cpd-font-body-sm-regular);
+    padding: var(--mj-space-1x) var(--mj-space-4x);
+    border-radius: var(--mj-radius-pill);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
     cursor: pointer;
 }
 
 .mj_TrackerToggleTab_active {
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
+    background: var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-primary);
     font-weight: 600;
-    box-shadow: var(--cpd-shadow-sm);
+    box-shadow: var(--mj-shadow-sm);
 }
 
 .mj_TrackerButton:disabled {
@@ -2155,7 +2603,7 @@ button.mj_TrackerCard {
 }
 
 .mj_TrackerButton_danger {
-    background: var(--cpd-color-text-critical-primary);
+    background: var(--mj-color-text-critical-primary);
     color: #fff;
 }
 
@@ -2165,16 +2613,170 @@ button.mj_TrackerCard {
     box-sizing: border-box;
     resize: vertical;
     min-height: 72px;
-    border: 1px solid var(--cpd-color-border-interactive-secondary);
-    border-radius: var(--cpd-radius-md);
-    background: var(--cpd-color-bg-canvas-default);
-    color: var(--cpd-color-text-primary);
-    padding: var(--cpd-space-2x) var(--cpd-space-3x);
-    font: var(--cpd-font-body);
+    border: 1px solid var(--mj-color-border-interactive-secondary);
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-primary);
+    padding: var(--mj-space-2x) var(--mj-space-3x);
+    font: var(--mj-font-body);
 }
 
 .mj_TrackerTextarea:focus-visible,
 .mj_TrackerComposer_input:focus-visible {
-    outline: 2px solid var(--cpd-color-icon-accent-primary);
+    outline: 2px solid var(--mj-color-icon-accent-primary);
     outline-offset: 0;
+}
+
+/* Coordinator / routine / consent-decision notices: the MissionNotice line, but not a button. */
+.mj_CoordinatorNotice {
+    cursor: default;
+    max-width: 100%;
+}
+.mj_CoordinatorNotice_text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mj_CoordinatorNotice_twoLines .mj_CoordinatorNotice_text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+}
+.mj_CoordinatorNotice_glyph {
+    flex: none;
+    font-size: 14px;
+}
+
+/* — The chat's Tasks & decisions pane (beside the conversation) — */
+.mj_ChatTasksToggle {
+    position: relative;
+    flex: 0 0 auto;
+}
+.mj_ChatTasksToggle_open {
+    background: var(--mj-state-hover);
+    color: var(--mj-color-text-primary);
+}
+.mj_ChatTasksToggle .mj_TrackerNeedsYouBadge {
+    position: absolute;
+    top: -7px;
+    right: -12px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+    pointer-events: none;
+}
+.mj_ChatTasksToggle .mj_TrackerNeedsYouBadge svg {
+    width: 10px;
+    height: 10px;
+}
+
+.mj_ChatTasks {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    box-sizing: border-box;
+    width: min(400px, 40vw);
+    min-width: 300px;
+    height: 100%;
+    min-height: 0;
+    border-left: 1px solid var(--mj-color-border-interactive-secondary);
+    background: var(--mj-color-bg-chat-canvas, var(--mj-color-bg-canvas-default));
+}
+.mj_ChatTasks_header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    padding: var(--mj-space-2x) var(--mj-space-3x);
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+}
+.mj_ChatTasks_title {
+    flex: 1 1 auto;
+    margin: 0;
+    font: var(--mj-font-body-strong);
+    color: var(--mj-color-text-primary);
+}
+.mj_ChatTasks_toolbar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--mj-space-2x);
+    padding: 0 var(--mj-space-3x);
+}
+.mj_ChatTasks_scope {
+    margin-right: auto;
+}
+.mj_ChatTasks_new:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+.mj_ChatTasks_banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--mj-space-2x);
+}
+.mj_ChatTasks_form {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: var(--mj-space-2x);
+    margin: 0 var(--mj-space-3x) var(--mj-space-2x);
+    padding: var(--mj-space-3x);
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-canvas-raised, var(--mj-color-bg-canvas-default));
+}
+.mj_ChatTasks_kind {
+    align-self: flex-start;
+}
+.mj_ChatTasks_details {
+    min-height: 64px;
+    resize: vertical;
+}
+.mj_ChatTasks_body {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: var(--mj-space-6x);
+    scrollbar-color: var(--mj-scrollbar) transparent;
+}
+.mj_ChatTasks_task {
+    position: relative;
+}
+.mj_ChatTasks_task[draggable="true"] {
+    cursor: grab;
+}
+.mj_ChatTasks_task_dragging {
+    opacity: 0.4;
+}
+.mj_ChatTasks_task_dropBefore::before,
+.mj_ChatTasks_task_dropAfter::after {
+    position: absolute;
+    left: var(--mj-space-4x);
+    right: var(--mj-space-4x);
+    height: 2px;
+    border-radius: 1px;
+    background: var(--mj-color-text-action-accent);
+    content: "";
+    pointer-events: none;
+}
+.mj_ChatTasks_task_dropBefore::before {
+    top: -1px;
+}
+.mj_ChatTasks_task_dropAfter::after {
+    bottom: -1px;
+}
+
+@media (max-width: 700px) {
+    .mj_ChatTasks {
+        position: fixed;
+        z-index: 40;
+        inset: 0;
+        width: 100%;
+        min-width: 0;
+        border-left: 0;
+    }
 }

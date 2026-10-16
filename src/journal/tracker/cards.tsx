@@ -196,6 +196,82 @@ export function renderItemMarker(event: JournalEvent, client: MatronJournalClien
     }
 }
 
+/**
+ * What a conversation's item markers say about its item cards, read in one walk before the timeline
+ * builds its rows. Every `created` and `closed` marker used to draw its own card from its frozen
+ * payload, so a decided item showed twice: a "Needs you" card that never cleared, and a "Done" card
+ * under it. An item now shows once — at its most recent `created`/`closed` marker, in the state of
+ * its most recent renderable marker of any kind. The one-line `commented`/`reopened` notes are events,
+ * not copies of the item, and stay. A marker without an `item_id` cannot be matched and is left as is.
+ */
+export interface ItemCardFold {
+    /** Seqs of card markers superseded by a later card for the same item. */
+    hidden: ReadonlySet<number>;
+    /** The surviving card per item, re-stated where a later marker changed what it shows. By seq. */
+    restated: ReadonlyMap<number, EventPayload>;
+}
+
+export const EMPTY_ITEM_CARD_FOLD: ItemCardFold = { hidden: new Set(), restated: new Map() };
+
+export function foldItemCards(events: readonly JournalEvent[]): ItemCardFold {
+    const hidden = new Set<number>();
+    const restated = new Map<number, EventPayload>();
+    const lastCard = new Map<string, JournalEvent>();
+    const latestMarker = new Map<string, JournalEvent>();
+    for (const event of events) {
+        if (!isRenderableItemMarker(event)) continue;
+        const itemId = asString(event.payload.item_id);
+        if (!itemId) continue;
+        latestMarker.set(itemId, event);
+        const action = asString(event.payload.action);
+        if (action !== "created" && action !== "closed") continue;
+        const previous = lastCard.get(itemId);
+        if (previous) hidden.add(previous.seq);
+        lastCard.set(itemId, event);
+    }
+    for (const [itemId, card] of lastCard) {
+        const latest = latestMarker.get(itemId);
+        if (!latest || latest === card) continue;
+        const payload = restateItemCard(card.payload, latest.payload);
+        if (payload !== card.payload) restated.set(card.seq, payload);
+    }
+    return hidden.size || restated.size ? { hidden, restated } : EMPTY_ITEM_CARD_FOLD;
+}
+
+/** Whether the item is closed as of this marker: a `closed` marker says so by its action; any later
+ *  marker carries the item's resolution, which a reopen clears. */
+function leavesItemClosed(payload: EventPayload): boolean {
+    const action = asString(payload.action);
+    return action === "closed" || (action !== "reopened" && resolution(payload) !== null);
+}
+
+/**
+ * A card-shaped marker (`created`/`closed`) re-stated in the item's state as of `latest`, a later
+ * marker for the same item. Returns `card` itself when nothing the card draws changed. A closed card
+ * keeps its closing comment; a card whose item has been reopened since drops it, with the "Done" pill.
+ */
+export function restateItemCard(card: EventPayload, latest: EventPayload): EventPayload {
+    const closed = leavesItemClosed(latest);
+    const wasClosed = asString(card.action) === "closed";
+    const title = typeof latest.title === "string" ? latest.title : card.title;
+    const awaiting = latest.awaiting;
+    const nextResolution = closed ? (resolution(latest) ?? resolution(card)) : null;
+    const keepComment = closed === wasClosed;
+    const unchanged =
+        title === card.title &&
+        closed === wasClosed &&
+        awaiting === card.awaiting &&
+        nextResolution === (closed ? resolution(card) : null) &&
+        (keepComment || card.comment === undefined);
+    if (unchanged) return card;
+    const next: EventPayload = { ...card, title, action: closed ? "closed" : "created", awaiting };
+    if (awaiting === undefined) delete next.awaiting;
+    if (nextResolution) next.resolution = nextResolution;
+    else delete next.resolution;
+    if (!keepComment) delete next.comment;
+    return next;
+}
+
 /** `milestone` marker — a card that jumps to its parent mission. */
 export function MilestoneCard({
     client,

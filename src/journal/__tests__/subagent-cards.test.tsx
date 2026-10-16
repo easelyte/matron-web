@@ -416,19 +416,19 @@ describe("subagent card + sidebar child row (rendered)", () => {
         // Nowhere in the thread or the sidebar does the raw command or its emoji line appear.
         expect(container.textContent).not.toContain("sed -n");
         expect(container.textContent).not.toContain("🔀 Subtask");
-        const row = container.querySelector(".mj_RoomListItem_sub");
-        expect(row?.querySelector(".mj_RoomListPreview")?.textContent).toBe("Reading paths.py…");
-        expect(row?.querySelector(".mj_RoomListSubStatus_running .mj_TurnCard_spinner")).not.toBeNull();
+        const row = container.querySelector(".mj_ConversationListItem_sub");
+        expect(row?.querySelector(".mj_ConversationListPreview")?.textContent).toBe("Reading paths.py…");
+        expect(row?.querySelector(".mj_ConversationListSubStatus_running .mj_TurnCard_spinner")).not.toBeNull();
         expect(row?.querySelector(".mj_AnthropicMark, .mj_OpenAIMark")).toBeNull();
-        expect(row?.querySelector(".mj_RoomListName")?.textContent).toBe("Wave 2: units");
+        expect(row?.querySelector(".mj_ConversationListName")?.textContent).toBe("Wave 2: units");
     });
 
     it("Developer view on keeps the raw lines: the sidebar snippet and the card's steps", async () => {
         localStorage.setItem(SHOW_THE_WORK_KEY, "true");
         const client = setup();
         await act(async () => root.render(<MatronApp client={client} />));
-        const row = container.querySelector(".mj_RoomListItem_sub");
-        expect(row?.querySelector(".mj_RoomListPreview")?.textContent).toContain("sed -n 1,60p");
+        const row = container.querySelector(".mj_ConversationListItem_sub");
+        expect(row?.querySelector(".mj_ConversationListPreview")?.textContent).toContain("sed -n 1,60p");
         const card = container.querySelector(".mj_SubagentCard");
         expect(card).not.toBeNull();
         await act(async () => (card?.querySelector(".mj_SubagentCard_toggle") as HTMLButtonElement).click());

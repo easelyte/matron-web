@@ -7,8 +7,11 @@ Please see LICENSE files in the repository root for full details.
 
 import { parseSessionOptions, type SessionOptions } from "./new-session";
 import {
+    JOURNAL_ATTACHMENTS_MAX,
     JournalApi,
     JournalApiError,
+    isMediaExpiredError,
+    knownErrorMessage,
     loadMatronConfig,
     parseBoxDefaultsState,
     parseBoxStatus,
@@ -17,11 +20,27 @@ import {
 import { JournalConnection } from "./connection";
 import { FilesApi } from "./files/filesApi";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
+import { parseCoordinatorConsent, resetSessionStops, spawnConsentRowsIn } from "./coordinator-consent";
 import { JournalDatabase } from "./database";
 import { buildEditFileParams, classifyEditFileReply, type EditFileInput, type EditFileOutcome } from "./edit-file";
 import { buildReadFileParams, classifyReadFileReply, type ReadFileInput, type ReadFileOutcome } from "./read-file";
 import { helperContextStatus, mergeSessionStatus } from "./status";
 import { sectionStateFromReply, type JournalMetrics, type OpsSection, type OpsSectionState } from "./ops/model";
+import {
+    parseRoutine,
+    parseRoutineList,
+    type Routine,
+    type RoutineDraft,
+    routineErrorMessage,
+    routineFormError,
+    routineRequestBody,
+    routineRunMessage,
+    RoutineRules,
+    ROUTINES_UNSUPPORTED,
+    sortRoutines,
+} from "./routines";
+import { newestOwnMessageSeq } from "./jump-to-message";
+import { parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
 import {
     DEFAULT_PIN_LIMIT,
     markPinImportDone,
@@ -35,6 +54,11 @@ import {
     readCachedPins,
     writeCachedPins,
 } from "./pins";
+import { isAgentRoomTitle, isStartCommand, NEW_CONVERSATION_STALE_MS, startedSessionIntents } from "./needs-you";
+import { SeenTracker } from "./seen-tracker";
+import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
+import { CHAT_TASKS_DONE_FETCH, chatTaskSections, planTaskMove } from "./tracker/chat-tasks";
+import { doneSortKey, inDone } from "./tracker/format";
 import {
     asNumber,
     buildSidebarIndex,
@@ -43,8 +67,11 @@ import {
     type BriefingLatest,
     type BriefingRefresh,
     type BriefingState,
+    type AttachmentBatchTag,
     type ClientState,
+    type ComposerAttachment,
     type Conversation,
+    type ConversationMissionLink,
     type BoxDefaults,
     type BoxDefaultsPatch,
     type BoxDefaultsState,
@@ -52,13 +79,22 @@ import {
     type ConvoPin,
     type DeviceDTO,
     type HostVitals,
+    type LinkStart,
+    type LinkStatus,
+    type PairPreview,
     isSubChat,
     type MatronLinkKind,
+    type Mission,
+    type NumberLookup,
+    type NumberLookupKind,
+    type NumberLookupOutcome,
     type JournalEphemeralFrame,
     type JournalEvent,
     MESSAGE_EVENT_TYPES,
     normalizeServerUrl,
+    type NewSessionOffer,
     type PendingMessage,
+    type Project,
     type RecentFolder,
     rendersAsTopLevelRow,
     type RpcReply,
@@ -67,10 +103,15 @@ import {
     type Session,
     type SessionStatus,
     type SnapshotResponse,
+    type SpawnConsentRows,
+    type StartOption,
+    type StartSessionPicks,
     type TrackerAttachment,
     type JournalControlFrame,
+    type RoutinesState,
     type TrackerCommentWrite,
     type TrackerItem,
+    type TrackerItemCreate,
     type UserSettings,
     type MemoryWrite,
     type TrackerResolution,
@@ -90,6 +131,16 @@ const HISTORY_PAGE_SIZE = 80;
 // A subagent card's one-off tail fetch: the server's page cap, and how long a card waits for it.
 const CONVERSATION_TAIL_SIZE = 200;
 const CONVERSATION_TAIL_TIMEOUT_MS = 15_000;
+// A jump to a message pages history back at most this many pages (80 rows each) before landing on
+// the oldest row loaded: a hit thousands of messages deep must not fetch the whole conversation
+// while the transcript sits still.
+const FOCUS_MAX_PAGES = 20;
+// While another history page is in flight a jump waits for it, polling this often, this many times.
+const FOCUS_WAIT_MS = 50;
+const FOCUS_MAX_WAITS = 300;
+// Find in chat steps through a conversation's whole match list, so it asks for more than the
+// sidebar's search; the journal caps a single-conversation search at this.
+const CHAT_SEARCH_LIMIT = 500;
 // Message-content search hits per query (server caps at 50; 20 keeps the Messages section tight).
 const MESSAGE_SEARCH_LIMIT = 20;
 // Max query length the server accepts (over this it returns 400); guard client-side so an
@@ -97,6 +148,33 @@ const MESSAGE_SEARCH_LIMIT = 20;
 const MESSAGE_SEARCH_MAX_QUERY_LEN = 256;
 // Transport-agnostic deadline: abort a /search that never settles so "Searching…" can't hang.
 const MESSAGE_SEARCH_TIMEOUT_MS = 15_000;
+/** How long "go to number" waits for the journal before reporting a failed lookup. */
+export const NUMBER_LOOKUP_TIMEOUT_MS = 15_000;
+/** A mission page's closed items come in pages of this many (the Mac's closed-items page). */
+export const MISSION_CLOSED_PAGE = 50;
+/** How many `GET /items` pages of closed items one `fetchMissionClosedItems` call walks at most. */
+const MISSION_CLOSED_SCAN_PAGES = 4;
+
+const NUMBER_LOOKUP_KINDS: readonly NumberLookupKind[] = ["item", "mission", "milestone", "project"];
+const isTrackerNumber = (value: unknown): value is number =>
+    typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+
+/** A `/lookup` answer reduced to the fields this app understands; null when it names no known kind. */
+function sanitizeNumberLookup(raw: unknown): NumberLookup | null {
+    if (!raw || typeof raw !== "object") return null;
+    const { kind, id, num, title, mission } = raw as Record<string, unknown>;
+    if (typeof id !== "string" || !NUMBER_LOOKUP_KINDS.includes(kind as NumberLookupKind)) return null;
+    const hit: NumberLookup = { kind: kind as NumberLookupKind, id };
+    if (isTrackerNumber(num)) hit.num = num;
+    if (typeof title === "string" && title) hit.title = title;
+    if (mission && typeof mission === "object") {
+        const parent = mission as Record<string, unknown>;
+        if (typeof parent.id === "string" && isTrackerNumber(parent.num)) {
+            hit.mission = { id: parent.id, num: parent.num };
+        }
+    }
+    return hit;
+}
 
 /**
  * Runtime guard for the GET /search response. The producer is a separate service, so we parse at
@@ -149,7 +227,33 @@ export const RPC_CREATE_STALLED_NOTICE =
 const MALFORMED_SEQ_RESYNC_LIMIT = 3;
 const MALFORMED_SEQ_RESYNC_WINDOW_MS = 30_000;
 export const MALFORMED_SEQ_HALTED_ERROR = "Sync paused — the server is sending malformed updates. Reload to try again.";
+/**
+ * The matching seqs of a find-in-chat response, newest first and without repeats. Only `seq` (and
+ * `convo_id`, to drop anything outside the conversation) is read, so both the journal's
+ * newest-first hits and an older journal's ranked ones parse.
+ */
+export function conversationMatchSeqs(
+    response: { hits?: unknown } | null | undefined,
+    conversationId: string,
+): number[] {
+    const raw = response?.hits;
+    if (!Array.isArray(raw)) return [];
+    const seqs = new Set<number>();
+    for (const item of raw) {
+        if (!item || typeof item !== "object") continue;
+        const hit = item as Record<string, unknown>;
+        if (hit.convo_id !== undefined && hit.convo_id !== conversationId) continue;
+        if (typeof hit.seq === "number" && Number.isSafeInteger(hit.seq) && hit.seq >= 0) seqs.add(hit.seq);
+    }
+    return [...seqs].sort((a, b) => b - a);
+}
+
+// How long a marker-driven refetch waits, so a burst of markers costs one GET.
+const MARKER_REFETCH_DELAY_MS = 250;
 const BACKFILL_SNAPSHOT_TIMEOUT_MS = 10_000;
+// How long after start-up the one-off room-membership backfill reads its snapshot, so it never
+// competes with the first paint and the first history read.
+const MEMBERSHIP_BACKFILL_DELAY_MS = 5_000;
 const TOOL_STREAM_DISPLAY_BYTES = 65_536;
 const MARK_ALL_READ_ERROR = "Some conversations couldn't be updated — device storage is full or unavailable.";
 export const PREFERENCES_UNAVAILABLE_ERROR = "Couldn't load saved preferences — device storage unavailable.";
@@ -203,6 +307,12 @@ interface AttachmentOwner {
 type PersistPendingAttachmentOutcome =
     { kind: "persisted-uploadable" } | { kind: "persisted-terminal" } | { kind: "persist-failed" };
 
+/** What one ask of a possibly sleeping box found: it answered, it is still booting, or the ask
+ *  never reached the journal. */
+/** Which feature started a jump to a message (see focusMessage). */
+export type FocusOwner = "link" | "search" | "lastOwnMessage";
+export type AgentProbe = "up" | "booting" | "failed";
+
 export type StartOutcome =
     | { kind: "created"; convoId: string }
     /** `code` is the agent's error code when it gave one (e.g. `bad_workdir`); `reach` = the box
@@ -211,6 +321,43 @@ export type StartOutcome =
     | { kind: "uncertain" };
 
 export type WorkerKind = "claude" | "codex";
+
+/** How one item comment went: written, or not — with why, unless the session ended meanwhile
+ *  (signed out, or another account signed in), when there is nothing left to report it to. */
+export type TrackerCommentOutcome = { ok: true } | { ok: false; reason?: string };
+
+function parseRecentFolders(raw: unknown): RecentFolder[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((entry): RecentFolder[] => {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+        const folder = entry as Record<string, unknown>;
+        if (
+            typeof folder.path !== "string" ||
+            folder.path.length === 0 ||
+            (folder.last_used !== null && (typeof folder.last_used !== "number" || !Number.isFinite(folder.last_used)))
+        ) {
+            return [];
+        }
+        return [{ path: folder.path, last_used: folder.last_used }];
+    });
+}
+
+// Bridge order is kept. A repeated value is dropped: the value is the option's identity.
+function parseStartOptions(raw: unknown): StartOption[] {
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set<string>();
+    return raw.flatMap((entry): StartOption[] => {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+        const { value, label } = entry as Record<string, unknown>;
+        if (typeof value !== "string" || value.length === 0 || seen.has(value)) return [];
+        seen.add(value);
+        return [{ value, label: typeof label === "string" && label.length > 0 ? label : value }];
+    });
+}
+
+function parseOfferDefault(raw: unknown): string | null {
+    return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
 
 export function workerKind(conversation: Conversation): WorkerKind | null {
     // Sub-chats resolve their kind from the convo-id infix: children go through
@@ -247,6 +394,7 @@ function blankState(): ClientState {
         favoriteIds: new Set(),
         unreadOverrideIds: new Set(),
         collapsedSubagentParentIds: new Set(),
+        newConversationIds: new Set(),
         controlError: undefined,
         events: [],
         pendingMessages: [],
@@ -261,6 +409,7 @@ function blankState(): ClientState {
         boxStatuses: {},
         agents: [],
         dragActive: false,
+        composerAttachments: {},
         sendTick: 0,
     };
 }
@@ -344,6 +493,16 @@ function capToolStream(value: string): { content: string; truncated: boolean } {
     return { content: new TextDecoder().decode(slice), truncated: true };
 }
 
+/** A tray file's failed upload, in the words its chip shows. */
+function stagedUploadError(error: unknown): string {
+    const aborted =
+        (error instanceof DOMException && error.name === "AbortError") ||
+        (error instanceof JournalApiError && error.status === 0 && /abort/i.test(error.message));
+    if (aborted) return "The upload was interrupted.";
+    if (error instanceof Error && error.message) return error.message;
+    return "Upload failed.";
+}
+
 function abortPromise(signal: AbortSignal): Promise<never> {
     return new Promise((_, reject) => {
         const rejectAbort = (): void => reject(new DOMException("The upload timed out.", "AbortError"));
@@ -359,9 +518,41 @@ export function voiceNoteFile(blob: Blob): File {
     return new File([blob], `voice-note.${ext}`, { type });
 }
 
+/** See MatronJournalClient.addLiveListener. */
+export interface LiveListener {
+    frame?(frame: ServerFrame): void;
+    journalEvent?(event: JournalEvent, previous: Conversation | undefined): void;
+}
+
+/**
+ * The freshly read conversation list, keeping the previous object for every conversation whose
+ * fields are all unchanged (and the previous array when nothing changed at all), so the sidebar's
+ * memoised rows only re-render for the conversations that did change.
+ */
+export function keepUnchangedConversations(previous: Conversation[], next: Conversation[]): Conversation[] {
+    const byId = new Map(previous.map((conversation) => [conversation.id, conversation]));
+    let same = previous.length === next.length;
+    const kept = next.map((conversation, index) => {
+        const old = byId.get(conversation.id);
+        const keep = old !== undefined && sameFields(old, conversation) ? old : conversation;
+        if (keep !== previous[index]) same = false;
+        return keep;
+    });
+    return same ? previous : kept;
+}
+
+function sameFields(left: Conversation, right: Conversation): boolean {
+    const keys = Object.keys(left) as (keyof Conversation)[];
+    if (keys.length !== Object.keys(right).length) return false;
+    return keys.every((key) => Object.is(left[key], right[key]));
+}
+
 export class MatronJournalClient {
     private state = blankState();
+    // The `/u/<name>/<n>` link the page was opened at, until the first sign-in opens it.
+    private pathLink: TrackerLinkPath | null = parseTrackerLinkPath(window.location.pathname);
     private readonly listeners = new Set<() => void>();
+    private readonly liveListeners = new Set<LiveListener>();
     private api?: JournalApi;
     // Monotonic guard so only the latest message-search request writes its results — an earlier
     // slow response (or a cleared box) can never clobber a newer query's hits. See searchMessages.
@@ -371,9 +562,16 @@ export class MatronJournalClient {
     private searchAbort?: AbortController;
     private database?: JournalDatabase;
     private connection?: JournalConnection;
+    // Read state: which timeline rows and tracker items were actually on screen, reported as
+    // `seen` / `item_seen` over the socket. Separate from read_marker and the unread badge.
+    public readonly seen = new SeenTracker({ send: (op) => this.connection?.send(op) ?? false });
     private readonly history = new Map<string, ConversationHistoryState>();
     // refreshConversationTail(): one request per conversation per session (settled or in flight).
     private readonly conversationTailFetches = new Map<string, Promise<boolean>>();
+    // The latest-history-page fetch a spawn consent item made per conversation, keyed
+    // `${sessionGen}:${convoId}`: in flight (later reads wait on it) or done (a card that is not in
+    // that page is not asked for again). A failed fetch is forgotten so the next read retries.
+    private readonly consentHistoryFetches = new Map<string, Promise<void>>();
     private readonly activities = new Map<string, JournalEphemeralFrame["activity"]>();
     private readonly statuses = new Map<string, NonNullable<JournalEphemeralFrame["status"]>>();
     // Host-global vitals: ONE value for the whole app, keyed to no conversation. Set from
@@ -390,10 +588,11 @@ export class MatronJournalClient {
     // Files pane (Phase 1b): one FilesApi bound to the current session, built lazily on first use
     // and torn down (blob URLs revoked) on sign-out. Mirrors the mediaUrls ownership model.
     private filesApiInstance?: FilesApi;
+    // Blob ids the server answered 404 for: reaped, permanently. Never re-requested.
+    private readonly expiredMedia = new Set<string>();
     private readonly readHighWater = new Map<string, number>();
     private readonly readTimers = new Map<string, number>();
     private pendingFiles = new Map<string, File>();
-    private stagedSendChain: Promise<void> = Promise.resolve();
     private transientAttachmentErrors = new Map<string, PendingMessage>();
     private readonly dismissedAttachments = new Set<string>();
     private readonly attachmentOperations = new Map<string, Promise<void>>();
@@ -412,6 +611,7 @@ export class MatronJournalClient {
     private trackerItemGen = 0;
     private trackerMissionGen = 0;
     private trackerInboxGen = 0;
+    private trackerInboxDoneGen = 0;
     // True while a loadInbox walk is in flight. The first connect-time walk publishes only at the
     // end, so until then inboxItems is undefined; writes and item markers that land meanwhile must
     // still count (see inboxTracked / applyWrittenItem) or the walk's older pages overwrite them.
@@ -422,19 +622,57 @@ export class MatronJournalClient {
     private inboxPendingWrites = new Map<string, TrackerItem>();
     private trackerMissionsGen = 0;
     private trackerProjectsGen = 0;
+    private conversationMissionsGen = 0;
+    // The last missions fetched per conversation, so returning to one shows its chip at once
+    // (and the header does not jump) while the fresh fetch runs. Cleared with the session.
+    private readonly conversationMissionsCache = new Map<string, ConversationMissionLink[]>();
+    // The generation of the newest load per conversation: only that load may write its cache entry,
+    // so a slower, older request cannot put back what a newer one replaced.
+    private readonly conversationMissionsCacheGen = new Map<string, number>();
+    // Pending marker-driven refetch of the chip's missions: a burst of `mission` markers (a
+    // reconnect replay; `left` then `current_changed`) costs one GET.
+    private conversationMissionsRefetchTimer?: number;
     private trackerProjectGen = 0;
     // Pending marker-driven inbox refetch. A burst of `item` markers (a reconnect replay, a batch of
     // agent writes) coalesces into ONE inbox walk instead of one per marker.
     private trackerInboxRefetchTimer?: number;
+    // The chat's Tasks & decisions pane: a request generation for its list (a newer load, or a
+    // drag, supersedes an older load still in flight) and its coalesced marker refetch.
+    private chatTasksGen = 0;
+    private chatTasksRefetchTimer?: number;
+    // Ranks staged by a move the journal has not confirmed yet: a load that lands meanwhile (a
+    // second move's refetch, a marker) still reads the old rank, so these win until it answers.
+    private chatTasksStaged = new Map<string, number>();
     // Same for `mission` / `milestone` markers and the missions list.
     private trackerMissionsRefetchTimer?: number;
     private trackerMemoriesGen = 0;
     private trackerMemoriesRefetchTimer?: number;
+    private trackerItemWorkingRefetchTimer?: number;
+    private trackerItemWorkingRefetchNum?: number;
     // Coordinator briefing: a request-generation guard like the tracker loaders', and the timer
     // that refetches once a pending refresh's expires_at passes (the journal then reports it
     // timed_out, which no frame announces).
     private briefingGen = 0;
     private settingsGen = 0;
+    // Coordinator consent switch: bumped by every write, so a GET sent before one is dropped and
+    // only the latest write's answer moves the switch; the journal's last known value (where a
+    // failed write puts the switch back); and the write chain that keeps PUTs in tap order.
+    private coordinatorConsentEpoch = 0;
+    private coordinatorConsentConfirmed?: boolean;
+    private coordinatorConsentWrite: Promise<void> = Promise.resolve();
+    // The Coordinator conversation: bumped by every write, hello and marker, so only the newest
+    // answer lands; and the pending marker-driven refetch (a burst of `coordinator` events costs
+    // one GET).
+    private coordinatorEpoch = 0;
+    // A `coordinator` marker arrived and no hello, write or read has answered since: the value in
+    // state may be the old one.
+    private coordinatorStale = false;
+    private coordinatorRefetchTimer?: number;
+    // Routines: a request-generation guard like the tracker loaders', the views showing them (only
+    // then do `routine` markers and reconnects refetch), and the pending marker-driven refetch.
+    private routinesGen = 0;
+    private routinesViewers = 0;
+    private routinesRefetchTimer?: number;
     private briefingExpiryTimer?: number;
     // New-chat defaults. What the sheet shows is always `defaultsServer` (the latest answer from
     // the journal: a GET result, a PUT response's key, or a live frame, applied in arrival order)
@@ -490,7 +728,23 @@ export class MatronJournalClient {
     // fresh session (resetTransientSyncState on logout / snapshot transition, or a reload).
     private journalHalted = false;
     private historyError?: string;
+    // Bumped by every jump to a message; a paging jump whose token is stale has been superseded.
+    private focusToken = 0;
+    // Which feature started the jump now running: closing find-in-chat cancels only its own jump,
+    // never a "jump to my last message" that happens to be in flight while the bar is up.
+    private focusOwner?: FocusOwner;
+    // Find in chat: only the newest request applies, and closing the bar supersedes one in flight.
+    private chatSearchSeq = 0;
+    private chatSearchAbort?: AbortController;
     private startSessionRequest?: Promise<StartOutcome>;
+    // The session starts this device asked for and has not seen born yet: a conversation that
+    // answers one is the user's own, and never gets the "New" marker.
+    private startIntents = startedSessionIntents();
+    // Live-born conversations whose first frames (a session_status, a title-less meta) could not
+    // yet say whether they are a room, a child or the answer to a start, by id with the first
+    // frame's time. The verdict waits for a titled convo_meta or a message; an entry that never
+    // gets one ages out after NEW_CONVERSATION_STALE_MS.
+    private newVerdictPending = new Map<string, number>();
     private rpcCreateWatchdog?: number;
     private rpcCreateWatchdogConvo?: string;
     private rpcCreateWatchdogGen?: number;
@@ -539,6 +793,27 @@ export class MatronJournalClient {
     };
 
     public readonly getSnapshot = (): ClientState => this.state;
+
+    /**
+     * Observes what the socket delivers, for side effects that live outside the client (desktop
+     * notifications): every server frame as it arrives, and each journal event once it is newly
+     * applied, with the conversation as it stood before it. Listeners only watch; a throwing one
+     * is logged and never disturbs sync.
+     */
+    public readonly addLiveListener = (listener: LiveListener): (() => void) => {
+        this.liveListeners.add(listener);
+        return () => this.liveListeners.delete(listener);
+    };
+
+    private emitLive(call: (listener: LiveListener) => void): void {
+        for (const listener of this.liveListeners) {
+            try {
+                call(listener);
+            } catch (error) {
+                console.warn("matron:live-listener", error);
+            }
+        }
+    }
 
     public async initialise(): Promise<void> {
         let config = {};
@@ -614,6 +889,7 @@ export class MatronJournalClient {
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
         this.transientAttachmentErrors.clear();
+        this.seen.reset();
         this.connection?.stop();
         this.connection = undefined;
         if (this.storageListener) {
@@ -629,6 +905,8 @@ export class MatronJournalClient {
         this.database?.close();
         this.database = undefined;
         this.api = undefined;
+        this.coordinatorConsentConfirmed = undefined;
+        resetSessionStops();
         this.defaultsServer = undefined;
         this.defaultsPending.clear();
         this.defaultsSaving.clear();
@@ -644,6 +922,9 @@ export class MatronJournalClient {
         this.mediaUrls.clear();
         this.filesApiInstance?.dispose();
         this.filesApiInstance = undefined;
+        this.expiredMedia.clear();
+        this.startIntents = startedSessionIntents();
+        this.newVerdictPending.clear();
         // The archived-conversations key is deliberately left in place: it is a per-device
         // preference that re-login should restore. Clearing it here would also go unnoticed
         // by this tab, since storage events only fire in other tabs.
@@ -672,25 +953,7 @@ export class MatronJournalClient {
     }
 
     public async recentFolders(agentDeviceId: number): Promise<RecentFolder[]> {
-        const reply = await this.agentRpc(agentDeviceId, "recent_folders", {});
-        if (!reply.ok || typeof reply.result !== "object" || reply.result === null || Array.isArray(reply.result)) {
-            return [];
-        }
-        const folders = (reply.result as Record<string, unknown>).folders;
-        if (!Array.isArray(folders)) return [];
-        return folders.flatMap((raw): RecentFolder[] => {
-            if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return [];
-            const folder = raw as Record<string, unknown>;
-            if (
-                typeof folder.path !== "string" ||
-                folder.path.length === 0 ||
-                (folder.last_used !== null &&
-                    (typeof folder.last_used !== "number" || !Number.isFinite(folder.last_used)))
-            ) {
-                return [];
-            }
-            return [{ path: folder.path, last_used: folder.last_used }];
-        });
+        return (await this.newSessionOffer(agentDeviceId)).folders;
     }
 
     /**
@@ -729,11 +992,43 @@ export class MatronJournalClient {
         return parseSessionOptions(reply.result);
     }
 
+    // A box's `recent_folders` reply: its folders, plus the agent, model and effort choices a
+    // `start` there may name. A failed or malformed reply is an empty offer, never a throw.
+    public async newSessionOffer(agentDeviceId: number): Promise<NewSessionOffer> {
+        const reply = await this.agentRpc(agentDeviceId, "recent_folders", {});
+        const result =
+            reply.ok && typeof reply.result === "object" && reply.result !== null && !Array.isArray(reply.result)
+                ? (reply.result as Record<string, unknown>)
+                : {};
+        return {
+            folders: parseRecentFolders(result.folders),
+            agentOptions: parseStartOptions(result.agent_options),
+            defaultAgent: parseOfferDefault(result.default_agent),
+            // The bridge's model list mirrors its /model buttons, which lead with the `default`
+            // alias; the sheet's own Default row already stands for that, so drop the duplicate.
+            modelOptions: parseStartOptions(result.model_options).filter((option) => option.value !== "default"),
+            defaultModel: parseOfferDefault(result.default_model),
+            effortOptions: parseStartOptions(result.effort_options).filter((option) => option.value !== "default"),
+            defaultEffort: parseOfferDefault(result.default_effort),
+        };
+    }
+
+    // One ask of a box that may be asleep. The journal boots an idle-stopped box whenever a
+    // request targets it and refuses that request with `agent_unreachable`, so the first refused
+    // ask is the wake and re-asking until the box answers is how a caller learns it is up. A
+    // timeout also reads as booting: mid-boot the socket can be up before the bridge is.
+    public async probeAgent(agentDeviceId: number): Promise<AgentProbe> {
+        const reply = await this.agentRpc(agentDeviceId, "recent_folders", {});
+        if (reply.ok || reply.origin === "agent") return "up";
+        if (reply.code === "agent_unreachable" || reply.origin === "timeout") return "booting";
+        return "failed";
+    }
+
     public startSessionRpc(
         agentDeviceId: number,
         workdir: string,
         browser: boolean,
-        choice: { model?: string; agent?: "claude" | "codex"; idempotencyKey?: string } = {},
+        choice: StartSessionPicks & { idempotencyKey?: string } = {},
     ): Promise<StartOutcome> {
         if (this.startSessionRequest) {
             return Promise.resolve({ kind: "error", message: "A session is already starting — please wait." });
@@ -752,34 +1047,45 @@ export class MatronJournalClient {
         agentDeviceId: number,
         workdir: string,
         browser: boolean,
-        choice: { model?: string; agent?: "claude" | "codex"; idempotencyKey?: string } = {},
+        choice: StartSessionPicks & { idempotencyKey?: string } = {},
     ): Promise<StartOutcome> {
-        const params: {
-            workdir?: string;
-            browser?: true;
-            model?: string;
-            agent?: string;
-            idempotency_key?: string;
-        } = {};
+        const params: { workdir?: string; browser?: true; idempotency_key?: string } & StartSessionPicks = {};
         const normalizedWorkdir = workdir.trim();
         if (normalizedWorkdir) params.workdir = normalizedWorkdir;
         if (browser) params.browser = true;
-        if (choice.model) params.model = choice.model;
         if (choice.agent) params.agent = choice.agent;
+        if (choice.model) params.model = choice.model;
+        if (choice.effort) params.effort = choice.effort;
         // One key per operator intent: a retry after an uncertain start re-answers the same
         // conversation instead of spawning a second one (bridge start dedup).
         if (choice.idempotencyKey) params.idempotency_key = choice.idempotencyKey;
 
+        // The session this start brings is the user's own: it must not arrive marked "New".
+        this.startIntents.noteBox(agentDeviceId, Date.now());
         const reply = await this.agentRpc(agentDeviceId, "start", params);
         if (reply.ok) {
             if (typeof reply.result !== "object" || reply.result === null || Array.isArray(reply.result)) {
                 return { kind: "uncertain" };
             }
             const convoId = (reply.result as Record<string, unknown>).convo_id;
-            return typeof convoId === "string" && convoId.length > 0
-                ? { kind: "created", convoId }
-                : { kind: "uncertain" };
+            if (typeof convoId === "string" && convoId.length > 0) {
+                // Its first frames may have beaten this reply. If they already settled its verdict,
+                // only the box's ask is left, and any mark it got is undone: it is the user's own
+                // even when the sheet was dismissed and it is not opened. Otherwise (not seen yet,
+                // or its verdict still waits for the titled meta) it is claimed by id.
+                const seen = this.state.conversations.some((candidate) => candidate.id === convoId);
+                if (seen && !this.newVerdictPending.has(convoId)) {
+                    this.startIntents.forgetBox(agentDeviceId);
+                    this.clearNewMark(convoId);
+                } else {
+                    this.startIntents.noteConversation(convoId, agentDeviceId);
+                }
+                return { kind: "created", convoId };
+            }
+            return { kind: "uncertain" };
         }
+        // A refusal brings no session; a session that does arrive on this box later is not this ask's.
+        if (reply.origin !== "timeout") this.startIntents.forgetBox(agentDeviceId);
         if (reply.origin === "relay") {
             return {
                 kind: "error",
@@ -793,13 +1099,21 @@ export class MatronJournalClient {
         if (reply.origin === "agent" && reply.code === "bad_workdir") {
             return { kind: "error", code: "bad_workdir", message: "That folder doesn’t exist on the box." };
         }
-        if (reply.origin === "agent" && (reply.code === "bad_model" || reply.code === "bad_agent")) {
-            return {
-                kind: "error",
-                code: reply.code,
-                message:
-                    reply.code === "bad_model" ? "The box can’t run that model." : "The box can’t start that agent.",
-            };
+        // The pickers only ever show what this box's own reply offered, so these mean the box
+        // has changed since; the Default rows always work.
+        if (reply.origin === "agent" && reply.code === "bad_model") {
+            return { kind: "error", message: "That box doesn't offer that model — pick another." };
+        }
+        if (reply.origin === "agent" && reply.code === "bad_effort") {
+            return { kind: "error", message: "That box doesn't offer that effort — pick another." };
+        }
+        if (reply.origin === "agent" && reply.code === "bad_agent") {
+            return { kind: "error", message: "That box can't start that agent — pick another." };
+        }
+        // A bridge without Codex's app-server transport refuses browser tools on an explicit Codex
+        // start: a definite refusal, so no session is coming — not "may have started".
+        if (reply.origin === "agent" && reply.code === "bad_request" && choice.agent === "codex" && browser) {
+            return { kind: "error", message: "That box can't give Codex browser tools — untick Browser tools." };
         }
         return { kind: "uncertain" };
     }
@@ -857,17 +1171,6 @@ export class MatronJournalClient {
             clearTimeout(timeoutTimer!);
             if (this.searchAbort === controller) this.searchAbort = undefined;
         }
-    }
-
-    /**
-     * The stored events of a conversation that is NOT (necessarily) selected — a subagent card
-     * reads its child's steps here. Every live frame lands in IndexedDB whatever is selected, so
-     * this is local and immediate; refreshConversationTail() tops it up from the server.
-     */
-    public async conversationEvents(conversationId: string): Promise<JournalEvent[]> {
-        const database = this.database;
-        if (!database) return [];
-        return database.events(conversationId);
     }
 
     /**
@@ -933,18 +1236,21 @@ export class MatronJournalClient {
             });
         }
         if (!this.beginConversationSelection(conversationId, opts, false)) return;
+        // A conversation opened for the first time needs its history from the journal. Ask for it
+        // now, alongside the local read below, instead of after it: the request then overlaps the
+        // IndexedDB read and the first render. Whichever refresh lands last wins (refresh epochs).
+        const history = this.history.get(conversationId)?.initialized
+            ? undefined
+            : this.loadOlderHistory({ suppressNotFound: opts?.fromRpcCreate || opts?.suppressNotFound });
         if (!returningFromHistoryWindow) {
             await this.refreshSelectedConversation(conversationId, this.database, this.sessionGen, selectionEpoch);
-            if (!this.isCurrentSelection(conversationId, selectionEpoch)) return;
         }
-        if (!this.isCurrentSelection(conversationId, selectionEpoch)) return;
+        if (!this.isCurrentSelection(conversationId, selectionEpoch)) {
+            await history;
+            return;
+        }
         this.announceConversationViewing(conversationId);
-
-        if (!this.history.get(conversationId)?.initialized) {
-            await this.loadOlderHistory({
-                suppressNotFound: opts?.fromRpcCreate || opts?.suppressNotFound,
-            });
-        }
+        await history;
     }
 
     public async selectConversationAtSeq(conversationId: string, seq: number): Promise<void> {
@@ -1035,6 +1341,8 @@ export class MatronJournalClient {
         // idle session reports "not syncing" as an error.
         if (opts?.fromRpcCreate) this.armRpcCreateWatchdog(conversationId);
         if (opts?.clearUnread ?? true) this.clearUnreadOverride(conversationId);
+        // Opening a conversation, by any route, ends its "New" marker.
+        this.clearNewMark(conversationId);
         storeSelectedConversation(this.state.session, conversationId);
         // Selecting a conversation closes the Tracker pane, so it drops the cached item detail the
         // same way closeTrackerView does.
@@ -1042,6 +1350,13 @@ export class MatronJournalClient {
             this.trackerItemGen += 1;
             this.trackerMissionGen += 1;
             this.trackerProjectGen += 1;
+        }
+        if (this.state.chatSearch && this.state.chatSearch.conversationId !== conversationId) {
+            // The bar closes below; a search still in flight there must not answer a bar opened on
+            // that conversation again later.
+            this.chatSearchSeq += 1;
+            this.chatSearchAbort?.abort();
+            this.chatSearchAbort = undefined;
         }
         this.patch({
             selectedConversationId: conversationId,
@@ -1054,6 +1369,11 @@ export class MatronJournalClient {
             ...(this.state.trackerView ? { trackerItem: null, trackerMission: null, trackerProject: null } : {}),
             events: [],
             pendingMessages: [],
+            focusTarget: undefined,
+            // Find in chat searches one conversation; opening another closes its bar.
+            ...(this.state.chatSearch && this.state.chatSearch.conversationId !== conversationId
+                ? { chatSearch: undefined }
+                : {}),
             loadingHistory: false,
             hasOlderHistory: this.history.get(conversationId)?.hasMore ?? true,
             pendingScrollSeq: undefined,
@@ -1103,6 +1423,9 @@ export class MatronJournalClient {
     }
 
     public clearSelection(): void {
+        // Find in chat belongs to the conversation being left: a search still in flight must not
+        // reopen it, nor answer a bar opened there later.
+        this.endChatSearch();
         this.connection?.send({ op: "viewing", convo_id: null });
         if (this.state.session) storeSelectedConversation(this.state.session, undefined);
         this.patch({
@@ -1513,6 +1836,221 @@ export class MatronJournalClient {
         }
     }
 
+    // ── Jump to a message ───────────────────────────────────────────────────
+
+    /**
+     * Opens `conversationId` on the row with `seq` (a search hit, a milestone's anchor) instead of
+     * at its tail: pages history back until that seq is loaded, then hands the timeline a
+     * `focusTarget` to scroll to and flash. A seq that is not rendered (a milestone's own marker, a
+     * deleted row) lands on the nearest row before it; one older than the history reached in
+     * FOCUS_MAX_PAGES pages lands on the oldest row loaded. A newer jump, or opening another
+     * conversation, supersedes one still paging. Resolves true when a target was handed over.
+     */
+    public async focusMessage(conversationId: string, seq: number, owner: FocusOwner = "link"): Promise<boolean> {
+        if (!conversationId || !Number.isSafeInteger(seq) || seq < 0) return false;
+        const token = ++this.focusToken;
+        this.focusOwner = owner;
+        if (this.state.selectedConversationId !== conversationId) {
+            await this.selectConversation(conversationId, { suppressNotFound: true });
+        } else {
+            this.closeTrackerView();
+        }
+        const loaded = (): boolean => {
+            if (this.state.events.some((event) => event.seq === seq)) return true;
+            const history = this.history.get(conversationId);
+            return Boolean(history?.initialized && history.oldestSeq !== undefined && history.oldestSeq <= seq);
+        };
+        if (!(await this.pageHistoryUntil(conversationId, token, loaded))) return false;
+        this.patch({ focusTarget: { conversationId, seq, token } });
+        return true;
+    }
+
+    /**
+     * Scrolls the open conversation to the newest message the user sent themself — what scrolling
+     * can't find once an agent has run for hours. Pages back until one is loaded (bounded like
+     * focusMessage). Resolves false when there is none to land on; the transcript stays put.
+     */
+    public async jumpToLastOwnMessage(): Promise<boolean> {
+        const conversationId = this.state.selectedConversationId;
+        if (!conversationId || this.state.trackerView) return false;
+        const token = ++this.focusToken;
+        this.focusOwner = "lastOwnMessage";
+        const found = (): boolean => newestOwnMessageSeq(this.state.events) !== undefined;
+        if (!(await this.pageHistoryUntil(conversationId, token, found))) return false;
+        const seq = newestOwnMessageSeq(this.state.events);
+        if (seq === undefined) return false;
+        this.patch({ focusTarget: { conversationId, seq, token } });
+        return true;
+    }
+
+    /** The timeline landed on (or gave up on) the target handed over with `token`. */
+    public clearFocusTarget(token: number): void {
+        if (this.state.focusTarget?.token === token) this.patch({ focusTarget: undefined });
+    }
+
+    // ── Find in chat ────────────────────────────────────────────────────────
+
+    /**
+     * Ctrl/⌘F: opens the search bar over the open conversation with nothing searched yet, or —
+     * with the bar already up — keeps its search and asks for the field to take focus again.
+     */
+    public openChatSearch(): void {
+        const conversationId = this.state.selectedConversationId;
+        if (!conversationId || this.state.trackerView) return;
+        const current = this.state.chatSearch;
+        this.patch({
+            chatSearch:
+                current?.conversationId === conversationId
+                    ? { ...current, focusTick: current.focusTick + 1 }
+                    : {
+                          conversationId,
+                          query: "",
+                          matchSeqs: [],
+                          index: 0,
+                          loading: false,
+                          failed: false,
+                          focusTick: 1,
+                      },
+        });
+    }
+
+    /**
+     * Searches one conversation (the open one unless `conversationId` says otherwise, which it then
+     * opens) and jumps to the newest match, paging history back as far as it lies. The journal
+     * searches the whole conversation, not just the loaded rows. `startingAt` is the message a
+     * sidebar search result showed: the jump lands there instead, and it counts among the matches
+     * even when the narrower in-chat matching would not have found it. Only leading whitespace is
+     * trimmed: a trailing space tells the journal the last word is finished.
+     */
+    public async beginChatSearch(
+        rawQuery: string,
+        opts: { conversationId?: string; startingAt?: number } = {},
+    ): Promise<void> {
+        const query = rawQuery.replace(/^\s+/, "");
+        const conversationId = opts.conversationId ?? this.state.selectedConversationId;
+        if (!query.trim() || query.length > MESSAGE_SEARCH_MAX_QUERY_LEN || !conversationId || !this.api) return;
+        if (this.state.selectedConversationId !== conversationId) {
+            await this.selectConversation(conversationId, { suppressNotFound: true });
+            if (this.state.selectedConversationId !== conversationId) return;
+        } else {
+            this.closeTrackerView();
+        }
+        this.chatSearchAbort?.abort();
+        // The previous query's jump, if still paging, must not land while this one searches.
+        this.cancelChatSearchFocus();
+        const seq = ++this.chatSearchSeq;
+        const controller = new AbortController();
+        this.chatSearchAbort = controller;
+        const focusTick =
+            this.state.chatSearch?.conversationId === conversationId ? this.state.chatSearch.focusTick : 0;
+        const startingAt = opts.startingAt;
+        this.patch({
+            chatSearch: { conversationId, query, matchSeqs: [], index: 0, loading: true, failed: false, focusTick },
+        });
+        const call = this.api.searchConversation(conversationId, query, CHAT_SEARCH_LIMIT, controller.signal);
+        void call.catch(() => undefined);
+        let timer: ReturnType<typeof setTimeout>;
+        const timeout = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+                reject(new Error("timeout"));
+                controller.abort();
+            }, MESSAGE_SEARCH_TIMEOUT_MS);
+        });
+        const stale = (): boolean =>
+            seq !== this.chatSearchSeq ||
+            this.state.chatSearch?.conversationId !== conversationId ||
+            this.state.selectedConversationId !== conversationId;
+        let matchSeqs: number[];
+        let failed = false;
+        try {
+            matchSeqs = conversationMatchSeqs(await Promise.race([call, timeout]), conversationId);
+        } catch {
+            matchSeqs = [];
+            failed = true;
+        } finally {
+            clearTimeout(timer!);
+            if (this.chatSearchAbort === controller) this.chatSearchAbort = undefined;
+        }
+        if (stale()) return;
+        if (startingAt !== undefined && Number.isSafeInteger(startingAt) && !matchSeqs.includes(startingAt)) {
+            matchSeqs = [...matchSeqs, startingAt].sort((a, b) => b - a);
+        }
+        const index = startingAt === undefined ? 0 : Math.max(0, matchSeqs.indexOf(startingAt));
+        this.patch({ chatSearch: { conversationId, query, matchSeqs, index, loading: false, failed, focusTick } });
+        if (matchSeqs.length === 0) {
+            // "No matches": an earlier query's deep jump still paging must not land afterwards.
+            this.cancelChatSearchFocus();
+            return;
+        }
+        // The tracker opened over the conversation meanwhile: landing would close it again.
+        if (this.state.trackerView) return;
+        await this.focusMessage(conversationId, matchSeqs[index], "search");
+    }
+
+    /** Steps to the adjacent match: `older` walks up into history. Stops at either end. */
+    public async stepChatSearch(older: boolean): Promise<void> {
+        const search = this.state.chatSearch;
+        if (!search || search.loading) return;
+        const next = search.index + (older ? 1 : -1);
+        if (next < 0 || next >= search.matchSeqs.length) return;
+        this.patch({ chatSearch: { ...search, index: next } });
+        await this.focusMessage(search.conversationId, search.matchSeqs[next], "search");
+    }
+
+    /**
+     * Closes the bar. The transcript stays where it is, so a search jump still paging is cancelled
+     * too — left running, it would scroll the transcript after the user closed search.
+     */
+    public endChatSearch(): void {
+        this.chatSearchSeq += 1;
+        this.chatSearchAbort?.abort();
+        this.chatSearchAbort = undefined;
+        if (this.state.chatSearch) this.patch({ chatSearch: undefined });
+        this.cancelChatSearchFocus();
+    }
+
+    /** A sidebar search result: open its conversation on the message, with the find bar up. */
+    public openSearchHit(hit: SearchHit): void {
+        const query = this.state.messageSearch?.query;
+        if (query) void this.beginChatSearch(query, { conversationId: hit.convo_id, startingAt: hit.seq });
+        else void this.focusMessage(hit.convo_id, hit.seq);
+    }
+
+    private cancelChatSearchFocus(): void {
+        if (this.focusOwner !== "search") return;
+        const token = this.focusToken;
+        this.focusToken += 1;
+        this.focusOwner = undefined;
+        // A target already handed over but not yet landed goes too.
+        if (this.state.focusTarget?.token === token) this.patch({ focusTarget: undefined });
+    }
+
+    /**
+     * Loads older pages of the open conversation until `done()` holds or history runs out, at most
+     * FOCUS_MAX_PAGES pages. A page already in flight (the "Load earlier" button) is waited out
+     * rather than raced; a failed page stops the walk. Resolves false when the jump was superseded
+     * (a newer jump, or another conversation opened) — the caller then lands nothing.
+     */
+    private async pageHistoryUntil(conversationId: string, token: number, done: () => boolean): Promise<boolean> {
+        const current = (): boolean =>
+            this.focusToken === token && this.state.selectedConversationId === conversationId;
+        let pages = 0;
+        let waits = 0;
+        while (current() && !done()) {
+            if (this.history.get(conversationId)?.hasMore === false) break;
+            if (this.state.loadingHistory) {
+                if (++waits > FOCUS_MAX_WAITS) break;
+                await new Promise((resolve) => setTimeout(resolve, FOCUS_WAIT_MS));
+                continue;
+            }
+            if (pages >= FOCUS_MAX_PAGES) break;
+            pages += 1;
+            await this.loadOlderHistory({ suppressNotFound: true });
+            if (this.historyError) break;
+        }
+        return current();
+    }
+
     public async sendMessage(bodyInput: string, targetConvoId?: string): Promise<boolean> {
         const body = bodyInput.trim();
         const conversationId = targetConvoId ?? this.state.selectedConversationId;
@@ -1532,6 +2070,10 @@ export class MatronJournalClient {
         };
         await db.addToOutbox(message); // the only awaited durable step
         if (!owns()) return false;
+        if (isStartCommand(body)) {
+            const box = this.state.conversations.find((candidate) => candidate.id === conversationId)?.agent_device_id;
+            this.startIntents.noteBox(box ?? null, Date.now());
+        }
         // sendTick is a synchronous "a send happened → scroll to bottom" signal; bump it now (the
         // message is durably queued) rather than gating it behind the async refresh below.
         if (this.state.selectedConversationId === conversationId) {
@@ -1802,6 +2344,14 @@ export class MatronJournalClient {
             size: message.size,
             local_id: message.localId,
             ...(message.caption ? { caption: message.caption } : {}),
+            // Absent for a lone attachment, so its frame is exactly what an older bridge expects.
+            ...(message.batch
+                ? {
+                      batch_id: message.batch.id,
+                      batch_index: message.batch.index,
+                      batch_total: message.batch.total,
+                  }
+                : {}),
         };
     }
 
@@ -1872,129 +2422,215 @@ export class MatronJournalClient {
         }
     }
 
-    public stageFiles(files: File[]): void {
-        if (files.length === 0) return;
-        const staged = this.state.stagedUploads;
-        if (staged) {
-            if (this.isChildConvo(staged.convoId)) return;
-            if (staged.error) return;
-            this.patch({
-                stagedUploads: {
-                    ...staged,
-                    items: [...staged.items, ...files.map((file) => ({ id: crypto.randomUUID(), file }))],
-                    total: staged.total + files.length,
-                },
-            });
-            return;
-        }
-        const convoId = this.state.selectedConversationId;
-        if (!convoId) return;
+    /**
+     * Adds files to a conversation's attachment tray (the selected one by default). Picking, pasting
+     * and dropping all land here; nothing uploads until the user sends.
+     */
+    public stageFiles(files: File[], convoId = this.state.selectedConversationId): void {
+        if (files.length === 0 || !convoId || this.isChildConvo(convoId)) return;
         if (this.isViewingHistoricalWindow(convoId)) return;
-        if (this.isChildConvo(convoId)) return;
-        this.patch({
-            stagedUploads: {
-                convoId,
-                items: files.map((file) => ({ id: crypto.randomUUID(), file })),
-                total: files.length,
-                confirming: false,
-            },
+        const added = files.map((file): ComposerAttachment => {
+            const unsendable =
+                file.size === 0
+                    ? "That file is empty."
+                    : file.size > BROWSER_MEMORY_SAFETY_MAX_BYTES
+                      ? "Too large for this browser to upload."
+                      : undefined;
+            return unsendable
+                ? { id: crypto.randomUUID(), file, state: "failed", error: unsendable, unsendable: true }
+                : { id: crypto.randomUUID(), file, state: "staged" };
         });
+        this.setTray(convoId, [...this.trayOf(convoId), ...added]);
     }
 
-    public async confirmStagedFile(itemId: string, captionInput?: string): Promise<void> {
-        const staged = this.state.stagedUploads;
-        if (!staged || staged.confirming || staged.error) return;
-        const head = staged.items[0];
-        if (!head || head.id !== itemId) return;
-        if (this.isChildConvo(staged.convoId)) return;
-        this.patch({ stagedUploads: { ...staged, confirming: true } });
+    /** Takes one file out of the tray. A file already part of a send in flight stays. */
+    public removeStagedFile(convoId: string, id: string): void {
+        const tray = this.trayOf(convoId);
+        const item = tray.find((candidate) => candidate.id === id);
+        if (!item || item.state === "queued" || item.state === "uploading") return;
+        this.setTray(
+            convoId,
+            tray.filter((candidate) => candidate.id !== id),
+        );
+    }
 
+    /**
+     * Sends a conversation's tray with the composer text, as one turn: the files upload one at a
+     * time, each followed by its media frame. The text rides on the first as its caption (once, so
+     * the agent doesn't read it per file), and with more than one file every frame carries the same
+     * batch tag, so the bridge hands them to the agent together.
+     *
+     * Stops at the first failed upload: a later file sent without the earlier one it goes with would
+     * reach the agent out of context. The failed file and the ones after it stay in the tray, keeping
+     * their batch tags, and the next send retries them. `captionDelivered` says whether the text went
+     * out with a file that made it, so the composer knows whether to put it back.
+     */
+    public async sendStagedFiles(
+        convoId: string,
+        caption: string,
+    ): Promise<{ outcome: "sent" | "failed" | "skipped"; captionDelivered: boolean }> {
+        const skipped = { outcome: "skipped" as const, captionDelivered: false };
         const gen = this.sessionGen;
         const api = this.api;
         const db = this.database;
-        if (!api || !db) {
-            const current = this.state.stagedUploads;
-            if (current) this.patch({ stagedUploads: { ...current, confirming: false } });
-            return;
+        if (!api || !db || this.isChildConvo(convoId) || !this.stagedConvoValid(convoId)) return skipped;
+        const tray = this.trayOf(convoId);
+        if (
+            tray.length === 0 ||
+            tray.some((item) => item.unsendable || item.state === "queued" || item.state === "uploading")
+        ) {
+            return skipped;
         }
+        // Fresh tags only across files that haven't failed out of an earlier send, and only when
+        // there is more than one: a lone file goes untagged, and a retried one keeps its own tag.
+        const untagged = tray.filter((item) => !item.batch);
+        const batchId = untagged.length > 1 ? crypto.randomUUID() : undefined;
+        let freshIndex = 0;
+        const plan = tray.map((item) => ({
+            id: item.id,
+            file: item.file,
+            batch: item.batch ?? (batchId ? { id: batchId, index: ++freshIndex, total: untagged.length } : undefined),
+        }));
+        const planned = new Set(plan.map((step) => step.id));
+        this.setTray(
+            convoId,
+            tray.map((item) =>
+                planned.has(item.id) ? { ...item, state: "queued", progress: undefined, error: undefined } : item,
+            ),
+        );
+        if (this.state.selectedConversationId === convoId) this.patch({ sendTick: this.state.sendTick + 1 });
+
         const owner: AttachmentOwner = { gen, api, db };
-        const convoId = staged.convoId;
-
-        if (!this.stagedConvoValid(convoId)) {
-            this.patch({ stagedUploads: { ...staged, items: [], confirming: false, error: "archived" } });
-            return;
-        }
-
-        const caption = captionInput?.trim() ? captionInput.trim() : undefined;
-        const message = head.message ?? this.buildPendingAttachment(head.file, convoId, caption);
-        head.message = message;
-        if (caption) message.caption = caption;
-        else delete message.caption;
-
-        const persistOutcome = await this.persistPendingAttachment(message, head.file, db, gen);
-        if (this.sessionGen !== gen) return;
-        const current = this.state.stagedUploads;
-        if (!current) return;
-        if (persistOutcome.kind === "persist-failed") {
-            this.transientAttachmentErrors.delete(message.localId);
-            this.pendingFiles.delete(message.localId);
-            if (this.state.selectedConversationId === convoId) {
-                await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-            }
-            const afterPurge = this.state.stagedUploads;
-            if (!afterPurge) return;
-            this.patch({ stagedUploads: { ...afterPurge, confirming: false, persistError: true } });
-            return;
-        }
-        if (this.state.selectedConversationId === convoId) {
-            this.patch({ sendTick: this.state.sendTick + 1 });
-        }
-        void this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-        const rest = current.items.slice(1);
-        this.patch({
-            stagedUploads: rest.length
-                ? { ...current, items: rest, confirming: false, persistError: false }
-                : undefined,
-        });
-
-        if (persistOutcome.kind === "persisted-terminal") return;
-
-        this.stagedSendChain = this.stagedSendChain.then(async () => {
-            try {
-                if (this.sessionGen !== gen || this.database !== db) return;
-                if (!this.stagedConvoValid(convoId)) {
-                    message.attachState = "error";
-                    message.errorKind = "upload_failed";
-                    message.errorMessage = "Conversation was archived in another tab — unarchive to retry.";
-                    if (await this.persistAttachment(message, db, gen)) {
-                        await this.refreshSelectedConversation(convoId, db, gen).catch(() => undefined);
-                    }
-                    return;
+        try {
+            return await this.runStagedSend(convoId, plan, caption.trim(), owner);
+        } finally {
+            // Whatever way the send ended, no file of it may stay stuck as queued or uploading:
+            // anything still in the tray goes back to staged with its batch tag, ready to retry.
+            if (this.sessionGen === gen) {
+                const batches = new Map(plan.map((step) => [step.id, step.batch]));
+                const tray = this.trayOf(convoId);
+                if (
+                    tray.some((item) => batches.has(item.id) && (item.state === "queued" || item.state === "uploading"))
+                ) {
+                    this.setTray(
+                        convoId,
+                        tray.map((item): ComposerAttachment => {
+                            if (!batches.has(item.id) || (item.state !== "queued" && item.state !== "uploading")) {
+                                return item;
+                            }
+                            const batch = batches.get(item.id);
+                            return { id: item.id, file: item.file, state: "staged", ...(batch ? { batch } : {}) };
+                        }),
+                    );
                 }
-                await this.runPendingUpload(message, head.file, owner);
-            } catch {
-                // Rejection isolation: one failed upload must not poison the chain.
             }
-        });
+        }
     }
 
-    public skipStagedFile(itemId: string): void {
-        const staged = this.state.stagedUploads;
-        if (!staged || staged.confirming || staged.error) return;
-        const head = staged.items[0];
-        if (!head || head.id !== itemId) return;
-        const rest = staged.items.slice(1);
-        this.patch({
-            stagedUploads: rest.length ? { ...staged, items: rest, persistError: false } : undefined,
-        });
+    private async runStagedSend(
+        convoId: string,
+        plan: { id: string; file: File; batch?: AttachmentBatchTag }[],
+        text: string,
+        owner: AttachmentOwner,
+    ): Promise<{ outcome: "sent" | "failed" | "skipped"; captionDelivered: boolean }> {
+        const { gen, api, db } = owner;
+        let captionDelivered = false;
+        for (const [index, step] of plan.entries()) {
+            if (this.sessionGen !== gen || this.api !== api || this.database !== db) {
+                return { outcome: "skipped", captionDelivered };
+            }
+            let mediaId: string;
+            try {
+                if (this.isChildConvo(convoId)) throw new Error("Can't send to a read-only subagent transcript.");
+                if (!this.stagedConvoValid(convoId)) throw new Error("This conversation was archived.");
+                this.updateStaged(convoId, step.id, { state: "uploading", progress: 0 });
+                mediaId = await this.uploadStagedFile(convoId, step.id, step.file, api);
+            } catch (error) {
+                if (this.sessionGen !== gen) return { outcome: "skipped", captionDelivered };
+                const unsent = new Map(plan.slice(index).map((later) => [later.id, later.batch]));
+                this.setTray(
+                    convoId,
+                    this.trayOf(convoId).map((item): ComposerAttachment => {
+                        if (!unsent.has(item.id)) return item;
+                        const batch = unsent.get(item.id);
+                        const kept: ComposerAttachment = { id: item.id, file: item.file, state: "staged" };
+                        if (batch) kept.batch = batch;
+                        if (item.id === step.id) {
+                            kept.state = "failed";
+                            kept.error = stagedUploadError(error);
+                        }
+                        return kept;
+                    }),
+                );
+                return { outcome: "failed", captionDelivered };
+            }
+            const message = this.buildPendingAttachment(step.file, convoId, index === 0 ? text : undefined);
+            message.blobRef = mediaId;
+            if (step.batch) message.batch = step.batch;
+            // Out of the tray as it joins the timeline, so the two never show the same file.
+            this.setTray(
+                convoId,
+                this.trayOf(convoId).filter((item) => item.id !== step.id),
+            );
+            // From here the outbox owns it: a failed frame becomes a retryable tile in the timeline,
+            // and the text is with it either way.
+            if (message.caption) captionDelivered = true;
+            try {
+                await this.emitPendingAttachment(message, owner);
+            } catch (error) {
+                console.warn("matron: attachment frame not dispatched", error);
+                return { outcome: "failed", captionDelivered };
+            }
+        }
+        return { outcome: "sent", captionDelivered };
     }
 
-    public cancelStagedFiles(): void {
-        const staged = this.state.stagedUploads;
-        if (!staged) return;
-        // The confirming lock guards all mutations at the client boundary.
-        if (staged.confirming) return;
-        this.patch({ stagedUploads: undefined });
+    private trayOf(convoId: string): ComposerAttachment[] {
+        return this.state.composerAttachments[convoId] ?? [];
+    }
+
+    private setTray(convoId: string, items: ComposerAttachment[]): void {
+        const next = { ...this.state.composerAttachments };
+        if (items.length > 0) next[convoId] = items;
+        else delete next[convoId];
+        this.patch({ composerAttachments: next });
+    }
+
+    private updateStaged(convoId: string, id: string, change: Partial<ComposerAttachment>): void {
+        const tray = this.trayOf(convoId);
+        if (!tray.some((item) => item.id === id)) return;
+        this.setTray(
+            convoId,
+            tray.map((item) => (item.id === id ? { ...item, ...change } : item)),
+        );
+    }
+
+    private async uploadStagedFile(convoId: string, id: string, file: File, api: JournalApi): Promise<string> {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), uploadTimeoutMsFor(file.size));
+        // Tracked with the outbox uploads, so signing out or the conversation turning into a
+        // read-only subagent transcript aborts it too.
+        this.inFlightUploads.set(id, controller);
+        this.uploadConvos.set(id, convoId);
+        try {
+            const bytes = await Promise.race([file.arrayBuffer(), abortPromise(controller.signal)]);
+            const response = await api.uploadMedia(
+                bytes,
+                file.type || "application/octet-stream",
+                controller.signal,
+                (fraction) => this.updateStaged(convoId, id, { progress: fraction }),
+            );
+            if (typeof response.media_id !== "string" || response.media_id.trim() === "") {
+                throw new Error("The journal server returned a malformed media response.");
+            }
+            return response.media_id;
+        } finally {
+            window.clearTimeout(timer);
+            if (this.inFlightUploads.get(id) === controller) {
+                this.inFlightUploads.delete(id);
+                this.uploadConvos.delete(id);
+            }
+        }
     }
 
     private stagedConvoValid(convoId: string): boolean {
@@ -2053,6 +2689,81 @@ export class MatronJournalClient {
         await this.api.answerAgentSpawn(requestId, decision, signal);
     }
 
+    /**
+     * Answers the agent-spawn ask a consent item stands for, through the same call as the card in
+     * the conversation, then refetches the item if it is still the one open: the journal closes it
+     * once the ask is decided, and after a 409 (answered elsewhere, or expired) the copy that still
+     * offered the buttons was stale. Errors are rethrown unchanged for the card's state machine.
+     */
+    public async answerSpawnConsent(
+        itemNum: number,
+        requestId: string,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<void> {
+        try {
+            await this.answerAgentSpawn(requestId, decision, signal);
+        } catch (error) {
+            if (error instanceof JournalApiError && error.status === 409) this.refreshSelectedItem(itemNum);
+            throw error;
+        }
+        this.refreshSelectedItem(itemNum);
+    }
+
+    private refreshSelectedItem(itemNum: number): void {
+        if (this.isSelectedTrackerItem(itemNum)) void this.loadItem(itemNum);
+    }
+
+    /**
+     * The agent-spawn ask a consent item stands for, as the conversation that asked tells it: the
+     * card's own event and its outcome. Read from the local store. A conversation this device has
+     * not opened may not hold the card yet, so the first miss fetches that conversation's latest
+     * history page once (per conversation and session) and looks again. Never throws: a store or
+     * network failure reads as "not here", which the item shows as a card that has not arrived.
+     */
+    public async spawnConsentRows(convoId: string, requestId: string): Promise<SpawnConsentRows> {
+        const database = this.database;
+        const none: SpawnConsentRows = { request: null, outcome: null };
+        if (!database || !convoId || !requestId) return none;
+        let rows: SpawnConsentRows;
+        try {
+            rows = spawnConsentRowsIn(await database.events(convoId), requestId);
+        } catch {
+            return none;
+        }
+        const api = this.api;
+        if (rows.request || !api) return rows;
+        const fetchKey = `${this.sessionGen}:${convoId}`;
+        let fetch = this.consentHistoryFetches.get(fetchKey);
+        if (!fetch) {
+            fetch = (async (): Promise<void> => {
+                const response = await api.messages(convoId);
+                if (this.database === database && this.api === api) await database.putHistory(response.events);
+            })();
+            this.consentHistoryFetches.set(fetchKey, fetch);
+            fetch.catch(() => {
+                if (this.consentHistoryFetches.get(fetchKey) === fetch) this.consentHistoryFetches.delete(fetchKey);
+            });
+        }
+        try {
+            await fetch;
+            if (this.database !== database) return rows;
+            return spawnConsentRowsIn(await database.events(convoId), requestId);
+        } catch {
+            return rows;
+        }
+    }
+
+    public async answerAgentChat(
+        roomId: string,
+        targetDeviceId: number,
+        decision: "approve" | "deny",
+        signal?: AbortSignal,
+    ): Promise<boolean> {
+        if (!this.api) throw new Error("Not signed in.");
+        return this.api.answerAgentChat(roomId, targetDeviceId, decision, signal);
+    }
+
     // Concurrent callers for the same id (the viewer body and its DownloadLink mount in the
     // same commit) share one in-flight request: without the dedupe map each miss fetched the
     // blob again and the loser's object URL was overwritten in the cache — never revoked, a
@@ -2060,6 +2771,7 @@ export class MatronJournalClient {
     public mediaUrl(mediaId: string): Promise<string> {
         const cached = this.mediaUrls.get(mediaId);
         if (cached) return Promise.resolve(cached);
+        if (this.expiredMedia.has(mediaId)) return Promise.reject(new JournalApiError("Media expired", 404));
         const inflight = this.mediaUrlRequests.get(mediaId);
         if (inflight) return inflight;
         const api = this.api;
@@ -2077,12 +2789,20 @@ export class MatronJournalClient {
                 }
                 this.mediaUrls.set(mediaId, url);
                 return url;
+            } catch (error) {
+                if (isMediaExpiredError(error) && this.sessionGen === gen) this.expiredMedia.add(mediaId);
+                throw error;
             } finally {
                 this.mediaUrlRequests.delete(mediaId);
             }
         })();
         this.mediaUrlRequests.set(mediaId, request);
         return request;
+    }
+
+    /** Whether a fetch for this blob already came back 404 (reaped server-side). */
+    public isMediaExpired(mediaId: string): boolean {
+        return this.expiredMedia.has(mediaId);
     }
 
     public selectedConversation(): Conversation | undefined {
@@ -2248,7 +2968,11 @@ export class MatronJournalClient {
         // leaves the state shape exactly as it was before loop selection existed.
         if (next.selectedLoopId === undefined) delete next.selectedLoopId;
         if (next.selectedMemoryName === undefined) delete next.selectedMemoryName;
-        this.patch({ trackerView: next });
+        // The tracker covers the transcript: a jump still paging history is dropped, and a target
+        // not yet landed is withdrawn, or returning to the conversation would flash a jump the
+        // user has since left.
+        this.focusToken += 1;
+        this.patch({ trackerView: next, ...(this.state.focusTarget ? { focusTarget: undefined } : {}) });
     }
 
     /** Open the Work tab, on a loop's detail when `loopId` is a number, else on the list. */
@@ -2370,6 +3094,15 @@ export class MatronJournalClient {
     // call site so a valid link is always activatable (F6) — never rendered inert or stripped.
     // A project link opens that project's page (openTrackerProject).
     public openTrackerLink(kind: MatronLinkKind, target: number | string): void {
+        if (kind === "link") {
+            if (typeof target !== "string") return;
+            const link = parseOwnTrackerUrl(target);
+            const user = this.state.session?.username;
+            // Another user's number would open the wrong row here, so it opens as a web page.
+            if (link && user && link.user.toLowerCase() === user.toLowerCase()) void this.openLinkedNumber(link.num);
+            else window.open(target, "_blank", "noopener,noreferrer");
+            return;
+        }
         if (kind === "convo") {
             if (typeof target === "string" && target) void this.selectConversation(target, { suppressNotFound: true });
             return;
@@ -2379,6 +3112,147 @@ export class MatronJournalClient {
         if (kind === "item") this.openTrackerItem(num);
         else if (kind === "mission") this.openTrackerMission(num);
         else this.openTrackerProject(num);
+    }
+
+    // ── Go to number ────────────────────────────────────────────────────────
+    // Items, missions, milestones and projects share one per-user number space, and each kind
+    // opens differently, so "go to 412" first asks the journal which kind 412 is.
+
+    public openGoToNumber(): void {
+        if (!this.state.goToNumberOpen) this.patch({ goToNumberOpen: true });
+    }
+
+    public closeGoToNumber(): void {
+        if (this.state.goToNumberOpen) this.patch({ goToNumberOpen: false });
+    }
+
+    // ── Subagent side pane and media browser ────────────────────────────────
+
+    /**
+     * Opens a subagent from a Subtask line or a subagent pill. With its parent on screen it opens
+     * in the pane beside the parent (switching the pane if another subagent is there); from
+     * anywhere else, such as a sibling subagent opened on its own, it opens as the conversation.
+     */
+    public openSubChat(childId: string): void {
+        const child = this.state.conversations.find((conversation) => conversation.id === childId);
+        const parentId = child?.parent_convo_id;
+        if (parentId && parentId === this.state.selectedConversationId && !this.state.trackerView?.open) {
+            const open = this.state.subChatPane;
+            // One pane beside the chat: the subagent takes the slot from the Tasks pane.
+            const tasks = this.state.chatTasks;
+            if (open?.parentId !== parentId || open.childId !== childId || tasks?.open) {
+                this.patch({
+                    subChatPane: { parentId, childId },
+                    ...(tasks?.open ? { chatTasks: { ...tasks, open: false } } : {}),
+                });
+            }
+            return;
+        }
+        void this.selectConversation(childId, { suppressNotFound: true });
+    }
+
+    /** Resolves once the open conversation's history page in flight has landed, or once another
+     *  conversation is on screen. */
+    private historyLoadSettled(conversationId: string): Promise<void> {
+        return new Promise((resolve) => {
+            const check = (): void => {
+                if (this.state.loadingHistory && this.state.selectedConversationId === conversationId) return;
+                unsubscribe();
+                resolve();
+            };
+            const unsubscribe = this.subscribe(check);
+            check();
+        });
+    }
+
+    public closeSubChat(): void {
+        if (this.state.subChatPane) this.patch({ subChatPane: undefined });
+    }
+
+    /**
+     * Every stored event of a conversation, oldest first: what the side pane and the media browser
+     * show for a conversation other than (or as well as) the one on screen. When its history was
+     * never loaded, the newest page is fetched first, as opening the conversation would. Never
+     * throws: a failed fetch still returns what is stored.
+     */
+    public async conversationEvents(conversationId: string): Promise<JournalEvent[]> {
+        const db = this.database;
+        if (!db) return [];
+        const api = this.api;
+        if (conversationId === this.state.selectedConversationId) {
+            // The conversation on screen pages its own history: wait for (or start) its first
+            // page there, so the transcript, its "Load earlier" state and its scroll anchor stay
+            // in step, rather than fetching the same page beside it.
+            if (this.state.loadingHistory) await this.historyLoadSettled(conversationId);
+            else if (api && !this.history.get(conversationId)?.initialized) await this.loadOlderHistory();
+            return this.database === db ? db.events(conversationId) : [];
+        }
+        if (api && !this.history.get(conversationId)?.initialized) {
+            try {
+                const response = await api.messages(conversationId, undefined, HISTORY_PAGE_SIZE);
+                if (this.database !== db) return [];
+                await db.putHistory(response.events);
+                if (!this.history.get(conversationId)?.initialized) {
+                    const known = this.state.conversations.find((candidate) => candidate.id === conversationId);
+                    const emptyWithKnownHistory = response.events.length === 0 && (known?.last_seq ?? 0) > 0;
+                    this.history.set(conversationId, {
+                        initialized: !emptyWithKnownHistory,
+                        oldestSeq: response.events.reduce<number | undefined>(
+                            (current, event) => (current === undefined ? event.seq : Math.min(current, event.seq)),
+                            undefined,
+                        ),
+                        hasMore: emptyWithKnownHistory || response.events.length === HISTORY_PAGE_SIZE,
+                        hasMoreNewer: false,
+                    });
+                }
+            } catch {
+                // Offline or refused: show what is stored.
+            }
+        }
+        return db.events(conversationId);
+    }
+
+    /**
+     * Asks the journal what the signed-in user's number `num` is. Never throws: a 404 is `none`
+     * (no such number), anything else that goes wrong is `failed`. The payload is checked field
+     * by field, since the journal is a separate service that may be older or newer than this app.
+     */
+    public async lookupNumber(num: number, signal?: AbortSignal): Promise<NumberLookupOutcome> {
+        const api = this.api;
+        const user = this.state.session?.username;
+        if (!api || !user || !Number.isSafeInteger(num) || num <= 0) return { status: "failed" };
+        // Bounded like searchMessages: a transport that ignores the abort signal must not leave
+        // the field waiting for ever.
+        const call = api.lookup(user, num, signal);
+        void call.catch(() => undefined);
+        let timer: ReturnType<typeof setTimeout>;
+        const timeout = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error("timeout")), NUMBER_LOOKUP_TIMEOUT_MS);
+        });
+        try {
+            const hit = sanitizeNumberLookup(await Promise.race([call, timeout]));
+            return hit ? { status: "found", hit } : { status: "failed" };
+        } catch (error) {
+            if (error instanceof JournalApiError && error.status === 404) return { status: "none" };
+            return { status: "failed" };
+        } finally {
+            clearTimeout(timer!);
+        }
+    }
+
+    /**
+     * Opens what a lookup found; `asked` is the number that was looked up, used when an older
+     * journal's answer does not carry the row's own number. A milestone has no page of its own,
+     * so it opens the mission it sits on. Returns false when there is nothing to open.
+     */
+    public openNumberHit(hit: NumberLookup, asked: number): boolean {
+        const num = hit.num ?? asked;
+        if (hit.kind === "item") this.openTrackerItem(num);
+        else if (hit.kind === "mission") this.openTrackerMission(num);
+        else if (hit.kind === "project") this.openTrackerProject(num);
+        else if (hit.mission) this.openTrackerMission(hit.mission.num);
+        else return false;
+        return true;
     }
 
     // ── Coordinator briefing (top of the Projects tab) ──────────────────────
@@ -2402,12 +3276,13 @@ export class MatronJournalClient {
     }
 
     /**
-     * "Open in chat": the Coordinator conversation the briefing was posted to. The client has no
-     * jump-to-seq (search hits open their conversation the same way), so this opens the
-     * conversation; the briefing is its latest message unless the Coordinator has said more since.
+     * "Open in chat": the Coordinator conversation the briefing was posted to, landed on the
+     * briefing's own message. Without a seq (an older journal) it opens at the tail, where the
+     * briefing is unless the Coordinator has said more since.
      */
-    public openBriefingInChat(convoId: string): void {
-        void this.selectConversation(convoId, { suppressNotFound: true });
+    public openBriefingInChat(convoId: string, seq?: number): void {
+        if (seq !== undefined && Number.isSafeInteger(seq)) void this.focusMessage(convoId, seq);
+        else void this.selectConversation(convoId, { suppressNotFound: true });
     }
 
     // GET /briefings/latest. A 404 means the journal predates briefings: the card stays hidden
@@ -2457,6 +3332,346 @@ export class MatronJournalClient {
             }
             return false;
         }
+    }
+
+    // ── Coordinator consent approval (Settings → Coordinator; GET/PUT /coordinator `consent`) ──
+
+    /**
+     * GET /coordinator: the switch's value, and the Coordinator conversation. A journal without
+     * `consent` leaves the switch hidden.
+     */
+    public async loadCoordinatorConsent(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const epoch = this.coordinatorConsentEpoch;
+        const coordinatorEpoch = this.coordinatorEpoch;
+        try {
+            const raw = await api.coordinator();
+            const enabled = parseCoordinatorConsent(raw);
+            // The same answer names the Coordinator conversation (Settings shows it above the switch).
+            const id = coordinatorIdIn(raw);
+            if (this.api === api && id !== undefined && this.coordinatorEpoch === coordinatorEpoch) {
+                this.coordinatorStale = false;
+                this.patch({ coordinatorConvoId: id });
+            }
+            // A write since the GET was sent is newer than its answer.
+            if (this.api !== api || this.coordinatorConsentEpoch !== epoch) return;
+            this.coordinatorConsentConfirmed = enabled;
+            this.patch({ coordinatorConsent: { ...this.state.coordinatorConsent, enabled } });
+        } catch {
+            // Keep what is shown: a blip must not take the switch away.
+        }
+    }
+
+    /**
+     * PUT /coordinator {consent}. The switch moves at once; a failed write puts it back to the
+     * journal's last known value and says why. Writes go one at a time, in tap order, so the
+     * journal ends on the last tap, and only the latest write's answer moves the switch.
+     */
+    public setCoordinatorConsent(enabled: boolean): Promise<void> {
+        const api = this.api;
+        const current = this.state.coordinatorConsent?.enabled;
+        if (!api || current === undefined || current === enabled) return Promise.resolve();
+        const epoch = ++this.coordinatorConsentEpoch;
+        this.patch({ coordinatorConsent: { enabled, error: undefined } });
+        const write = this.coordinatorConsentWrite.then(async () => {
+            if (this.api !== api) return;
+            try {
+                const stored = parseCoordinatorConsent(await api.putCoordinatorConsent(enabled)) ?? enabled;
+                if (this.api !== api) return;
+                this.coordinatorConsentConfirmed = stored;
+                if (this.coordinatorConsentEpoch === epoch) this.patch({ coordinatorConsent: { enabled: stored } });
+            } catch (error) {
+                if (this.api !== api || this.coordinatorConsentEpoch !== epoch) return;
+                this.patch({
+                    coordinatorConsent: { enabled: this.coordinatorConsentConfirmed, error: errorMessage(error) },
+                });
+            }
+        });
+        this.coordinatorConsentWrite = write;
+        return write;
+    }
+
+    // ── The Coordinator conversation (rail entry, Settings → Coordinator; /coordinator `convo_id`) ──
+
+    /**
+     * GET /coordinator: the user's Coordinator conversation, asked fresh each time. The one lookup
+     * for anything that opens the Coordinator (the rail entry, a keyboard shortcut): call it and
+     * pass a non-null answer to `selectConversation(id, { suppressNotFound: true })`, or use
+     * `openCoordinator()`, rather than reading `/coordinator` again.
+     *
+     * Resolves to the journal's answer (null = no Coordinator), which also updates
+     * `coordinatorConvoId`; when a hello, write or marker landed while the read was in flight, that
+     * newer value instead. A failed read falls back to the last known value, so an offline click
+     * still opens it. Null for a signed-out client, or a failed read with nothing known.
+     */
+    public async coordinatorConversationId(): Promise<string | null> {
+        const api = this.api;
+        if (!api) return null;
+        // A `coordinator` marker only says the value changed: an answer it overtook is asked again
+        // (a few times at most), while a hello or write already put the newer value in state.
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const epoch = this.coordinatorEpoch;
+            let raw: unknown;
+            try {
+                raw = await api.coordinator();
+            } catch {
+                return this.api === api ? (this.state.coordinatorConvoId ?? null) : null;
+            }
+            if (this.api !== api) return null;
+            if (this.coordinatorEpoch === epoch) {
+                const id = coordinatorIdIn(raw);
+                if (id !== undefined) {
+                    this.coordinatorStale = false;
+                    this.patch({ coordinatorConvoId: id });
+                }
+                return id ?? null;
+            }
+            if (!this.coordinatorStale) return this.state.coordinatorConvoId ?? null;
+        }
+        return this.state.coordinatorConvoId ?? null;
+    }
+
+    /**
+     * The rail's Coordinator entry: opens the Coordinator conversation (`coordinatorConversationId`
+     * semantics: the journal first, the last known value when the read fails). Resolves false
+     * when there is none, so the caller can offer the chooser.
+     */
+    public async openCoordinator(): Promise<boolean> {
+        const id = await this.coordinatorConversationId();
+        if (!id) return false;
+        this.closeTrackerView();
+        void this.selectConversation(id, { suppressNotFound: true });
+        return true;
+    }
+
+    /**
+     * PUT /coordinator {convo_id}: the user's pick, or null to clear. The journal first; the value
+     * shown follows its answer, so a failed write changes nothing. Resolves to the message to
+     * show, or undefined on success.
+     */
+    public async setCoordinator(convoId: string | null): Promise<string | undefined> {
+        const api = this.api;
+        if (!api) return "Not signed in.";
+        try {
+            const raw = await api.putCoordinator(convoId);
+            if (this.api !== api) return undefined;
+            this.coordinatorEpoch += 1;
+            this.coordinatorStale = false;
+            this.patch({ coordinatorConvoId: coordinatorIdIn(raw) ?? convoId });
+            return undefined;
+        } catch (error) {
+            if (error instanceof JournalApiError && error.status === 404) {
+                return "That conversation can't be the Coordinator: it no longer exists, or it isn't yours.";
+            }
+            return `Couldn't change the Coordinator: ${errorMessage(error)}`;
+        }
+    }
+
+    // hello_ok's `coordinator_convo_id` is the journal's word on connect; it supersedes any GET in
+    // flight. An older journal leaves the key out, and a GET asks instead.
+    private applyHelloCoordinator(hello: JournalControlFrame): void {
+        const id =
+            "coordinator_convo_id" in hello ? coordinatorIdIn({ convo_id: hello.coordinator_convo_id }) : undefined;
+        if (id === undefined) {
+            void this.coordinatorConversationId();
+            return;
+        }
+        this.coordinatorEpoch += 1;
+        this.coordinatorStale = false;
+        this.patch({ coordinatorConvoId: id });
+    }
+
+    // `coordinator` events (assigned / released) and `routine` markers are pure invalidation: the
+    // journal's answer is refetched, so a reconnect's replayed backlog can never leave an old value.
+    private handleCoordinatorMarker(event: JournalEvent): void {
+        if (event.type === "coordinator") {
+            this.coordinatorEpoch += 1;
+            this.coordinatorStale = true;
+            if (this.coordinatorRefetchTimer !== undefined) return;
+            this.coordinatorRefetchTimer = window.setTimeout(() => {
+                this.coordinatorRefetchTimer = undefined;
+                void this.coordinatorConversationId();
+            }, MARKER_REFETCH_DELAY_MS);
+            return;
+        }
+        if (event.type === "routine" && this.routinesViewers > 0) this.scheduleRoutinesRefetch();
+    }
+
+    // ── Coordinator routines (Settings → Coordinator → Routines; journal /routines) ──
+
+    /**
+     * The Routines sheet is showing: load now, and follow `routine` markers and reconnects until
+     * the returned function is called. Nothing loads before, so an older journal's 404 stays on
+     * that sheet.
+     */
+    public watchRoutines(): () => void {
+        this.routinesViewers += 1;
+        void this.loadRoutines();
+        let stopped = false;
+        return () => {
+            if (stopped) return;
+            stopped = true;
+            this.routinesViewers = Math.max(0, this.routinesViewers - 1);
+            if (this.routinesViewers === 0 && this.routinesRefetchTimer !== undefined) {
+                window.clearTimeout(this.routinesRefetchTimer);
+                this.routinesRefetchTimer = undefined;
+            }
+        };
+    }
+
+    /** GET /routines. A 404 marks the journal as without routines; a failure keeps the list. */
+    public async loadRoutines(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.routinesGen;
+        this.patchRoutines({ loading: true });
+        try {
+            const list = parseRoutineList(await api.routines());
+            if (this.api !== api || this.routinesGen !== gen) return;
+            if (!list) {
+                this.patchRoutines({ loading: false, error: "The journal sent a malformed routines list." });
+                return;
+            }
+            this.patchRoutines({ list, loading: false, unsupported: false, error: undefined });
+        } catch (error) {
+            if (this.api !== api || this.routinesGen !== gen) return;
+            if (error instanceof JournalApiError && error.status === 404) {
+                this.patchRoutines({ loading: false, unsupported: true, error: undefined });
+                return;
+            }
+            this.patchRoutines({ loading: false, error: errorMessage(error) });
+        }
+    }
+
+    /** Pause (false) or resume (true). Resolves to the message to show, or undefined. */
+    public async setRoutineEnabled(id: string, enabled: boolean): Promise<string | undefined> {
+        const api = this.api;
+        if (!api || this.state.routines?.busyIds?.has(id)) return undefined;
+        this.markRoutineBusy(id, true);
+        try {
+            const raw = await api.patchRoutine(id, { enabled });
+            if (this.api !== api) return undefined;
+            this.replaceRoutine(routineIn(raw));
+            return undefined;
+        } catch (error) {
+            if (this.api !== api) return undefined;
+            if (error instanceof JournalApiError && error.status === 404) void this.loadRoutines();
+            return routineFailure(error, false);
+        } finally {
+            if (this.api === api) this.markRoutineBusy(id, false);
+        }
+    }
+
+    /**
+     * POST /routines/:key/run: fires the routine now. Its outcome lands later as a `fired` marker,
+     * which refetches the list. Resolves to null once the journal took it, otherwise the reason.
+     */
+    public async runRoutine(id: string): Promise<string | null> {
+        const api = this.api;
+        if (!api || this.state.routines?.busyIds?.has(id)) return null;
+        this.markRoutineBusy(id, true);
+        try {
+            const message = routineRunMessage(await api.runRoutine(id));
+            return this.api === api ? message : null;
+        } catch (error) {
+            return this.api === api ? routineFailure(error, false) : null;
+        } finally {
+            if (this.api === api) this.markRoutineBusy(id, false);
+        }
+    }
+
+    /**
+     * Creates (`existingId` undefined) or edits a routine. The journal's rules are checked first,
+     * and a new routine's name must not already be in the list. Resolves to the message to show,
+     * or undefined on success.
+     */
+    public async saveRoutine(
+        existingId: string | undefined,
+        name: string,
+        draft: RoutineDraft,
+    ): Promise<string | undefined> {
+        const api = this.api;
+        if (!api) return "Not signed in.";
+        const isNew = existingId === undefined;
+        if (isNew && !this.state.routines?.list) await this.loadRoutines();
+        const problem = routineFormError(name, draft);
+        if (problem) return problem;
+        const routines = this.state.routines;
+        if (isNew) {
+            if (!routines?.list) {
+                return routines?.unsupported
+                    ? ROUTINES_UNSUPPORTED
+                    : "Routines haven't loaded yet, so this name can't be checked. Try again in a moment.";
+            }
+            if (routines.list.some((routine) => routine.name === name)) {
+                return `A routine named "${name}" already exists. Open it from the list to change it.`;
+            }
+            if (routines.list.length >= RoutineRules.maxRoutines)
+                return routineErrorMessage(409, { blocked_by: "cap" }, true)!;
+        }
+        const body = routineRequestBody(draft);
+        try {
+            const raw = isNew
+                ? await api.createRoutine({ ...body, name, tz: draft.tz })
+                : await api.patchRoutine(existingId, body);
+            if (this.api !== api) return undefined;
+            this.replaceRoutine(routineIn(raw));
+            return undefined;
+        } catch (error) {
+            if (this.api !== api) return undefined;
+            // An edit of a routine deleted elsewhere: drop it from the list, as a pause does.
+            if (!isNew && error instanceof JournalApiError && error.status === 404) void this.loadRoutines();
+            return routineFailure(error, isNew);
+        }
+    }
+
+    /** DELETE /routines/:key. A routine already gone counts as deleted. */
+    public async deleteRoutine(id: string): Promise<string | undefined> {
+        const api = this.api;
+        if (!api) return "Not signed in.";
+        try {
+            await api.deleteRoutine(id);
+        } catch (error) {
+            if (!(error instanceof JournalApiError && error.status === 404)) return routineFailure(error, false);
+        }
+        if (this.api !== api) return undefined;
+        // Any load in flight was asked before the delete: its answer may still have the routine.
+        this.routinesGen += 1;
+        const list = this.state.routines?.list?.filter((routine) => routine.id !== id);
+        this.patchRoutines({ loading: false, ...(list ? { list } : {}) });
+        return undefined;
+    }
+
+    private patchRoutines(update: Partial<RoutinesState>): void {
+        this.patch({ routines: { ...this.state.routines, ...update } });
+    }
+
+    private markRoutineBusy(id: string, busy: boolean): void {
+        const busyIds = new Set(this.state.routines?.busyIds ?? []);
+        if (busy) busyIds.add(id);
+        else busyIds.delete(id);
+        this.patchRoutines({ busyIds });
+    }
+
+    // One routine's fresh copy goes into the list at once, before the marker's refetch lands. Any
+    // load already in flight was asked before this write, so its answer is dropped.
+    private replaceRoutine(routine: Routine | null): void {
+        if (!routine) {
+            void this.loadRoutines();
+            return;
+        }
+        this.routinesGen += 1;
+        const others = (this.state.routines?.list ?? []).filter((row) => row.id !== routine.id);
+        this.patchRoutines({ list: sortRoutines([...others, routine]), loading: false });
+    }
+
+    private scheduleRoutinesRefetch(): void {
+        if (this.routinesRefetchTimer !== undefined) return;
+        this.routinesRefetchTimer = window.setTimeout(() => {
+            this.routinesRefetchTimer = undefined;
+            if (this.routinesViewers > 0) void this.loadRoutines();
+        }, MARKER_REFETCH_DELAY_MS);
     }
 
     // A settings frame (or hello_ok) is the journal's word on the current value; it supersedes any
@@ -2688,6 +3903,71 @@ export class MatronJournalClient {
 
     private patchDefaults(update: Partial<DefaultsState>): void {
         this.patch({ defaults: { loading: false, unsupported: false, ...this.state.defaults, ...update } });
+    }
+
+    // ── Device admin (Settings → Devices). Pull-based, as on the Mac: the screen re-fetches the
+    // roster after every change; only the agent roster (session tags) is pushed, by `device_meta`.
+
+    private deviceAdminApi(): JournalApi {
+        if (!this.api) throw new JournalApiError("Not signed in.", 401, "unauthenticated");
+        return this.api;
+    }
+
+    /** GET /devices: every device on the account, this one included. */
+    public async listDevices(): Promise<DeviceDTO[]> {
+        return (await this.deviceAdminApi().devices()).devices;
+    }
+
+    /** Rename a device; the Boxes group re-reads its names. */
+    public async renameDevice(deviceId: number, name: string): Promise<void> {
+        await this.deviceAdminApi().renameDevice(deviceId, name);
+        void this.loadBoxDefaults();
+    }
+
+    /** Set an agent box's tag character, or clear it back to automatic (null). */
+    public async setDeviceTag(deviceId: number, tagChar: string | null): Promise<void> {
+        await this.deviceAdminApi().setDeviceTag(deviceId, tagChar);
+    }
+
+    /**
+     * Revoke a device. A 404 means it was already revoked elsewhere and counts as done. Revoking
+     * this device is a sign-out: the token is already dead, so the client signs out at once.
+     */
+    public async revokeDevice(device: Pick<DeviceDTO, "device_id" | "is_self">): Promise<void> {
+        try {
+            await this.deviceAdminApi().revokeDevice(device.device_id);
+        } catch (error) {
+            if (!(error instanceof JournalApiError && error.status === 404)) throw error;
+        }
+        if (device.is_self) {
+            await this.logout("This device was revoked. Sign in again to continue.");
+            return;
+        }
+        void this.loadBoxDefaults();
+    }
+
+    public pairPreview(pairCode: string): Promise<PairPreview> {
+        return this.deviceAdminApi().pairPreview(pairCode);
+    }
+
+    public pairApprove(pairCode: string, agentName: string, tagChar: string | null): Promise<void> {
+        return this.deviceAdminApi().pairApprove(pairCode, agentName, tagChar);
+    }
+
+    public linkStart(): Promise<LinkStart> {
+        return this.deviceAdminApi().linkStart();
+    }
+
+    public linkStatus(): Promise<LinkStatus> {
+        return this.deviceAdminApi().linkStatus();
+    }
+
+    public linkApprove(linkCode: string): Promise<void> {
+        return this.deviceAdminApi().linkApprove(linkCode);
+    }
+
+    public linkDeny(linkCode: string): Promise<void> {
+        return this.deviceAdminApi().linkDeny(linkCode);
     }
 
     // ── Per-box defaults (Settings → Boxes; GET /devices `defaults`, PUT /devices/:id/defaults) ──
@@ -2957,6 +4237,38 @@ export class MatronJournalClient {
         }
     }
 
+    /** The project page's "Show more" once every loaded row of its Latest feed shows: the next page
+     *  of every roll-up kind that still has one, fetched together and appended. A page that lands
+     *  after the page moved to another project is dropped; a failed fetch keeps the list as it is. */
+    public async loadMoreProjectActivity(): Promise<void> {
+        const api = this.api;
+        const detail = this.state.trackerProject;
+        if (!api || !detail || this.state.trackerProjectFeedLoading) return;
+        const kinds = kindsWithMore(detail);
+        if (kinds.length === 0) return;
+        const gen = this.trackerProjectGen;
+        this.patch({ trackerProjectFeedLoading: true });
+        try {
+            const pages = await Promise.all(
+                kinds.map(
+                    async (kind) =>
+                        [kind, await api.projectFeed(detail.project.id, kind, detail[kind]!.next_before!)] as const,
+                ),
+            );
+            // The pages continue the detail they were asked for. A refresh that landed meanwhile
+            // replaced it (new first pages, new cursors), so they are dropped: the next Show more
+            // pages on from the new cursors instead of leaving a gap.
+            if (this.api !== api || this.trackerProjectGen !== gen || this.state.trackerProject !== detail) return;
+            let current = detail;
+            for (const [kind, page] of pages) current = appendFeedPage(current, kind, page);
+            this.patch({ trackerProject: current });
+        } catch {
+            // The rows already on the page stay; the button offers the fetch again.
+        } finally {
+            if (this.api === api) this.patch({ trackerProjectFeedLoading: false });
+        }
+    }
+
     // The inbox is "tracked" once loaded, and also while its first walk is still in flight, so a
     // write or marker that lands mid-walk refetches rather than being dropped.
     private inboxTracked(): boolean {
@@ -3002,7 +4314,11 @@ export class MatronJournalClient {
             let cursor: string | undefined;
             let truncated = false;
             for (let page = 0; ; page += 1) {
-                const { items, next_cursor } = await api.items({ state: "open", ...(cursor ? { cursor } : {}) });
+                const { items, next_cursor } = await api.items({
+                    state: "open",
+                    limit: OPEN_ITEMS_PAGE,
+                    ...(cursor ? { cursor } : {}),
+                });
                 if (this.api !== api || this.trackerInboxGen !== gen) return;
                 for (const item of items) {
                     if (seen.has(item.id)) continue;
@@ -3023,6 +4339,7 @@ export class MatronJournalClient {
             const merged = this.mergeInboxPendingWrites(accumulated);
             this.patch({
                 inboxItems: merged,
+                ...this.doneWithoutOpen(merged),
                 trackerLoading: false,
                 ...(this.trackerListTabShown()
                     ? {
@@ -3123,6 +4440,297 @@ export class MatronJournalClient {
         }
     }
 
+    /**
+     * Fetch the missions a conversation is or was on, for the chat header's mission chip. The
+     * result is kept for that conversation only; the header never shows it against another. A
+     * journal without the route (404) reads as "no missions", which hides the chip. Any other
+     * failure keeps what was shown.
+     */
+    // ── The chat's Tasks & decisions pane ──────────────────────────────────────────────────────
+    // A side pane beside the conversation (not the main-region tracker): this chat's items, or
+    // every chat's, with a create form and drag reorder of the open tasks. The pane mounts while
+    // it is open and calls loadChatTasks whenever the conversation or the scope changes.
+
+    /** Opens or closes the pane (toggles without an argument). It stays open across chats. */
+    public toggleChatTasks(open = !this.state.chatTasks?.open): void {
+        // One pane beside the chat: opening Tasks closes the subagent pane.
+        this.patch({
+            chatTasks: { ...this.state.chatTasks, open, actionError: undefined },
+            ...(open && this.state.subChatPane ? { subChatPane: undefined } : {}),
+        });
+    }
+
+    /** "This chat" or "All" for the conversation on screen; another conversation starts on its own. */
+    public setChatTasksScope(scope: "chat" | "all"): void {
+        const convoId = this.state.selectedConversationId;
+        if (!convoId) return;
+        this.patch({
+            chatTasks: {
+                ...this.state.chatTasks,
+                open: this.state.chatTasks?.open ?? true,
+                allFor: scope === "all" ? convoId : undefined,
+            },
+        });
+    }
+
+    /** The list the pane shows for the conversation on screen: its id, or "all". */
+    public chatTasksScope(): string | undefined {
+        const convoId = this.state.selectedConversationId;
+        if (!convoId) return undefined;
+        return this.state.chatTasks?.allFor === convoId ? "all" : convoId;
+    }
+
+    public dismissChatTasksError(): void {
+        const current = this.state.chatTasks;
+        if (current?.actionError) this.patch({ chatTasks: { ...current, actionError: undefined } });
+    }
+
+    /**
+     * Loads the pane's list: the open items (one page, rank order) and the latest closed ones for
+     * Done, for this conversation or across all of them. A list for another scope is cleared at
+     * once rather than shown under the wrong heading; a failed refresh keeps the rows it had.
+     */
+    public async loadChatTasks(): Promise<void> {
+        const api = this.api;
+        const scope = this.chatTasksScope();
+        if (!api || !scope) return;
+        const gen = ++this.chatTasksGen;
+        const prior = this.state.chatTasks;
+        this.patch({
+            chatTasks: {
+                ...prior,
+                open: prior?.open ?? false,
+                scope,
+                items: prior?.scope === scope ? prior.items : undefined,
+                error: prior?.scope === scope ? prior.error : undefined,
+                // A refused move belongs to the list it was made in.
+                actionError: prior?.scope === scope ? prior.actionError : undefined,
+                loading: true,
+            },
+        });
+        const convo = scope === "all" ? undefined : scope;
+        try {
+            const [open, closed] = await Promise.all([
+                api.items({ convo, state: "open", sort: "rank", limit: 500 }),
+                // The journal sorts closed items by their last change, not by when they closed, so a
+                // wider page is read for Done to pick the latest closed from.
+                api.items({ convo, state: "closed", sort: "updated", limit: CHAT_TASKS_DONE_FETCH }),
+            ]);
+            if (this.api !== api || this.chatTasksGen !== gen) return;
+            this.patch({
+                chatTasks: {
+                    ...this.state.chatTasks,
+                    open: this.state.chatTasks?.open ?? false,
+                    scope,
+                    items: [...open.items, ...closed.items].map((item) => {
+                        const rank = this.chatTasksStaged.get(item.id);
+                        return rank === undefined || item.state !== "open" ? item : { ...item, rank };
+                    }),
+                    loading: false,
+                    error: undefined,
+                    unsupported: false,
+                },
+            });
+        } catch (error) {
+            if (this.api !== api || this.chatTasksGen !== gen) return;
+            const unsupported = error instanceof JournalApiError && error.status === 404;
+            this.patch({
+                chatTasks: {
+                    ...this.state.chatTasks,
+                    open: this.state.chatTasks?.open ?? false,
+                    loading: false,
+                    error: unsupported ? undefined : errorMessage(error),
+                    unsupported,
+                },
+            });
+        }
+    }
+
+    /**
+     * Files a new item from the user into the conversation on screen (whichever scope the pane
+     * shows, the item belongs to this chat). It joins the list at once; the refetch then brings the
+     * journal's order. A failure comes back with its reason, so the form keeps what was typed.
+     * `idempotencyKey`: the form passes the same key for every try of one draft, so a retry after a
+     * create that landed but whose answer was lost is deduped instead of filing the item twice.
+     */
+    public async createChatItem(
+        draft: {
+            kind: TrackerItemCreate["kind"];
+            title: string;
+            body: string;
+        },
+        idempotencyKey?: string,
+    ): Promise<{ ok: true } | { ok: false; reason: string }> {
+        const api = this.api;
+        const convoId = this.state.selectedConversationId;
+        if (!api || !convoId) return { ok: false, reason: "Open a chat to file a new item." };
+        const title = draft.title.trim();
+        if (!title || title.length > 200) return { ok: false, reason: "Give the item a title (up to 200 characters)." };
+        let created: TrackerItem | undefined;
+        try {
+            ({ item: created } = await api.createItem(
+                { kind: draft.kind, title, body: draft.body, convo_id: convoId },
+                idempotencyKey ?? crypto.randomUUID(),
+            ));
+        } catch (error) {
+            return { ok: false, reason: `Couldn't file the item: ${errorMessage(error)}` };
+        }
+        if (this.api !== api) return { ok: true };
+        const current = this.state.chatTasks;
+        // Only into a list it belongs to: the pane may have moved to another chat meanwhile.
+        if (
+            created &&
+            typeof created.id === "string" &&
+            (current?.scope === "all" || current?.scope === convoId) &&
+            current?.items &&
+            !current.items.some((i) => i.id === created!.id)
+        ) {
+            this.patch({ chatTasks: { ...current, items: [...current.items, created] } });
+        }
+        void this.loadChatTasks();
+        if (this.inboxTracked()) void this.loadInbox();
+        return { ok: true };
+    }
+
+    /**
+     * A drag of an open task to `toIndex` among the open tasks (counted without it). Drawn in its
+     * new place at once; the journal is told second, and a refusal puts the task back and says why.
+     */
+    public async moveChatTask(itemId: string, toIndex: number): Promise<void> {
+        const api = this.api;
+        const current = this.state.chatTasks;
+        const items = current?.items;
+        if (!api || !current || !items) return;
+        const plan = planTaskMove(chatTaskSections(items).tasks, itemId, toIndex);
+        if (!plan) return;
+        const original = items.find((item) => item.id === itemId)!;
+        // A load already in flight read the old order: it must not land over the move.
+        this.chatTasksGen += 1;
+        // Rank only: a load that landed meanwhile may carry newer fields for the same item.
+        const withRank = (list: TrackerItem[], rank: number): TrackerItem[] =>
+            list.map((item) => (item.id === itemId ? { ...item, rank } : item));
+        const staged = plan.moved.rank;
+        this.chatTasksStaged.set(itemId, staged);
+        this.patch({ chatTasks: { ...current, items: withRank(items, staged), actionError: undefined } });
+        try {
+            await api.rankItem(itemId, plan.change);
+        } catch (error) {
+            // A later move of the same task owns the entry from here on.
+            if (this.chatTasksStaged.get(itemId) === staged) this.chatTasksStaged.delete(itemId);
+            if (this.api !== api) return;
+            const now = this.state.chatTasks;
+            this.patch({
+                chatTasks: {
+                    ...now,
+                    open: now?.open ?? false,
+                    items: now?.items ? withRank(now.items, original.rank) : now?.items,
+                    actionError: `Couldn't move the task: ${errorMessage(error)}`,
+                },
+            });
+            // The refusal may mean the list is stale (a neighbour closed or moved): read it again.
+            void this.loadChatTasks();
+            return;
+        }
+        if (this.chatTasksStaged.get(itemId) === staged) this.chatTasksStaged.delete(itemId);
+        if (this.api !== api) return;
+        void this.loadChatTasks();
+    }
+
+    // Item markers refetch the open pane's list, coalesced like the inbox's.
+    private scheduleChatTasksRefetch(): void {
+        if (this.chatTasksRefetchTimer !== undefined) return;
+        this.chatTasksRefetchTimer = window.setTimeout(() => {
+            this.chatTasksRefetchTimer = undefined;
+            if (this.state.chatTasks?.open) void this.loadChatTasks();
+        }, 250);
+    }
+
+    public async loadConversationMissions(convoId: string): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.conversationMissionsGen;
+        this.conversationMissionsCacheGen.set(convoId, gen);
+        const cached = this.conversationMissionsCache.get(convoId);
+        if (cached && this.state.conversationMissions?.convoId !== convoId) {
+            this.patch({ conversationMissions: { convoId, links: cached } });
+        }
+        try {
+            const links = await api.conversationMissions(convoId);
+            if (this.api !== api) return;
+            if (this.conversationMissionsCacheGen.get(convoId) === gen)
+                this.conversationMissionsCache.set(convoId, links);
+            if (this.conversationMissionsGen !== gen) return;
+            this.patch({ conversationMissions: { convoId, links } });
+        } catch (error) {
+            if (this.api !== api) return;
+            const missing = error instanceof JournalApiError && error.status === 404;
+            if (missing && this.conversationMissionsCacheGen.get(convoId) === gen)
+                this.conversationMissionsCache.set(convoId, []);
+            if (this.conversationMissionsGen !== gen) return;
+            if (missing) this.patch({ conversationMissions: { convoId, links: [] } });
+        }
+    }
+
+    // Coalesce marker-driven refetches of the chip's missions (see conversationMissionsRefetchTimer).
+    // The timer reads the selection when it fires, so a switch in the meantime fetches nothing extra.
+    private scheduleConversationMissionsRefetch(): void {
+        if (this.conversationMissionsRefetchTimer !== undefined) return;
+        this.conversationMissionsRefetchTimer = window.setTimeout(() => {
+            this.conversationMissionsRefetchTimer = undefined;
+            const convoId = this.state.selectedConversationId;
+            if (convoId) void this.loadConversationMissions(convoId);
+        }, 250);
+    }
+
+    /** Whether a mission marker changes what the chip of the conversation on screen shows: it landed
+     *  there (joined, left, made current), or it is about a mission the chip lists — a rename or a
+     *  close is written to the mission's origin conversation only. */
+    private missionMarkerConcernsChip(event: JournalEvent): boolean {
+        const selected = this.state.selectedConversationId;
+        if (!selected) return false;
+        if (event.convo_id === selected) return true;
+        const shown = this.state.conversationMissions;
+        if (shown?.convoId !== selected) return false;
+        const missionId = typeof event.payload.mission_id === "string" ? event.payload.mission_id : null;
+        const num = asNumber(event.payload.num, 0);
+        return shown.links.some((link) => link.id === missionId || (num > 0 && link.num === num));
+    }
+
+    /**
+     * One page of a mission's closed items, most recently updated first. `GET /items` has no
+     * mission filter, so this walks the user's closed items newest first (at most
+     * MISSION_CLOSED_SCAN_PAGES requests of 500) and keeps the mission's own, stopping once `want`
+     * are found. The walk starts no further back than the mission's creation (`since`): the journal
+     * bumps an item's `updated_at` whenever it is put on a mission, so none of the mission's items
+     * is older than the mission. `cursor` is where the walk stopped, null once every candidate has
+     * been seen — pass it back to continue. Not store state: the mission page holds the pages it
+     * asked for. Rejects on a failed request, and resolves empty when signed out.
+     */
+    public async fetchMissionClosedItems(
+        mission: Pick<Mission, "id" | "created_at">,
+        cursor: string | null = null,
+        want: number = MISSION_CLOSED_PAGE,
+    ): Promise<{ items: TrackerItem[]; cursor: string | null }> {
+        const api = this.api;
+        if (!api) return { items: [], cursor: null };
+        const since = Number.isInteger(mission.created_at) && mission.created_at > 0 ? mission.created_at : undefined;
+        const items: TrackerItem[] = [];
+        let next = cursor;
+        for (let page = 0; page < MISSION_CLOSED_SCAN_PAGES; page++) {
+            const res = await api.items({
+                state: "closed",
+                sort: "updated",
+                limit: 500,
+                ...(since !== undefined ? { since } : {}),
+                cursor: next ?? undefined,
+            });
+            for (const item of res.items) if (item.mission_id === mission.id) items.push(item);
+            next = res.next_cursor;
+            if (!next || items.length >= want) break;
+        }
+        return { items, cursor: next };
+    }
+
     // ── Tracker mutations (fresh Idempotency-Key per call → refetch the affected row + patch).
     // On failure they surface trackerError but leave the loaded data intact (await-refetch, no
     // optimistic outbox in v1). The inbox / missions list are refetched only when already loaded,
@@ -3152,23 +4760,38 @@ export class MatronJournalClient {
         body: TrackerCommentWrite,
         idempotencyKey?: string,
     ): Promise<boolean> {
+        const outcome = await this.postTrackerComment(id, body, idempotencyKey);
+        if (!outcome.ok && outcome.reason !== undefined) this.patch({ trackerError: outcome.reason });
+        return outcome.ok;
+    }
+
+    /**
+     * commentItem for the reply box: the same write and refetches, but a failure comes back with
+     * its reason instead of raising the tracker's error banner, so the box can say beside the kept
+     * draft which reply did not go and why.
+     */
+    public async postTrackerComment(
+        id: number | string,
+        body: TrackerCommentWrite,
+        idempotencyKey?: string,
+    ): Promise<TrackerCommentOutcome> {
         const api = this.api;
-        if (!api) return false;
+        if (!api) return { ok: false };
         let written: TrackerItem | undefined;
         try {
             ({ item: written } = await api.postItemComment(id, body, idempotencyKey ?? crypto.randomUUID()));
         } catch (error) {
-            if (this.api === api) this.patch({ trackerError: errorMessage(error) });
-            return false;
+            return this.api === api ? { ok: false, reason: commentFailureMessage(error) } : { ok: false };
         }
-        if (this.api !== api) return true;
+        if (this.api !== api) return { ok: true };
         // Reflect the written item at once (a Seen tap closes a notice in the same write), so the
         // row leaves "Needs you" and the badge drops before the refetches below land.
         if (written) this.applyWrittenItem(written);
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.inboxTracked()) await this.loadInbox();
+        if (this.state.inboxDone) void this.loadInboxDone();
         if (this.state.missions) await this.loadMissions();
-        return true;
+        return { ok: true };
     }
 
     /**
@@ -3213,6 +4836,31 @@ export class MatronJournalClient {
         return this.commentItem(id, { action: SEEN_ACTION, body: SEEN_ACTION });
     }
 
+    /**
+     * The Done rows with any of `open` that waits on the user again dropped. A refresh only
+     * re-reads the first page, so a row loaded from a later page that has since been reopened would
+     * otherwise stay listed as done. An open row the user has answered stays: it is done for them.
+     */
+    private doneWithoutOpen(open: TrackerItem[]): Partial<ClientState> {
+        const done = this.state.inboxDone;
+        if (!done || open.length === 0) return {};
+        const ids = new Set(open.filter((item) => !inDone(item)).map((item) => item.id));
+        const items = done.items.filter((row) => !ids.has(row.id));
+        return items.length === done.items.length ? {} : { inboxDone: { ...done, items } };
+    }
+
+    /**
+     * The Done rows with `item` as just written: an item the user has just answered, seen or closed
+     * goes to the top at once, before the refetch lands; one that waits on them again leaves.
+     */
+    private doneWithWritten(item: TrackerItem): Partial<ClientState> {
+        const done = this.state.inboxDone;
+        if (!done) return {};
+        const others = done.items.filter((row) => row.id !== item.id);
+        if (!inDone(item)) return others.length === done.items.length ? {} : { inboxDone: { ...done, items: others } };
+        return { inboxDone: { ...done, items: inDoneOrder([item, ...others]) } };
+    }
+
     private applyWrittenItem(item: TrackerItem): void {
         if (!item || typeof item !== "object" || typeof item.id !== "string") return;
         const inbox = this.state.inboxItems;
@@ -3230,8 +4878,90 @@ export class MatronJournalClient {
                               : inbox.filter((row) => row.id !== item.id),
                   }
                 : {}),
+            ...this.doneWithWritten(item),
             ...(detail && detail.item.id === item.id ? { trackerItem: { ...detail, item } } : {}),
         });
+    }
+
+    /**
+     * For you's Done tab: the newest page of closed questions, decisions and notices (tasks are the
+     * agents' work list, not something the user answered or read). Also the refresh: rows already
+     * loaded beyond the first page stay, except one the fresh page should have carried and does
+     * not, which has been reopened.
+     */
+    public async loadInboxDone(): Promise<void> {
+        const api = this.api;
+        if (!api) return;
+        const gen = ++this.trackerInboxDoneGen;
+        const prior = this.state.inboxDone;
+        this.patch({ inboxDone: { items: prior?.items ?? [], nextCursor: prior?.nextCursor ?? null, loading: true } });
+        try {
+            const { items, next_cursor } = await api.items(INBOX_DONE_FILTER);
+            if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
+            const fresh = new Set(items.map((item) => item.id));
+            const open = new Set((this.state.inboxItems ?? []).filter((item) => !inDone(item)).map((item) => item.id));
+            const oldest = items[items.length - 1];
+            // Below the fresh page only: anything newer that it does not list is no longer closed.
+            // The latest rows in state, not the ones from before the request: a row reopened
+            // while it was in flight has already been dropped from them.
+            // Kept only when the fresh page reaches the rows already loaded (it lists one of them)
+            // and there is more beyond it. A page that shares nothing with them leaves a gap the
+            // old cursor would never fetch, so the list starts again from this page.
+            const loaded = this.state.inboxDone?.items ?? [];
+            const joins = next_cursor !== null && loaded.some((row) => fresh.has(row.id));
+            const older =
+                oldest && joins
+                    ? loaded.filter((row) => !fresh.has(row.id) && !open.has(row.id) && sortsAfter(row, oldest))
+                    : [];
+            this.patch({
+                inboxDone: {
+                    items: [...items, ...older],
+                    nextCursor: older.length > 0 ? (prior?.nextCursor ?? null) : next_cursor,
+                    loading: false,
+                },
+            });
+        } catch (error) {
+            if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
+            const kept = this.state.inboxDone;
+            this.patch({
+                inboxDone: {
+                    items: kept?.items ?? [],
+                    nextCursor: kept?.nextCursor ?? null,
+                    loading: false,
+                    error: errorMessage(error),
+                },
+            });
+        }
+    }
+
+    /** The Done tab's "Show more": the next page, appended. */
+    public async loadMoreInboxDone(): Promise<void> {
+        const api = this.api;
+        const done = this.state.inboxDone;
+        if (!api || !done || done.loading || !done.nextCursor) return;
+        const gen = ++this.trackerInboxDoneGen;
+        this.patch({ inboxDone: { ...done, loading: true, error: undefined } });
+        try {
+            const { items, next_cursor } = await api.items({ ...INBOX_DONE_FILTER, cursor: done.nextCursor });
+            if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
+            // The rows in state now, not the ones from before the request: a row reopened while
+            // it was in flight has been dropped from them and must stay dropped.
+            const rows = this.state.inboxDone?.items ?? done.items;
+            const skip = new Set(
+                [...rows, ...(this.state.inboxItems ?? []).filter((item) => !inDone(item))].map((item) => item.id),
+            );
+            this.patch({
+                inboxDone: {
+                    items: [...rows, ...items.filter((item) => !skip.has(item.id))],
+                    nextCursor: next_cursor,
+                    loading: false,
+                },
+            });
+        } catch (error) {
+            if (this.api !== api || this.trackerInboxDoneGen !== gen) return;
+            const kept = this.state.inboxDone ?? done;
+            this.patch({ inboxDone: { ...kept, loading: false, error: errorMessage(error) } });
+        }
     }
 
     // PUT is an upsert by name and idempotent by construction, so no Idempotency-Key: a retried
@@ -3282,6 +5012,7 @@ export class MatronJournalClient {
         if (this.api !== api) return true;
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.inboxTracked()) await this.loadInbox();
+        if (this.state.inboxDone) void this.loadInboxDone();
         if (this.state.missions) await this.loadMissions();
         return true;
     }
@@ -3298,6 +5029,7 @@ export class MatronJournalClient {
         if (this.api !== api) return true;
         if (this.isSelectedTrackerItem(id)) await this.loadItem(id);
         if (this.inboxTracked()) await this.loadInbox();
+        if (this.state.inboxDone) void this.loadInboxDone();
         if (this.state.missions) await this.loadMissions();
         return true;
     }
@@ -3364,6 +5096,78 @@ export class MatronJournalClient {
         return true;
     }
 
+    // ── Project filing (the Mac's "New project", "Move to project…" and "Merge into…"). ──
+
+    /**
+     * "New project": creates it, refreshes the Projects home and opens the new project's page. A
+     * failure comes back with its reason for the sheet to show beside what was typed, rather than
+     * on the tracker's banner, so the sheet stays open with nothing lost.
+     */
+    public async createTrackerProject(title: string, body = ""): Promise<{ project: Project } | { error: string }> {
+        const api = this.api;
+        if (!api) return { error: "Not signed in." };
+        let project: Project;
+        try {
+            ({ project } = await api.createProject({ title: title.trim(), body: body.trim() }, crypto.randomUUID()));
+        } catch (error) {
+            return { error: errorMessage(error) };
+        }
+        if (this.api !== api) return { project };
+        await this.loadProjects();
+        this.openTrackerProject(project.num);
+        return { project };
+    }
+
+    /**
+     * "Move to project…": files the mission into another open project, then refetches what shows
+     * it — the mission page when it is the one shown, the missions and projects lists when loaded,
+     * and the open project page (which it may just have left). Resolves to why it did not move, for
+     * the sheet (which stays open over the pane's banner) to show, or null once moved.
+     */
+    public async moveTrackerMission(missionId: string, projectId: string): Promise<string | null> {
+        const api = this.api;
+        if (!api) return "Not signed in.";
+        try {
+            await api.patchMission(missionId, { project: projectId }, crypto.randomUUID());
+        } catch (error) {
+            return projectFilingFailure(error, "move");
+        }
+        if (this.api !== api) return null;
+        await Promise.all([
+            this.isSelectedTrackerMission(missionId) ? this.loadMission(missionId) : undefined,
+            this.state.missions ? this.loadMissions() : undefined,
+            this.state.projects ? this.loadProjects() : undefined,
+            this.state.trackerProject ? this.loadProject(this.state.trackerProject.project.num) : undefined,
+        ]);
+        return null;
+    }
+
+    /**
+     * "Merge into…": the journal moves every mission of `sourceId` to `intoId` and closes the
+     * source as merged. The page follows its missions to the project they went into, when the
+     * source's page is still the one shown. The journal lets the user merge, and of the agents
+     * only the Coordinator. Resolves to why it did not merge, for the sheet to show (the page
+     * stays), or null once merged.
+     */
+    public async mergeTrackerProject(sourceId: string, intoId: string): Promise<string | null> {
+        const api = this.api;
+        if (!api) return "Not signed in.";
+        if (sourceId === intoId) return "A project cannot merge into itself.";
+        let into: Project;
+        try {
+            ({ project: into } = await api.mergeProject(sourceId, intoId));
+        } catch (error) {
+            return projectFilingFailure(error, "merge");
+        }
+        if (this.api !== api) return null;
+        const shown = this.state.trackerProject?.project;
+        if (shown?.id === sourceId && this.state.trackerView?.selectedProjectId === shown.num) {
+            this.openTrackerProject(into.num);
+        }
+        await Promise.all([this.loadProjects(), this.state.missions ? this.loadMissions() : undefined]);
+        return null;
+    }
+
     // WS invalidation for tracker markers (`item` / `mission` / `milestone` journal frames).
     // A marker is a change connected clients must reflect without re-polling; we refetch ONLY the
     // tracker data the OPEN pane is showing. A closed pane fetches nothing but the needs-you badge
@@ -3375,8 +5179,27 @@ export class MatronJournalClient {
     private handleTrackerMarker(event: JournalEvent): void {
         // The inbox feeds the For you badge on the rail, so it follows item markers even while the
         // pane is closed; everything else is refetched only for an open pane.
-        if (event.type === "item" && this.inboxTracked()) this.scheduleInboxRefetch();
+        if (event.type === "item" && (this.inboxTracked() || this.state.inboxDone)) this.scheduleInboxRefetch();
+        if (event.type === "item" && this.state.chatTasks?.open) this.scheduleChatTasksRefetch();
+        // The header chip of the conversation on screen follows the mission markers that concern it
+        // (see missionMarkerConcernsChip) whether or not the pane is open — also while its first load
+        // is in flight (the newer load supersedes it) or after a failed one.
+        if (event.type === "mission" && this.missionMarkerConcernsChip(event)) {
+            // A load already in flight predates the marker: it may neither publish nor cache.
+            this.conversationMissionsGen += 1;
+            if (this.state.selectedConversationId)
+                this.conversationMissionsCacheGen.delete(this.state.selectedConversationId);
+            this.scheduleConversationMissionsRefetch();
+        }
         if (!this.state.trackerView?.open) return;
+        // The open item's `working` block follows the conversation that owns it: a turn starting
+        // or ending there changes what the thread's indicator should say, and no item marker
+        // announces it.
+        if (event.type === "session_status") {
+            const open = this.state.trackerItem?.item;
+            if (open && open.origin_convo_id === event.convo_id) this.scheduleItemWorkingRefetch(open.num);
+            return;
+        }
         if (event.type === "item") {
             const num = asNumber(event.payload.num, 0);
             if (num && this.state.trackerItem && this.state.trackerItem.item.num === num) {
@@ -3423,6 +5246,22 @@ export class MatronJournalClient {
         this.trackerInboxRefetchTimer = window.setTimeout(() => {
             this.trackerInboxRefetchTimer = undefined;
             if (this.inboxTracked()) void this.loadInbox();
+            if (this.state.inboxDone) void this.loadInboxDone();
+        }, 250);
+    }
+
+    // A turn ending and the queued one starting arrive back to back; one read covers both. The timer
+    // serves one item: an event for a different open item replaces it, so that item's read is not
+    // lost to a timer armed for the one before. The item may have been closed by the time it fires.
+    private scheduleItemWorkingRefetch(num: number): void {
+        if (this.trackerItemWorkingRefetchTimer !== undefined) {
+            if (this.trackerItemWorkingRefetchNum === num) return;
+            window.clearTimeout(this.trackerItemWorkingRefetchTimer);
+        }
+        this.trackerItemWorkingRefetchNum = num;
+        this.trackerItemWorkingRefetchTimer = window.setTimeout(() => {
+            this.trackerItemWorkingRefetchTimer = undefined;
+            if (this.state.trackerView?.open && this.state.trackerItem?.item.num === num) void this.loadItem(num);
         }, 250);
     }
 
@@ -3490,7 +5329,6 @@ export class MatronJournalClient {
         this.uploadConvos.clear();
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
-        this.stagedSendChain = Promise.resolve();
         this.transientAttachmentErrors.clear();
         this.connection?.stop();
         this.database?.close();
@@ -3695,6 +5533,76 @@ export class MatronJournalClient {
         const expiringDatabase = this.database;
         void expiringDatabase.expireToolLogs().catch((error) => {
             if (this.database === expiringDatabase) console.warn("matron: tool-log expiry deferred", error);
+        });
+        void this.openPathLink();
+        void this.backfillRoomMembership();
+    }
+
+    /**
+     * Once per browser: a store that synced before room membership was kept reads one snapshot,
+     * a few seconds after start-up, and copies each room's membership onto its rows, so the
+     * chat header's Rooms control works without waiting for the next full snapshot. Leaves the
+     * live sync alone; a failure just tries again on the next start.
+     */
+    private async backfillRoomMembership(): Promise<void> {
+        const database = this.database;
+        const api = this.api;
+        const gen = this.sessionGen;
+        const current = (): boolean => this.sessionGen === gen && this.database === database;
+        if (!database || !api || typeof database.roomMembershipBackfillDue !== "function") return;
+        try {
+            if (!(await database.roomMembershipBackfillDue())) return;
+            await new Promise((resolve) => window.setTimeout(resolve, MEMBERSHIP_BACKFILL_DELAY_MS));
+            // A full snapshot meanwhile (a resync) already brought the membership.
+            if (!current() || !(await database.roomMembershipBackfillDue())) return;
+            const snapshot = await api.snapshot();
+            if (!current()) return;
+            await database.backfillRoomMembership(snapshot);
+            if (!current()) return;
+            const stored = new Map((await database.conversations()).map((row) => [row.id, row]));
+            if (!current()) return;
+            // Only the membership changed: copy it onto the rows on screen, leaving the rest of
+            // each row as the live sync has it.
+            this.patch({
+                conversations: this.state.conversations.map((row) => {
+                    const membership = stored.get(row.id);
+                    return membership?.participant_convos === undefined
+                        ? row
+                        : {
+                              ...row,
+                              participants: membership.participants,
+                              participant_convos: membership.participant_convos,
+                          };
+                }),
+            });
+        } catch (error) {
+            console.warn("matron: room membership backfill deferred", error);
+        }
+    }
+
+    /**
+     * Opens the `/u/<name>/<n>` link the page was loaded at, once, after the first sign-in. Only
+     * the signed-in user's own numbers open: the tracker shows that user's rows, so another user's
+     * number would open the wrong row. A number that names nothing says so.
+     */
+    public async openPathLink(): Promise<void> {
+        const link = this.pathLink;
+        const user = this.state.session?.username;
+        if (!link || !user) return;
+        this.pathLink = null;
+        if (link.user.toLowerCase() !== user.toLowerCase()) return;
+        await this.openLinkedNumber(link.num);
+    }
+
+    /** Looks the signed-in user's number up and opens it; a number that names nothing says so. */
+    private async openLinkedNumber(num: number): Promise<void> {
+        const user = this.state.session?.username;
+        const outcome = await this.lookupNumber(num);
+        if (this.state.session?.username !== user) return;
+        if (outcome.status === "found" && this.openNumberHit(outcome.hit, num)) return;
+        this.patch({
+            controlError:
+                outcome.status === "none" ? `Nothing numbered #${num} is visible to you.` : `Couldn't open #${num}.`,
         });
     }
 
@@ -3903,7 +5811,7 @@ export class MatronJournalClient {
             this.pendingFiles.delete(localId);
             this.transientAttachmentErrors.delete(localId);
         }
-        const conversations = await db.conversations();
+        const conversations = keepUnchangedConversations(this.state.conversations, await db.conversations());
         if (!owns()) return;
         let { archivedIds, pinnedIds, favoriteIds, unreadOverrideIds } = this.state;
         const session = this.state.session;
@@ -3970,9 +5878,13 @@ export class MatronJournalClient {
             this.sessionGen === gen && this.database === db && this.connection === connection;
 
         if (hello?.settings !== undefined) this.applySettingsFrame(hello.settings);
+        if (hello !== undefined) this.applyHelloCoordinator(hello);
+        // A routine marker missed while offline is never replayed: refetch while the sheet shows them.
+        if (this.routinesViewers > 0) void this.loadRoutines();
         // The For you badge counts open items awaiting the user, so the inbox loads on every
         // (re)connect, not only when the tracker opens: markers missed while offline never replay.
         void this.loadInbox();
+        if (this.state.inboxDone) void this.loadInboxDone();
 
         // A briefing frame missed while offline is never replayed: refetch the card on (re)connect.
         this.refetchBriefingIfShown();
@@ -4052,6 +5964,7 @@ export class MatronJournalClient {
     }
 
     private async handleFrame(frame: ServerFrame): Promise<void> {
+        this.emitLive((listener) => listener.frame?.(frame));
         if (frame.kind === "journal") {
             await this.handleJournal(frame);
             return;
@@ -4092,6 +6005,10 @@ export class MatronJournalClient {
             return;
         }
         if (frame.kind === "control" && frame.op === "error") {
+            // Read-state reports are fire-and-forget with no reply (a conversation or item the
+            // journal refuses, e.g. one removed meanwhile). Advisory, as on the other apps: never
+            // an error banner for something the user didn't do.
+            if (frame.ref === "seen" || frame.ref === "item_seen") return;
             this.patch({ connectionError: frame.detail || `Journal operation failed: ${frame.code ?? "unknown"}` });
         }
     }
@@ -4250,6 +6167,7 @@ export class MatronJournalClient {
         // data regardless of whether this event is newly applied below — fire-and-forget so it
         // never blocks (or is blocked by) timeline application. Non-tracker types return at once.
         this.handleTrackerMarker(event);
+        this.handleCoordinatorMarker(event);
         const applied = await this.database.applyJournal(event);
         this.clearRpcCreateWatchdog(event.convo_id);
         const removed = await this.database.reconcileOwnMessage(event);
@@ -4295,6 +6213,8 @@ export class MatronJournalClient {
         }
         this.clearHistoryError();
         this.scheduleAck(event.seq);
+        const previous = this.state.conversations.find((conversation) => conversation.id === event.convo_id);
+        this.emitLive((listener) => listener.journalEvent?.(event, previous));
 
         const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
         if (messageRef) {
@@ -4307,6 +6227,7 @@ export class MatronJournalClient {
 
         await this.refreshConversations();
         this.abortUploadsForChildConvos();
+        if (!previous || this.newVerdictPending.has(event.convo_id)) this.considerNewConversation(event, !previous);
         if (event.convo_id === this.state.selectedConversationId) {
             const history = this.history.get(event.convo_id);
             const viewingHistoryWindow = history?.hasMoreNewer === true;
@@ -4369,6 +6290,73 @@ export class MatronJournalClient {
                 connectionError: error instanceof Error ? error.message : "Could not resync after a malformed update.",
             });
         }
+    }
+
+    // A conversation this tab sees for the first time, live. One this device asked for is the
+    // user's own and opens the way they started it; any other (an agent, the Coordinator or a
+    // routine started it) never takes the selection, and is marked "New" in the list until opened.
+    // Not for one already on screen, a subagent's child, an agent-chat room, or a reconnect's
+    // replay of sessions born while this tab was away.
+    //
+    // As on the Mac, the verdict waits for a frame that can settle it: a convo_meta carrying the
+    // title (which also names the box), or a message. A new session's first frame is usually its
+    // session_status, ahead of the meta, and judged on that the title is still empty (a room would
+    // pass as a session) and the box unknown (a /start's own session would not answer its ask).
+    private considerNewConversation(event: JournalEvent, firstFrame: boolean): void {
+        const id = event.convo_id;
+        const now = Date.now();
+        if (firstFrame) {
+            // A reconnect's replay of a conversation born while this tab was away.
+            if (typeof event.ts === "number" && event.ts < now - NEW_CONVERSATION_STALE_MS) return;
+        } else {
+            const since = this.newVerdictPending.get(id);
+            if (since === undefined || since < now - NEW_CONVERSATION_STALE_MS) {
+                this.newVerdictPending.delete(id);
+                return;
+            }
+        }
+        const titled = event.type === "convo_meta" && typeof event.payload.title === "string";
+        const conversation = this.state.conversations.find((candidate) => candidate.id === id);
+        const box = conversation?.agent_device_id ?? null;
+        const settles =
+            titled ||
+            (MESSAGE_EVENT_TYPES.has(event.type) &&
+                // A message from a conversation that has not named its box cannot answer an ask
+                // waiting on a particular box, nor rule one out: its title settles it.
+                (box !== null || !this.startIntents.awaitsKnownBox(now)));
+        if (!settles) {
+            if (firstFrame) this.parkNewVerdict(id, now);
+            return;
+        }
+        this.newVerdictPending.delete(id);
+        if (id === this.state.selectedConversationId || this.state.newConversationIds.has(id)) return;
+        // A child's id carries ":sub:" (Claude) or ":codex:" (Codex) before its parent link, learned
+        // from a later convo_meta, lands.
+        if (!conversation || isSubChat(conversation) || /:(?:sub|codex):[^:]+$/.test(id)) return;
+        if (isAgentRoomTitle(conversation.title)) return;
+        if (this.startIntents.claim(conversation, now)) return;
+        // Keep only marks a row can still show, so the set stays the size of what is on screen.
+        const visible = new Set(
+            this.state.conversations
+                .filter((candidate) => !isSubChat(candidate) && !isAgentRoomTitle(candidate.title))
+                .map((candidate) => candidate.id),
+        );
+        const kept = [...this.state.newConversationIds].filter((candidate) => visible.has(candidate));
+        this.patch({ newConversationIds: new Set([...kept, id]) });
+    }
+
+    private clearNewMark(id: string): void {
+        if (!this.state.newConversationIds.has(id)) return;
+        const newConversationIds = new Set(this.state.newConversationIds);
+        newConversationIds.delete(id);
+        this.patch({ newConversationIds });
+    }
+
+    private parkNewVerdict(id: string, now: number): void {
+        for (const [candidate, since] of this.newVerdictPending) {
+            if (since < now - NEW_CONVERSATION_STALE_MS) this.newVerdictPending.delete(candidate);
+        }
+        this.newVerdictPending.set(id, now);
     }
 
     private async reconcilePersistedOwnMessages(database: JournalDatabase): Promise<void> {
@@ -4494,8 +6482,8 @@ export class MatronJournalClient {
         for (const conversation of conversations) {
             if (conversation.session_state !== "running") this.toolStreams.delete(conversation.id);
         }
-        this.patch({ conversations });
-        // Keep the published snapshot in lockstep with the private map (P2): deleting the private
+        this.patch({ conversations: keepUnchangedConversations(this.state.conversations, conversations) });
+        // Keep the published snapshot in lockstep with the private map. Deleting the private
         // entry above does NOT touch ClientState.toolStreams, so a pruned card would otherwise
         // still sit in the snapshot and re-render on the conversation's next running turn.
         // Republish only when a card was just pruned out from under the snapshot, so a routine
@@ -4698,18 +6686,36 @@ export class MatronJournalClient {
         this.searchAbort = undefined;
         this.searchSeq += 1;
         if (this.state.messageSearch) this.patch({ messageSearch: undefined });
+        this.closeGoToNumber();
         for (const timer of this.readTimers.values()) window.clearTimeout(timer);
         if (this.ackTimer !== undefined) window.clearTimeout(this.ackTimer);
         if (this.trackerInboxRefetchTimer !== undefined) window.clearTimeout(this.trackerInboxRefetchTimer);
         this.trackerInboxRefetchTimer = undefined;
+        if (this.chatTasksRefetchTimer !== undefined) window.clearTimeout(this.chatTasksRefetchTimer);
+        this.chatTasksRefetchTimer = undefined;
+        this.chatTasksStaged.clear();
         this.inboxWalking = false;
         this.inboxPendingWrites.clear();
         if (this.trackerMissionsRefetchTimer !== undefined) window.clearTimeout(this.trackerMissionsRefetchTimer);
         this.trackerMissionsRefetchTimer = undefined;
         this.trackerMissionRefetchPending = false;
+        if (this.conversationMissionsRefetchTimer !== undefined)
+            window.clearTimeout(this.conversationMissionsRefetchTimer);
+        this.conversationMissionsRefetchTimer = undefined;
+        this.conversationMissionsCache.clear();
+        this.conversationMissionsCacheGen.clear();
+        if (this.trackerItemWorkingRefetchTimer !== undefined) window.clearTimeout(this.trackerItemWorkingRefetchTimer);
+        this.trackerItemWorkingRefetchTimer = undefined;
         if (this.briefingExpiryTimer !== undefined) window.clearTimeout(this.briefingExpiryTimer);
         this.briefingExpiryTimer = undefined;
         this.briefingGen += 1;
+        if (this.coordinatorRefetchTimer !== undefined) window.clearTimeout(this.coordinatorRefetchTimer);
+        this.coordinatorRefetchTimer = undefined;
+        this.coordinatorEpoch += 1;
+        this.coordinatorStale = false;
+        if (this.routinesRefetchTimer !== undefined) window.clearTimeout(this.routinesRefetchTimer);
+        this.routinesRefetchTimer = undefined;
+        this.routinesGen += 1;
         this.readTimers.clear();
         this.readHighWater.clear();
         this.ackTimer = undefined;
@@ -4721,6 +6727,7 @@ export class MatronJournalClient {
         this.historyError = undefined;
         this.history.clear();
         this.conversationTailFetches.clear();
+        this.consentHistoryFetches.clear();
         this.activities.clear();
         this.statuses.clear();
         this.hostVitals = null;
@@ -4809,11 +6816,112 @@ export function sanitizeBriefingLatest(raw: unknown): BriefingLatest {
     };
 }
 
+/**
+ * Why a filing write (move a mission, merge projects) did not happen, in the user's words where
+ * the journal says why: a closed project on either end, or a merge only the user or the
+ * Coordinator may make. Anything else is the ordinary error message.
+ */
+export function projectFilingFailure(error: unknown, write: "move" | "merge"): string {
+    if (error instanceof JournalApiError) {
+        const blockedBy = error.body?.blocked_by;
+        if (error.status === 409 && (blockedBy === "project_closed" || blockedBy === "into_closed")) {
+            return "That project is closed, so nothing can move into it.";
+        }
+        // `closed` names the row the write addresses: the mission on a move, the source on a merge.
+        if (error.status === 409 && blockedBy === "closed") {
+            return write === "move"
+                ? "This mission is closed, so it stays where it is."
+                : "This project is already closed.";
+        }
+        if (error.status === 403 && error.body?.detail === "not_coordinator") {
+            return "Only you or your Coordinator can merge projects.";
+        }
+    }
+    return errorMessage(error);
+}
+
+/** A `/coordinator` body's `convo_id`: the id, null for none, undefined when it says nothing. */
+function coordinatorIdIn(raw: unknown): string | null | undefined {
+    if (!raw || typeof raw !== "object" || !("convo_id" in raw)) return undefined;
+    const id = (raw as { convo_id?: unknown }).convo_id;
+    if (id === null) return null;
+    return typeof id === "string" ? id || null : undefined;
+}
+
+/** The `{routine}` of a create or edit answer, or null when malformed. */
+function routineIn(raw: unknown): Routine | null {
+    return parseRoutine(raw && typeof raw === "object" ? (raw as { routine?: unknown }).routine : undefined);
+}
+
+/** A failed routines write in the sheet's words. */
+function routineFailure(error: unknown, collection: boolean): string {
+    if (error instanceof JournalApiError) {
+        const message = routineErrorMessage(error.status, error.body, collection);
+        if (message) return message;
+    }
+    return errorMessage(error);
+}
+
 export function errorMessage(error: unknown): string {
     if (error instanceof JournalApiError && error.retryAfter) {
         return `${error.message} (${error.retryAfter}s)`;
     }
     return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+/**
+ * Why an item comment was not written. A refusal (a 4xx other than an expired or refused session
+ * or a rate limit) says what the journal said: its `message`, else — for `too_many_attachments` —
+ * the limit (the response's `max`), else its `reason`, else the sentence for an error code this
+ * client knows, else that the server refused it and with what status. Anything else — offline, a timeout, a 5xx, auth, a rate
+ * limit with its wait — is the ordinary error message.
+ */
+export function commentFailureMessage(error: unknown): string {
+    if (
+        !(error instanceof JournalApiError) ||
+        error.status < 400 ||
+        error.status >= 500 ||
+        error.status === 401 ||
+        error.status === 403 ||
+        error.status === 429
+    ) {
+        return errorMessage(error);
+    }
+    const body = error.body ?? {};
+    if (typeof body.message === "string" && body.message.trim()) return body.message.trim();
+    if (error.code === "too_many_attachments") {
+        const max = typeof body.max === "number" && body.max > 0 ? body.max : JOURNAL_ATTACHMENTS_MAX;
+        return `The journal takes at most ${max} attachments on one comment.`;
+    }
+    if (typeof body.reason === "string" && body.reason.trim()) {
+        return `The server refused it: ${body.reason.trim().replace(/_/g, " ")}.`;
+    }
+    return knownErrorMessage(error.code) ?? `The server refused it (HTTP ${error.status}).`;
+}
+
+// The journal's largest page. The open-items walk is sequential, so on a real network each extra
+// page is another round trip before the inbox can show anything; the default 100 took a dozen.
+const OPEN_ITEMS_PAGE = 500;
+
+/** The Done tab's page: what the user answered, decided or read, most recently touched first. */
+const INBOX_DONE_FILTER = {
+    state: "done",
+    kind: ["question", "decision", "notice"],
+    sort: "acted",
+    limit: 50,
+} as const;
+
+/** True when `row` comes after `mark` in the journal's `sort=acted` order (the user's last action
+ *  first, then the higher number). */
+function sortsAfter(row: TrackerItem, mark: TrackerItem): boolean {
+    const r = doneSortKey(row);
+    const m = doneSortKey(mark);
+    return r < m || (r === m && row.num < mark.num);
+}
+
+/** Done rows in the journal's `sort=acted` order. */
+function inDoneOrder(rows: TrackerItem[]): TrackerItem[] {
+    return [...rows].sort((a, b) => (sortsAfter(a, b) ? 1 : sortsAfter(b, a) ? -1 : 0));
 }
 
 /** The label of a notice's one-tap answer; the journal closes the notice when it is tapped. */

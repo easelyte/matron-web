@@ -15,14 +15,17 @@ Please see LICENSE files in the repository root for full details.
 //   - svg     → inert <img> ONLY (never <iframe>/<object>/<embed>/innerHTML/inline-<svg>)
 //   - pdf     → pdf.js → <canvas>, lazily imported (./pdf-render) only when a PDF opens
 //   - video   → <video controls>
+//   - audio   → <audio controls>
 //   - download→ metadata + Download card; HTML and unknown types are NEVER rendered inline
 //
 // All rendering reuses the cached `blob:` object URL from `client.mediaUrl` — no re-fetch, no
 // same-origin navigation to /media/:id, and downloads go through `<a href={blob:} download>`.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { isMediaExpiredError } from "./api";
 import type { MatronJournalClient } from "./client";
 import {
+    AudioFileIcon,
     ChevronLeftIcon,
     ChevronRightIcon,
     CloseIcon,
@@ -36,13 +39,21 @@ import {
     ZoomOutIcon,
 } from "./icons";
 import type { LoadedPdf } from "./pdf-render";
-import { asString, type FileKind, fileKindFromMime, type JournalEvent, type MediaDims, parseMediaDims } from "./types";
+import {
+    asString,
+    type FileKind,
+    fileKindFromMime,
+    type JournalEvent,
+    type MediaDims,
+    mediaFileName,
+    parseMediaDims,
+} from "./types";
 
 // ---------------------------------------------------------------------------------------
 // Pure helpers (exported for unit tests — no React, no DOM).
 // ---------------------------------------------------------------------------------------
 
-export type MediaRenderKind = "raster" | "svg" | "pdf" | "video" | "download";
+export type MediaRenderKind = "raster" | "svg" | "pdf" | "video" | "audio" | "download";
 
 export interface MediaItem {
     mediaId: string;
@@ -54,10 +65,24 @@ export interface MediaItem {
     caption?: string;
     dims?: MediaDims;
     size?: number;
+    /** The reaper tombstone (`expired: true`): the blob was deleted server-side. */
+    expired?: boolean;
 }
 
 const RASTER_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm", "mov", "m4v", "ogv"]);
+// Extension → the MIME an <audio> element needs when the sender gave none.
+const AUDIO_EXTENSION_MIME: Record<string, string> = {
+    m4a: "audio/mp4",
+    aac: "audio/aac",
+    mp3: "audio/mpeg",
+    wav: "audio/wav",
+    ogg: "audio/ogg",
+    oga: "audio/ogg",
+    opus: "audio/ogg",
+    flac: "audio/flac",
+    weba: "audio/webm",
+};
 
 function extensionOf(filename?: string): string {
     if (!filename) return "";
@@ -81,6 +106,7 @@ export function mediaRenderKind(isImageEvent: boolean, contentType?: string, fil
     if (mime === "image/svg+xml" || (generic && ext === "svg")) return "svg";
     if (mime === "application/pdf" || (generic && ext === "pdf")) return "pdf";
     if (mime.startsWith("video/") || (generic && VIDEO_EXTENSIONS.has(ext))) return "video";
+    if (mime.startsWith("audio/") || (generic && ext in AUDIO_EXTENSION_MIME)) return "audio";
     if (mime.startsWith("image/") || (generic && RASTER_EXTENSIONS.has(ext))) return "raster";
     return "download";
 }
@@ -99,7 +125,7 @@ export function buildMediaCorpus(events: readonly JournalEvent[]): MediaItem[] {
         if (!mediaId) continue;
         const isImageEvent = event.type === "image";
         const contentType = asString(event.payload.content_type) || undefined;
-        const filename = asString(event.payload.filename) || undefined;
+        const filename = mediaFileName(event.payload) || undefined;
         const size =
             typeof event.payload.size === "number" && Number.isFinite(event.payload.size)
                 ? event.payload.size
@@ -112,6 +138,7 @@ export function buildMediaCorpus(events: readonly JournalEvent[]): MediaItem[] {
             caption: asString(event.payload.caption) || undefined,
             dims: parseMediaDims(event.payload.dims),
             size,
+            expired: event.payload.expired === true,
             kind: mediaRenderKind(isImageEvent, contentType, filename),
             fileKind: fileKindFromMime(contentType),
         });
@@ -161,6 +188,8 @@ interface ObjectUrlState {
     url?: string;
     loading: boolean;
     error?: string;
+    /** The fetch came back 404: the blob was reaped, so there is nothing to retry. */
+    expired?: boolean;
 }
 
 function useObjectUrl(client: MatronJournalClient, mediaId: string): ObjectUrlState & { retry: () => void } {
@@ -175,7 +204,8 @@ function useObjectUrl(client: MatronJournalClient, mediaId: string): ObjectUrlSt
                 if (!cancelled) setState({ url, loading: false });
             })
             .catch((error: unknown) => {
-                if (!cancelled) setState({ loading: false, error: errorText(error) });
+                if (!cancelled)
+                    setState({ loading: false, error: errorText(error), expired: isMediaExpiredError(error) });
             });
         return () => {
             cancelled = true;
@@ -190,8 +220,17 @@ function useObjectUrl(client: MatronJournalClient, mediaId: string): ObjectUrlSt
 // types simply aren't in its MIME map). An <img>/<video> cannot render an octet-stream blob,
 // so for the types the viewer paints natively we must re-wrap the cached bytes in a correctly
 // typed Blob. pdf.js reads raw bytes and never needs this; raster arrives as image/* already.
-export function viewerRetypeMime(item: Pick<MediaItem, "kind" | "filename">): string | undefined {
+export function viewerRetypeMime(
+    item: Pick<MediaItem, "kind" | "filename"> & { contentType?: string },
+): string | undefined {
     if (item.kind === "svg") return "image/svg+xml";
+    if (item.kind === "audio") {
+        // A sent audio/* type is the most precise answer (voice notes travel as audio/mp4).
+        const mime = item.contentType?.trim().toLowerCase();
+        if (mime?.startsWith("audio/")) return mime;
+        const ext = extensionOf(item.filename);
+        return AUDIO_EXTENSION_MIME[ext] ?? "audio/mpeg";
+    }
     if (item.kind === "video") {
         const ext = item.filename?.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
         if (ext === "webm") return "video/webm";
@@ -202,17 +241,21 @@ export function viewerRetypeMime(item: Pick<MediaItem, "kind" | "filename">): st
     return undefined;
 }
 
-// Like useObjectUrl, but re-wraps the cached bytes in a correctly-typed Blob for svg/video
-// (whose source blob is octet-stream) so the <img>/<video> can render them. Transparent
-// pass-through for types that already carry a usable content-type (raster).
-function useRenderableObjectUrl(client: MatronJournalClient, item: MediaItem): ObjectUrlState & { retry: () => void } {
+// Like useObjectUrl, but re-wraps the cached bytes in a correctly-typed Blob for svg/video/audio
+// (whose source blob is octet-stream) so the <img>/<video>/<audio> can render them. Transparent
+// pass-through for types that already carry a usable content-type (raster). Exported for the
+// timeline's inline audio player.
+export function useRenderableObjectUrl(
+    client: MatronJournalClient,
+    item: Pick<MediaItem, "mediaId" | "kind" | "filename" | "contentType">,
+): ObjectUrlState & { retry: () => void } {
     const base = useObjectUrl(client, item.mediaId);
     const targetMime = viewerRetypeMime(item);
     const [typed, setTyped] = useState<ObjectUrlState>({ loading: true });
     useEffect(() => {
         if (!targetMime) return; // raster: `base` is used directly below.
         if (base.error) {
-            setTyped({ loading: false, error: base.error });
+            setTyped({ loading: false, error: base.error, expired: base.expired });
             return;
         }
         if (!base.url) {
@@ -243,7 +286,7 @@ function useRenderableObjectUrl(client: MatronJournalClient, item: MediaItem): O
             cancelled = true;
             if (created) URL.revokeObjectURL(created);
         };
-    }, [base.url, base.error, targetMime]);
+    }, [base.url, base.error, base.expired, targetMime]);
     return targetMime ? { ...typed, retry: base.retry } : base;
 }
 
@@ -429,11 +472,12 @@ interface PageApi {
 // image — the browser rasterises it and its scripts / external fetches stay inert. There is
 // deliberately no <iframe>/<object>/<embed>/innerHTML path here (guardrail).
 function ImageBody({ client, item, registerZoom, announce }: BodyProps): React.ReactElement {
-    const { url, loading, error, retry } = useRenderableObjectUrl(client, item);
+    const { url, loading, error, expired, retry } = useRenderableObjectUrl(client, item);
     const [imgError, setImgError] = useState(false);
     const zoom = useZoomPan(registerZoom);
     const imgRef = useRef<HTMLImageElement>(null);
 
+    if (expired) return <ExpiredBody item={item} />;
     if (error || imgError) {
         return (
             <div className="mj_MediaViewer_body mj_MediaViewer_center">
@@ -489,7 +533,8 @@ function ImageBody({ client, item, registerZoom, announce }: BodyProps): React.R
 }
 
 function VideoBody({ client, item }: BodyProps): React.ReactElement {
-    const { url, loading, error, retry } = useRenderableObjectUrl(client, item);
+    const { url, loading, error, expired, retry } = useRenderableObjectUrl(client, item);
+    if (expired) return <ExpiredBody item={item} />;
     if (error) {
         return (
             <div className="mj_MediaViewer_body mj_MediaViewer_center">
@@ -514,10 +559,73 @@ function VideoBody({ client, item }: BodyProps): React.ReactElement {
     );
 }
 
+function AudioBody({ client, item }: BodyProps): React.ReactElement {
+    const { url, loading, error, expired, retry } = useRenderableObjectUrl(client, item);
+    if (expired) return <ExpiredBody item={item} />;
+    if (error) {
+        return (
+            <div className="mj_MediaViewer_body mj_MediaViewer_center">
+                <div className="mj_MediaViewer_errorGroup">
+                    <span className="mj_MediaViewer_error">{error}</span>
+                    <button type="button" className="mj_MediaViewer_retry" onClick={retry}>
+                        Retry
+                    </button>
+                </div>
+            </div>
+        );
+    }
+    const size = formatMediaSize(item.size);
+    return (
+        <div className="mj_MediaViewer_body mj_MediaViewer_center">
+            <div className="mj_MediaViewer_downloadCard mj_MediaViewer_audioCard">
+                <AudioFileIcon className="mj_MediaViewer_downloadGlyph" aria-hidden />
+                <span className="mj_MediaViewer_downloadName" title={item.filename}>
+                    {item.filename || "Audio"}
+                </span>
+                <span className="mj_MediaViewer_downloadMeta">
+                    {[mediaTypeLabel(item), size].filter(Boolean).join(" · ")}
+                </span>
+                {!url || loading ? (
+                    <span className="mj_MediaViewer_note">Loading audio…</span>
+                ) : (
+                    // eslint-disable-next-line jsx-a11y/media-has-caption
+                    <audio
+                        className="mj_MediaViewer_audio"
+                        src={url}
+                        controls
+                        aria-label={`Play ${item.filename || "audio"}`}
+                    />
+                )}
+            </div>
+        </div>
+    );
+}
+
+// The reaper deleted the blob (payload tombstone, or a 404 on fetch): say so plainly instead of
+// a load error with a Retry that can never succeed.
+function ExpiredBody({ item }: { item: MediaItem }): React.ReactElement {
+    const isImage = item.isImageEvent || item.kind === "raster" || item.kind === "svg";
+    return (
+        <div className="mj_MediaViewer_body mj_MediaViewer_center">
+            <div className="mj_MediaViewer_downloadCard mj_MediaViewer_expired">
+                <ThumbGlyph item={item} className="mj_MediaViewer_downloadGlyph" />
+                <span className="mj_MediaViewer_downloadName">{isImage ? "Image expired" : "File expired"}</span>
+                {item.filename && (
+                    <span className="mj_MediaViewer_downloadMeta" title={item.filename}>
+                        {item.filename}
+                    </span>
+                )}
+                <span className="mj_MediaViewer_downloadNote">This attachment is no longer stored on the server.</span>
+            </div>
+        </div>
+    );
+}
+
 function DownloadBody({ client, item }: BodyProps): React.ReactElement {
-    const { url, loading, error } = useObjectUrl(client, item.mediaId);
+    const { url, loading, error, expired } = useObjectUrl(client, item.mediaId);
     const KindIcon = item.fileKind === "pdf" ? PdfFileIcon : item.fileKind === "video" ? VideoFileIcon : FileIcon;
     const size = formatMediaSize(item.size);
+    if (expired) return <ExpiredBody item={item} />;
     return (
         <div className="mj_MediaViewer_body mj_MediaViewer_center">
             <div className="mj_MediaViewer_downloadCard">
@@ -545,7 +653,7 @@ function DownloadBody({ client, item }: BodyProps): React.ReactElement {
 }
 
 function PdfBody({ client, item, registerZoom, registerPage, announce }: BodyProps): React.ReactElement {
-    const { url, loading: urlLoading, error: urlError, retry } = useObjectUrl(client, item.mediaId);
+    const { url, loading: urlLoading, error: urlError, expired, retry } = useObjectUrl(client, item.mediaId);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const docRef = useRef<LoadedPdf | null>(null);
     const [numPages, setNumPages] = useState(0);
@@ -645,6 +753,7 @@ function PdfBody({ client, item, registerZoom, registerPage, announce }: BodyPro
         };
     }, [page, numPages, item.filename, onContentMeasured, announce]);
 
+    if (expired) return <ExpiredBody item={item} />;
     if (urlError || renderError) {
         return (
             <div className="mj_MediaViewer_body mj_MediaViewer_center">
@@ -696,6 +805,7 @@ function PdfBody({ client, item, registerZoom, registerPage, announce }: BodyPro
 }
 
 function MediaBody(props: BodyProps): React.ReactElement {
+    if (props.item.expired) return <ExpiredBody item={props.item} />;
     switch (props.item.kind) {
         case "raster":
         case "svg":
@@ -704,6 +814,8 @@ function MediaBody(props: BodyProps): React.ReactElement {
             return <PdfBody {...props} />;
         case "video":
             return <VideoBody {...props} />;
+        case "audio":
+            return <AudioBody {...props} />;
         default:
             return <DownloadBody {...props} />;
     }
@@ -713,10 +825,11 @@ function MediaBody(props: BodyProps): React.ReactElement {
 // ThumbStrip — the corpus, current item ringed in accent. Scrolls, never wraps.
 // ---------------------------------------------------------------------------------------
 
-function ThumbGlyph({ item }: { item: MediaItem }): React.ReactElement {
-    if (item.kind === "pdf") return <PdfFileIcon aria-hidden />;
-    if (item.kind === "video") return <VideoFileIcon aria-hidden />;
-    return <FileIcon aria-hidden />;
+function ThumbGlyph({ item, className }: { item: MediaItem; className?: string }): React.ReactElement {
+    if (item.kind === "pdf") return <PdfFileIcon className={className} aria-hidden />;
+    if (item.kind === "video") return <VideoFileIcon className={className} aria-hidden />;
+    if (item.kind === "audio") return <AudioFileIcon className={className} aria-hidden />;
+    return <FileIcon className={className} aria-hidden />;
 }
 
 function LoadedThumbImage({ client, mediaId }: { client: MatronJournalClient; mediaId: string }): React.ReactElement {
@@ -774,7 +887,7 @@ function ThumbStrip({
         <div className="mj_MediaViewer_thumbs" ref={stripRef} role="tablist" aria-label="Media in this conversation">
             {items.map((item, index) => {
                 const active = index === activeIndex;
-                const showImage = item.kind === "raster" || item.kind === "svg";
+                const showImage = !item.expired && (item.kind === "raster" || item.kind === "svg");
                 return (
                     <button
                         key={item.mediaId}
@@ -929,7 +1042,7 @@ export function MediaViewer({
                     </span>
                     {meta && <span className="mj_MediaViewer_meta">{meta}</span>}
                     <span className="mj_MediaViewer_headerSpacer" />
-                    <DownloadLink client={client} item={item} />
+                    {!item.expired && <DownloadLink client={client} item={item} />}
                     <button
                         ref={closeRef}
                         type="button"
@@ -988,8 +1101,10 @@ export function MediaViewer({
 
 // Download always goes through the cached blob: URL, never a same-origin /media/:id href
 // (guardrail). Rendered in the header so every type — including download-only — can save.
-function DownloadLink({ client, item }: { client: MatronJournalClient; item: MediaItem }): React.ReactElement {
-    const { url, loading } = useObjectUrl(client, item.mediaId);
+function DownloadLink({ client, item }: { client: MatronJournalClient; item: MediaItem }): React.ReactElement | null {
+    const { url, loading, expired } = useObjectUrl(client, item.mediaId);
+    // Nothing to download once the server has reaped the blob.
+    if (expired) return null;
     if (!url) {
         return (
             <button

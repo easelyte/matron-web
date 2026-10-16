@@ -10,13 +10,20 @@ Please see LICENSE files in the repository root for full details.
  * labels beneath, one red count badge per entry that has something to show, and the app's
  * chrome (theme, settings, account) at its foot. Entries route to the tracker views or back to
  * the conversation list; the parent owns that routing, so this component knows nothing about
- * the client. The Mac's Coordinator entry is omitted: the web has no Coordinator conversation
- * setting to open (decision on the tracker).
+ * the client. The Coordinator entry sits first and opens the Coordinator conversation.
  */
 
 import React from "react";
 
-import { ConversationsIcon, DecisionsIcon, FolderIcon, MemoriesIcon, ProjectsIcon, PulseIcon } from "./icons";
+import {
+    ConversationsIcon,
+    DecisionsIcon,
+    FolderIcon,
+    MemoriesIcon,
+    PersonCheckIcon,
+    ProjectsIcon,
+    PulseIcon,
+} from "./icons";
 
 export type NavKey = "projects" | "decisions" | "conversations" | "memories" | "files" | "ops";
 
@@ -40,26 +47,59 @@ const ENTRIES: ReadonlyArray<{
     { key: "ops", label: "Ops", Icon: PulseIcon, countNoun: "" },
 ];
 
+/** The Coordinator entry: whether its conversation is on screen, its unread count, and the tap. */
+export interface NavRailCoordinator {
+    selected: boolean;
+    unread: number;
+    onOpen: () => void;
+}
+
 export function NavRail({
     active,
     counts,
     onSelect,
+    coordinator,
     footer,
     filesAvailable = true,
 }: {
     active: NavKey;
     counts: Partial<Record<NavKey, number>>;
     onSelect: (key: NavKey) => void;
+    coordinator?: NavRailCoordinator;
     footer?: React.ReactNode;
     /** The Files entry is hidden where the file pane cannot run (the packaged desktop app). */
     filesAvailable?: boolean;
 }): React.ReactElement {
     return (
         <nav className="mj_NavRail" aria-label="Sections" data-testid="nav-rail">
+            {coordinator && (
+                <button
+                    type="button"
+                    className="mj_NavRail_entry"
+                    data-nav="coordinator"
+                    aria-current={coordinator.selected ? "page" : undefined}
+                    aria-label={coordinator.unread > 0 ? `Coordinator, ${coordinator.unread} unread` : "Coordinator"}
+                    title="Coordinator"
+                    onClick={coordinator.onOpen}
+                >
+                    <span className="mj_NavRail_icon" aria-hidden="true">
+                        <PersonCheckIcon />
+                        {coordinator.unread > 0 && (
+                            <span className="mj_NavRail_badge">
+                                {coordinator.unread > 99 ? "99+" : coordinator.unread}
+                            </span>
+                        )}
+                    </span>
+                    <span className="mj_NavRail_label" aria-hidden="true">
+                        Coordinator
+                    </span>
+                </button>
+            )}
             {ENTRIES.filter((entry) => entry.key !== "files" || filesAvailable).map(
                 ({ key, label, Icon, countNoun }) => {
                     const count = counts[key] ?? 0;
-                    const selected = key === active;
+                    // The Coordinator's conversation is under Conversations, but its own entry is current.
+                    const selected = key === active && !(key === "conversations" && coordinator?.selected);
                     return (
                         <button
                             key={key}

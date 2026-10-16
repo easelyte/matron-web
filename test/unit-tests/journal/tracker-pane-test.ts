@@ -136,4 +136,35 @@ describe("TrackerPane mission load failures", () => {
         });
         expect(load).toHaveBeenCalledWith(5);
     });
+
+    it("opens a milestone's conversation on the message it was posted at", async () => {
+        const detail = missionDetail({ num: 5 });
+        detail.milestones = [
+            {
+                id: "ml_1",
+                mission_id: "ms_1",
+                num: 9,
+                kind: "progress",
+                title: "Tests pass",
+                body: "",
+                convo_id: "c7",
+                seq: 4242,
+                device_id: 1,
+                created_by: "agent",
+                created_at: 1,
+            },
+        ];
+        const client = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            missions: [mission({ num: 5 })],
+            trackerMission: detail,
+        });
+        const focus = jest.spyOn(client, "focusMessage").mockResolvedValue(true);
+        rendered = await renderPane(client);
+        const row = rendered.container.querySelector<HTMLButtonElement>('[aria-label^="Milestone number 9"]')!;
+        await act(async () => {
+            row.click();
+        });
+        expect(focus).toHaveBeenCalledWith("c7", 4242);
+    });
 });

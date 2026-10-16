@@ -330,6 +330,15 @@ describe("MatronJournalClient briefing navigation + links", () => {
 
         expect(select).toHaveBeenCalledWith("c_coord", { suppressNotFound: true });
     });
+
+    it("openBriefingInChat lands on the briefing's own message when its seq is known", () => {
+        const { client } = makeClient();
+        const focus = jest.spyOn(client, "focusMessage").mockResolvedValue(true);
+
+        client.openBriefingInChat("c_coord", 812);
+
+        expect(focus).toHaveBeenCalledWith("c_coord", 812);
+    });
 });
 
 describe("JournalApi briefing routes", () => {

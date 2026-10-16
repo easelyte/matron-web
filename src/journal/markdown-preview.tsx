@@ -205,7 +205,7 @@ function useMarkdownText(client: MatronJournalClient, blobRef: string): LoadStat
 
 // Overlays that own Escape while they are open; the panel defers to them.
 const ESCAPE_OWNERS =
-    ".mj_MediaViewer_scrim, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_EventRowMenu, .mj_RoomItemMenu, .mj_HeaderMenu, [role='menu']";
+    ".mj_MediaViewer_scrim, .mj_MediaBrowser_scrim, .mj_SubChatPane_covering, .mj_EventSource_scrim, .mj_UploadConfirm_scrim, .mj_NewSessionSheet, .mj_SettingsScrim, .mj_EventRowMenu, .mj_ConversationMenu, .mj_HeaderMenu, [role='menu']";
 
 function DownloadButton({
     client,

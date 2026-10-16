@@ -23,6 +23,7 @@ import "./work.pcss";
 import "./ops.pcss";
 import "./subagents.pcss";
 import "./mobile.pcss";
+import "./coordinator.pcss";
 
 const container = document.getElementById("matron");
 if (!container) throw new Error("Matron application container is missing");

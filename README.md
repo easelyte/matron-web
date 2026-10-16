@@ -53,6 +53,8 @@ CI runs `pnpm lint` and `pnpm test` on every PR.
 }
 ```
 
+The build emits absolute URLs (`/assets/…`, `/config.json`, `/manifest.json`), so the same `index.html` works at any client-side route the server falls back to it for, such as the journal's `/u/<name>/<n>` tracker links. To serve `webapp/` from a sub-path instead of the root, set `PUBLIC_PATH` when building, e.g. `PUBLIC_PATH=/chat/ pnpm build`.
+
 `config.json` is copied into the build output, so edit it before `pnpm build` (or edit `webapp/config.json` after). `config.sample.json` shows the full key set; see [docs/config.md](docs/config.md) for the complete runtime configuration surface.
 
 ## License

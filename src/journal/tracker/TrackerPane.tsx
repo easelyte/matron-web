@@ -17,7 +17,8 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect } from "react";
 
 import type { MatronJournalClient } from "../client";
-import { CloseIcon } from "../icons";
+import { goToNumberShortcutLabel } from "../goto-number";
+import { CloseIcon, NumberSignIcon } from "../icons";
 import type { ClientState } from "../types";
 import { BriefingDetail, LatestBriefingCard } from "./BriefingCard";
 import { ItemDetail } from "./ItemDetail";
@@ -130,6 +131,32 @@ export function TrackerPane({
         if (selectedMissionId != null) void client.loadMission(selectedMissionId);
     };
 
+    // The shown mission's project, for its breadcrumb: from the projects list, or the project page
+    // it was opened from. Unknown until one of them is loaded (the effect below loads the list). A
+    // mission row without project_num (an older journal) opened from a project page is in that one.
+    const shownMission =
+        view === "missions" && state.trackerMission?.mission?.num === selectedMissionId
+            ? state.trackerMission?.mission
+            : undefined;
+    const missionProjectNum = shownMission ? (shownMission.project_num ?? selectedProjectId ?? null) : null;
+    const missionProject =
+        missionProjectNum == null
+            ? null
+            : (state.projects?.find((project) => project.num === missionProjectNum) ??
+              (state.trackerProject?.project.num === missionProjectNum ? state.trackerProject.project : null));
+    const missionProjectKnown = missionProjectNum == null || missionProject != null;
+    const projectsLoaded = state.projects !== undefined;
+    // A project or mission page opened straight from a link needs the list too: its move and merge
+    // choices are the open projects.
+    const filingTargetsWanted =
+        view === "missions" && !state.projectsUnsupported && (selectedProjectId != null || selectedMissionId != null);
+    const projectsWanted = !missionProjectKnown || filingTargetsWanted;
+    useEffect(() => {
+        if (projectsWanted && !projectsLoaded) void client.loadProjects();
+    }, [client, projectsWanted, projectsLoaded]);
+    const moveMission = (missionId: string, projectId: string): Promise<string | null> =>
+        client.moveTrackerMission(missionId, projectId);
+
     const body = ((): React.ReactElement => {
         // Render a cached detail ONLY when it belongs to the current selection. A detail loaded for
         // a previously selected row is cleared to null on selection change (openTracker*), but the
@@ -198,8 +225,13 @@ export function TrackerPane({
                         detail={state.trackerMission}
                         client={client}
                         agents={state.agents}
+                        project={state.projectsUnsupported ? null : missionProject}
+                        rootLabel={state.projectsUnsupported ? "Missions" : "Projects"}
                         onOpenItem={(num) => client.openTrackerItem(num)}
                         onBack={backFromMission}
+                        onOpenRoot={() => switchView("missions")}
+                        onOpenProject={backToProject}
+                        projects={state.projectsUnsupported ? undefined : state.projects}
                     />
                 </>
             );
@@ -283,9 +315,14 @@ export function TrackerPane({
                         ) : null}
                         <ProjectPage
                             detail={state.trackerProject}
+                            loadingMore={!!state.trackerProjectFeedLoading}
                             onBack={() => switchView("missions")}
                             onOpenMission={(num) => client.openTrackerView({ view: "missions", missionId: num })}
                             onOpenItem={(num) => client.openTrackerItem(num, { keepProject: true })}
+                            onLoadMore={() => void client.loadMoreProjectActivity()}
+                            projects={state.projects}
+                            onMerge={(projectId, intoId) => client.mergeTrackerProject(projectId, intoId)}
+                            onMoveMission={moveMission}
                         />
                     </>
                 );
@@ -403,6 +440,11 @@ export function TrackerPane({
                         unfiled={state.missions ?? []}
                         onOpenProject={(num) => client.openTrackerProject(num)}
                         onOpenMission={(num) => client.openTrackerMission(num)}
+                        onCreateProject={async (title, body) => {
+                            const out = await client.createTrackerProject(title, body);
+                            return "error" in out ? out.error : null;
+                        }}
+                        onMoveMission={moveMission}
                     />
                 </>
             ) : (
@@ -432,6 +474,7 @@ export function TrackerPane({
                 {staleNotice}
                 <ItemsInbox
                     items={state.inboxItems ?? []}
+                    done={state.inboxDone}
                     client={client}
                     onOpenItem={(num) => client.openTrackerItem(num)}
                 />
@@ -451,6 +494,15 @@ export function TrackerPane({
                     <CloseIcon />
                 </button>
                 <h1 className="mj_TrackerPane_title">Tracker</h1>
+                <button
+                    type="button"
+                    className="mj_IconButton mj_TrackerPane_goTo"
+                    aria-label="Go to number"
+                    title={`Go to number (${goToNumberShortcutLabel()})`}
+                    onClick={() => client.openGoToNumber()}
+                >
+                    <NumberSignIcon />
+                </button>
                 <div className="mj_Seg mj_TrackerViewSwitch" role="tablist" aria-label="Tracker view">
                     <button
                         type="button"

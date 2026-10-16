@@ -121,8 +121,10 @@ describe("subagent strip", () => {
         expect(pills?.[2].classList.contains("mj_SubagentPill_finished")).toBe(true);
         expect([...pills!].some((pill) => pill.getAttribute("role") === "listitem")).toBe(false);
 
+        // From the parent, a pill opens the subagent in the pane beside it instead of leaving.
         await act(async () => pills?.[2].click());
-        expect(selectConversation).toHaveBeenCalledWith("queued");
+        expect(selectConversation).not.toHaveBeenCalled();
+        expect(client.getSnapshot().subChatPane).toEqual({ parentId: "parent", childId: "queued" });
     });
 
     it("shows siblings and marks the selected child as current", async () => {
@@ -170,7 +172,7 @@ describe("subagent strip integration", () => {
         jest.restoreAllMocks();
     });
 
-    it("renders every child in running-first order and opens the clicked child", async () => {
+    it("renders every child in running-first order and opens the clicked child beside the parent", async () => {
         const conversations = [
             conversation("parent", "Parent", "running"),
             conversation("running-a", "Research", "running", "parent"),
@@ -188,7 +190,10 @@ describe("subagent strip integration", () => {
         expect(pills[2].classList.contains("mj_SubagentPill_finished")).toBe(true);
 
         await act(async () => (pills[1] as HTMLButtonElement).click());
-        expect(selectConversation).toHaveBeenCalledWith("running-b");
+        expect(selectConversation).not.toHaveBeenCalled();
+        expect(client.getSnapshot().subChatPane).toEqual({ parentId: "parent", childId: "running-b" });
+        expect(rendered.container.querySelector('aside[aria-label="Subagent Draft"]')).not.toBeNull();
+        expect(pills[1].getAttribute("aria-current")).toBe("true");
     });
 
     it("renders finished children when the selected conversation has no running children", async () => {

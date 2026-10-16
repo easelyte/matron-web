@@ -6,7 +6,9 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    applyArgument,
     applyCommand,
+    argSuggestions,
     applyFolder,
     CLAUDE_BRIDGE_COMMANDS,
     filterCommands,
@@ -27,8 +29,108 @@ const session = {
 const storageKey = `matron_journal_recent_start_folders_v1:${encodeURIComponent(session.serverUrl)}:${session.userId}`;
 
 describe("CLAUDE_BRIDGE_COMMANDS", () => {
-    it("contains the 22 operator-facing bridge commands", () => {
-        expect(CLAUDE_BRIDGE_COMMANDS).toHaveLength(22);
+    it("lists the desktop app's commands, in its order", () => {
+        expect(CLAUDE_BRIDGE_COMMANDS.map(({ trigger }) => trigger)).toEqual([
+            "/start",
+            "/stop",
+            "/restart",
+            "/resume",
+            "/sessions",
+            "/workdir",
+            "/status",
+            "/agent",
+            "/switch",
+            "/working",
+            "/mcp",
+            "/model",
+            "/effort",
+            "/mode",
+            "/cost",
+            "/usage",
+            "/limits",
+            "/tools",
+            "/context",
+            "/compact",
+            "/login",
+            "/logout",
+            "/timer",
+            "!esc",
+            "!enter",
+            "/help",
+        ]);
+    });
+});
+
+describe("argSuggestions", () => {
+    const values = (input: string, status?: Parameters<typeof argSuggestions>[2]): string[] =>
+        argSuggestions(input, CLAUDE_BRIDGE_COMMANDS, status).map(({ value }) => value);
+
+    it("offers nothing until the command is typed in full and followed by whitespace", () => {
+        expect(values("/start")).toEqual([]);
+        expect(values("/sta ")).toEqual([]);
+        expect(values("hello /start ")).toEqual([]);
+        expect(values("/stop ")).toEqual([]);
+    });
+
+    it("offers a command's flags, with either prefix and any case", () => {
+        expect(values("/start ")).toEqual(["--claude", "--codex", "--browser"]);
+        expect(values("  !START ")).toEqual(["--claude", "--codex", "--browser"]);
+        expect(values("/restart ")).toEqual(["--force", "--browser"]);
+        expect(values("/resume ")).toEqual(["--claude", "--codex"]);
+    });
+
+    it("filters by the trailing partial, smart dashes included", () => {
+        expect(values("/start --c")).toEqual(["--claude", "--codex"]);
+        expect(values("/start \u2014co")).toEqual(["--codex"]);
+        // A complete flag offers nothing more for that token.
+        expect(values("/start --codex")).toEqual([]);
+    });
+
+    it("drops flags already on the line and those that conflict with them", () => {
+        expect(values("/start --browser ")).toEqual(["--claude"]);
+        expect(values("/start --codex ")).toEqual([]);
+        expect(values("/start \u2013claude ")).toEqual(["--browser"]);
+        expect(values("/restart --force ")).toEqual(["--browser"]);
+    });
+
+    it("stops offering flags once a positional argument is down", () => {
+        expect(values("/start work ")).toEqual([]);
+        expect(values("/resume 2 --")).toEqual([]);
+    });
+
+    it("offers a plain value only for the first argument", () => {
+        expect(values("/switch ")).toEqual(["claude", "codex"]);
+        expect(values("/switch co")).toEqual(["codex"]);
+        expect(values("/switch claude ")).toEqual([]);
+        expect(values("/mode ")).toEqual(["interactive", "print"]);
+        expect(values("/timer ")).toEqual(["cancel"]);
+        expect(values("/timer 2h ")).toEqual([]);
+    });
+
+    it("takes /model and /effort values from the session's status", () => {
+        const status = {
+            model_options: [
+                { value: "opus", label: "Opus" },
+                { value: "sonnet", label: "Sonnet" },
+                { value: "OPUS", label: "again" },
+            ],
+            effort_levels: [{ value: "high", label: "High" }, { value: "xhigh", label: "X-High" }, { value: "" }],
+        };
+        expect(values("/model ")).toEqual([]);
+        expect(argSuggestions("/model ", CLAUDE_BRIDGE_COMMANDS, status)).toEqual([
+            { value: "opus", label: "Opus" },
+            { value: "sonnet", label: "Sonnet" },
+        ]);
+        expect(values("/effort x", status)).toEqual(["xhigh"]);
+        expect(values("/effort ", { model_options: status.model_options })).toEqual([]);
+    });
+});
+
+describe("applyArgument", () => {
+    it("replaces the trailing partial with the value and a space", () => {
+        expect(applyArgument("/start --c", "--codex")).toBe("/start --codex ");
+        expect(applyArgument("/start --browser ", "--claude")).toBe("/start --browser --claude ");
+        expect(applyArgument("/model ", "opus[1m]")).toBe("/model opus[1m] ");
     });
 });
 

@@ -109,6 +109,22 @@ test("leaves an unknown language fence unhighlighted without throwing", async ()
     expect(code?.querySelectorAll('[class^="hljs-"]').length).toBe(0);
 });
 
+test.each(["bash", "go", "python", "rust", "sql", "yaml", "diff", "json", "css", "html"])(
+    "highlights a %s fence",
+    async (lang) => {
+        const container = await renderMarkdown(`\`\`\`${lang}\nfoo = "bar" # 1\n\`\`\``);
+        expect(container.querySelector("code")?.classList.contains("hljs")).toBe(true);
+    },
+);
+
+test("leaves a language outside the curated set plain", async () => {
+    const container = await renderMarkdown("```java\nclass A {}\n```");
+    const code = container.querySelector("code");
+
+    expect(code?.className).toBe("hljs language-java");
+    expect(code?.querySelectorAll('[class^="hljs-"]').length).toBe(0);
+});
+
 test("omits highlighting while streaming", async () => {
     const container = await renderMarkdown("```ts\nconst answer: number = 42;\n```", true);
     const code = container.querySelector("code");
@@ -550,5 +566,57 @@ describe("bare matron://item links", () => {
         const container = await renderMarkdown("see matron://item/5");
         expect(container.querySelectorAll("a")).toHaveLength(0);
         expect(container.textContent).toBe("see matron://item/5");
+    });
+});
+
+describe("https /u/<name>/<n> links to this deployment", () => {
+    async function render(text: string, onTrackerLink: TrackerLinkHandler): Promise<HTMLDivElement> {
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        rendered.push({ container, root });
+        await act(async () => {
+            root.render(React.createElement(MarkdownBody, { text, label: "test-message", onTrackerLink }));
+        });
+        return container;
+    }
+
+    test("an own-origin link opens in-app; a modified click is left to the browser", async () => {
+        const url = `${window.location.origin}/u/alice/412`;
+        const onTrackerLink = jest.fn();
+        const container = await render(`see [#412](${url}) and ${url}`, onTrackerLink);
+
+        const links = container.querySelectorAll<HTMLAnchorElement>("a.mj_TrackerLink");
+        expect(links).toHaveLength(2);
+        expect(links[0].getAttribute("target")).toBeNull();
+        await act(async () => links[0].click());
+        expect(onTrackerLink).toHaveBeenCalledWith("link", url);
+
+        onTrackerLink.mockClear();
+        const modified = new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true });
+        await act(async () => links[1].dispatchEvent(modified));
+        expect(onTrackerLink).not.toHaveBeenCalled();
+        expect(modified.defaultPrevented).toBe(false);
+    });
+
+    test("without an in-app handler it is an ordinary external link", async () => {
+        const url = `${window.location.origin}/u/alice/412`;
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        rendered.push({ container, root });
+        await act(async () => {
+            root.render(React.createElement(MarkdownBody, { text: `[#412](${url})`, label: "test-message" }));
+        });
+        const link = container.querySelector("a");
+        expect(link?.getAttribute("href")).toBe(url);
+        expect(link?.getAttribute("target")).toBe("_blank");
+    });
+
+    test("the same path on another host stays an external link", async () => {
+        const onTrackerLink = jest.fn();
+        const container = await render("[#412](https://elsewhere.example/u/alice/412)", onTrackerLink);
+        expect(container.querySelector("a.mj_TrackerLink")).toBeNull();
+        expect(container.querySelector("a")?.getAttribute("target")).toBe("_blank");
     });
 });

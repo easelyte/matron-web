@@ -110,8 +110,8 @@ afterEach(async () => {
     localStorage.clear();
 });
 
-const sidebar = (container: HTMLElement): HTMLElement => container.querySelector(".mx_LeftPanel_outerWrapper")!;
-const main = (container: HTMLElement): HTMLElement => container.querySelector(".mx_RoomView_wrapper")!;
+const sidebar = (container: HTMLElement): HTMLElement => container.querySelector(".mj_Sidebar_outerWrapper")!;
+const main = (container: HTMLElement): HTMLElement => container.querySelector(".mj_ChatView_wrapper")!;
 
 describe("mobile region visibility", () => {
     // Root cause of "the tracker button does nothing on mobile": the sidebar was hidden only when a

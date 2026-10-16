@@ -63,90 +63,92 @@ function serve(dir) {
 // A shot: reach a state, then screenshot `clip` (a selector) — mouse left where it lands so
 // :hover persists into the capture.
 const SHOTS_SPEC = [
-    { comp: "composer", state: "rest", clip: ".mx_MessageComposer", setup: async () => {} },
+    { comp: "composer", state: "rest", clip: ".mj_Composer", setup: async () => {} },
     {
         comp: "composer",
         state: "typed",
-        clip: ".mx_MessageComposer",
-        setup: async (p) => p.fill(".mx_BasicMessageComposer_input", "restart nginx on prod"),
+        clip: ".mj_Composer",
+        setup: async (p) => p.fill(".mj_ComposerInput_input", "restart nginx on prod"),
     },
     {
         comp: "composer",
         state: "send-hover",
-        clip: ".mx_MessageComposer",
+        clip: ".mj_Composer",
         setup: async (p) => {
-            await p.fill(".mx_BasicMessageComposer_input", "restart nginx on prod");
+            await p.fill(".mj_ComposerInput_input", "restart nginx on prod");
             await p.hover(".mj_ComposerSend");
         },
     },
     {
         comp: "composer",
         state: "slash-open",
-        clip: ".mx_MessageComposer",
-        setup: async (p) => p.fill(".mx_BasicMessageComposer_input", "/"),
+        clip: ".mj_Composer",
+        setup: async (p) => p.fill(".mj_ComposerInput_input", "/"),
     },
     {
-        comp: "upload",
-        state: "single",
-        clip: ".mj_UploadConfirm",
-        setup: async (p) => {
-            await p.evaluate(() => window.__matron.stageImage());
-            await p.waitForSelector(".mj_UploadConfirm_queue");
-        },
-    },
-    {
-        comp: "upload",
-        state: "single-doc",
-        clip: ".mj_UploadConfirm",
-        setup: async (p) => {
-            await p.evaluate(() => window.__matron.stageDoc());
-            await p.waitForSelector(".mj_UploadConfirm_queue");
-        },
-    },
-    {
-        comp: "upload",
-        state: "queue",
-        clip: ".mj_UploadConfirm",
+        comp: "tray",
+        state: "staged",
+        clip: ".mj_Composer",
         setup: async (p) => {
             await p.evaluate(() => window.__matron.stageTwo());
-            await p.waitForSelector(".mj_UploadConfirm_queue");
+            await p.fill(".mj_ComposerInput_input", "the deploy failed with this error");
+            await p.waitForSelector(".mj_AttachmentTray img");
+        },
+    },
+    {
+        comp: "tray",
+        state: "uploading",
+        clip: ".mj_Composer",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.trayUploading());
+            await p.waitForSelector(".mj_StagedAttachment_uploading img");
+        },
+    },
+    {
+        comp: "tray",
+        state: "failed",
+        clip: ".mj_Composer",
+        setup: async (p) => {
+            await p.evaluate(() => window.__matron.trayFailed());
+            await p.fill(".mj_ComposerInput_input", "the deploy failed with this error");
+            await p.waitForSelector(".mj_StagedAttachment_failed");
         },
     },
     // Track-1 r2 surfaces.
     {
         comp: "sidebar",
         state: "with-subagents",
-        clip: ".mx_RoomListPanel",
-        setup: async (p) => p.waitForSelector(".mj_RoomListItem_sub"),
+        clip: ".mj_ConversationListPanel",
+        setup: async (p) => p.waitForSelector(".mj_ConversationListItem_sub"),
     },
     // manual collapse/expand of a parent's subagent child rows via the row menu.
     {
         comp: "sidebar",
         state: "collapse-menu",
-        clip: ".mx_RoomListPanel",
+        clip: ".mj_ConversationListPanel",
         setup: async (p) => {
-            await p.waitForSelector(".mj_RoomListItem_sub");
-            const parent = p.locator(".mj_RoomListItem_wrapper", {
-                has: p.locator('[data-testid="room-name"]', { hasText: "matron-web · deploy" }),
+            await p.waitForSelector(".mj_ConversationListItem_sub");
+            const parent = p.locator(".mj_ConversationListItem_wrapper", {
+                has: p.locator('[data-testid="conversation-name"]', { hasText: "matron-web · deploy" }),
             });
-            await parent.locator(".mj_RoomListItem").click({ button: "right" });
-            await p.locator('.mj_RoomItemMenu [role="menuitem"]', { hasText: "Collapse subagents" }).waitFor();
+            await parent.locator(".mj_ConversationListItem").click({ button: "right" });
+            await p.locator('.mj_ConversationMenu [role="menuitem"]', { hasText: "Collapse subagents" }).waitFor();
         },
     },
     {
         comp: "sidebar",
         state: "collapsed",
-        clip: ".mx_RoomListPanel",
+        clip: ".mj_ConversationListPanel",
         setup: async (p) => {
-            await p.waitForSelector(".mj_RoomListItem_sub");
-            const parent = p.locator(".mj_RoomListItem_wrapper", {
-                has: p.locator('[data-testid="room-name"]', { hasText: "matron-web · deploy" }),
+            await p.waitForSelector(".mj_ConversationListItem_sub");
+            const parent = p.locator(".mj_ConversationListItem_wrapper", {
+                has: p.locator('[data-testid="conversation-name"]', { hasText: "matron-web · deploy" }),
             });
-            await parent.locator(".mj_RoomListItem").click({ button: "right" });
-            await p.locator('.mj_RoomItemMenu [role="menuitem"]', { hasText: "Collapse subagents" }).click();
+            await parent.locator(".mj_ConversationListItem").click({ button: "right" });
+            await p.locator('.mj_ConversationMenu [role="menuitem"]', { hasText: "Collapse subagents" }).click();
             // Child rows detach; the parent gains the collapsed-count affordance.
-            await p.locator(".mj_RoomListItem_sub").waitFor({ state: "detached" });
-            await p.waitForSelector(".mj_RoomListCollapsedSubs");
+            await p.locator(".mj_ConversationListItem_sub").waitFor({ state: "detached" });
+            await p.waitForSelector(".mj_ConversationListCollapsedSubs");
         },
     },
     // Pinned conversation summary. Only two states are reachable from real data —
@@ -187,7 +189,7 @@ const SHOTS_SPEC = [
     {
         comp: "timeline",
         state: "date-divider",
-        clip: ".mx_RoomView_MessageList",
+        clip: ".mj_ChatView_messageList",
         setup: async (p) => p.waitForSelector(".mj_DateDivider"),
     },
     {
@@ -213,7 +215,7 @@ const SHOTS_SPEC = [
     {
         comp: "subagent",
         state: "child-view",
-        clip: ".mx_RoomView_body",
+        clip: ".mj_ChatView_body",
         setup: async (p) => {
             await p.evaluate(() => window.__matron.selectChild());
             await p.waitForSelector(".mj_SubagentBack");

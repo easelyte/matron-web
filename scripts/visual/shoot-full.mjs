@@ -65,7 +65,7 @@ function serve(dir) {
 
 const REGIONS = [
     { name: "header", sel: ".mj_ChatHeader" },
-    { name: "sidebar", sel: ".mx_RoomListPanel" },
+    { name: "sidebar", sel: ".mj_ConversationListPanel" },
     { name: "permission", sel: ".mj_PromptCard_permission" },
     { name: "unknown", sel: ".mj_Unknown" },
     { name: "diff", sel: ".mj_DiffCard" },
@@ -95,6 +95,21 @@ for (const theme of ["light", "dark"]) {
         } catch (e) {
             console.log(`ERR ${r.name} @ ${theme}: ${e.message}`);
         }
+    }
+    await page.close();
+}
+// Running tool stream (?toolstream), collapsed and then expanded.
+for (const theme of ["light", "dark"]) {
+    const page = await browser.newPage({ viewport: { width: 1180, height: 1100 } });
+    await page.goto(`${base}?theme=${theme}&toolstream`, { waitUntil: "networkidle" });
+    await page.evaluate(() => document.fonts.ready);
+    const tile = page.locator(".mj_LiveTool").first();
+    for (const state of ["collapsed", "expanded"]) {
+        if (state === "expanded") await page.locator("button[aria-label='Expand output']").first().click();
+        await tile.scrollIntoViewIfNeeded();
+        const file = path.join(OUT, `tool-stream-${state}__${theme}.png`);
+        await tile.screenshot({ path: file, animations: "disabled" });
+        shots.push(file);
     }
     await page.close();
 }

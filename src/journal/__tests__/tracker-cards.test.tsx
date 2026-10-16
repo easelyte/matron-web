@@ -11,6 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { MatronJournalClient } from "../client";
 import type { EventPayload, JournalEvent } from "../types";
 import {
+    foldItemCards,
     isRenderableItemMarker,
     ItemCard,
     ItemInlineNote,
@@ -18,6 +19,7 @@ import {
     MemoryNotice,
     MissionNotice,
     renderItemMarker,
+    restateItemCard,
 } from "../tracker/cards";
 
 interface FakeClient {
@@ -473,5 +475,79 @@ describe("MemoryNotice", () => {
             missionId: null,
             memoryName: null,
         });
+    });
+});
+
+describe("foldItemCards", () => {
+    const marker = (seq: number, payload: EventPayload): JournalEvent => ({
+        kind: "journal",
+        seq,
+        convo_id: "c1",
+        ts: seq,
+        sender: "journal",
+        type: "item",
+        payload: { item_id: "it_a", num: 7, kind: "question", title: "Pick a database", by: "agent", ...payload },
+    });
+
+    it("keeps one card per item, at its latest created/closed marker, in its latest state", () => {
+        const fold = foldItemCards([
+            marker(1, { action: "created", awaiting: "user" }),
+            marker(2, { action: "commented", awaiting: "agent", comment: { id: "c", body: "Postgres" } }),
+            marker(3, { action: "closed", resolution: "answered", comment: { id: "d", body: "Thanks" } }),
+            marker(4, { action: "updated", title: "Renamed by an invalidation-only marker" }),
+        ]);
+        expect([...fold.hidden]).toEqual([1]);
+        // The closed card is already the latest renderable marker: nothing to re-state.
+        expect(fold.restated.size).toBe(0);
+    });
+
+    it("re-states the surviving card when a later note changed the item", () => {
+        const fold = foldItemCards([
+            marker(1, { action: "created", awaiting: "user" }),
+            marker(2, { action: "commented", awaiting: "agent", title: "Pick a database, revised" }),
+        ]);
+        expect(fold.hidden.size).toBe(0);
+        expect(fold.restated.get(1)).toMatchObject({
+            action: "created",
+            awaiting: "agent",
+            title: "Pick a database, revised",
+        });
+    });
+
+    it("re-opens a closed card after a reopen, dropping its closing comment and resolution", () => {
+        const fold = foldItemCards([
+            marker(1, { action: "created", awaiting: "user" }),
+            marker(2, { action: "closed", resolution: "answered", comment: { id: "d", body: "Done" } }),
+            marker(3, { action: "reopened", awaiting: "user" }),
+        ]);
+        expect([...fold.hidden]).toEqual([1]);
+        const card = fold.restated.get(2)!;
+        expect(card).toMatchObject({ action: "created", awaiting: "user" });
+        expect(card.comment).toBeUndefined();
+        expect(card.resolution).toBeUndefined();
+    });
+
+    it("leaves markers for different items, and markers without an item_id, alone", () => {
+        const fold = foldItemCards([
+            marker(1, { action: "created", awaiting: "user" }),
+            marker(2, { item_id: "it_b", num: 8, action: "closed", resolution: "done" }),
+            marker(3, { item_id: undefined, action: "created" }),
+            marker(4, { item_id: undefined, action: "closed", resolution: "done" }),
+        ]);
+        expect(fold.hidden.size).toBe(0);
+        expect(fold.restated.size).toBe(0);
+    });
+});
+
+describe("restateItemCard", () => {
+    it("keeps the closing comment while the item stays closed, and takes the latest resolution", () => {
+        const card = { action: "closed", title: "T", resolution: "done", comment: { id: "c", body: "Shipped" } };
+        const restated = restateItemCard(card, { action: "commented", title: "T", resolution: "cancelled" });
+        expect(restated).toMatchObject({ action: "closed", resolution: "cancelled", comment: card.comment });
+    });
+
+    it("returns the card itself when nothing it draws changed", () => {
+        const card = { action: "created", title: "T", awaiting: "user" };
+        expect(restateItemCard(card, { action: "commented", title: "T", awaiting: "user" })).toBe(card);
     });
 });

@@ -20,7 +20,7 @@ Please see LICENSE files in the repository root for full details.
 import React from "react";
 
 import type { TrackerItem } from "../types";
-import { awaitsSeen, itemProvenance, itemStatusText, kindLabel, needsUser, oneLine, resolutionLabel } from "./format";
+import { awaitsSeen, closedStatusLabel, itemProvenance, itemStatusText, kindLabel, needsUser, oneLine } from "./format";
 import { CommentBubbleGlyph, ImagePlaceholderGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
 import { inlineRefsToText } from "./inline-attachments";
 
@@ -32,6 +32,7 @@ export function ItemRow({
     onOpen,
     onSeen,
     seenBusy = false,
+    describedBy,
 }: {
     item: TrackerItem;
     scope?: "chat" | "all";
@@ -44,6 +45,8 @@ export function ItemRow({
     onSeen?: (num: number) => void;
     /** The Seen tap is in flight: the button is disabled. */
     seenBusy?: boolean;
+    /** Id of an extra description for the row button (e.g. a keyboard hint). */
+    describedBy?: string;
 }): React.ReactElement {
     const notice = item.kind === "notice";
     // A notice awaiting the user is still in "Needs you", but it is not the urgent orange state.
@@ -67,9 +70,7 @@ export function ItemRow({
     ) : notice && needsUser(item) ? (
         <span className="mj_TrackerItemRow_status mj_TrackerItemRow_status_muted">To read</span>
     ) : item.state === "closed" ? (
-        <span className="mj_TrackerItemRow_status mj_TrackerItemRow_status_muted">
-            {item.resolution ? resolutionLabel(item.resolution) : "Closed"}
-        </span>
+        <span className="mj_TrackerItemRow_status mj_TrackerItemRow_status_muted">{closedStatusLabel(item)}</span>
     ) : item.awaiting === "agent" ? (
         <span className="mj_TrackerItemRow_status mj_TrackerItemRow_status_muted">With the agent</span>
     ) : null;
@@ -95,6 +96,7 @@ export function ItemRow({
                 notice ? " mj_TrackerItemRow_notice" : ""
             }${showSeen ? " mj_TrackerItemRow_withSeen" : ""}`}
             aria-label={label}
+            aria-describedby={describedBy}
             onClick={() => onOpen(item.num)}
         >
             <span className="mj_TrackerItemRow_glyph" aria-hidden="true">

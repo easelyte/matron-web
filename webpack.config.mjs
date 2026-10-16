@@ -43,6 +43,9 @@ class VersionAssetPlugin {
 export default (_environment, arguments_) => {
     const development = arguments_.mode !== "production";
     const version = process.env.VERSION ?? `${packageJson.version}${development ? "-dev" : ""}`;
+    // Where webapp/ is served from. Every URL the build emits starts with it, so index.html also
+    // works at the client-side routes the journal serves it for (/u/*, /app/*).
+    const publicPath = (process.env.PUBLIC_PATH || "/").replace(/\/*$/, "/");
 
     return {
         mode: development ? "development" : "production",
@@ -51,6 +54,7 @@ export default (_environment, arguments_) => {
         entry: "./src/journal/index.tsx",
         output: {
             path: path.join(root, "webapp"),
+            publicPath,
             filename: "assets/[name].[contenthash:8].js",
             chunkFilename: "assets/[name].[contenthash:8].js",
             assetModuleFilename: "assets/[name].[contenthash:8][ext]",
@@ -67,6 +71,13 @@ export default (_environment, arguments_) => {
                 new MinimizerPlugin({
                     exclude: /pdf\.worker\.min\..*\.mjs$/,
                     terserOptions: { compress: { passes: 2 } },
+                }),
+                // Webpack minifies only JS by default. Without this the stylesheet ships with its
+                // comments and indentation, nearly doubling its compressed size.
+                new MinimizerPlugin({
+                    test: /\.css$/i,
+                    minify: MinimizerPlugin.cleanCssMinify,
+                    minimizerOptions: { level: 1 },
                 }),
             ],
         },
@@ -90,7 +101,7 @@ export default (_environment, arguments_) => {
                             options: {
                                 sourceMap: true,
                                 postcssOptions: {
-                                    plugins: [postcssPresetEnv({ stage: 3, browsers: "last 2 versions" })],
+                                    plugins: [postcssPresetEnv({ stage: 3 })],
                                 },
                             },
                         },
@@ -107,14 +118,16 @@ export default (_environment, arguments_) => {
             new HtmlWebpackPlugin({ template: "./src/index.html", minify: !development }),
             new CopyWebpackPlugin({
                 patterns: [
-                    { from: "res/.well-known", to: ".well-known", noErrorOnMissing: true },
                     { from: "res/manifest.json", noErrorOnMissing: true },
                     { from: "res/icons", to: "icons", noErrorOnMissing: true },
                     { from: "res/opengraph.png", noErrorOnMissing: true },
                     { from: "config.json", noErrorOnMissing: true },
                 ],
             }),
-            new webpack.DefinePlugin({ "process.env.VERSION": JSON.stringify(version) }),
+            new webpack.DefinePlugin({
+                "process.env.VERSION": JSON.stringify(version),
+                "process.env.PUBLIC_PATH": JSON.stringify(publicPath),
+            }),
             new VersionAssetPlugin(version),
         ],
         devServer: {

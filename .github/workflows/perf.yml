@@ -1,0 +1,45 @@
+name: Perf
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only, like CI: the job builds, runs the harness and uploads its results.
+permissions:
+  contents: read
+
+jobs:
+  perf:
+    name: Perf budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      # The harness runs a throwaway journal from source, seeded with synthetic data. Pinned, so a
+      # journal change can't turn this check red on an unrelated web change; move it forward
+      # deliberately, in a pull request of its own.
+      - uses: actions/checkout@v4
+        with:
+          repository: Matronhq/matron-journal
+          ref: 89630da96bd1860d8bb06455eefaa918fb0053db
+          path: .perf/matron-journal
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: npm ci --omit=optional --no-audit --no-fund
+        working-directory: .perf/matron-journal
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm build
+      - run: node scripts/perf/run.mjs --scale=ci --runs=3 --budget=scripts/perf/budget.json --out=perf-results.json
+        env:
+          MATRON_JOURNAL_DIR: .perf/matron-journal
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-results
+          path: perf-results.json
+          if-no-files-found: ignore

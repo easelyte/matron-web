@@ -1,0 +1,64 @@
+{
+    "_comment": "Limits for the ci-scale run in CI (scripts/perf/run.mjs --scale=ci --runs=3). Timings are medians in ms on a GitHub-hosted runner. Lower a limit when a change makes a number better; raise one only with a reason in the pull request.",
+    "bundle": {
+        "initialGzipKB": {
+            "max": 295
+        },
+        "totalGzipKB": {
+            "max": 830
+        }
+    },
+    "cold": {
+        "signInToListMs": {
+            "max": 700
+        },
+        "longTaskMs": {
+            "max": 700
+        }
+    },
+    "warm": {
+        "reloadToListMs": {
+            "max": 450
+        }
+    },
+    "switch": {
+        "firstOpenMedianMs": {
+            "max": 300
+        },
+        "revisitMedianMs": {
+            "max": 250
+        },
+        "rowClickMedianMs": {
+            "max": 500
+        }
+    },
+    "long": {
+        "lastPageMs": {
+            "max": 600
+        },
+        "appendWithLongHistoryMs": {
+            "max": 400
+        }
+    },
+    "tracker": {
+        "projectsReadyMs": {
+            "max": 500
+        },
+        "missionReadyMs": {
+            "max": 300
+        }
+    },
+    "stream": {
+        "short.maxLongTaskMs": {
+            "max": 150
+        },
+        "long.maxLongTaskMs": {
+            "max": 150
+        }
+    },
+    "soak": {
+        "heapGrowthPerCycleMB": {
+            "max": 0.5
+        }
+    }
+}
