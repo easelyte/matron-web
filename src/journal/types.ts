@@ -735,7 +735,7 @@ export interface ClientState {
     filesView?: FilesViewState;
     // Find in chat: the search bar over the open conversation, while it is up.
     chatSearch?: ChatSearchState;
-    // Tracker pane (Missions / Milestones / Decisions-Inbox / Work). `trackerView` is the
+    // Tracker pane (Missions / Milestones / Decisions-Inbox / Memories). `trackerView` is the
     // main-region discriminant (checked alongside filesView — one surface at a time).
     // The rest are store-resident so sidebar badges stay live off WS invalidation:
     //   missions/inboxItems  = the two list views;
@@ -969,7 +969,7 @@ export interface FilesViewState {
     targetToken?: number;
 }
 
-// ── Tracker (Missions / Milestones / Decisions-Inbox / Work) ───────────────────
+// ── Tracker (Missions / Milestones / Decisions-Inbox / Memories) ───────────────────
 // Wire shapes bind EXACTLY to the journal tracker API (src/items.js, src/missions.js
 // @dd9c04a): `id`/`mission_id`/`supersedes`/`origin_convo_id` are opaque TEXT ids
 // (strings); `num` is the human #number (integer); every timestamp is epoch-ms INTEGER
@@ -978,11 +978,9 @@ export interface FilesViewState {
 /** Which tracker surface the pane shows; `selected*Id` are #num values (integers). */
 export interface TrackerViewState {
     open: boolean;
-    view?: "missions" | "inbox" | "work" | "memories";
+    view?: "missions" | "inbox" | "memories";
     selectedItemId?: number;
     selectedMissionId?: number;
-    /** Work tab: the loop whose detail is open. The Work data itself is WorkView-local. */
-    selectedLoopId?: number;
     /** Projects view: the open project's number; undefined = the dashboard. */
     selectedProjectId?: number;
     /** Memories view: the open memory's name, or "" for the new-memory form. Undefined = the list. */

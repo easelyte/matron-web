@@ -27,7 +27,6 @@ import { MemoriesList } from "./MemoriesList";
 import { MemoryDetail } from "./MemoryDetail";
 import { MissionDetail } from "./MissionDetail";
 import { MissionsList } from "./MissionsList";
-import { WorkView } from "./WorkView";
 import { ProjectPage } from "./ProjectPage";
 import { ProjectsDashboard } from "./ProjectsDashboard";
 
@@ -45,19 +44,11 @@ export function TrackerPane({
     const selectedProjectId = state.trackerView?.selectedProjectId;
     const briefingOpen = state.trackerView?.briefingOpen === true;
 
-    // Prime the two tracker list views, but NOT while Work is the active tab.
-    // Work is served by a different endpoint and shares none of this state, yet
-    // priming would fetch /missions and walk the paginated /items inbox (up to
-    // 20 pages) on its behalf -- and any failure of those lands in the shared
-    // `trackerError`, which renders as an error banner ABOVE a perfectly
-    // healthy Work view. Work would look degraded because a dependency it never
-    // uses failed. The inbox/missions tabs still prime both, so their badges
-    // stay warm exactly as before; switching to one of them from Work primes on
-    // arrival.
+    // Prime the two tracker list views, but NOT while Memories is the active tab.
     useEffect(() => {
         // Memories is isolated the same way: it has its own list and error, and a missions/inbox
         // failure must not raise the shared banner over a healthy Memories view.
-        if (view === "work" || view === "memories") return;
+        if (view === "memories") return;
         void client.loadMissions();
         void client.loadInbox();
     }, [client, view]);
@@ -96,12 +87,11 @@ export function TrackerPane({
 
     // The view switch (and the detail back buttons) clear any open detail selection; null clears a
     // selected id explicitly, in one view update.
-    const switchView = (next: "missions" | "inbox" | "work" | "memories"): void =>
+    const switchView = (next: "missions" | "inbox" | "memories"): void =>
         client.openTrackerView({
             view: next,
             itemId: null,
             missionId: null,
-            loopId: null,
             memoryName: null,
             projectId: null,
         });
@@ -246,19 +236,6 @@ export function TrackerPane({
                     client={client}
                     onOpenItem={(num) => client.openTrackerItem(num)}
                     onBack={backFromMission}
-                />
-            );
-        }
-        if (view === "work") {
-            // One element at one position for both the list and a loop detail, so the Work view
-            // stays mounted across the switch and keeps its filters, grouping and loaded data.
-            return (
-                <WorkView
-                    api={client}
-                    selectedLoopId={state.trackerView?.selectedLoopId}
-                    onOpenLoop={(id) => client.openTrackerLoop(id)}
-                    onCloseLoop={() => client.openTrackerLoop(null)}
-                    onTrackerLink={(kind, num) => client.openTrackerLink(kind, num)}
                 />
             );
         }
@@ -531,30 +508,11 @@ export function TrackerPane({
                     >
                         Memories
                     </button>
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={view === "work"}
-                        className={`mj_Seg_item mj_TrackerViewSwitch_tab${view === "work" ? " mj_Seg_item_on mj_TrackerViewSwitch_tab_active" : ""}`}
-                        onClick={() => switchView("work")}
-                    >
-                        Work
-                    </button>
                 </div>
-                {state.trackerLoading && view !== "work" ? (
-                    // Same isolation as the error banner below, and for the same
-                    // reason: `trackerLoading` belongs to missions/inbox, which
-                    // Work never reads. Gating one without the other would leave a
-                    // healthy Work view showing an unrelated tab's spinner
-                    // indefinitely if that request hangs.
-                    <span className="mj_TrackerPane_spinner" aria-label="Loading" />
-                ) : null}
+                {state.trackerLoading ? <span className="mj_TrackerPane_spinner" aria-label="Loading" /> : null}
             </div>
 
-            {state.trackerError && view !== "work" ? (
-                // `trackerError` belongs to missions/inbox. Work surfaces its own
-                // failures inline (fail-loud, never a blank list), so showing this
-                // banner over it would attribute an unrelated tab's failure to Work.
+            {state.trackerError ? (
                 <div className="mj_TrackerErrorBanner" role="alert">
                     {state.trackerError}
                 </div>

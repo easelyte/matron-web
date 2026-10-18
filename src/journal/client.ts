@@ -122,7 +122,6 @@ import {
     type ToolStreamState,
     utf8Length,
 } from "./types";
-import type { WorkViewEnvelope, WorkViewGroupBy } from "./work-view";
 
 const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
@@ -2892,30 +2891,9 @@ export class MatronJournalClient {
     /** Every hash deep link the app understands. Each applier ignores a hash that is not its own. */
     public applyDeepLinks(): void {
         this.applyFilesDeepLink();
-        this.applyWorkDeepLink();
     }
 
-    // Hash-based deep link into the tracker's Work tab: `#work` opens the list, `#work=<loop id>`
-    // opens that loop's detail. Same lifecycle as `#files=`: applied after sign-in and on every
-    // hashchange, left in place while signed out so it is honoured once the session is up, and
-    // cleared once applied so a refresh or back-button does not re-fire it.
-    public applyWorkDeepLink(): void {
-        if (typeof window === "undefined") return;
-        const match = /^#work(?:=(\d+))?$/.exec(window.location.hash || "");
-        if (!match) return;
-        const loopId = match[1] === undefined ? null : Number(match[1]);
-        // A malformed id is left in place for inspection, exactly like a malformed #files= link.
-        if (loopId !== null && (!Number.isSafeInteger(loopId) || loopId < 1)) return;
-        if (this.state.phase !== "signed-in") return;
-        this.openTrackerLoop(loopId);
-        try {
-            window.history.replaceState(null, "", window.location.pathname + window.location.search);
-        } catch {
-            window.location.hash = "";
-        }
-    }
-
-    // ── Tracker pane (Missions / Milestones / Decisions-Inbox / Work) ───────────────
+    // ── Tracker pane (Missions / Milestones / Decisions-Inbox / Memories) ───────────────
     // The tracker shares the main region with the Files pane and the conversation view —
     // one surface at a time — so opening it closes Files (mirrors how Files closes over the
     // conversation view). `trackerView` is the discriminant; the list/detail data is
@@ -2926,10 +2904,9 @@ export class MatronJournalClient {
     // selection. `null ?? prev` would resolve to prev, so the clear needs the explicit === null arm.
     public openTrackerView(
         opts: {
-            view?: "missions" | "inbox" | "work" | "memories";
+            view?: "missions" | "inbox" | "memories";
             itemId?: number | null;
             missionId?: number | null;
-            loopId?: number | null;
             memoryName?: string | null;
             projectId?: number | null;
             /** true opens the latest briefing in full (Projects view); false closes it. */
@@ -2959,25 +2936,17 @@ export class MatronJournalClient {
             view,
             selectedItemId: opts.itemId === null ? undefined : (opts.itemId ?? prev?.selectedItemId),
             selectedMissionId: opts.missionId === null ? undefined : (opts.missionId ?? prev?.selectedMissionId),
-            selectedLoopId: opts.loopId === null ? undefined : (opts.loopId ?? prev?.selectedLoopId),
             selectedMemoryName: opts.memoryName === null ? undefined : (opts.memoryName ?? prev?.selectedMemoryName),
             selectedProjectId: opts.projectId === null ? undefined : (opts.projectId ?? prev?.selectedProjectId),
             ...(briefingOpen ? { briefingOpen } : {}),
         };
-        // Omit an absent selection rather than carrying `key: undefined`, so a plain view switch
-        // leaves the state shape exactly as it was before loop selection existed.
-        if (next.selectedLoopId === undefined) delete next.selectedLoopId;
+        // Omit an absent selection rather than carrying `key: undefined`.
         if (next.selectedMemoryName === undefined) delete next.selectedMemoryName;
         // The tracker covers the transcript: a jump still paging history is dropped, and a target
         // not yet landed is withdrawn, or returning to the conversation would flash a jump the
         // user has since left.
         this.focusToken += 1;
         this.patch({ trackerView: next, ...(this.state.focusTarget ? { focusTarget: undefined } : {}) });
-    }
-
-    /** Open the Work tab, on a loop's detail when `loopId` is a number, else on the list. */
-    public openTrackerLoop(loopId: number | null): void {
-        this.openTrackerView({ view: "work", loopId, itemId: null, missionId: null, memoryName: null });
     }
 
     // Memories view entry points: a name opens that memory's editor, "" opens the new-memory form,
@@ -2991,7 +2960,6 @@ export class MatronJournalClient {
             memoryName: name,
             itemId: null,
             missionId: null,
-            loopId: null,
             projectId: null,
         });
     }
@@ -4161,15 +4129,9 @@ export class MatronJournalClient {
     // messageSearch precedent). Each guards on the api instance so a response that races a
     // logout / re-login can never write into a newer session's store. ──────────────────────
 
-    /** Data seam used by the mounted Work view; the hook owns refresh cancellation and ordering. */
-    public work(groupBy: WorkViewGroupBy, signal?: AbortSignal): Promise<WorkViewEnvelope> {
-        if (!this.api) return Promise.reject(new Error("Not signed in"));
-        return this.api.work(groupBy, signal);
-    }
-
     // Whether the pane is showing a tracker list tab (Inbox or Missions). A list load that settles
-    // after the user moved to Work or Memories must not write the shared banner there: those tabs
-    // surface their own failures, and the list keeps its own error (inboxError / missionsError)
+    // after the user moved to Memories must not write the shared banner there: that tab
+    // surfaces its own failures, and the list keeps its own error (inboxError / missionsError)
     // for when its tab is shown again.
     private trackerListTabShown(): boolean {
         const view = this.state.trackerView;
@@ -5246,7 +5208,7 @@ export class MatronJournalClient {
     // Coalesce marker-driven inbox refetches: the first marker arms a short timer and any marker that
     // lands before it fires rides along, so a burst costs one paginated walk. The conditions are
     // re-checked when the timer fires, since the pane may have closed (or the session ended) since.
-    // With the pane closed, the Work or Memories tab showing (neither reads these lists, and the
+    // With the pane closed, the Memories tab showing (neither reads these lists, and the
     // pane re-primes them when Inbox/Missions is selected again), or the inbox not loaded yet, only the
     // needs-you badge is refreshed, and only once it has been primed (see refreshInboxOrBadge).
     private scheduleInboxRefetch(): void {
@@ -5288,7 +5250,7 @@ export class MatronJournalClient {
             this.trackerMissionsRefetchTimer = undefined;
             const detail = this.trackerMissionRefetchPending;
             this.trackerMissionRefetchPending = false;
-            // Nothing while closed, and nothing for the Work or Memories tabs (see scheduleInboxRefetch).
+            // Nothing while closed, and nothing for the Memories tab (see scheduleInboxRefetch).
             const view = this.state.trackerView;
             if (!view?.open || (view.view !== "inbox" && view.view !== "missions")) return;
             if (this.state.missions) void this.loadMissions();

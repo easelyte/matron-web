@@ -4,16 +4,5 @@
 /webapp/
 /pnpm-lock.yaml
 
-# Generated, byte-identical-to-source artifacts. Reformatting these would break
-# the drift checks that are the whole point of vendoring them:
-#   - the schema is published byte-for-byte from the producer repository's canonical copy
-#   - the fixtures are raw producer stdout (see fixtures/WORK-VIEW-FIXTURES.md)
-/src/contracts/work-view.schema.json
-/src/journal/__tests__/fixtures/work-view-ok.json
-/src/journal/__tests__/fixtures/work-view-ok-domain.json
-/src/journal/__tests__/fixtures/work-view-ok-detail.json
-/src/journal/__tests__/fixtures/work-view-empty.json
-/src/journal/__tests__/fixtures/work-view-error.json
-
 # Scrubbed corpus sample (generated, one line): regression fixture for helper headlines.
 src/journal/__tests__/fixtures/helper-corpus.json

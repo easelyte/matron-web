@@ -32,9 +32,8 @@ interface FakeClient {
     openTrackerView: jest.Mock;
     openTrackerItem: jest.Mock;
     openTrackerMission: jest.Mock;
-    openTrackerLoop: jest.Mock;
     openTrackerLink: jest.Mock;
-    work: jest.Mock;
+    loadMemories: jest.Mock;
     loadProjects: jest.Mock;
     loadProject: jest.Mock;
     openTrackerProject: jest.Mock;
@@ -53,14 +52,8 @@ function fakeClient(): FakeClient {
         openTrackerView: jest.fn(),
         openTrackerItem: jest.fn(),
         openTrackerMission: jest.fn(),
-        openTrackerLoop: jest.fn(),
         openTrackerLink: jest.fn(),
-        work: jest.fn().mockResolvedValue({
-            schema_version: 1,
-            status: "empty",
-            group_by: "repo",
-            groups: [],
-        }),
+        loadMemories: jest.fn().mockResolvedValue(undefined),
         loadProjects: jest.fn().mockResolvedValue(undefined),
         loadProject: jest.fn().mockResolvedValue(undefined),
         openTrackerProject: jest.fn(),
@@ -138,103 +131,28 @@ describe("TrackerPane", () => {
         // Falls through to the missions list, not the (stale #5) mission detail head.
         expect(container.querySelector(".mj_TrackerMissionHead")).toBeNull();
     });
-
-    it("renders Work as a third tracker surface", async () => {
-        const client = fakeClient();
-        const { container } = await mount(
-            <TrackerPane
-                client={client as unknown as MatronJournalClient}
-                state={paneState({ trackerView: { open: true, view: "work" } })}
-            />,
-        );
-
-        const workTab = Array.from(container.querySelectorAll<HTMLButtonElement>(".mj_TrackerViewSwitch_tab")).find(
-            (button) => button.textContent === "Work",
-        );
-        expect(workTab?.getAttribute("aria-selected")).toBe("true");
-        expect(container.querySelector(".mj_TrackerEmpty_title")?.textContent).toBe("No open work");
-        expect(client.work).toHaveBeenCalledWith("repo", expect.any(AbortSignal));
-    });
 });
 
-describe("TrackerPane — Work loop selection", () => {
+describe("TrackerPane — Memories tab isolation", () => {
     beforeAll(() => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     });
 
-    const payload = {
-        schema_version: 1,
-        status: "ok",
-        group_by: "repo",
-        groups: [
-            {
-                key: "matron-web",
-                loops: [
-                    {
-                        id: 31,
-                        title: "Loop detail",
-                        repo: "matron-web",
-                        domain: "infra",
-                        priority: 3,
-                        description: "Lead.",
-                        status: "active",
-                        claim: null,
-                    },
-                ],
-            },
-        ],
-    };
-
-    it("routes a row tap through the client and renders the selected loop's detail from the store", async () => {
-        const client = fakeClient();
-        client.work.mockResolvedValue(payload);
-        const { container, root } = await mount(
-            <TrackerPane
-                client={client as unknown as MatronJournalClient}
-                state={paneState({ trackerView: { open: true, view: "work" } })}
-            />,
-        );
-        await act(async () => container.querySelector<HTMLButtonElement>('[data-loop-id="31"]')!.click());
-        expect(client.openTrackerLoop).toHaveBeenCalledWith(31);
-
-        await act(async () =>
-            root.render(
-                <TrackerPane
-                    client={client as unknown as MatronJournalClient}
-                    state={paneState({ trackerView: { open: true, view: "work", selectedLoopId: 31 } })}
-                />,
-            ),
-        );
-        expect(container.querySelector("h1.mj_TrackerItemTitle")?.textContent).toBe("Loop detail");
-        // Same mounted Work view: the selection change did not refetch.
-        expect(client.work).toHaveBeenCalledTimes(1);
-
-        await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Back to work"]')!.click());
-        expect(client.openTrackerLoop).toHaveBeenCalledWith(null);
-        await act(async () => root.unmount());
-    });
-});
-
-describe("TrackerPane — Work tab isolation", () => {
-    beforeAll(() => {
-        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    });
-
-    it("does not prime missions or the paginated inbox while Work is the active tab", async () => {
-        // Work is served by a different endpoint and shares none of this state.
+    it("does not prime missions or the paginated inbox while Memories is the active tab", async () => {
+        // Memories has its own list and error and shares none of this state.
         // Priming would fetch /missions and walk /items (up to 20 pages / 10,000
         // items) purely as a side effect of opening a tab that never reads them.
         const client = fakeClient();
         await mount(
             <TrackerPane
                 client={client as unknown as MatronJournalClient}
-                state={paneState({ trackerView: { open: true, view: "work" } })}
+                state={paneState({ trackerView: { open: true, view: "memories" } })}
             />,
         );
 
         expect(client.loadMissions).not.toHaveBeenCalled();
         expect(client.loadInbox).not.toHaveBeenCalled();
-        expect(client.work).toHaveBeenCalled();
+        expect(client.loadMemories).toHaveBeenCalled();
     });
 
     it("still primes both list views on the tabs that actually use them", async () => {
@@ -250,24 +168,6 @@ describe("TrackerPane — Work tab isolation", () => {
 
         expect(client.loadMissions).toHaveBeenCalled();
         expect(client.loadInbox).toHaveBeenCalled();
-    });
-
-    it("does not show a missions/inbox error banner over a healthy Work view", async () => {
-        // trackerError belongs to missions/inbox. Work fails loud inline, so this
-        // banner would attribute an unrelated tab's failure to Work and make a
-        // working pane look degraded.
-        const client = fakeClient();
-        const { container } = await mount(
-            <TrackerPane
-                client={client as unknown as MatronJournalClient}
-                state={paneState({
-                    trackerView: { open: true, view: "work" },
-                    trackerError: "Could not load the inbox.",
-                })}
-            />,
-        );
-
-        expect(container.querySelector(".mj_TrackerErrorBanner")).toBeNull();
     });
 
     it("still shows the error banner on the tabs the error belongs to", async () => {
@@ -555,7 +455,6 @@ describe("TrackerPane inbox", () => {
             view: "missions",
             itemId: null,
             missionId: null,
-            loopId: null,
             memoryName: null,
             projectId: null,
         });
@@ -730,7 +629,6 @@ describe("TrackerPane inbox", () => {
             view: "inbox",
             itemId: null,
             missionId: null,
-            loopId: null,
             memoryName: null,
             projectId: null,
         });
@@ -814,7 +712,6 @@ describe("TrackerPane inbox", () => {
             view: "inbox",
             itemId: null,
             missionId: null,
-            loopId: null,
             memoryName: null,
             projectId: null,
         });
