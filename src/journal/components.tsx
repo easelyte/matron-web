@@ -289,11 +289,10 @@ import { voiceNoteSessionFor } from "./voice-note-session";
 import { type ListPlace, useWindowedList } from "./windowing";
 
 const NAV_VIEW = { projects: "missions", decisions: "inbox", memories: "memories" } as const;
-const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories" | "work", NavKey> = {
+const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories", NavKey> = {
     missions: "projects",
     inbox: "decisions",
     memories: "memories",
-    work: "projects",
 };
 const LEFT_PANEL_SIZE_KEY = "matron_sidebar_width";
 // The key earlier versions stored the width under; moved to the current key on first read.

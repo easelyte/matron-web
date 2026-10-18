@@ -42,7 +42,6 @@ import type {
 } from "../src/journal/types";
 import { SHOW_THE_WORK_KEY } from "../src/journal/show-the-work";
 import { v6Fixture, type V6Scenario } from "./v6-thread";
-import { workFixture, type WorkFixtureMode } from "./work";
 import { opsDevices, opsMetrics, opsReply, type OpsFixtureMode } from "./ops";
 import { parseBoxStatus, parseMetrics, sectionStateFromReply, type OpsSection } from "../src/journal/ops/model";
 import { REAL_STATUS, subagentFixture, type SubagentScenario } from "./subagents";
@@ -50,7 +49,6 @@ import "../src/journal/shell.pcss";
 import "../src/journal/controls.pcss";
 import "../src/journal/journal.pcss";
 import "../src/journal/tracker.pcss";
-import "../src/journal/work.pcss";
 import "../src/journal/ops.pcss";
 import "../src/journal/subagents.pcss";
 import "../src/journal/mobile.pcss";
@@ -2579,13 +2577,6 @@ const trackerMissionDetail: MissionDetail = {
 };
 
 // Expose hooks so the Playwright driver can drive states (stage files → upload modal, etc.).
-// Work tab: replace the fake client's `work()` so the REAL WorkView (list, filters, detail) renders
-// a canned loop store. `openWork(mode)` picks the payload; reload between modes, since a mounted
-// Work view only refetches on its own interval.
-let workMode: WorkFixtureMode = "ok";
-(client as unknown as { work: (groupBy: "repo" | "domain") => Promise<unknown> }).work = (groupBy) =>
-    workFixture(workMode, groupBy);
-
 const runbook = (): File => new File([new Uint8Array(1024)], "deploy-runbook.pdf", { type: "application/pdf" });
 const errorLog = (): File => new File([new Uint8Array(512)], "error-log.txt", { type: "text/plain" });
 (window as unknown as { __matron: unknown }).__matron = {
@@ -2639,14 +2630,6 @@ const errorLog = (): File => new File([new Uint8Array(512)], "error-log.txt", { 
             trackerItem: trackerItemDetail,
         }),
     closeTracker: () => patchState({ trackerView: undefined }),
-    openWork: (mode: WorkFixtureMode = "ok") => {
-        workMode = mode;
-        patchState({ filesView: undefined, trackerView: { open: true, view: "work" } });
-    },
-    openWorkLoop: (id: number, mode: WorkFixtureMode = "ok") => {
-        workMode = mode;
-        patchState({ filesView: undefined, trackerView: { open: true, view: "work", selectedLoopId: id } });
-    },
     openOps: (mode: OpsFixtureMode = "ok") => {
         opsMode = mode;
         patchState({ filesView: undefined, trackerView: undefined, opsView: { open: true } });

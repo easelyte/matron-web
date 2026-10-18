@@ -19,7 +19,6 @@ import "./shell.pcss";
 import "./controls.pcss";
 import "./journal.pcss";
 import "./tracker.pcss";
-import "./work.pcss";
 import "./ops.pcss";
 import "./subagents.pcss";
 import "./mobile.pcss";
