@@ -54,6 +54,10 @@ const ERROR_PATTERNS: readonly RegExp[] = [
     /^The session couldn[’']t resume\b/,
 ];
 
+/** Agent text events routed to the notices rail since page load (ghost-reply diagnostics). */
+let noticeTextCount = 0;
+export const noticeTextCounter = (): number => noticeTextCount;
+
 export function bridgeTextKind(body: string): BridgeTextKind | null {
     const text = body.trim();
     if (!text) return null;
@@ -235,10 +239,16 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
         const steps = stepsOf(turn.items);
         const lastStep = steps[steps.length - 1];
         const lastStepIndex = lastStep ? turn.items.indexOf(lastStep) : -1;
+        // A turn can end on a late step (a tool_output or diff journaled after the agent's final
+        // text). With no text after the last step, the turn's last text is still the reply:
+        // demoting it into the collapsed card hides the answer until something else arrives.
+        // Text that precedes all of the turn's work stays narration.
+        const lastText = texts[texts.length - 1];
+        const promoted = lastText && lastText.itemIndex > 0 && lastText.itemIndex <= lastStepIndex ? texts.length - 1 : -1;
         // Walk texts backwards so splicing narration into items keeps earlier indexes valid.
         for (let index = texts.length - 1; index >= 0; index -= 1) {
             const entry = texts[index];
-            if (entry.itemIndex <= lastStepIndex) {
+            if (entry.itemIndex <= lastStepIndex && index !== promoted) {
                 turn.items.splice(entry.itemIndex, 0, { kind: "narration", text: entry.text });
             } else {
                 turn.answer.unshift(entry.event);
@@ -285,6 +295,7 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
                 break;
             case "notice":
                 turn.notices.push(event);
+                noticeTextCount += 1;
                 break;
             case "peer":
                 turn.peers.push(event);

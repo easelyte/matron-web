@@ -27,6 +27,22 @@ beforeEach(() => {
 });
 
 describe("assembleTurns", () => {
+    it("keeps the final text as the answer when a late tool event trails it", () => {
+        const turns = assembleTurns([
+            user("fix it"),
+            say("Looking."),
+            cmd("ls"),
+            say("All done: the fix is in."),
+            cmd("git status"),
+        ]);
+        expect(turns[0].answer.map((event) => event.payload.body)).toEqual(["All done: the fix is in."]);
+        expect(turns[0].items.map((item) => (item.kind === "narration" ? item.text : item.id))).toEqual([
+            "Looking.",
+            "e3",
+            "e5",
+        ]);
+    });
+
     it("splits on operator messages and separates narration from the answer", () => {
         const events = [
             user("why is the sheet cryptic?"),
