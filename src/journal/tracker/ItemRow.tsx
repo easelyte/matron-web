@@ -14,17 +14,29 @@ Please see LICENSE files in the repository root for full details.
  * A notice (something to read, not to decide) is drawn lighter than a question: regular-weight
  * secondary title, a muted "To read" token instead of the orange "Needs you", no orange edge. Given
  * `onSeen`, an open notice carries a one-tap Seen button beside the row (a sibling, not nested in
- * the row's button).
+ * the row's button). Given `onAnswer`, an open consent request waiting on the user carries its own
+ * Approve and Decline on a line under the row (rowConsentAnswers), so it is answered in place.
  */
 
 import React from "react";
 
 import type { TrackerItem } from "../types";
-import { awaitsSeen, closedStatusLabel, itemProvenance, itemStatusText, kindLabel, needsUser, oneLine } from "./format";
+import {
+    awaitsSeen,
+    closedStatusLabel,
+    contributorWords,
+    isAffirmativeAnswer,
+    itemProvenance,
+    itemStatusText,
+    kindLabel,
+    needsUser,
+    oneLine,
+    rowConsentAnswers,
+} from "./format";
 import { CommentBubbleGlyph, ImagePlaceholderGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
 import { inlineRefsToText } from "./inline-attachments";
 
-export function ItemRow({
+export const ItemRow = React.memo(function ItemRow({
     item,
     scope = "chat",
     originTitle,
@@ -32,6 +44,8 @@ export function ItemRow({
     onOpen,
     onSeen,
     seenBusy = false,
+    onAnswer,
+    answerBusy = false,
     describedBy,
 }: {
     item: TrackerItem;
@@ -45,6 +59,10 @@ export function ItemRow({
     onSeen?: (num: number) => void;
     /** The Seen tap is in flight: the button is disabled. */
     seenBusy?: boolean;
+    /** Answers a consent request with one of its labels; without it no answer buttons are drawn. */
+    onAnswer?: (num: number, label: string) => void;
+    /** An answer tap is in flight: the buttons are disabled. */
+    answerBusy?: boolean;
     /** Id of an extra description for the row button (e.g. a keyboard hint). */
     describedBy?: string;
 }): React.ReactElement {
@@ -52,6 +70,9 @@ export function ItemRow({
     // A notice awaiting the user is still in "Needs you", but it is not the urgent orange state.
     const urgent = needsUser(item) && !notice;
     const showSeen = !!onSeen && awaitsSeen(item);
+    const answers = onAnswer ? rowConsentAnswers(item) : [];
+    // Filed by another person (or their agent) into one of the user's missions.
+    const by = contributorWords(item.contributor);
     // The preview shows no attachments, so an inline image ref reads as its caption.
     const body = oneLine(inlineRefsToText(item.body));
     // Provenance relative to the viewing session. The caller-resolved originTitle (the live
@@ -84,6 +105,7 @@ export function ItemRow({
             : showOtherChip
               ? `from ${provTitle ?? "another chat"}`
               : "",
+        by ? `by ${by}` : "",
         itemStatusText(item),
     ]
         .filter(Boolean)
@@ -94,7 +116,7 @@ export function ItemRow({
             type="button"
             className={`mj_TrackerItemRow${urgent ? " mj_TrackerItemRow_needsyou" : ""}${
                 notice ? " mj_TrackerItemRow_notice" : ""
-            }${showSeen ? " mj_TrackerItemRow_withSeen" : ""}`}
+            }${showSeen ? " mj_TrackerItemRow_withSeen" : ""}${answers.length > 0 ? " mj_TrackerItemRow_withAnswers" : ""}`}
             aria-label={label}
             aria-describedby={describedBy}
             onClick={() => onOpen(item.num)}
@@ -116,6 +138,7 @@ export function ItemRow({
                     ) : showOtherChip ? (
                         <span className="mj_TrackerItemRow_origin">from {provTitle ?? "another chat"}</span>
                     ) : null}
+                    {by ? <span className="mj_TrackerItemRow_origin mj_TrackerContributor">by {by}</span> : null}
                     {item.mission_num ? (
                         <span className="mj_TrackerItemRow_missionChip">
                             <MissionGlyph state="open" aria-hidden="true" />#{item.mission_num}
@@ -137,6 +160,27 @@ export function ItemRow({
             ) : null}
         </button>
     );
+    if (answers.length > 0) {
+        return (
+            <div className="mj_TrackerItemRow_wrap mj_TrackerItemRow_answerWrap">
+                {row}
+                <div className="mj_TrackerItemRow_answers" role="group" aria-label={`Answer number ${item.num}`}>
+                    {answers.map((label) => (
+                        <button
+                            key={label}
+                            type="button"
+                            className={`mj_TrackerAction${isAffirmativeAnswer(label) ? " mj_TrackerAction_affirmative" : ""}`}
+                            aria-label={`${label}, number ${item.num}`}
+                            disabled={answerBusy}
+                            onClick={() => onAnswer?.(item.num, label)}
+                        >
+                            {label}
+                        </button>
+                    ))}
+                </div>
+            </div>
+        );
+    }
     if (!showSeen) return row;
     return (
         <div className="mj_TrackerItemRow_wrap">
@@ -152,4 +196,4 @@ export function ItemRow({
             </button>
         </div>
     );
-}
+});

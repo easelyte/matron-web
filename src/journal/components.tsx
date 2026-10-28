@@ -21,6 +21,7 @@ import { createPortal } from "react-dom";
 import { useFocusTrap } from "./use-focus-trap";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
+import { leaveResetPage, takeResetLink, useForgotPasswordEnabled } from "./reset-link";
 import {
     AgentSpawnCard,
     isAnswerableAgentSpawn,
@@ -45,12 +46,14 @@ import {
     type RememberedAgentChatAnswer,
     unanswerableAgentRequestNotice,
 } from "./agent-chat";
+import { parsePeopleCard, PeopleCardView, PromptPeopleGlyph } from "./people-card";
 import { isMediaExpiredError, JournalApiError } from "./api";
 import {
     type AgentProbe,
     errorMessage,
     type MatronJournalClient,
     PREFERENCES_UNAVAILABLE_ERROR,
+    type TwoFactorChallenge,
     workerKind,
 } from "./client";
 import { copyText } from "./clipboard";
@@ -75,10 +78,22 @@ import {
     type SystemNotice,
 } from "./system-notice";
 import { dateTimeFormat } from "./date-format";
-import { ChatTasksPane, CoordinatorChooserSheet, RoutinesSheet, SettingsSheet, TrackerPane } from "./deferred-ui";
+import {
+    ChatTasksPane,
+    CoordinatorChooserSheet,
+    RoutinesSheet,
+    SettingsSheet,
+    TrackerPane,
+    TwoFactorSignIn,
+    ForgotPasswordForm,
+    ResetPasswordPage,
+} from "./deferred-ui";
 import { FOCUS_HIGHLIGHT_MS, focusScrollTop, jumpToLastOwnShortcutLabel, landingSeq } from "./jump-to-message";
 import { FindInChatBar, useFindInChatShortcut } from "./find-in-chat";
-import { GoToNumberDialog, goToNumberShortcutLabel, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
+import { GoToNumberDialog, NumberSearchResult, useGoToNumberShortcut } from "./goto-number";
+import { renderSnippet } from "./snippet";
+
+export { renderSnippet };
 import { PinDialog, type PinDialogTarget } from "./PinDialogs";
 import { CommandPalette } from "./CommandPalette";
 import { shortcutLabel, useAppShortcuts, useShortcutCommand } from "./shortcuts";
@@ -112,7 +127,6 @@ import {
     VideoFileIcon,
     MarkdownIcon,
     MarkAllReadIcon,
-    NumberSignIcon,
     MarkReadIcon,
     MarkUnreadIcon,
     OpenAIMark,
@@ -170,6 +184,7 @@ import {
     useMarkdownPreview,
     useMarkdownPreviewPanel,
 } from "./markdown-preview";
+import { TrackerLinkInfoContext, type TrackerLinkInfo } from "./tracker-link-title";
 import { MediaBrowserSheet } from "./media-browser";
 import { paneCoversChat, SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
 import { chatSidePane, subtaskDescription } from "./subtask";
@@ -288,11 +303,12 @@ import {
 import { voiceNoteSessionFor } from "./voice-note-session";
 import { type ListPlace, useWindowedList } from "./windowing";
 
-const NAV_VIEW = { projects: "missions", decisions: "inbox", memories: "memories" } as const;
-const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories", NavKey> = {
+const NAV_VIEW = { search: "search", projects: "missions", decisions: "inbox", memories: "memories" } as const;
+const NAV_KEY_FOR_VIEW: Record<"missions" | "inbox" | "memories" | "search", NavKey> = {
     missions: "projects",
     inbox: "decisions",
     memories: "memories",
+    search: "search",
 };
 const LEFT_PANEL_SIZE_KEY = "matron_sidebar_width";
 // The key earlier versions stored the width under; moved to the current key on first read.
@@ -503,18 +519,37 @@ function formatBytes(value: unknown): string | undefined {
     return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function LoginScreen({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {
+function LoginScreen({
+    client,
+    state,
+    initialForgot = false,
+    initialServer,
+}: {
+    client: MatronJournalClient;
+    state: ClientState;
+    /** Open on the Forgot password? step (from a spent reset link). */
+    initialForgot?: boolean;
+    /** The server to start with (the journal a reset link came from), else the usual suggestion. */
+    initialServer?: string;
+}): React.ReactElement {
     // unify step 2: the Mac sign-in layout — one column, labels above fields, submit disabled
     // until the form is valid. When config.json fixes the server the field is hidden and the
     // host is named under the title instead.
     const fixedServer = state.config.journal_server_url?.trim() || undefined;
-    const [server, setServer] = useState(client.suggestedServer());
+    const [server, setServer] = useState(() => initialServer ?? client.suggestedServer());
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(state.connectionError);
+    // Set after a right password on a two-factor account: the code step replaces the form.
+    const [challenge, setChallenge] = useState<TwoFactorChallenge>();
+    const [forgot, setForgot] = useState(initialForgot);
 
     const effectiveServer = fixedServer ?? server;
+    const forgotEnabled = useForgotPasswordEnabled(client, effectiveServer);
+    useEffect(() => {
+        if (forgotEnabled || initialForgot) ForgotPasswordForm.preload().catch(() => undefined);
+    }, [forgotEnabled, initialForgot]);
     const canSubmit = !busy && effectiveServer.trim() !== "" && username.trim() !== "" && password !== "";
     const brand = state.config.brand || "Matron";
 
@@ -523,8 +558,14 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
         if (!canSubmit) return;
         setBusy(true);
         setError(undefined);
+        // Fetched alongside the request, so a two-factor account's code step is ready when it is.
+        TwoFactorSignIn.preload().catch(() => undefined);
         try {
-            await client.login(effectiveServer, username, password);
+            const next = await client.login(effectiveServer, username, password);
+            if (next) {
+                setPassword("");
+                setChallenge(next);
+            }
         } catch (loginError) {
             setError(errorMessage(loginError));
         } finally {
@@ -538,60 +579,91 @@ function LoginScreen({ client, state }: { client: MatronJournalClient; state: Cl
                 <img className="mj_Login_logo" src={matronLogo} alt={brand} />
                 <h1 className="mj_Login_title">Sign in to {brand}</h1>
                 {fixedServer && <p className="mj_LoginServerNote">Signing in to {hostLabel(fixedServer)}</p>}
-                <form className="mj_LoginForm" onSubmit={(event) => void submit(event)}>
-                    {!fixedServer && (
-                        <label className="mj_LoginField" htmlFor="mj_LoginForm_server">
-                            <span className="mj_LoginField_label">Server</span>
+                {forgot && !challenge ? (
+                    <ForgotPasswordForm
+                        client={client}
+                        server={effectiveServer}
+                        initialIdentifier={username.trim()}
+                        onBack={() => setForgot(false)}
+                    />
+                ) : challenge ? (
+                    <TwoFactorSignIn
+                        client={client}
+                        challenge={challenge}
+                        onBack={(message) => {
+                            setChallenge(undefined);
+                            setError(message);
+                        }}
+                    />
+                ) : (
+                    <form className="mj_LoginForm" onSubmit={(event) => void submit(event)}>
+                        {!fixedServer && (
+                            <label className="mj_LoginField" htmlFor="mj_LoginForm_server">
+                                <span className="mj_LoginField_label">Server</span>
+                                <input
+                                    id="mj_LoginForm_server"
+                                    type="text"
+                                    inputMode="url"
+                                    value={server}
+                                    onChange={(event) => setServer(event.target.value)}
+                                    placeholder="https://your-server.example.com"
+                                    autoComplete="url"
+                                    autoCorrect="off"
+                                    autoCapitalize="none"
+                                    required
+                                    autoFocus
+                                />
+                            </label>
+                        )}
+                        <label className="mj_LoginField" htmlFor="mj_LoginForm_username">
+                            <span className="mj_LoginField_label">Username</span>
                             <input
-                                id="mj_LoginForm_server"
+                                id="mj_LoginForm_username"
                                 type="text"
-                                inputMode="url"
-                                value={server}
-                                onChange={(event) => setServer(event.target.value)}
-                                placeholder="https://your-server.example.com"
-                                autoComplete="url"
+                                value={username}
+                                onChange={(event) => setUsername(event.target.value)}
+                                placeholder="alice"
+                                autoComplete="username"
                                 autoCorrect="off"
                                 autoCapitalize="none"
                                 required
-                                autoFocus
+                                autoFocus={Boolean(fixedServer)}
                             />
                         </label>
-                    )}
-                    <label className="mj_LoginField" htmlFor="mj_LoginForm_username">
-                        <span className="mj_LoginField_label">Username</span>
-                        <input
-                            id="mj_LoginForm_username"
-                            type="text"
-                            value={username}
-                            onChange={(event) => setUsername(event.target.value)}
-                            placeholder="alice"
-                            autoComplete="username"
-                            autoCorrect="off"
-                            autoCapitalize="none"
-                            required
-                            autoFocus={Boolean(fixedServer)}
-                        />
-                    </label>
-                    <label className="mj_LoginField" htmlFor="mj_LoginForm_password">
-                        <span className="mj_LoginField_label">Password</span>
-                        <input
-                            id="mj_LoginForm_password"
-                            type="password"
-                            value={password}
-                            onChange={(event) => setPassword(event.target.value)}
-                            autoComplete="current-password"
-                            required
-                        />
-                    </label>
-                    {error && (
-                        <div className="mj_Error mj_Login_error" role="alert">
-                            {error}
-                        </div>
-                    )}
-                    <button className="mj_LoginSubmit" type="submit" disabled={!canSubmit}>
-                        {busy ? "Signing in…" : "Sign in"}
-                    </button>
-                </form>
+                        <label className="mj_LoginField" htmlFor="mj_LoginForm_password">
+                            <span className="mj_LoginField_label">Password</span>
+                            <input
+                                id="mj_LoginForm_password"
+                                type="password"
+                                value={password}
+                                onChange={(event) => setPassword(event.target.value)}
+                                autoComplete="current-password"
+                                required
+                            />
+                        </label>
+                        {forgotEnabled && (
+                            <button
+                                type="button"
+                                className="mj_LoginForgot"
+                                data-action="forgot-password"
+                                onClick={() => {
+                                    setError(undefined);
+                                    setForgot(true);
+                                }}
+                            >
+                                Forgot password?
+                            </button>
+                        )}
+                        {error && (
+                            <div className="mj_Error mj_Login_error" role="alert">
+                                {error}
+                            </div>
+                        )}
+                        <button className="mj_LoginSubmit" type="submit" disabled={!canSubmit}>
+                            {busy ? "Signing in…" : "Sign in"}
+                        </button>
+                    </form>
+                )}
                 {state.config.privacy_policy_url && (
                     <a
                         className="mj_PrivacyLink"
@@ -1293,26 +1365,6 @@ function SubRowStatus({ conversation }: { conversation: Conversation }): React.R
 
 // Debounce keystrokes before firing a message-content search request.
 const MESSAGE_SEARCH_DEBOUNCE_MS = 200;
-
-/**
- * Render a server search snippet, turning its `**…**` match markers into <mark> highlights.
- * The snippet is plain text (server-escaped), so we only split on the markers — no HTML is
- * interpreted. Unbalanced markers degrade to literal text rather than swallowing the rest.
- */
-export function renderSnippet(snippet: string): React.ReactNode[] {
-    const parts = snippet.split("**");
-    return parts.map((part, index) =>
-        // Odd segments sat between a matched pair of markers → highlight. If the count is even
-        // (a dangling marker), the trailing odd segment is still highlighted, which is harmless.
-        index % 2 === 1 ? (
-            <mark key={index} className="mj_SearchHit_mark">
-                {part}
-            </mark>
-        ) : (
-            <React.Fragment key={index}>{part}</React.Fragment>
-        ),
-    );
-}
 
 export function MessageSearchResults({
     query,
@@ -2229,15 +2281,6 @@ function ConversationListView({
                                 <MarkAllReadIcon />
                             </button>
                         )}
-                        <button
-                            className="mj_IconButton"
-                            type="button"
-                            aria-label="Go to number"
-                            title={`Go to number (${goToNumberShortcutLabel()})`}
-                            onClick={() => client.openGoToNumber()}
-                        >
-                            <NumberSignIcon />
-                        </button>
                         {/* Mac: New Chat is the toolbar's square.and.pencil glyph, not a button row. */}
                         <button
                             className="mj_IconButton mj_HeaderNavButton mj_IconButton_badged"
@@ -2409,6 +2452,9 @@ function ConversationListView({
                     onAutoApproveCoordinatorSpawnsChange={(value) =>
                         void client.setAutoApproveCoordinatorSpawnsSetting(value)
                     }
+                    autoArchiveDays={state.userSettingsUnsupported ? undefined : state.userSettings?.auto_archive_days}
+                    autoArchiveError={state.autoArchiveError}
+                    onAutoArchiveChange={(days) => void client.setAutoArchiveDays(days)}
                     onLoadSettings={() => void client.loadSettings()}
                     onNoticesChange={(value) => void client.setNoticesSetting(value)}
                     onChooseCoordinator={() => {
@@ -2421,7 +2467,7 @@ function ConversationListView({
                     }}
                     onSignOut={() => {
                         setAccountOpen(false);
-                        void client.logout();
+                        void client.signOut();
                     }}
                     onClose={closeSettings}
                 />
@@ -5108,26 +5154,6 @@ function agentChatOutcomeText(
     return settled.approved ? "Approved" : "Declined";
 }
 
-function PromptPeopleGlyph(): React.ReactElement {
-    return (
-        <svg
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <circle cx="9" cy="8" r="3" />
-            <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
-            <path d="M16 5.5a3 3 0 0 1 0 5" />
-            <path d="M17.5 14a5.5 5.5 0 0 1 3 5" />
-        </svg>
-    );
-}
-
 // Minimal standalone row for the durable spawn_outcome event itself (§ design "Timeline
 // rendering of spawn_outcome itself") — keeps the record legible once the card has scrolled
 // away, and stops the default case's raw JSON <details> dump.
@@ -6130,6 +6156,25 @@ export function EventContent({
                         onStopSession={(convoId) =>
                             void stopSpawnedSession(convoId, (target) => client.sendMessage("/stop", target))
                         }
+                    />
+                );
+            }
+            // A person-to-person ask (contact, mission share, hand-over, session share, room or
+            // talk) is answered on its mirror tracker item: nothing reads a prompt_reply to it, so
+            // the card opens that item. A hand-over also answers its grant from the card.
+            const people = parsePeopleCard(event.payload);
+            if (people) {
+                return (
+                    <PeopleCardView
+                        key={`${event.convo_id}:${event.seq}`}
+                        event={event}
+                        card={people}
+                        findItem={(convoId, url) => client.findConsentItem(convoId, url)}
+                        onOpenItem={(num) => client.openTrackerItem(num)}
+                        loadGrant={(grantId) => client.loadGrant(grantId)}
+                        // A read-only transcript (a sub-chat or a subagent pane) shows how a
+                        // hand-over stands but never answers it.
+                        answerGrant={isReadOnly ? undefined : (grantId, answer) => client.answerGrant(grantId, answer)}
                     />
                 );
             }
@@ -8474,10 +8519,12 @@ function Composer({
             sendingConvos.current.delete(cid);
         }
     };
+    // While the microphone is starting, a send would post the text alone and leave the note to follow
+    // without it; once it records, the recording bar's stop-and-send is the one send, the text with it.
     const send = async (): Promise<void> => {
         const cid = convoIdRef.current;
         const submitted = body;
-        if (!cid || sendingConvos.current.has(cid)) return;
+        if (!cid || sendingConvos.current.has(cid) || voiceState === "requesting") return;
         if ((client.getSnapshot().composerAttachments[cid] ?? []).length > 0) {
             await sendStaged(cid, submitted);
             return;
@@ -8688,7 +8735,7 @@ function Composer({
                             <button
                                 className="mj_ComposerSend"
                                 type="button"
-                                disabled={trayHeld}
+                                disabled={trayHeld || voiceState === "requesting"}
                                 onClick={() => void send()}
                                 aria-label="Send message"
                             >
@@ -9284,6 +9331,8 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
     // Markdown attachment preview: a side panel to the right of the conversation or item.
     const markdownPreview = useMarkdownPreviewPanel();
+    // Every tracker link in markdown shows what its number points at (tracker-link-title.tsx).
+    const trackerLinkInfo = useCallback<TrackerLinkInfo>((user, num) => client.trackerLinkInfo(user, num), [client]);
     const closeMarkdownPreview = markdownPreview.close;
     // It belongs to the view it was opened from: moving to another conversation or item closes it.
     useEffect(() => {
@@ -9338,7 +9387,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
             setDraftReloadTicks((ticks) => ({ ...ticks, [conversationId]: (ticks[conversationId] ?? 0) + 1 })),
         [],
     );
-    // ⌘K: the slash palette, for a conversation with a composer on screen (Mac: the chat view's).
+    // ⇧⌘K: the slash palette, for a conversation with a composer on screen (Mac: the chat view's).
     const [paletteOpen, setPaletteOpen] = useState(false);
     const composerConvo =
         state.selectedConversationId && !state.trackerView?.open && !childMode ? state.selectedConversationId : null;
@@ -9373,162 +9422,196 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
     return (
         <MarkdownPreviewContext.Provider value={markdownPreview.context}>
-            <div className="mj_App_wrapper">
-                <ConnectionBanner client={client} state={state} />
-                <div ref={appContent} className="mj_App">
-                    <ConversationList client={client} state={state} width={leftPanel.width} />
-                    <div
-                        className="mj_ResizeHandle mj_ResizeHandle--horizontal"
-                        data-id="lp-resizer"
-                        onPointerDown={leftPanel.onPointerDown}
-                    >
-                        <div />
-                    </div>
-                    <div
-                        ref={chatAreaRef}
-                        // Covered by the subagent pane, the chat stays mounted but out of reach.
-                        inert={sidePane?.kind === "subchat" && paneCoversChat(chatArea)}
-                        className={`mj_ChatView_wrapper ${mainSurfaceOpen(state, !isElectronRuntime()) ? "" : "mj_Chat_mobileHidden"}${voiceNoteBarVisible ? " mj_ChatView_wrapper_voiceNote" : ""}`}
-                    >
-                        {state.trackerView?.open ? (
-                            <TrackerPane client={client} state={state} />
-                        ) : state.opsView?.open ? (
-                            <OpsPane client={client} state={state} />
-                        ) : state.filesView?.open && !isElectronRuntime() ? (
-                            <FilesPane client={client} state={state} />
-                        ) : state.selectedConversationId ? (
-                            <div
-                                className={`mj_ChatView${dragActive ? " mj_ChatView_dragActive" : ""}`}
-                                onDragOver={(event) => {
-                                    if (!isFileDrag(event)) return;
-                                    event.preventDefault();
-                                    setDragActive(true);
-                                }}
-                                onDrop={(event) => {
-                                    if (!isFileDrag(event)) return;
-                                    event.preventDefault();
-                                    setDragActive(false);
-                                    if (childMode) return;
-                                    const files = [...event.dataTransfer.files];
-                                    if (files.length > 0) client.stageFiles(files);
-                                }}
-                                onDragLeave={(event) => {
-                                    const nextTarget = event.relatedTarget;
-                                    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
-                                    setDragActive(false);
-                                }}
-                                onDragEnd={() => setDragActive(false)}
-                            >
-                                {dragActive && (
-                                    <div className="mj_DragOverlay" aria-hidden="true">
-                                        Drop files to attach
-                                    </div>
-                                )}
-                                <div ref={setBodyEl} className="mj_ChatView_body" data-layout="bubble">
-                                    {childMode ? (
-                                        <SubChatHeader client={client} state={state} collapse={collapse} />
-                                    ) : (
-                                        <ChatHeader client={client} state={state} collapse={collapse} />
+            <TrackerLinkInfoContext.Provider value={trackerLinkInfo}>
+                <div className="mj_App_wrapper">
+                    <ConnectionBanner client={client} state={state} />
+                    <div ref={appContent} className="mj_App">
+                        <ConversationList client={client} state={state} width={leftPanel.width} />
+                        <div
+                            className="mj_ResizeHandle mj_ResizeHandle--horizontal"
+                            data-id="lp-resizer"
+                            onPointerDown={leftPanel.onPointerDown}
+                        >
+                            <div />
+                        </div>
+                        <div
+                            ref={chatAreaRef}
+                            // Covered by the subagent pane, the chat stays mounted but out of reach.
+                            inert={sidePane?.kind === "subchat" && paneCoversChat(chatArea)}
+                            className={`mj_ChatView_wrapper ${mainSurfaceOpen(state, !isElectronRuntime()) ? "" : "mj_Chat_mobileHidden"}${voiceNoteBarVisible ? " mj_ChatView_wrapper_voiceNote" : ""}`}
+                        >
+                            {state.trackerView?.open ? (
+                                <TrackerPane client={client} state={state} />
+                            ) : state.opsView?.open ? (
+                                <OpsPane client={client} state={state} />
+                            ) : state.filesView?.open && !isElectronRuntime() ? (
+                                <FilesPane client={client} state={state} />
+                            ) : state.selectedConversationId ? (
+                                <div
+                                    className={`mj_ChatView${dragActive ? " mj_ChatView_dragActive" : ""}`}
+                                    onDragOver={(event) => {
+                                        if (!isFileDrag(event)) return;
+                                        event.preventDefault();
+                                        setDragActive(true);
+                                    }}
+                                    onDrop={(event) => {
+                                        if (!isFileDrag(event)) return;
+                                        event.preventDefault();
+                                        setDragActive(false);
+                                        if (childMode) return;
+                                        const files = [...event.dataTransfer.files];
+                                        if (files.length > 0) client.stageFiles(files);
+                                    }}
+                                    onDragLeave={(event) => {
+                                        const nextTarget = event.relatedTarget;
+                                        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget))
+                                            return;
+                                        setDragActive(false);
+                                    }}
+                                    onDragEnd={() => setDragActive(false)}
+                                >
+                                    {dragActive && (
+                                        <div className="mj_DragOverlay" aria-hidden="true">
+                                            Drop files to attach
+                                        </div>
                                     )}
-                                    {!childMode && (
-                                        <CompactNudge
-                                            key={state.selectedConversationId}
-                                            context={state.sessionStatus?.context}
-                                            send={(command) =>
-                                                client.sendMessage(command, state.selectedConversationId)
-                                            }
-                                        />
-                                    )}
-                                    <SubagentStrip
-                                        client={client}
-                                        state={state}
-                                        mode={childMode ? "child" : "parent"}
-                                    />
-                                    {/* Pinned conversation summary, fed by the bridge's rolling digest. Renders
-                                        nothing when the conversation has no digest. The conversation-id key
-                                        remounts on a room switch so disclosure state never carries across. */}
-                                    <PinnedSummary
-                                        key={`summary:${state.selectedConversationId ?? "no-convo"}`}
-                                        summary={conversationSummary(
-                                            state.conversations.find(
-                                                (conversation) => conversation.id === state.selectedConversationId,
-                                            ),
+                                    <div ref={setBodyEl} className="mj_ChatView_body" data-layout="bubble">
+                                        {childMode ? (
+                                            <SubChatHeader client={client} state={state} collapse={collapse} />
+                                        ) : (
+                                            <ChatHeader client={client} state={state} collapse={collapse} />
                                         )}
-                                    />
-                                    {state.chatSearch?.conversationId === state.selectedConversationId && (
-                                        <FindInChatBar client={client} search={state.chatSearch} />
-                                    )}
-                                    <Timeline client={client} state={state} isReadOnly={childMode} />
-                                    {childMode ? (
-                                        <ReadOnlyHint />
-                                    ) : (
-                                        <Composer
+                                        {!childMode && (
+                                            <CompactNudge
+                                                key={state.selectedConversationId}
+                                                context={state.sessionStatus?.context}
+                                                send={(command) =>
+                                                    client.sendMessage(command, state.selectedConversationId)
+                                                }
+                                            />
+                                        )}
+                                        <SubagentStrip
                                             client={client}
                                             state={state}
-                                            drafts={drafts}
-                                            draftReloadTick={draftReloadTicks[state.selectedConversationId] ?? 0}
-                                            reloadDraft={reloadDraft}
-                                            sendingConvos={sendingConvos}
-                                            draftRevisions={draftRevisions}
-                                            sentHistory={sentHistory}
+                                            mode={childMode ? "child" : "parent"}
                                         />
-                                    )}
+                                        {/* Pinned conversation summary, fed by the bridge's rolling digest. Renders
+                                            nothing when the conversation has no digest. The conversation-id key
+                                            remounts on a room switch so disclosure state never carries across. */}
+                                        <PinnedSummary
+                                            key={`summary:${state.selectedConversationId ?? "no-convo"}`}
+                                            summary={conversationSummary(
+                                                state.conversations.find(
+                                                    (conversation) => conversation.id === state.selectedConversationId,
+                                                ),
+                                            )}
+                                        />
+                                        {state.chatSearch?.conversationId === state.selectedConversationId && (
+                                            <FindInChatBar client={client} search={state.chatSearch} />
+                                        )}
+                                        <Timeline client={client} state={state} isReadOnly={childMode} />
+                                        {childMode ? (
+                                            <ReadOnlyHint />
+                                        ) : (
+                                            <Composer
+                                                client={client}
+                                                state={state}
+                                                drafts={drafts}
+                                                draftReloadTick={draftReloadTicks[state.selectedConversationId] ?? 0}
+                                                reloadDraft={reloadDraft}
+                                                sendingConvos={sendingConvos}
+                                                draftRevisions={draftRevisions}
+                                                sentHistory={sentHistory}
+                                            />
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
-                        ) : (
-                            <main className="mj_HomePage mj_HomePage_default">
-                                <div className="mj_HomePage_default_wrapper">
-                                    <img src={matronLogo} alt={state.config.brand || "Matron"} />
-                                    <h1>Welcome to {state.config.brand || "Matron"}</h1>
-                                </div>
-                            </main>
-                        )}
-                        <VoiceNoteBar client={client} onOpen={openVoiceNoteTarget} />
+                            ) : (
+                                <main className="mj_HomePage mj_HomePage_default">
+                                    <div className="mj_HomePage_default_wrapper">
+                                        <img src={matronLogo} alt={state.config.brand || "Matron"} />
+                                        <h1>Welcome to {state.config.brand || "Matron"}</h1>
+                                    </div>
+                                </main>
+                            )}
+                            <VoiceNoteBar client={client} onOpen={openVoiceNoteTarget} />
+                        </div>
+                        {/* One slot beside the chat, decided by chatSidePane: never both panes at once. */}
+                        {sidePane?.kind === "subchat" ? (
+                            <SubChatPane
+                                key={sidePane.parentId}
+                                client={client}
+                                conversations={state.conversations}
+                                parentId={sidePane.parentId}
+                                childId={sidePane.childId}
+                                area={chatArea}
+                                transcript={subChatTranscript}
+                            />
+                        ) : sidePane?.kind === "tasks" && state.chatTasks ? (
+                            <ChatTasksPane
+                                client={client}
+                                pane={state.chatTasks}
+                                convoId={sidePane.convoId}
+                                conversations={state.conversations}
+                            />
+                        ) : null}
+                        {markdownPreview.target ? (
+                            <MarkdownPreviewPanel
+                                client={client}
+                                target={markdownPreview.target}
+                                onClose={markdownPreview.close}
+                            />
+                        ) : null}
                     </div>
-                    {/* One slot beside the chat, decided by chatSidePane: never both panes at once. */}
-                    {sidePane?.kind === "subchat" ? (
-                        <SubChatPane
-                            key={sidePane.parentId}
-                            client={client}
-                            conversations={state.conversations}
-                            parentId={sidePane.parentId}
-                            childId={sidePane.childId}
-                            area={chatArea}
-                            transcript={subChatTranscript}
-                        />
-                    ) : sidePane?.kind === "tasks" && state.chatTasks ? (
-                        <ChatTasksPane
-                            client={client}
-                            pane={state.chatTasks}
-                            convoId={sidePane.convoId}
-                            conversations={state.conversations}
-                        />
-                    ) : null}
-                    {markdownPreview.target ? (
-                        <MarkdownPreviewPanel
-                            client={client}
-                            target={markdownPreview.target}
-                            onClose={markdownPreview.close}
-                        />
-                    ) : null}
+                    {state.goToNumberOpen && <GoToNumberDialog client={client} />}
+                    {paletteOpen && composerConvo && (
+                        <CommandPalette onPick={pickCommand} onClose={() => setPaletteOpen(false)} />
+                    )}
                 </div>
-                {state.goToNumberOpen && <GoToNumberDialog client={client} />}
-                {paletteOpen && composerConvo && (
-                    <CommandPalette onPick={pickCommand} onClose={() => setPaletteOpen(false)} />
-                )}
-            </div>
+            </TrackerLinkInfoContext.Provider>
         </MarkdownPreviewContext.Provider>
     );
 }
 
 export function MatronApp({ client }: { client: MatronJournalClient }): React.ReactElement {
     const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
+    // /app/reset-password#token=…: the page for a reset link, signed in or not.
+    const [resetLink, setResetLink] = useState(takeResetLink);
+    // Where a reset link sent the user next: the sign-in screen (or its Forgot password? step) for
+    // the link's own journal, which may not be the one this browser last signed in to.
+    const [afterReset, setAfterReset] = useState<{ server: string; forgot: boolean }>();
     if (state.phase === "loading")
         return (
             <div className="mj_App_splash mj_Loading">
                 <img src={matronLogo} alt="Matron" />
             </div>
         );
-    if (state.phase === "signed-out") return <LoginScreen client={client} state={state} />;
+    const resetServer = state.config.journal_server_url?.trim() || window.location.origin;
+    if (resetLink) {
+        return (
+            <ResetPasswordPage
+                client={client}
+                server={resetServer}
+                token={resetLink.token}
+                brand={state.config.brand || "Matron"}
+                logo={matronLogo}
+                signedIn={state.phase !== "signed-out"}
+                onLeave={(next) => {
+                    leaveResetPage();
+                    setResetLink(null);
+                    setAfterReset({ server: resetServer, forgot: next === "forgot" });
+                }}
+            />
+        );
+    }
+    if (state.phase === "signed-out")
+        return (
+            <LoginScreen
+                client={client}
+                state={state}
+                initialForgot={afterReset?.forgot}
+                initialServer={afterReset?.server}
+            />
+        );
     return <SignedInApp client={client} state={state} />;
 }

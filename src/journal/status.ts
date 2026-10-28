@@ -216,6 +216,20 @@ export function resetDisplay(
     return fallback ?? "";
 }
 
+/**
+ * How long until a reset more than six hours off, for the box list ("in 30h", "in 3d 4h"), so
+ * a box's week can be compared at a glance; "" when the reset is unknown or nearer (resetDisplay
+ * already counts those down).
+ */
+export function resetCountdown(resetsAt: string | undefined, now = Date.now()): string {
+    const ms = typeof resetsAt === "string" ? Date.parse(resetsAt) : NaN;
+    if (!Number.isFinite(ms) || ms - now < 6 * 60 * 60_000) return "";
+    const hours = Math.floor((ms - now) / (60 * 60_000));
+    if (hours < 48) return `in ${hours}h`;
+    const rest = hours % 24;
+    return `in ${Math.floor(hours / 24)}d${rest ? ` ${rest}h` : ""}`;
+}
+
 function renderReset(resetTime: number, now: number): string {
     const interval = resetTime - now;
     if (interval < 60_000) return "now";

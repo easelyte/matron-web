@@ -1874,13 +1874,18 @@ describe("MatronJournalClient notices and user settings", () => {
         (state as SettingsInternals).api = { patchSettings };
         const saving = client.setAutoApproveCoordinatorSpawnsSetting(true);
         expect(client.getSnapshot().userSettings).toEqual({ ...initial, auto_approve_coordinator_spawns: true });
+        // Saves are queued behind earlier ones, so the PATCH goes out a tick later.
+        await Promise.resolve();
         finish({ notices: false, auto_approve_coordinator_spawns: true });
         await expect(saving).resolves.toBe(true);
         expect(patchSettings).toHaveBeenCalledWith({ auto_approve_coordinator_spawns: true });
-        expect(client.getSnapshot().userSettings).toEqual({ notices: false, auto_approve_coordinator_spawns: true });
+        // The save shows only the key it owns; the answer's other keys are recorded as confirmed.
+        expect(client.getSnapshot().userSettings).toEqual({ notices: true, auto_approve_coordinator_spawns: true });
 
         const savingNotices = client.setNoticesSetting(true);
         expect(client.getSnapshot().userSettings).toEqual({ notices: true, auto_approve_coordinator_spawns: true });
+        await Promise.resolve();
+        await Promise.resolve();
         finish({ notices: true, auto_approve_coordinator_spawns: true });
         await savingNotices;
     });
@@ -1929,7 +1934,8 @@ describe("MatronJournalClient notices and user settings", () => {
                 auto_approve_coordinator_spawns: "true",
             },
         });
-        expect(client.getSnapshot().userSettings).toEqual({ notices: true });
+        // An invalid value is ignored: the last good one stays (a key the payload lacks keeps its value).
+        expect(client.getSnapshot().userSettings).toEqual({ notices: true, auto_approve_coordinator_spawns: false });
     });
 
     it("setNoticesSetting puts the old value back and reports a failed save", async () => {

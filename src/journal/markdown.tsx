@@ -37,6 +37,7 @@ import { unified } from "unified";
 import { copyText } from "./clipboard";
 import { filesDeepLinkHash, handleFilesLinkClick } from "./files-link";
 import { parseOwnTrackerUrl } from "./link-path";
+import { TrackerLinkTarget } from "./tracker-link-title";
 import type { MatronLinkKind, TrackerLinkHandler } from "./types";
 
 export const MARKDOWN_MAX = 200_000;
@@ -526,6 +527,28 @@ function documentComponentsFor(source: string): Components {
     };
 }
 
+/** The text inside a rendered element (hast), for reading what a link's text says. */
+function hastText(node: unknown): string {
+    if (!node || typeof node !== "object") return "";
+    const value = (node as { value?: unknown }).value;
+    if (typeof value === "string") return value;
+    const children = (node as { children?: unknown }).children;
+    return Array.isArray(children) ? children.map(hastText).join("") : "";
+}
+
+/** Whose number a tracker link names: `user` from an https link, null for an own-number one. */
+function trackerLinkNumber(
+    tracker: { kind: MatronLinkKind; target: number | string },
+    href: string,
+): { user: string | null; num: number } | null {
+    if (tracker.kind === "link") {
+        const link = parseOwnTrackerUrl(href);
+        return link ? { user: link.user, num: link.num } : null;
+    }
+    if (tracker.kind === "convo" || typeof tracker.target !== "number") return null;
+    return { user: null, num: tracker.target };
+}
+
 const isModifiedClick = (event: React.MouseEvent): boolean =>
     event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
 
@@ -542,7 +565,7 @@ function componentsFor(source: string, onTrackerLink?: TrackerLinkHandler): Comp
                 <code className="mj_InlineCode">{children}</code>
             );
         },
-        a({ node: _node, href, children, ...props }) {
+        a({ node, href, children, ...props }) {
             const tracker = href !== undefined ? parseMatronHref(href) : null;
             // An https link is a working web link where there is no in-app handler; only the
             // custom scheme has to render inert.
@@ -551,6 +574,7 @@ function componentsFor(source: string, onTrackerLink?: TrackerLinkHandler): Comp
                 // tracker surface). Without one it renders inert — never navigate the browser to
                 // the custom scheme.
                 if (!onTrackerLink) return <a {...props}>{children}</a>;
+                const target = trackerLinkNumber(tracker, href!);
                 return (
                     <a
                         {...props}
@@ -565,6 +589,15 @@ function componentsFor(source: string, onTrackerLink?: TrackerLinkHandler): Comp
                         }}
                     >
                         {children}
+                        {target && (
+                            // Keyed by its target, so a re-rendered link never shows the previous one's chip.
+                            <TrackerLinkTarget
+                                key={`${target.user ?? ""}/${target.num}`}
+                                user={target.user}
+                                num={target.num}
+                                linkText={hastText(node)}
+                            />
+                        )}
                     </a>
                 );
             }

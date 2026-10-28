@@ -13,6 +13,8 @@ Please see LICENSE files in the repository root for full details.
  * bridge applies to a chat started without a choice of its own.
  * Boxes holds each agent box's own defaults (journal PUT /devices/:id/defaults): the agent, model
  * and effort a session started there gets when nobody names them.
+ * Security (TwoFactor.tsx): two-factor sign-in with an authenticator app — set up, new recovery
+ * codes, move to a new app, turn off, and (admins) require it for everyone.
  * Devices (DevicesSettings.tsx) is the Mac's Devices tab: rename, tag and revoke each device, and
  * the Add Agent and Link a Device pairing flows.
  *
@@ -31,7 +33,9 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import type { MatronJournalClient } from "./client";
+import { UsersSettings } from "./AccountEmail";
 import { DevicesSettings } from "./DevicesSettings";
+import { SecuritySettings } from "./TwoFactor";
 import {
     activeOverrides,
     convoNotifyState,
@@ -49,6 +53,7 @@ import { displayTitle } from "./SessionTag";
 import { useShowTheWork } from "./show-the-work";
 import { getSnapshot, setTheme, subscribe, type ThemePref } from "./theme";
 import type { BoxDefaults, BoxDefaultsState, DefaultsState, Session, UserDefaultKey } from "./types";
+import { AUTO_ARCHIVE_CHOICES, autoArchiveLabel } from "./server-archive";
 
 const APPEARANCE: ReadonlyArray<{ value: "system" | "light" | "dark"; label: string; pref: ThemePref }> = [
     { value: "system", label: "System", pref: null },
@@ -690,6 +695,9 @@ export function SettingsSheet({
     noticesError,
     autoApproveCoordinatorSpawns,
     onAutoApproveCoordinatorSpawnsChange,
+    autoArchiveDays,
+    autoArchiveError,
+    onAutoArchiveChange,
     onLoadSettings,
     onNoticesChange,
     onChooseCoordinator,
@@ -707,6 +715,11 @@ export function SettingsSheet({
     onAutoApproveCoordinatorSpawnsChange?: (enabled: boolean) => void;
     /** The last failed save of the setting. */
     noticesError?: string;
+    /** Days before an idle chat is archived (0 = off); undefined hides the row (an older journal). */
+    autoArchiveDays?: number;
+    /** The last failed save of the auto-archive setting. */
+    autoArchiveError?: string;
+    onAutoArchiveChange?: (days: number) => void;
     /** Fetch the settings (on open). */
     onLoadSettings?: () => void;
     onNoticesChange?: (notices: boolean) => void;
@@ -726,6 +739,8 @@ export function SettingsSheet({
     const pressStartedOnScrim = useRef(false);
     const onLoadSettingsRef = useRef(onLoadSettings);
     onLoadSettingsRef.current = onLoadSettings;
+    // Bumped by a password change, so Devices re-reads a roster that may have lost devices.
+    const [devicesRevision, setDevicesRevision] = useState(0);
 
     useEffect(() => {
         onLoadSettingsRef.current?.();
@@ -838,7 +853,9 @@ export function SettingsSheet({
                         ))}
                     </div>
                 </section>
-                <DevicesSettings client={client} session={session} />
+                <SecuritySettings client={client} onPasswordChanged={() => setDevicesRevision((n) => n + 1)} />
+                <DevicesSettings client={client} session={session} revision={devicesRevision} />
+                <UsersSettings client={client} />
                 <DesktopNotifications client={client} />
                 <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-developer">
                     <h3 id="mj-settings-developer" className="mj_SettingsSheet_groupTitle">
@@ -936,6 +953,43 @@ export function SettingsSheet({
                         {noticesError ? (
                             <p className="mj_SettingsSheet_error" role="alert">
                                 Couldn't save: {noticesError}
+                            </p>
+                        ) : null}
+                    </section>
+                ) : null}
+                {autoArchiveDays !== undefined && onAutoArchiveChange ? (
+                    <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-archive">
+                        <h3 id="mj-settings-archive" className="mj_SettingsSheet_groupTitle">
+                            Archive
+                        </h3>
+                        <div className="mj_SettingsSheet_rows">
+                            <label className="mj_SettingsSheet_row">
+                                <span>Archive idle chats</span>
+                                <select
+                                    className="mj_SettingsSheet_select"
+                                    data-setting="auto_archive_days"
+                                    aria-describedby="mj-settings-archive-help"
+                                    value={autoArchiveDays}
+                                    onChange={(event) => onAutoArchiveChange(Number(event.target.value))}
+                                >
+                                    {(AUTO_ARCHIVE_CHOICES.includes(autoArchiveDays)
+                                        ? AUTO_ARCHIVE_CHOICES
+                                        : [...AUTO_ARCHIVE_CHOICES, autoArchiveDays].sort((a, b) => a - b)
+                                    ).map((days) => (
+                                        <option key={days} value={days}>
+                                            {autoArchiveLabel(days)}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                        </div>
+                        <p id="mj-settings-archive-help" className="mj_SettingsSheet_help">
+                            Chats with no activity move to Archived. Pinned chats, running sessions and chats with open
+                            missions or items stay. A new message brings a chat back.
+                        </p>
+                        {autoArchiveError ? (
+                            <p className="mj_SettingsSheet_error" role="alert">
+                                Couldn't save: {autoArchiveError}
                             </p>
                         ) : null}
                     </section>

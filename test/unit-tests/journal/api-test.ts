@@ -1077,3 +1077,201 @@ describe("JournalApi project filing", () => {
         expect(body).toEqual({ project: "pj_2" });
     });
 });
+
+describe("JournalApi changePassword", () => {
+    beforeAll(() => {
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    beforeEach(() => {
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    it("POSTs both passwords and the sign-out flag to /password", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ ok: true, signed_out: 2 }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.changePassword("old-secret", "new-secret", true)).resolves.toEqual({ signed_out: 2 });
+
+        const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(String(url)).toBe("https://journal.example/password");
+        expect(init.method).toBe("POST");
+        expect((init.headers as Record<string, string>).Authorization).toBe("Bearer token");
+        expect(JSON.parse(String(init.body))).toEqual({
+            old_password: "old-secret",
+            new_password: "new-secret",
+            sign_out_others: true,
+        });
+    });
+
+    it("reads an older journal's bare { ok: true } as nobody signed out", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.changePassword("old-secret", "new-secret", false)).resolves.toEqual({ signed_out: 0 });
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).sign_out_others).toBe(false);
+    });
+
+    it.each([
+        [401, { error: "bad_password" }, "bad_password", "That password is incorrect."],
+        [400, { error: "weak_password" }, "weak_password", "Use at least 8 characters."],
+        [400, { error: "bad_request" }, "bad_request", "The journal server returned HTTP 400."],
+        [403, { error: "forbidden" }, "forbidden", "This device is not allowed to perform that action."],
+    ])("maps HTTP %i %j to a typed error", async (status, body, code, message) => {
+        fetchMock.mockResolvedValue(jsonResponse(body, status));
+        const api = new JournalApi("https://journal.example", "token");
+
+        const error = await api.changePassword("old-secret", "new-secret", true).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(JournalApiError);
+        expect(error).toMatchObject({ status, code, message });
+    });
+
+    it("carries a lockout's retry_after", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ error: "locked_out", retry_after: 600 }, 429));
+        const api = new JournalApi("https://journal.example", "token");
+
+        await expect(api.changePassword("old-secret", "new-secret", true)).rejects.toMatchObject({
+            status: 429,
+            code: "locked_out",
+            retryAfter: 600,
+        });
+    });
+});
+
+describe("JournalApi password reset and account email", () => {
+    beforeAll(() => {
+        globalThis.TextDecoder = NodeTextDecoder as typeof TextDecoder;
+    });
+
+    beforeEach(() => {
+        fetchMock.mockReset();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        delete (window as Window & { electron?: unknown }).electron;
+    });
+
+    const call = (n = 0): { url: string; init: RequestInit; body: unknown } => {
+        const [url, init] = fetchMock.mock.calls[n] as [string, RequestInit];
+        return { url: String(url), init, body: init.body ? JSON.parse(String(init.body)) : undefined };
+    };
+    const headers = (n = 0): Record<string, string> => (call(n).init.headers ?? {}) as Record<string, string>;
+
+    it("asks GET /password/forgot without a token, and reads a 404 as off", async () => {
+        const api = new JournalApi("https://journal.example");
+        fetchMock.mockResolvedValueOnce(jsonResponse({ enabled: true }));
+        await expect(api.forgotPasswordEnabled()).resolves.toBe(true);
+        expect(call().url).toBe("https://journal.example/password/forgot");
+        expect(headers().Authorization).toBeUndefined();
+
+        fetchMock.mockResolvedValueOnce(jsonResponse({ enabled: false }));
+        await expect(api.forgotPasswordEnabled()).resolves.toBe(false);
+        fetchMock.mockResolvedValueOnce(jsonResponse({ error: "not_found" }, 404));
+        await expect(api.forgotPasswordEnabled()).resolves.toBe(false);
+        fetchMock.mockResolvedValueOnce(jsonResponse({ error: "internal" }, 500));
+        await expect(api.forgotPasswordEnabled()).rejects.toMatchObject({ status: 500 });
+    });
+
+    it("POSTs the identifier to /password/forgot without a token", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+        await new JournalApi("https://journal.example").forgotPassword("alice@example.com");
+        expect(call()).toMatchObject({
+            url: "https://journal.example/password/forgot",
+            init: { method: "POST" },
+            body: { identifier: "alice@example.com" },
+        });
+        expect(headers().Authorization).toBeUndefined();
+    });
+
+    it("surfaces a rate limit on /password/forgot", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ error: "rate_limited" }, 429));
+        await expect(new JournalApi("https://journal.example").forgotPassword("alice")).rejects.toMatchObject({
+            status: 429,
+            code: "rate_limited",
+        });
+    });
+
+    it("POSTs the token and new password to /password/reset", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ ok: true, signed_out: 3 }));
+        const api = new JournalApi("https://journal.example");
+        await expect(api.resetPassword("tok", "new-secret")).resolves.toEqual({ signed_out: 3 });
+        expect(call()).toMatchObject({
+            url: "https://journal.example/password/reset",
+            init: { method: "POST" },
+            body: { token: "tok", new_password: "new-secret" },
+        });
+        expect(headers().Authorization).toBeUndefined();
+    });
+
+    it("maps a spent or unknown reset token", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ error: "invalid_token" }, 400));
+        await expect(
+            new JournalApi("https://journal.example").resetPassword("tok", "new-secret"),
+        ).rejects.toMatchObject({
+            status: 400,
+            code: "invalid_token",
+            message: "This link has expired or has already been used. Ask for a new one.",
+        });
+    });
+
+    it("reads GET /account/email", async () => {
+        const api = new JournalApi("https://journal.example", "token");
+        fetchMock.mockResolvedValueOnce(jsonResponse({ email: "alice@example.com", reset_by_email: true }));
+        await expect(api.accountEmail()).resolves.toEqual({ email: "alice@example.com", reset_by_email: true });
+        expect(headers().Authorization).toBe("Bearer token");
+        fetchMock.mockResolvedValueOnce(jsonResponse({ email: null, reset_by_email: false }));
+        await expect(api.accountEmail()).resolves.toEqual({ email: null, reset_by_email: false });
+    });
+
+    it("PUTs the password and address to /account/email, null to remove it", async () => {
+        const api = new JournalApi("https://journal.example", "token");
+        fetchMock.mockResolvedValueOnce(jsonResponse({ email: "alice@example.com" }));
+        await expect(api.setAccountEmail("secret-1", "alice@example.com")).resolves.toEqual({
+            email: "alice@example.com",
+        });
+        expect(call()).toMatchObject({
+            url: "https://journal.example/account/email",
+            init: { method: "PUT" },
+            body: { password: "secret-1", email: "alice@example.com" },
+        });
+        fetchMock.mockResolvedValueOnce(jsonResponse({ email: null }));
+        await expect(api.setAccountEmail("secret-1", null)).resolves.toEqual({ email: null });
+        expect(call(1).body).toEqual({ password: "secret-1", email: null });
+    });
+
+    it.each([
+        [401, { error: "bad_password" }, "bad_password", "That password is incorrect."],
+        [400, { error: "bad_email" }, "bad_email", "Enter a valid email address."],
+        [409, { error: "email_taken" }, "email_taken", "Another account already uses that address."],
+    ])("maps PUT /account/email HTTP %i %j", async (status, body, code, message) => {
+        fetchMock.mockResolvedValue(jsonResponse(body, status));
+        await expect(
+            new JournalApi("https://journal.example", "token").setAccountEmail("x", "alice@example.com"),
+        ).rejects.toMatchObject({ status, code, message });
+    });
+
+    it("lists users with their addresses and sets one by PUT /users/:id/email", async () => {
+        const api = new JournalApi("https://journal.example", "token");
+        fetchMock.mockResolvedValueOnce(
+            jsonResponse({
+                users: [
+                    { id: 1, name: "alice", email: "alice@example.com", is_admin: true, created_at: 1 },
+                    { id: 2, name: "bob", email: null, is_admin: false },
+                    { name: "broken" },
+                ],
+            }),
+        );
+        await expect(api.listUsers()).resolves.toEqual([
+            { id: 1, name: "alice", email: "alice@example.com", is_admin: true },
+            { id: 2, name: "bob", email: null, is_admin: false },
+        ]);
+
+        fetchMock.mockResolvedValueOnce(jsonResponse({ user: { id: 2, name: "bob", email: "bob@example.com" } }));
+        await expect(api.setUserEmail(2, "bob@example.com")).resolves.toMatchObject({ email: "bob@example.com" });
+        expect(call(1)).toMatchObject({
+            url: "https://journal.example/users/2/email",
+            init: { method: "PUT" },
+            body: { email: "bob@example.com" },
+        });
+    });
+});

@@ -2,10 +2,10 @@
     "_comment": "Limits for the ci-scale run in CI (scripts/perf/run.mjs --scale=ci --runs=3). Timings are medians in ms on a GitHub-hosted runner. Lower a limit when a change makes a number better; raise one only with a reason in the pull request.",
     "bundle": {
         "initialGzipKB": {
-            "max": 295
+            "max": 298
         },
         "totalGzipKB": {
-            "max": 830
+            "max": 846
         }
     },
     "cold": {

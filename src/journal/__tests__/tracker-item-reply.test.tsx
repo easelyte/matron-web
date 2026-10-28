@@ -532,6 +532,50 @@ describe("ItemDetail reply box", () => {
             expect(container.querySelector(".mj_VoiceRecording")).toBeNull();
         });
 
+        it("has one send while recording: the box's own send gives way to the recording bar", async () => {
+            const container = await renderItem(fakeClient());
+            await type(container, "listen to this");
+
+            await click(container.querySelector<HTMLButtonElement>(".mj_TrackerComposer_mic"));
+
+            expect(container.querySelector(".mj_VoiceRecording_stop")).not.toBeNull();
+            expect(container.querySelector(".mj_TrackerComposer_send")).toBeNull();
+            expect(container.querySelector(".mj_TrackerComposer_mic")).toBeNull();
+            expect(container.querySelector(".mj_TrackerComposer_input")).toBeNull();
+        });
+
+        it("holds the typed send while the microphone starts, then sends the text with the note", async () => {
+            const request = deferred<MediaStream>();
+            (navigator.mediaDevices.getUserMedia as jest.Mock).mockReturnValueOnce(request.promise);
+            const client = fakeClient();
+            const container = await renderItem(client);
+            await type(container, "listen to this");
+
+            await click(container.querySelector<HTMLButtonElement>(".mj_TrackerComposer_mic"));
+
+            expect(sendButton(container).disabled).toBe(true);
+            await act(async () => {
+                input(container).dispatchEvent(
+                    new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true, cancelable: true }),
+                );
+            });
+            expect(client.postTrackerComment).not.toHaveBeenCalled();
+            expect(input(container).value).toBe("listen to this");
+
+            await act(async () => request.resolve(stream));
+            await click(container.querySelector<HTMLButtonElement>(".mj_VoiceRecording_stop"));
+            await act(async () => {
+                await new Promise((done) => setTimeout(done, 5));
+            });
+
+            expect(client.postTrackerComment).toHaveBeenCalledTimes(1);
+            expect(client.postTrackerComment).toHaveBeenCalledWith(
+                12,
+                { body: "listen to this", attachments: [expect.objectContaining({ name: "voice-note.webm" })] },
+                expect.any(String),
+            );
+        });
+
         it("with an empty draft is a voice-only comment", async () => {
             const client = fakeClient();
             const container = await renderItem(client);

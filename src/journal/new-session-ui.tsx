@@ -39,7 +39,7 @@ import {
 } from "./new-session";
 import { type BoxStatus } from "./ops/model";
 import { effectiveStatus } from "./ops/OpsPane";
-import { formatSampleAge, resetDisplay } from "./status";
+import { formatSampleAge, resetCountdown, resetDisplay } from "./status";
 import { type DeviceDTO } from "./types";
 import { V6Icon } from "./v6-icons";
 
@@ -76,8 +76,9 @@ export function BoxUsage({ status, now }: { status: BoxStatus | undefined; now: 
     const lines: string[] = [];
     for (const line of status.limits?.lines ?? []) {
         const reset = resetDisplay(line.resets_at, line.resets, now);
+        const countdown = resetCountdown(line.resets_at, now);
         const usage = `${line.label} ${Math.round(line.percent)}%`;
-        lines.push(reset ? `${usage} · resets ${reset}` : usage);
+        lines.push(reset ? `${usage} · resets ${reset}${countdown ? ` · ${countdown}` : ""}` : usage);
     }
     if (status.activity) {
         const count = status.activity.live_sessions;

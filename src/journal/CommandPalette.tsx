@@ -6,11 +6,11 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * ⌘K: the open conversation's slash commands without typing "/" first — the Mac's pinned-open
+ * ⇧⌘K: the open conversation's slash commands without typing "/" first — the Mac's pinned-open
  * slash palette (ComposerViewModel.palettePinnedOpen). Same rows as the composer's palette; the
  * sheet has its own filter field, so the draft is left alone until a command is picked, and the
  * pick replaces it with the command's trigger and a space, ready for arguments, as on the Mac.
- * ⌘K again, Escape or a click outside closes it.
+ * ⇧⌘K again, Escape or a click outside closes it.
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -55,7 +55,7 @@ export function CommandPalette({
         };
     }, [opener]);
 
-    // ⌘K closes it wherever focus has gone (the app's own handler stands aside while a dialog is up).
+    // ⇧⌘K closes it wherever focus has gone (the app's own handler stands aside while a dialog is up).
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
     useEffect(() => {

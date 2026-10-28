@@ -17,6 +17,8 @@ import {
 
 interface JournalConnectionCallbacks {
     cursor(): Promise<number>;
+    /** The archive cursor for hello's `archive_since` (0 = the whole set); undefined omits it. */
+    archiveSince?(): number | undefined;
     onFrame(frame: ServerFrame): Promise<void>;
     /**
      * Optional batched sink for sequenced journal frames. When present, consecutive journal frames
@@ -263,8 +265,15 @@ export class JournalConnection {
                 .then((cursor) => {
                     if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) return;
                     if (typeof cursor === "number") this.helloCursor.set(socket, cursor);
+                    const archiveSince = this.callbacks.archiveSince?.();
                     socket.send(
-                        JSON.stringify({ op: "hello", token: this.token, cursor, max_replay: MAX_CLIENT_REPLAY }),
+                        JSON.stringify({
+                            op: "hello",
+                            token: this.token,
+                            cursor,
+                            max_replay: MAX_CLIENT_REPLAY,
+                            ...(archiveSince !== undefined ? { archive_since: archiveSince } : {}),
+                        }),
                     );
                 })
                 .catch((error) => {

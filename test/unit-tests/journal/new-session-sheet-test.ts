@@ -597,6 +597,26 @@ describe("NewSessionSheet", () => {
             return match;
         }
 
+        it("counts down to a reset more than six hours off", async () => {
+            const client = new MatronJournalClient();
+            const now = Date.now();
+            const status = statusFor(now);
+            status.limits!.lines[1] = {
+                id: "week_all",
+                label: "Week (all models)",
+                percent: 22,
+                resets_at: new Date(now + 30.5 * 60 * 60_000).toISOString(),
+            };
+            withStatuses(client, { [AGENT_A.device_id]: status });
+            jest.spyOn(client, "listAgents").mockResolvedValue([AGENT_A, AGENT_B]);
+
+            rendered = await render(React.createElement(NewSessionSheet, { client, onClose: jest.fn() }));
+
+            const lines = [...listItem(rendered.container, "Box A").querySelectorAll(".mj_NewSessionSheet_usageLine")];
+            expect(lines[0].textContent).toBe("Session 13% · resets 30m");
+            expect(lines[1].textContent).toMatch(/^Week \(all models\) 22% · resets \w{3} \d{1,2}(am|pm) · in 30h$/);
+        });
+
         it("renders limits, reset times, live sessions, disk and an as-of caption under a box", async () => {
             const client = new MatronJournalClient();
             withStatuses(client, { [AGENT_A.device_id]: statusFor(Date.now()) });

@@ -22,6 +22,9 @@ type CoordinatorChooserProps = ComponentProps<typeof import("./CoordinatorSheets
 type RoutinesSheetProps = ComponentProps<typeof import("./CoordinatorSheets").RoutinesSheet>;
 type ChatTasksPaneProps = ComponentProps<typeof import("./tracker/ChatTasksPane").ChatTasksPane>;
 type TrackerPaneProps = ComponentProps<typeof import("./tracker/TrackerPane").TrackerPane>;
+type TwoFactorSignInProps = ComponentProps<typeof import("./TwoFactor").TwoFactorSignIn>;
+type ForgotPasswordFormProps = ComponentProps<typeof import("./PasswordReset").ForgotPasswordForm>;
+type ResetPasswordPageProps = ComponentProps<typeof import("./PasswordReset").ResetPasswordPage>;
 
 /** Same as the tasks pane's own: below this width it covers the chat. */
 const CHAT_TASKS_OVERLAY_QUERY = "(max-width: 700px)";
@@ -189,3 +192,72 @@ export function TrackerFrame({ close, failed }: { close: () => void; failed: boo
         </div>
     );
 }
+
+/**
+ * The sign-in screen's code step. Only two-factor accounts reach it, so it stays out of the first
+ * download; the screen starts fetching it when the password is submitted.
+ */
+export const TwoFactorSignIn = deferred<TwoFactorSignInProps>(
+    () => import("./TwoFactor").then((module) => module.TwoFactorSignIn),
+    (props, failed) => (
+        <div className="mj_LoginForm mj_TwoFactorStep" aria-busy={!failed}>
+            {failed ? (
+                <div className="mj_Error mj_Login_error" role="alert">
+                    {LOAD_FAILED}
+                </div>
+            ) : (
+                <p className="mj_TwoFactorStep_text" role="status">
+                    Loading…
+                </p>
+            )}
+            <button className="mj_TwoFactorStep_back" type="button" onClick={() => props.onBack()}>
+                Back
+            </button>
+        </div>
+    ),
+);
+
+/**
+ * The sign-in screen's Forgot password? step. The screen starts fetching it once the server says
+ * it sends mail, so it is usually here before the link is pressed.
+ */
+export const ForgotPasswordForm = deferred<ForgotPasswordFormProps>(
+    () => import("./PasswordReset").then((module) => module.ForgotPasswordForm),
+    (props, failed) => (
+        <div className="mj_LoginForm mj_TwoFactorStep" aria-busy={!failed}>
+            {failed ? (
+                <div className="mj_Error mj_Login_error" role="alert">
+                    {LOAD_FAILED}
+                </div>
+            ) : (
+                <p className="mj_TwoFactorStep_text" role="status">
+                    Loading…
+                </p>
+            )}
+            <button className="mj_TwoFactorStep_back" type="button" onClick={() => props.onBack()}>
+                Back to sign in
+            </button>
+        </div>
+    ),
+);
+
+/** /app/reset-password: only a reset link opens it. */
+export const ResetPasswordPage = deferred<ResetPasswordPageProps>(
+    () => import("./PasswordReset").then((module) => module.ResetPasswordPage),
+    (props, failed) => (
+        <div className="mj_Login" aria-busy={!failed}>
+            <main className="mj_Login_column">
+                <img className="mj_Login_logo" src={props.logo} alt={props.brand} />
+                {failed ? (
+                    <div className="mj_Error mj_Login_error" role="alert">
+                        {LOAD_FAILED}
+                    </div>
+                ) : (
+                    <p className="mj_TwoFactorStep_text" role="status">
+                        Loading…
+                    </p>
+                )}
+            </main>
+        </div>
+    ),
+);

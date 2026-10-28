@@ -166,6 +166,63 @@ describe("ItemDetail inline images", () => {
         expect(document.body.querySelector(".mj_MediaViewer_scrim")).toBeNull();
     });
 
+    it("captions each image with its name and size, the name split so the extension stays", async () => {
+        const client = fakeClient();
+        const long: TrackerAttachment = {
+            blob_ref: "dd44",
+            mime: "image/png",
+            name: "divider_4867x3071.png",
+            size: 40_789_000,
+        };
+        const view = await mount(
+            <ItemDetail
+                item={trackerItem({ body: "![The login page](attachment:aa11)", attachments: [shot, long] })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+
+        const inline = view.querySelector(".mj_TrackerImage .mj_TrackerImageName")!;
+        expect(inline.textContent).toBe("login.png · 2 KB");
+        expect(inline.getAttribute("title")).toBe("login.png · 2 KB");
+
+        const thumb = view.querySelector(".mj_TrackerThumbTile .mj_TrackerImageName")!;
+        expect(thumb.classList).toContain("mj_TrackerImageName_stacked");
+        expect(thumb.querySelector(".mj_TrackerImageName_head")?.textContent).toBe("divider_4867x");
+        expect(thumb.querySelector(".mj_TrackerImageName_tail")?.textContent).toBe("3071.png");
+        expect(thumb.querySelector(".mj_TrackerImageName_size")?.textContent).toBe("38.9 MB");
+        expect(thumb.getAttribute("title")).toBe("divider_4867x3071.png · 38.9 MB");
+    });
+
+    it("captions an unnamed image with its size alone", async () => {
+        const client = fakeClient();
+        const view = await mount(
+            <ItemDetail
+                item={trackerItem({ body: "", attachments: [{ ...extra, name: "" }] })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+        expect(view.querySelector(".mj_TrackerImageName")?.textContent).toBe("4 KB");
+    });
+
+    it("leaves out a missing size rather than showing 0 B", async () => {
+        const client = fakeClient();
+        const view = await mount(
+            <ItemDetail
+                item={trackerItem({ body: "", attachments: [{ ...extra, size: 0 }] })}
+                comments={[]}
+                client={client as unknown as MatronJournalClient}
+                onBack={jest.fn()}
+            />,
+        );
+        const line = view.querySelector(".mj_TrackerImageName")!;
+        expect(line.textContent).toBe("extra.jpg");
+        expect(line.getAttribute("title")).toBe("extra.jpg");
+    });
+
     it("falls back to the chip when an image fails to load", async () => {
         const client = fakeClient();
         client.mediaUrl.mockRejectedValue(new Error("nope"));

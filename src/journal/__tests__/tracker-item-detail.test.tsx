@@ -1643,6 +1643,34 @@ describe("ItemDetail spawn consent", () => {
         expect(container.querySelectorAll(".mj_TrackerConsent button")).toHaveLength(0);
     });
 
+    it("a waiting card in this browser answers on its own buttons; the item's Approve and Decline are not repeated", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const { container } = await render(client, consentItem({ actions: ["Approve", "Decline"] }));
+
+        expect(container.querySelectorAll(".mj_TrackerConsent button")).toHaveLength(2);
+        expect(container.querySelector(".mj_TrackerItemActions")).toBeNull();
+    });
+
+    it("offers neither the card's nor the item's buttons while the card read is in flight", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockReturnValue(new Promise(() => undefined));
+        const { container } = await render(client, consentItem({ actions: ["Approve", "Decline"] }));
+
+        expect(container.querySelector(".mj_TrackerItemActions")).toBeNull();
+    });
+
+    it("without the card, the item's own Approve and Decline answer it, and the note says so", async () => {
+        const client = fakeClient();
+        const { container } = await render(client, consentItem({ actions: ["Approve", "Decline"] }));
+
+        expect(container.querySelector(".mj_TrackerConsent_waiting")?.textContent).toContain(
+            "Approve or Decline below answers it as the card would.",
+        );
+        const labels = [...container.querySelectorAll(".mj_TrackerItemActions button")].map((b) => b.textContent);
+        expect(labels).toEqual(["Approve", "Decline"]);
+    });
+
     it("shows how the ask ended when only its outcome is here, with Open for a started session", async () => {
         const client = fakeClient();
         client.spawnConsentRows.mockResolvedValue(

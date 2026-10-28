@@ -40,7 +40,7 @@ import {
     sortRoutines,
 } from "./routines";
 import { newestOwnMessageSeq } from "./jump-to-message";
-import { parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
+import { othersLinkMessage, parseOwnTrackerUrl, parseTrackerLinkPath, type TrackerLinkPath } from "./link-path";
 import {
     DEFAULT_PIN_LIMIT,
     markPinImportDone,
@@ -56,6 +56,14 @@ import {
 } from "./pins";
 import { isAgentRoomTitle, isStartCommand, NEW_CONVERSATION_STALE_MS, startedSessionIntents } from "./needs-you";
 import { SeenTracker } from "./seen-tracker";
+import {
+    type ArchiveDelta,
+    applyArchiveChanges,
+    archiveBatches,
+    parseArchiveDelta,
+    readArchiveSince,
+    writeArchiveSince,
+} from "./server-archive";
 import { appendFeedPage, kindsWithMore } from "./tracker/projectActivity";
 import { CHAT_TASKS_DONE_FETCH, chatTaskSections, planTaskMove } from "./tracker/chat-tasks";
 import { doneSortKey, inDone } from "./tracker/format";
@@ -64,6 +72,8 @@ import {
     buildSidebarIndex,
     type BoxStatus,
     type JournalBoxStatusFrame,
+    type Grant,
+    type GrantAnswer,
     type BriefingLatest,
     type BriefingRefresh,
     type BriefingState,
@@ -99,6 +109,8 @@ import {
     rendersAsTopLevelRow,
     type RpcReply,
     type SearchHit,
+    type GlobalSearchChat,
+    type GlobalSearchResult,
     type ServerFrame,
     type Session,
     type SessionStatus,
@@ -119,9 +131,32 @@ import {
     trimUtf8Prefix,
     type UserDefaultKey,
     type UserDefaults,
+    type LoginResponse,
     type ToolStreamState,
+    type TwoFactorSetup,
+    type TwoFactorStatus,
+    type JournalUser,
+    type AccountEmail,
     utf8Length,
 } from "./types";
+
+/**
+ * What a right password gets a two-factor user instead of a session: a five-minute sign-in
+ * ticket. `code` asks for a code from their authenticator app (or a recovery code); `enrol` means
+ * the server requires two-factor and this user must set it up before signing in.
+ */
+export interface TwoFactorChallenge {
+    kind: "code" | "enrol";
+    serverUrl: string;
+    username: string;
+    ticket: string;
+}
+
+/** A sign-in that is done on the server but held back so the screen can show something first. */
+export interface HeldSignIn {
+    /** Store the session and open the app. */
+    finish: () => Promise<void>;
+}
 
 const SESSION_KEY = "matron_journal_session_v1";
 const LAST_SERVER_KEY = "matron_journal_last_server";
@@ -130,6 +165,8 @@ const HISTORY_PAGE_SIZE = 80;
 // A subagent card's one-off tail fetch: the server's page cap, and how long a card waits for it.
 const CONVERSATION_TAIL_SIZE = 200;
 const CONVERSATION_TAIL_TIMEOUT_MS = 15_000;
+// A consent mirror lookup reads at most this many 500-item pages of one conversation's consent items.
+const CONSENT_LOOKUP_PAGES = 4;
 // A jump to a message pages history back at most this many pages (80 rows each) before landing on
 // the oldest row loaded: a hit thousands of messages deep must not fetch the whole conversation
 // while the transcript sits still.
@@ -147,6 +184,42 @@ const MESSAGE_SEARCH_LIMIT = 20;
 const MESSAGE_SEARCH_MAX_QUERY_LEN = 256;
 // Transport-agnostic deadline: abort a /search that never settles so "Searching…" can't hang.
 const MESSAGE_SEARCH_TIMEOUT_MS = 15_000;
+// The Search page asks for up to this many tracker hits (the journal caps it at 50).
+const GLOBAL_SEARCH_LIMIT = 40;
+const GLOBAL_SEARCH_KINDS = new Set(["mission", "item", "memory", "project"]);
+
+/** `GET /search/all`'s tracker hits, dropping any a version-skewed journal sent malformed. */
+function sanitizeGlobalResults(response: unknown): GlobalSearchResult[] {
+    const results = (response as { results?: unknown } | null)?.results;
+    if (!Array.isArray(results)) return [];
+    return results.filter(
+        (r): r is GlobalSearchResult =>
+            !!r &&
+            typeof r === "object" &&
+            GLOBAL_SEARCH_KINDS.has((r as GlobalSearchResult).kind) &&
+            typeof (r as GlobalSearchResult).id === "string" &&
+            typeof (r as GlobalSearchResult).title === "string" &&
+            ((r as GlobalSearchResult).snippet == null || typeof (r as GlobalSearchResult).snippet === "string"),
+    );
+}
+
+/** `GET /search/all`'s matching conversations; absent on a request that asked for none. */
+function sanitizeGlobalChats(response: unknown): GlobalSearchChat[] {
+    const chats = (response as { chats?: unknown } | null)?.chats;
+    if (!Array.isArray(chats)) return [];
+    return chats.filter(
+        (c): c is GlobalSearchChat =>
+            !!c &&
+            typeof c === "object" &&
+            typeof (c as GlobalSearchChat).convo_id === "string" &&
+            typeof (c as GlobalSearchChat).top?.seq === "number" &&
+            typeof (c as GlobalSearchChat).top?.excerpt === "string",
+    );
+}
+/** How long a tracker link's looked-up title is kept before it is asked for again. */
+const TRACKER_LINK_CACHE_MS = 5 * 60_000;
+/** At most this many tracker link answers are kept. */
+const TRACKER_LINK_CACHE_MAX = 500;
 /** How long "go to number" waits for the journal before reporting a failed lookup. */
 export const NUMBER_LOOKUP_TIMEOUT_MS = 15_000;
 /** A mission page's closed items come in pages of this many (the Mac's closed-items page). */
@@ -373,6 +446,16 @@ export function workerKind(conversation: Conversation): WorkerKind | null {
     return null;
 }
 
+/** The two-factor step a /login refusal asks for, or undefined for any other failure. */
+function twoFactorChallengeFrom(error: unknown, serverUrl: string, username: string): TwoFactorChallenge | undefined {
+    if (!(error instanceof JournalApiError) || error.status !== 401) return undefined;
+    const ticket = error.body?.two_factor_ticket;
+    if (typeof ticket !== "string" || !ticket) return undefined;
+    if (error.code === "two_factor_required") return { kind: "code", serverUrl, username, ticket };
+    if (error.code === "two_factor_enrolment_required") return { kind: "enrol", serverUrl, username, ticket };
+    return undefined;
+}
+
 function deviceName(): string {
     if ((window as Window & { electron?: unknown }).electron) {
         const platform = navigator.platform || "computer";
@@ -412,6 +495,9 @@ function blankState(): ClientState {
         sendTick: 0,
     };
 }
+
+// How long Sign out waits for the journal to revoke this device before signing out locally anyway.
+const SIGN_OUT_REVOKE_TIMEOUT_MS = 3000;
 
 function storedSession(): Session | undefined {
     try {
@@ -553,12 +639,16 @@ export class MatronJournalClient {
     private readonly listeners = new Set<() => void>();
     private readonly liveListeners = new Set<LiveListener>();
     private api?: JournalApi;
+    // What tracker links point at, per session generation (trackerLinkInfo).
+    private readonly trackerLinkCache = new Map<string, { outcome: Promise<NumberLookupOutcome>; until: number }>();
     // Monotonic guard so only the latest message-search request writes its results — an earlier
     // slow response (or a cleared box) can never clobber a newer query's hits. See searchMessages.
     private searchSeq = 0;
     // The in-flight message-search request, so a superseding query / clear / logout can abort it
     // (bounded exit — a stalled /search never leaves the section stuck "Searching…").
     private searchAbort?: AbortController;
+    private globalSearchSeq = 0;
+    private globalSearchAbort?: AbortController;
     private database?: JournalDatabase;
     private connection?: JournalConnection;
     // Read state: which timeline rows and tracker items were actually on screen, reported as
@@ -653,6 +743,30 @@ export class MatronJournalClient {
     // timed_out, which no frame announces).
     private briefingGen = 0;
     private settingsGen = 0;
+    // PATCH /settings writes run one at a time, in the order chosen, so the journal ends on the
+    // latest pick even when an earlier request is slow.
+    private settingsWrites: Promise<unknown> = Promise.resolve();
+    // The settings as the journal last confirmed them (GET, PATCH answer, frame or hello): what a
+    // failed save goes back to, rather than an earlier optimistic value that may never have landed.
+    private settingsConfirmed: UserSettings | undefined;
+    // Per setting: bumped by every pick and every journal value for that key, so a failed save only
+    // puts back a key nothing newer has touched (a frame without the key leaves it alone).
+    private settingsKeyGen: Record<keyof UserSettings, number> = {
+        notices: 0,
+        auto_approve_coordinator_spawns: 0,
+        auto_archive_days: 0,
+    };
+    // Per setting: bumped by every journal value from a frame, hello or GET, so a PATCH answer that
+    // was sent before one does not overwrite it as the confirmed value.
+    private settingsHeardGen: Record<keyof UserSettings, number> = {
+        notices: 0,
+        auto_approve_coordinator_spawns: 0,
+        auto_archive_days: 0,
+    };
+    // Journal archive writes per conversation: the state the user last chose, and whether a POST
+    // is in flight. One POST at a time per conversation, always for the latest choice.
+    private archiveWanted = new Map<string, boolean>();
+    private archiveSending = new Set<string>();
     // Coordinator consent switch: bumped by every write, so a GET sent before one is dropped and
     // only the latest write's answer moves the switch; the journal's last known value (where a
     // failed write puts the switch back); and the write chain that keeps PUTs in tap order.
@@ -760,6 +874,10 @@ export class MatronJournalClient {
     // The journal's list while a carry-over is pending or failed: the sidebar keeps the
     // browser-local set until the import lands, so local pins never vanish mid-import.
     private stagedPins: ConvoPin[] | null = null;
+    // Whether this journal syncs the archive (journal protocol "Archived conversations"): learnt from
+    // hello_ok, or assumed from a stored cursor until then, so an Archive tapped before the first
+    // hello still reaches a journal this browser has synced with.
+    private archiveOnJournal = false;
 
     public get sessionGeneration(): number {
         return this.sessionGen;
@@ -860,16 +978,85 @@ export class MatronJournalClient {
         return this.state.config.journal_server_url || localStorage.getItem(LAST_SERVER_KEY) || "";
     }
 
-    public async login(serverInput: string, username: string, password: string): Promise<void> {
+    /**
+     * Sign in with a password. Resolves with nothing once signed in, or with a challenge when the
+     * account has two-factor on (or must set it up): the sign-in screen then asks for a code.
+     */
+    public async login(serverInput: string, username: string, password: string): Promise<TwoFactorChallenge | void> {
         const serverUrl = normalizeServerUrl(serverInput);
         const api = new JournalApi(serverUrl);
-        const response = await api.login(username.trim(), password, deviceName());
+        let response: LoginResponse;
+        try {
+            response = await api.login(username.trim(), password, deviceName());
+        } catch (error) {
+            const challenge = twoFactorChallengeFrom(error, serverUrl, username.trim());
+            if (challenge) return challenge;
+            throw error;
+        }
+        await this.finishLogin(serverUrl, username.trim(), response);
+    }
+
+    /** Whether the server typed on the sign-in screen mails reset links (no auth). */
+    public async forgotPasswordEnabled(serverInput: string): Promise<boolean> {
+        return new JournalApi(normalizeServerUrl(serverInput)).forgotPasswordEnabled();
+    }
+
+    /** Ask for a reset link for a username or email address (no auth; the answer reveals nothing). */
+    public async forgotPassword(serverInput: string, identifier: string): Promise<void> {
+        return new JournalApi(normalizeServerUrl(serverInput)).forgotPassword(identifier.trim());
+    }
+
+    /**
+     * Spend a reset link (no auth). The journal signs out every client device of the account, so
+     * a browser signed in to that journal signs itself out locally as well. (It may be signed in
+     * as someone else, but a reset on a shared browser should leave nobody signed in on it.)
+     */
+    public async resetPassword(serverInput: string, token: string, newPassword: string): Promise<void> {
+        const serverUrl = normalizeServerUrl(serverInput);
+        await new JournalApi(serverUrl).resetPassword(token, newPassword);
+        if (this.state.session?.serverUrl === serverUrl) await this.logout();
+    }
+
+    /**
+     * The code step: a 6-digit code or a recovery code for the challenge's ticket. When a recovery
+     * code was spent the sign-in is held so the screen can say how many are left.
+     */
+    public async loginWithCode(
+        challenge: TwoFactorChallenge,
+        code: string,
+    ): Promise<{ usedRecoveryCode: boolean; recoveryCodesLeft: number } & HeldSignIn> {
+        const response = await new JournalApi(challenge.serverUrl).loginTwoFactor(challenge.ticket, code.trim());
+        return {
+            usedRecoveryCode: response.used_recovery_code === true,
+            recoveryCodesLeft: response.recovery_codes_left,
+            finish: () => this.finishLogin(challenge.serverUrl, challenge.username, response),
+        };
+    }
+
+    /** Enrolment at sign-in: the new secret to show as a QR code. */
+    public loginTwoFactorSetup(challenge: TwoFactorChallenge): Promise<TwoFactorSetup> {
+        return new JournalApi(challenge.serverUrl).loginTwoFactorSetup(challenge.ticket);
+    }
+
+    /** Enrolment at sign-in, confirmed with a code. Held until the recovery codes have been shown. */
+    public async loginTwoFactorEnable(
+        challenge: TwoFactorChallenge,
+        code: string,
+    ): Promise<{ recoveryCodes: string[] } & HeldSignIn> {
+        const response = await new JournalApi(challenge.serverUrl).loginTwoFactorEnable(challenge.ticket, code.trim());
+        return {
+            recoveryCodes: response.recovery_codes,
+            finish: () => this.finishLogin(challenge.serverUrl, challenge.username, response),
+        };
+    }
+
+    private async finishLogin(serverUrl: string, username: string, response: LoginResponse): Promise<void> {
         const session: Session = {
             serverUrl,
             token: response.token,
             deviceId: response.device_id,
             userId: response.user_id,
-            username: username.trim(),
+            username,
         };
         localStorage.setItem(SESSION_KEY, JSON.stringify(session));
         localStorage.setItem(LAST_SERVER_KEY, serverUrl);
@@ -878,6 +1065,21 @@ export class MatronJournalClient {
         // initialise's stored-session branch, and no hashchange fires — apply it now so the linked
         // file opens instead of being stranded behind the conversation view.
         this.applyDeepLinks();
+    }
+
+    /**
+     * Sign out from Settings. The journal is told first, so the token stops working everywhere
+     * and not just in this browser (revoking your own device is the journal's logout). That call
+     * is best effort: offline, or a slow journal, must not keep the user signed in.
+     */
+    public async signOut(): Promise<void> {
+        const api = this.api;
+        const deviceId = this.state.session?.deviceId;
+        if (api && deviceId !== undefined) {
+            const revoke = api.revokeDevice(deviceId).catch(() => undefined);
+            await Promise.race([revoke, new Promise((resolve) => setTimeout(resolve, SIGN_OUT_REVOKE_TIMEOUT_MS))]);
+        }
+        await this.logout();
     }
 
     public async logout(message?: string): Promise<void> {
@@ -1216,6 +1418,80 @@ export class MatronJournalClient {
         slot.request = request;
         this.conversationTailFetches.set(conversationId, request);
         return request;
+    }
+
+    /** Opens the Search page; `query`, when given, replaces the text it shows (For you's link). */
+    public openSearch(query?: string): void {
+        if (query !== undefined && query !== this.state.globalSearchQuery) this.setGlobalSearchQuery(query);
+        if (this.state.trackerItem) this.patch({ trackerItem: null });
+        if (this.state.trackerMission) this.patch({ trackerMission: null });
+        this.openTrackerView({ view: "search", itemId: null, missionId: null, projectId: null, memoryName: null });
+        // Already open, the page is not remounted: this tells it to take the focus again.
+        this.patch({ globalSearchFocus: (this.state.globalSearchFocus ?? 0) + 1 });
+    }
+
+    /** The Search page's text. The page debounces the request (searchEverything). */
+    public setGlobalSearchQuery(query: string): void {
+        this.patch({ globalSearchQuery: query });
+    }
+
+    /**
+     * Search everything (the Search page): tracker entities and matching conversations from
+     * `GET /search/all`, with the same guarantees as searchMessages — only the newest request
+     * applies, a prior one is aborted, a timeout bounds it, and a failure is a "failed" state.
+     */
+    public async searchEverything(rawQuery: string): Promise<void> {
+        const query = rawQuery.trim();
+        // The same text again (a trailing space, a return to the page) keeps the request in
+        // flight or the answer on screen; aborting it here would report an outage.
+        if (query && this.state.globalSearch?.query === query && !this.state.globalSearch.failed) return;
+        this.globalSearchAbort?.abort();
+        this.globalSearchAbort = undefined;
+        if (!query || query.length > MESSAGE_SEARCH_MAX_QUERY_LEN) {
+            this.globalSearchSeq += 1;
+            if (this.state.globalSearch) this.patch({ globalSearch: undefined });
+            return;
+        }
+        if (!this.api) return;
+        const seq = ++this.globalSearchSeq;
+        const controller = new AbortController();
+        this.globalSearchAbort = controller;
+        this.patch({ globalSearch: { query, results: [], chats: [], loading: true, failed: false } });
+        const call = this.api.searchAll(query, GLOBAL_SEARCH_LIMIT, controller.signal);
+        void call.catch(() => undefined);
+        let timeoutTimer: ReturnType<typeof setTimeout>;
+        const timeoutReject = new Promise<never>((_resolve, reject) => {
+            timeoutTimer = setTimeout(() => {
+                reject(new Error("timeout"));
+                controller.abort();
+            }, MESSAGE_SEARCH_TIMEOUT_MS);
+        });
+        try {
+            const response = await Promise.race([call, timeoutReject]);
+            if (seq !== this.globalSearchSeq) return;
+            this.patch({
+                globalSearch: {
+                    query,
+                    results: sanitizeGlobalResults(response),
+                    chats: sanitizeGlobalChats(response),
+                    loading: false,
+                    failed: false,
+                },
+            });
+        } catch {
+            if (seq !== this.globalSearchSeq) return;
+            this.patch({ globalSearch: { query, results: [], chats: [], loading: false, failed: true } });
+        } finally {
+            clearTimeout(timeoutTimer!);
+            if (this.globalSearchAbort === controller) this.globalSearchAbort = undefined;
+        }
+    }
+
+    /** A Search page conversation hit: open it on its newest matching message, find bar up. */
+    public openGlobalSearchChat(chat: GlobalSearchChat): void {
+        const query = this.state.globalSearch?.query;
+        if (query) void this.beginChatSearch(query, { conversationId: chat.convo_id, startingAt: chat.top.seq });
+        else void this.focusMessage(chat.convo_id, chat.top.seq);
     }
 
     public async selectConversation(
@@ -2904,7 +3180,7 @@ export class MatronJournalClient {
     // selection. `null ?? prev` would resolve to prev, so the clear needs the explicit === null arm.
     public openTrackerView(
         opts: {
-            view?: "missions" | "inbox" | "memories";
+            view?: "missions" | "inbox" | "memories" | "search";
             itemId?: number | null;
             missionId?: number | null;
             memoryName?: string | null;
@@ -3035,6 +3311,46 @@ export class MatronJournalClient {
             missionId: null,
             projectId: opts.keepProject ? undefined : null,
         });
+    }
+
+    /**
+     * The number of the consent item the journal filed for a card in `convoId`, found by its exact
+     * `matron://consent/<kind>/<id>` link; null when it is not there or the lookup fails. The
+     * mirror is filed in the same conversation as its card, open or already decided.
+     */
+    public async findConsentItem(convoId: string, consentUrl: string): Promise<number | null> {
+        const api = this.api;
+        if (!api || !convoId || !consentUrl) return null;
+        try {
+            let cursor: string | undefined;
+            for (let page = 0; page < CONSENT_LOOKUP_PAGES; page++) {
+                const { items, next_cursor } = await api.items({
+                    convo: convoId,
+                    label: "consent",
+                    limit: 500,
+                    cursor,
+                });
+                const hit = items.find((item) => (item.links ?? []).some((link) => link?.url === consentUrl));
+                if (hit) return hit.num;
+                if (!next_cursor) return null;
+                cursor = next_cursor;
+            }
+        } catch {
+            // An unreachable tracker reads as "not found": the card then says where to answer.
+        }
+        return null;
+    }
+
+    /** One share of the user's (or with the user), for a card to show how it was answered. */
+    public async loadGrant(grantId: string, signal?: AbortSignal): Promise<Grant> {
+        if (!this.api) throw new Error("Not signed in.");
+        return this.api.grant(grantId, signal);
+    }
+
+    /** Answers a share or hand-over card. Errors (JournalApiError 409/404) are rethrown unchanged. */
+    public async answerGrant(grantId: string, answer: GrantAnswer, signal?: AbortSignal): Promise<Grant> {
+        if (!this.api) throw new Error("Not signed in.");
+        return this.api.answerGrant(grantId, answer, signal);
     }
 
     /** Opens a project page on the Projects view (the tracker's "missions" view key). */
@@ -3181,13 +3497,40 @@ export class MatronJournalClient {
     }
 
     /**
+     * What a tracker link points at, for the title shown beside it (tracker-link-title.tsx).
+     * `user` is the name in a `/u/<name>/<n>` link, or null for an own-number link
+     * (`matron://item/<n>`). Answers are kept for a few minutes per session, so a chat full of
+     * links to the same number asks once; anything but a found answer is not kept, so the next
+     * render asks again.
+     */
+    public trackerLinkInfo(user: string | null, num: number): Promise<NumberLookupOutcome> {
+        if (!Number.isSafeInteger(num) || num <= 0) return Promise.resolve({ status: "failed" });
+        const owner = user ?? this.state.session?.username ?? "";
+        const key = `${this.sessionGeneration}:${owner}/${num}`;
+        const now = Date.now();
+        const cached = this.trackerLinkCache.get(key);
+        if (cached && cached.until > now) return cached.outcome;
+        const outcome = this.lookupNumber(num, undefined, owner || undefined);
+        if (this.trackerLinkCache.size >= TRACKER_LINK_CACHE_MAX) {
+            const oldest = this.trackerLinkCache.keys().next().value;
+            if (oldest !== undefined) this.trackerLinkCache.delete(oldest);
+        }
+        this.trackerLinkCache.set(key, { outcome, until: now + TRACKER_LINK_CACHE_MS });
+        // Only a found answer is kept: a missing number may be made a moment later.
+        void outcome.then((result) => {
+            if (result.status !== "found") this.trackerLinkCache.delete(key);
+        });
+        return outcome;
+    }
+
+    /**
      * Asks the journal what the signed-in user's number `num` is. Never throws: a 404 is `none`
      * (no such number), anything else that goes wrong is `failed`. The payload is checked field
      * by field, since the journal is a separate service that may be older or newer than this app.
      */
-    public async lookupNumber(num: number, signal?: AbortSignal): Promise<NumberLookupOutcome> {
+    public async lookupNumber(num: number, signal?: AbortSignal, owner?: string): Promise<NumberLookupOutcome> {
         const api = this.api;
-        const user = this.state.session?.username;
+        const user = owner ?? this.state.session?.username;
         if (!api || !user || !Number.isSafeInteger(num) || num <= 0) return { status: "failed" };
         // Bounded like searchMessages: a transport that ignores the abort signal must not leave
         // the field waiting for ever.
@@ -3271,7 +3614,7 @@ export class MatronJournalClient {
             if (this.api !== api || this.settingsGen !== gen) return;
             this.patch({
                 userSettingsUnsupported: false,
-                ...(settings ? { userSettings: settings, userSettingsError: undefined } : {}),
+                ...(settings ? { userSettings: this.mergedSettings(settings), userSettingsError: undefined } : {}),
             });
         } catch (error) {
             if (this.api !== api || this.settingsGen !== gen) return;
@@ -3283,31 +3626,73 @@ export class MatronJournalClient {
         }
     }
 
-    public setNoticesSetting(notices: boolean): Promise<boolean> {
-        return this.saveUserSettings({ notices });
+    /** PATCH /settings {notices}. Shows the new value at once and puts the old one back on failure. */
+    public async setNoticesSetting(notices: boolean): Promise<boolean> {
+        return this.patchUserSettings({ notices });
     }
 
-    public setAutoApproveCoordinatorSpawnsSetting(enabled: boolean): Promise<boolean> {
-        return this.saveUserSettings({ auto_approve_coordinator_spawns: enabled });
+    public async setAutoApproveCoordinatorSpawnsSetting(enabled: boolean): Promise<boolean> {
+        return this.patchUserSettings({ auto_approve_coordinator_spawns: enabled });
     }
 
-    /** Save a subset, preserving the other switches until the full journal view arrives. */
-    private async saveUserSettings(patch: Partial<UserSettings>): Promise<boolean> {
+    /** PATCH /settings {auto_archive_days} (0 = off). Same optimistic shape as the notices switch. */
+    public async setAutoArchiveDays(days: number): Promise<boolean> {
+        return this.patchUserSettings({ auto_archive_days: days });
+    }
+
+    private async patchUserSettings(change: Partial<UserSettings>): Promise<boolean> {
         const api = this.api;
-        if (!api) return false;
         const previous = this.state.userSettings;
-        const gen = ++this.settingsGen;
-        this.patch({ userSettings: { ...previous, ...patch }, userSettingsError: undefined });
+        if (!api || !previous) return false;
+        ++this.settingsGen;
+        const keys = Object.keys(change) as (keyof UserSettings)[];
+        const picked = keys.map((key) => ++this.settingsKeyGen[key]);
+        const errorKey = "auto_archive_days" in change ? "autoArchiveError" : "userSettingsError";
+        this.patch({ userSettings: { ...previous, ...change }, [errorKey]: undefined });
+        let heard = { ...this.settingsHeardGen };
+        const write = this.settingsWrites.then(() => {
+            heard = { ...this.settingsHeardGen };
+            return api.patchSettings(change);
+        });
+        this.settingsWrites = write.catch(() => undefined);
+        const ours = (key: keyof UserSettings, i: number): boolean => this.settingsKeyGen[key] === picked[i];
         try {
-            const settings = parseUserSettings(await api.patchSettings(patch));
-            if (this.api === api && this.settingsGen === gen && settings) this.patch({ userSettings: settings });
+            const settings = parseUserSettings(await write);
+            if (this.api === api && settings) {
+                // Confirmed unless the journal has said something newer since this was sent; shown
+                // only for the keys this pick still owns.
+                const confirmed = { ...this.settingsConfirmed } as Partial<UserSettings>;
+                for (const key of Object.keys(settings) as (keyof UserSettings)[]) {
+                    if (this.settingsHeardGen[key] === heard[key]) Object.assign(confirmed, { [key]: settings[key] });
+                }
+                this.settingsConfirmed = confirmed as UserSettings;
+                const shown = keys.filter(ours).map((key) => [key, settings[key]] as const);
+                if (shown.length && this.state.userSettings) {
+                    this.patch({ userSettings: { ...this.state.userSettings, ...Object.fromEntries(shown) } });
+                }
+            }
             return true;
         } catch (error) {
-            if (this.api === api && this.settingsGen === gen) {
-                this.patch({ userSettings: previous, userSettingsError: errorMessage(error) });
+            const back = keys.filter(ours).map((key) => [key, (this.settingsConfirmed ?? previous)[key]] as const);
+            if (this.api === api && back.length && this.state.userSettings) {
+                this.patch({
+                    userSettings: { ...this.state.userSettings, ...Object.fromEntries(back) },
+                    [errorKey]: errorMessage(error),
+                });
             }
             return false;
         }
+    }
+
+    /** The journal's word on the settings (GET, frame or hello) over what is known: a key the
+     *  payload lacks keeps its known value, and only the keys it carries supersede a pending pick. */
+    private mergedSettings(settings: UserSettings): UserSettings {
+        for (const key of Object.keys(settings) as (keyof UserSettings)[]) {
+            ++this.settingsKeyGen[key];
+            ++this.settingsHeardGen[key];
+        }
+        this.settingsConfirmed = { ...this.settingsConfirmed, ...settings };
+        return { ...this.state.userSettings, ...settings };
     }
 
     // ── Coordinator consent approval (Settings → Coordinator; GET/PUT /coordinator `consent`) ──
@@ -3656,7 +4041,7 @@ export class MatronJournalClient {
         const settings = parseUserSettings(raw);
         if (!settings) return;
         ++this.settingsGen;
-        this.patch({ userSettings: settings, userSettingsError: undefined });
+        this.patch({ userSettings: this.mergedSettings(settings), userSettingsError: undefined });
     }
 
     public async loadBriefing(opts: { keepRefreshError?: boolean } = {}): Promise<void> {
@@ -3887,6 +4272,75 @@ export class MatronJournalClient {
     private deviceAdminApi(): JournalApi {
         if (!this.api) throw new JournalApiError("Not signed in.", 401, "unauthenticated");
         return this.api;
+    }
+
+    // ── Settings → Security (journal /2fa) ──────────────────────────────────────────────────
+
+    public twoFactorStatus(): Promise<TwoFactorStatus> {
+        return this.deviceAdminApi().twoFactorStatus();
+    }
+
+    public twoFactorSetup(password: string, code?: string): Promise<TwoFactorSetup> {
+        return this.deviceAdminApi().twoFactorSetup(password, code);
+    }
+
+    public twoFactorEnable(
+        code: string,
+        signOutOthers: boolean,
+    ): Promise<{ recovery_codes: string[]; signed_out: number }> {
+        return this.deviceAdminApi().twoFactorEnable(code.trim(), signOutOthers);
+    }
+
+    public twoFactorDisable(password: string, code: string): Promise<void> {
+        return this.deviceAdminApi().twoFactorDisable(password, code.trim());
+    }
+
+    public twoFactorRecoveryCodes(password: string, code: string): Promise<{ recovery_codes: string[] }> {
+        return this.deviceAdminApi().twoFactorRecoveryCodes(password, code.trim());
+    }
+
+    public twoFactorPolicy(required: boolean): Promise<{ required: boolean }> {
+        return this.deviceAdminApi().twoFactorPolicy(required);
+    }
+
+    /**
+     * Change this account's password (POST /password). This device stays signed in either way: a
+     * 401 here is a wrong current password, not an expired session, so it is only ever thrown back
+     * to the form and never taken as a reason to sign out.
+     */
+    public changePassword(
+        oldPassword: string,
+        newPassword: string,
+        signOutOthers: boolean,
+    ): Promise<{ signed_out: number }> {
+        return this.deviceAdminApi().changePassword(oldPassword, newPassword, signOutOthers);
+    }
+
+    /** Settings → Security → Email address (GET /account/email). */
+    public async accountEmail(): Promise<AccountEmail> {
+        return this.deviceAdminApi().accountEmail();
+    }
+
+    /**
+     * Set or (null) remove this account's address. Like changePassword, a 401 here is a wrong
+     * current password and is only ever thrown back to the form, never taken as a sign-out.
+     */
+    public async setAccountEmail(password: string, email: string | null): Promise<{ email: string | null }> {
+        return this.deviceAdminApi().setAccountEmail(password, email === null ? null : email.trim());
+    }
+
+    /** Settings → Users (admins): every account with its address. */
+    public async listUsers(): Promise<JournalUser[]> {
+        return this.deviceAdminApi().listUsers();
+    }
+
+    public async setUserEmail(userId: number, email: string | null): Promise<JournalUser | undefined> {
+        return this.deviceAdminApi().setUserEmail(userId, email === null ? null : email.trim());
+    }
+
+    /** Whether this account is a journal admin (GET /me). */
+    public async isAdmin(): Promise<boolean> {
+        return (await this.deviceAdminApi().me()).user.is_admin === true;
     }
 
     /** GET /devices: every device on the account, this one included. */
@@ -4736,6 +5190,21 @@ export class MatronJournalClient {
     }
 
     /**
+     * A consent request's Approve / Decline tapped on its For you row: the same action tap the item
+     * detail sends, which the journal answers exactly as the request card. A refused tap (most often
+     * "Already answered", decided on the card, on another device or by the Coordinator) refetches
+     * the inbox so the stale row leaves, and then shows the journal's own sentence in the banner.
+     */
+    public async answerConsentItem(num: number, label: string, idempotencyKey: string): Promise<boolean> {
+        const outcome = await this.postTrackerComment(num, { action: label, body: label }, idempotencyKey);
+        if (outcome.ok) return true;
+        if (outcome.reason === undefined) return false;
+        if (this.inboxTracked()) await this.loadInbox();
+        this.patch({ trackerError: outcome.reason });
+        return false;
+    }
+
+    /**
      * commentItem for the reply box: the same write and refetches, but a failure comes back with
      * its reason instead of raising the tracker's error banner, so the box can say beside the kept
      * draft which reply did not go and why.
@@ -5278,6 +5747,8 @@ export class MatronJournalClient {
         this.journalHalted = false;
         this.pinImportStarted = false;
         this.stagedPins = null;
+        this.archiveOnJournal = readArchiveSince(session) !== undefined;
+        this.settingsConfirmed = undefined;
         this.storeHydrated = { archive: true, pinned: true, favorite: true, unread: true };
         const writeProbeKey = `${archiveStore.storageKey(session)}:__wprobe__`;
         let storeWritable = false;
@@ -5419,6 +5890,13 @@ export class MatronJournalClient {
         this.storageListener = (event: StorageEvent): void => {
             const currentSession = this.state.session;
             if (!currentSession) return;
+            if (event.key === SESSION_KEY) {
+                // Another tab signed out, or signed in as someone else: this tab's session is
+                // over too, rather than carrying on with a token the user has let go of.
+                const next = storedSession();
+                if (!next || next.token !== currentSession.token) void this.logout("You signed out in another tab.");
+                return;
+            }
             if (event.key === archiveStore.storageKey(currentSession)) {
                 const read = archiveStore.read(currentSession);
                 this.storeHydrated.archive = read.ok;
@@ -5473,6 +5951,7 @@ export class MatronJournalClient {
         const current = (): boolean => this.sessionGen === connectionGen;
         this.connection = new JournalConnection(session.serverUrl, session.token, {
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
+            archiveSince: () => readArchiveSince(session) ?? 0,
             onFrame: async (frame) => {
                 if (current()) await this.handleFrame(frame);
             },
@@ -5553,14 +6032,18 @@ export class MatronJournalClient {
     /**
      * Opens the `/u/<name>/<n>` link the page was loaded at, once, after the first sign-in. Only
      * the signed-in user's own numbers open: the tracker shows that user's rows, so another user's
-     * number would open the wrong row. A number that names nothing says so.
+     * number would open the wrong row. Such a link says so rather than leaving the page silently
+     * on the user's own tracker. A number that names nothing says so too.
      */
     public async openPathLink(): Promise<void> {
         const link = this.pathLink;
         const user = this.state.session?.username;
         if (!link || !user) return;
         this.pathLink = null;
-        if (link.user.toLowerCase() !== user.toLowerCase()) return;
+        if (link.user.toLowerCase() !== user.toLowerCase()) {
+            this.patch({ controlError: othersLinkMessage(link) });
+            return;
+        }
         await this.openLinkedNumber(link.num);
     }
 
@@ -5610,6 +6093,116 @@ export class MatronJournalClient {
             preferencesUnavailable: this.storageUnavailable("archive"),
         });
         if (archived && conversationId === this.state.selectedConversationId) this.clearSelection();
+        if (this.archiveOnJournal) void this.sendArchive(conversationId, archived);
+    }
+
+    // ── Journal-synced archive (src/journal/server-archive.ts) ──────────────
+
+    /**
+     * POST /archive for an Archive/Unarchive tap. Writes for one conversation go one at a time and
+     * always carry the latest choice, so the journal ends where the user did. A refusal puts the row
+     * back only while that refused state is still the user's latest choice.
+     */
+    private async sendArchive(conversationId: string, archived: boolean): Promise<void> {
+        this.archiveWanted.set(conversationId, archived);
+        if (this.archiveSending.has(conversationId)) return;
+        const api = this.api;
+        const session = this.state.session;
+        if (!api || !session) return;
+        this.archiveSending.add(conversationId);
+        try {
+            let sent: boolean | undefined;
+            while (this.archiveWanted.get(conversationId) !== sent) {
+                const want = this.archiveWanted.get(conversationId)!;
+                try {
+                    await api.setArchived([conversationId], want);
+                    sent = want;
+                } catch (error) {
+                    if (this.api !== api || this.state.session !== session) return;
+                    if (this.archiveWanted.get(conversationId) !== want) continue;
+                    this.archiveWanted.delete(conversationId);
+                    this.writeArchivedIds(
+                        applyArchiveChanges(this.state.archivedIds, [
+                            { convo_id: conversationId, archived_at: want ? null : 0, auto: false },
+                        ]),
+                    );
+                    this.patch({
+                        controlError: `Couldn't ${want ? "archive" : "unarchive"}: ${errorMessage(error)}`,
+                    });
+                    return;
+                }
+            }
+            this.archiveWanted.delete(conversationId);
+        } finally {
+            this.archiveSending.delete(conversationId);
+        }
+    }
+
+    /**
+     * hello_ok's `archive`, on a journal that syncs it. The first sync in this browser asks for the
+     * whole set: the browser-local ids the journal does not have are carried over (Archive on another
+     * device meanwhile is kept too), and only then is the cursor stored, so a failed carry-over is
+     * tried again on the next connect.
+     */
+    private async applyHelloArchive(hello: JournalControlFrame): Promise<void> {
+        const delta = parseArchiveDelta(hello.archive);
+        const session = this.state.session;
+        const api = this.api;
+        // A journal that does not answer archive_since (older, or rolled back) keeps the
+        // browser-local archive; the stored cursor stays for when it syncs again.
+        if (!delta) this.archiveOnJournal = false;
+        if (!delta || !session || !api) return;
+        this.archiveOnJournal = true;
+        if (readArchiveSince(session) !== undefined) {
+            this.applyArchiveDelta(delta);
+            return;
+        }
+        const onJournal = applyArchiveChanges(new Set<string>(), delta.changes);
+        const local = archiveStore.read(session);
+        const toImport = local.ok ? [...local.ids].filter((id) => !onJournal.has(id)) : [];
+        if (!this.writeArchivedIds(new Set([...onJournal, ...toImport]))) return;
+        try {
+            for (const batch of archiveBatches(toImport)) await api.setArchived(batch, true);
+        } catch {
+            return;
+        }
+        if (this.api === api && this.state.session === session) writeArchiveSince(session, delta.at);
+    }
+
+    /** An `archive` frame, or hello_ok's changes since the stored cursor. */
+    private applyArchiveDelta(delta: ArchiveDelta): void {
+        const session = this.state.session;
+        if (!session) return;
+        this.archiveOnJournal = true;
+        const next = applyArchiveChanges(this.state.archivedIds, delta.changes);
+        // The cursor only moves once the set it describes is saved, so a reload never skips a change.
+        // An unwritable store may hold less than is shown, so an unchanged set is written again too.
+        const unsaved = next !== this.state.archivedIds || !this.storeWritable.archive;
+        if (unsaved && !this.writeArchivedIds(next)) return;
+        const since = readArchiveSince(session);
+        if (since !== undefined && delta.at > since) writeArchiveSince(session, delta.at);
+    }
+
+    /** Adopt an archived set from the journal: shown at once, and saved in this browser. Returns
+     *  whether it was saved. */
+    private writeArchivedIds(next: Set<string>): boolean {
+        const session = this.state.session;
+        if (!session) return false;
+        let saved = true;
+        try {
+            archiveStore.write(session, next);
+            this.storeWritable.archive = true;
+        } catch {
+            saved = false;
+            this.storeWritable.archive = false;
+            this.logStorageDiag("write_fail", "archive", false);
+        }
+        const before = this.state.archivedIds;
+        this.patch({ archivedIds: next, preferencesUnavailable: this.storageUnavailable("archive") });
+        // Only a newly archived chat closes; one already open from the Archived tab stays.
+        const selected = this.state.selectedConversationId;
+        if (selected && next.has(selected) && !before.has(selected)) this.clearSelection();
+        return saved;
     }
 
     private setFlag(
@@ -5840,6 +6433,7 @@ export class MatronJournalClient {
     private async handleReady(hello?: JournalControlFrame): Promise<void> {
         // hello_ok carries the pin list on a journal with pins; its absence means an older journal.
         if (hello !== undefined) this.applyJournalPins(pinsFromContainer(hello));
+        if (hello !== undefined) void this.applyHelloArchive(hello);
         const gen = this.sessionGen;
         const db = this.database;
         const connection = this.connection;
@@ -5963,6 +6557,11 @@ export class MatronJournalClient {
         }
         if (frame.kind === "box_defaults") {
             this.handleBoxDefaultsFrame(frame);
+            return;
+        }
+        if (frame.kind === "archive") {
+            const delta = parseArchiveDelta(frame);
+            if (delta) this.applyArchiveDelta(delta);
             return;
         }
         if (frame.kind === "pins") {
@@ -6897,7 +7496,9 @@ function inDoneOrder(rows: TrackerItem[]): TrackerItem[] {
 /** The label of a notice's one-tap answer; the journal closes the notice when it is tapped. */
 const SEEN_ACTION = "Seen";
 
-/** Validate each supported setting independently; absent values keep older journals compatible. */
+/** Validate each supported setting independently; absent values keep older journals compatible.
+ *  `{notices?, auto_approve_coordinator_spawns?, auto_archive_days?}` from GET/PATCH /settings or a
+ *  settings frame, or null when it carries none of them (a malformed shape must not flip a switch). */
 function parseUserSettings(raw: unknown): UserSettings | null {
     if (typeof raw !== "object" || raw === null) return null;
     const view = raw as Record<string, unknown>;
@@ -6906,5 +7507,7 @@ function parseUserSettings(raw: unknown): UserSettings | null {
     if (typeof view.auto_approve_coordinator_spawns === "boolean") {
         settings.auto_approve_coordinator_spawns = view.auto_approve_coordinator_spawns;
     }
+    const days = view.auto_archive_days;
+    if (typeof days === "number" && Number.isInteger(days) && days >= 0) settings.auto_archive_days = days;
     return Object.keys(settings).length ? settings : null;
 }

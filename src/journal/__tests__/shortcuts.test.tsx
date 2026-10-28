@@ -75,9 +75,9 @@ const key = (over: Partial<Key>): Key => ({
 
 describe("matchShortcut", () => {
     it("uses Cmd on a Mac and Ctrl elsewhere", () => {
-        expect(matchShortcut(key({ metaKey: true }), true)).toEqual({ kind: "commandPalette" });
+        expect(matchShortcut(key({ metaKey: true }), true)).toEqual({ kind: "search" });
         expect(matchShortcut(key({ ctrlKey: true }), true)).toBeNull();
-        expect(matchShortcut(key({ ctrlKey: true }), false)).toEqual({ kind: "commandPalette" });
+        expect(matchShortcut(key({ ctrlKey: true }), false)).toEqual({ kind: "search" });
         expect(matchShortcut(key({ metaKey: true }), false)).toBeNull();
     });
 
@@ -85,6 +85,7 @@ describe("matchShortcut", () => {
         const ctrl = (over: Partial<Key>): ReturnType<typeof matchShortcut> =>
             matchShortcut(key({ ctrlKey: true, ...over }), false);
         expect(ctrl({ key: "n" })).toEqual({ kind: "newSession" });
+        expect(ctrl({ key: "K", shiftKey: true })).toEqual({ kind: "commandPalette" });
         expect(ctrl({ key: "F", shiftKey: true })).toEqual({ kind: "searchAllChats" });
         expect(ctrl({ key: "U", shiftKey: true })).toEqual({ kind: "jumpToLastOwnMessage" });
         expect(["1", "2", "3", "4", "5"].map((digit) => ctrl({ key: digit }))).toEqual([
@@ -100,7 +101,6 @@ describe("matchShortcut", () => {
         expect(matchShortcut(key({ key: "f", ctrlKey: true }), false)).toBeNull();
         expect(matchShortcut(key({ key: "6", ctrlKey: true }), false)).toBeNull();
         expect(matchShortcut(key({ key: "k", ctrlKey: true, altKey: true }), false)).toBeNull();
-        expect(matchShortcut(key({ key: "k", ctrlKey: true, shiftKey: true }), false)).toBeNull();
         expect(matchShortcut(key({ key: "n", ctrlKey: true, metaKey: true }), false)).toBeNull();
         expect(matchShortcut(key({ key: "k" }), false)).toBeNull();
     });
@@ -170,23 +170,23 @@ describe("app shortcuts", () => {
         input.dispatchEvent(new Event("input", { bubbles: true }));
     }
 
-    it("⌘K opens the slash palette with every command, and ⌘K again closes it", async () => {
+    it("⇧⌘K opens the slash palette with every command, and ⇧⌘K again closes it", async () => {
         await render(signedInClient());
-        const event = await press("k");
+        const event = await press("K", { shiftKey: true });
         expect(event.defaultPrevented).toBe(true);
         expect(palette()).not.toBeNull();
         expect(paletteRows()).toContain("/start");
         expect(paletteRows()).toContain("!esc");
         expect(document.activeElement).toBe(document.querySelector(".mj_CommandPalette_input"));
-        await press("k", {}, document.activeElement!);
+        await press("K", { shiftKey: true }, document.activeElement!);
         expect(palette()).toBeNull();
     });
 
-    it("⌘K closes the palette after focus has left its field", async () => {
+    it("⇧⌘K closes the palette after focus has left its field", async () => {
         await render(signedInClient());
-        await press("k");
+        await press("K", { shiftKey: true });
         (document.activeElement as HTMLElement).blur();
-        const event = await press("k");
+        const event = await press("K", { shiftKey: true });
         expect(event.defaultPrevented).toBe(true);
         expect(palette()).toBeNull();
     });
@@ -195,7 +195,7 @@ describe("app shortcuts", () => {
         jest.useFakeTimers();
         try {
             await render(signedInClient());
-            await press("k");
+            await press("K", { shiftKey: true });
             const input = document.querySelector<HTMLInputElement>(".mj_CommandPalette_input")!;
             await act(async () => type(input, "/sta"));
             expect(paletteRows()).toEqual(["/start", "/status"]);
@@ -214,7 +214,7 @@ describe("app shortcuts", () => {
 
     it("Escape closes the palette and leaves the draft alone", async () => {
         await render(signedInClient());
-        await press("k");
+        await press("K", { shiftKey: true });
         await press("Escape", { ctrlKey: false }, document.querySelector(".mj_CommandPalette_input")!);
         expect(palette()).toBeNull();
         expect(composer().value).toBe("");
@@ -223,7 +223,7 @@ describe("app shortcuts", () => {
     it("keeps Tab inside the palette and gives focus back on close", async () => {
         await render(signedInClient());
         composer().focus();
-        await press("k", {}, composer());
+        await press("K", { shiftKey: true }, composer());
         const input = document.querySelector<HTMLInputElement>(".mj_CommandPalette_input")!;
         expect(input.getAttribute("role")).toBe("combobox");
         expect(document.querySelector('[role="dialog"][aria-modal="true"]')).not.toBeNull();
@@ -234,12 +234,21 @@ describe("app shortcuts", () => {
         expect(document.activeElement).toBe(composer());
     });
 
-    it("⌘K does nothing without a conversation on screen", async () => {
+    it("⇧⌘K does nothing without a conversation on screen", async () => {
         const client = signedInClient();
         await render(client);
         await act(async () => client.openTrackerView({ view: "missions" }));
-        const event = await press("k");
+        const event = await press("K", { shiftKey: true });
         expect(event.defaultPrevented).toBe(false);
+        expect(palette()).toBeNull();
+    });
+
+    it("⌘K opens Search from anywhere", async () => {
+        const client = signedInClient();
+        await render(client);
+        const event = await press("k");
+        expect(event.defaultPrevented).toBe(true);
+        expect(client.getSnapshot().trackerView).toMatchObject({ open: true, view: "search" });
         expect(palette()).toBeNull();
     });
 
@@ -309,13 +318,13 @@ describe("app shortcuts", () => {
         expect(select).not.toHaveBeenCalled();
     });
 
-    it("ignores a held ⌘K's auto-repeat", async () => {
+    it("ignores a held ⇧⌘K's auto-repeat", async () => {
         await render(signedInClient());
-        await press("k");
-        await press("k", { repeat: true }, document.activeElement!);
+        await press("K", { shiftKey: true });
+        await press("K", { shiftKey: true, repeat: true }, document.activeElement!);
         expect(palette()).not.toBeNull();
-        await press("k");
-        await press("k", { repeat: true });
+        await press("K", { shiftKey: true });
+        await press("K", { shiftKey: true, repeat: true });
         expect(palette()).toBeNull();
     });
 

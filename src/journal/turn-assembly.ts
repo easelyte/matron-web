@@ -244,7 +244,8 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
         // demoting it into the collapsed card hides the answer until something else arrives.
         // Text that precedes all of the turn's work stays narration.
         const lastText = texts[texts.length - 1];
-        const promoted = lastText && lastText.itemIndex > 0 && lastText.itemIndex <= lastStepIndex ? texts.length - 1 : -1;
+        const promoted =
+            lastText && lastText.itemIndex > 0 && lastText.itemIndex <= lastStepIndex ? texts.length - 1 : -1;
         // Walk texts backwards so splicing narration into items keeps earlier indexes valid.
         for (let index = texts.length - 1; index >= 0; index -= 1) {
             const entry = texts[index];

@@ -217,9 +217,11 @@ function useObjectUrl(client: MatronJournalClient, mediaId: string): ObjectUrlSt
 
 // The bridge serves non-raster media as application/octet-stream (SVG is deliberately never
 // given image/svg+xml — iOS UIImage can't decode it and inline SVG is script-capable; other
-// types simply aren't in its MIME map). An <img>/<video> cannot render an octet-stream blob,
-// so for the types the viewer paints natively we must re-wrap the cached bytes in a correctly
-// typed Blob. pdf.js reads raw bytes and never needs this; raster arrives as image/* already.
+// types simply aren't in its MIME map), and api.media drops any other active type. An
+// <img>/<video> cannot render an octet-stream blob, so for the types the viewer paints natively
+// we must re-wrap the cached bytes in a correctly typed Blob. SVG is the exception: it becomes a
+// data: URL, never a blob: one (see useRenderableObjectUrl). pdf.js reads raw bytes and never
+// needs this; raster arrives as image/* already.
 export function viewerRetypeMime(
     item: Pick<MediaItem, "kind" | "filename"> & { contentType?: string },
 ): string | undefined {
@@ -239,6 +241,21 @@ export function viewerRetypeMime(
         return "video/mp4";
     }
     return undefined;
+}
+
+const SVG_MIME = "image/svg+xml";
+
+// An SVG typed image/svg+xml is a scriptable document. A blob: URL of it would have the app's
+// origin, so opening the image in a new tab would run its script with the app's storage. A data:
+// URL paints the same in an <img>, but a document opened from one gets an opaque origin of its
+// own (and browsers refuse to open data: URLs as top-level pages at all).
+function svgDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error ?? new Error("Couldn't read the image."));
+        reader.readAsDataURL(blob);
+    });
 }
 
 // Like useObjectUrl, but re-wraps the cached bytes in a correctly-typed Blob for svg/video/audio
@@ -276,8 +293,12 @@ export function useRenderableObjectUrl(
             .then((blob) => {
                 if (cancelled) return;
                 const retyped = blob.type === targetMime ? blob : new Blob([blob], { type: targetMime });
+                if (targetMime === SVG_MIME) return svgDataUrl(retyped);
                 created = URL.createObjectURL(retyped);
-                setTyped({ url: created, loading: false });
+                return created;
+            })
+            .then((url) => {
+                if (!cancelled) setTyped({ url, loading: false });
             })
             .catch((error: unknown) => {
                 if (!cancelled) setTyped({ loading: false, error: errorText(error) });
@@ -832,15 +853,17 @@ function ThumbGlyph({ item, className }: { item: MediaItem; className?: string }
     return <FileIcon className={className} aria-hidden />;
 }
 
-function LoadedThumbImage({ client, mediaId }: { client: MatronJournalClient; mediaId: string }): React.ReactElement {
-    const { url } = useObjectUrl(client, mediaId);
+// useRenderableObjectUrl, not the raw blob: an SVG's fetched bytes carry no image type, and it
+// paints from a data: URL just as the full-size view does.
+function LoadedThumbImage({ client, item }: { client: MatronJournalClient; item: MediaItem }): React.ReactElement {
+    const { url } = useRenderableObjectUrl(client, item);
     return url ? <img className="mj_MediaViewer_thumbImg" src={url} alt="" /> : <FileIcon aria-hidden />;
 }
 
 // The journal serves no thumbnail variant — a thumb paints the full-resolution blob. Fetch it
 // only once the tile has actually scrolled into view, or opening the viewer in an image-heavy
 // conversation downloads every blob in the strip up front just to draw 38px tiles.
-function ThumbImage({ client, mediaId }: { client: MatronJournalClient; mediaId: string }): React.ReactElement {
+function ThumbImage({ client, item }: { client: MatronJournalClient; item: MediaItem }): React.ReactElement {
     const holderRef = useRef<HTMLSpanElement>(null);
     const [visible, setVisible] = useState(false);
     useEffect(() => {
@@ -861,7 +884,7 @@ function ThumbImage({ client, mediaId }: { client: MatronJournalClient; mediaId:
     }, []);
     return (
         <span ref={holderRef} className="mj_MediaViewer_thumbHolder">
-            {visible ? <LoadedThumbImage client={client} mediaId={mediaId} /> : <FileIcon aria-hidden />}
+            {visible ? <LoadedThumbImage client={client} item={item} /> : <FileIcon aria-hidden />}
         </span>
     );
 }
@@ -899,7 +922,7 @@ function ThumbStrip({
                         aria-label={item.filename || item.caption || `Item ${index + 1}`}
                         onClick={() => onSelect(index)}
                     >
-                        {showImage ? <ThumbImage client={client} mediaId={item.mediaId} /> : <ThumbGlyph item={item} />}
+                        {showImage ? <ThumbImage client={client} item={item} /> : <ThumbGlyph item={item} />}
                     </button>
                 );
             })}

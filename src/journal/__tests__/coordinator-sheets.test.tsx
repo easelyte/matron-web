@@ -442,4 +442,71 @@ describe("Coordinator rail entry, chooser and Routines sheet", () => {
             enabled: true,
         });
     });
+    it("creates a spare-allowance routine in tiers, editing, adding and removing one", async () => {
+        const createRoutine = jest.fn().mockResolvedValue({
+            routine: routineRow({
+                id: "rt_10",
+                name: "spare",
+                schedule: null,
+                trigger: { kind: "disk_under", pct: 20 },
+            }),
+        });
+        const client = signedInClient({
+            coordinator: jest.fn().mockResolvedValue({ convo_id: "c_coord", consent: true }),
+            routines: jest.fn().mockResolvedValue({ routines: [] }),
+            createRoutine,
+        });
+        await render(client);
+        await act(async () => container.querySelector<HTMLButtonElement>(".mj_NavRail_settings")!.click());
+        await act(async () =>
+            settingsSheet()!.querySelector<HTMLButtonElement>('button[data-setting="routines"]')!.click(),
+        );
+        await act(async () =>
+            routinesSheet()!.querySelector<HTMLButtonElement>('button[data-action="new-routine"]')!.click(),
+        );
+        const sheet = routinesSheet()!;
+        const type = async (element: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> => {
+            const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement;
+            await act(async () => {
+                Object.getOwnPropertyDescriptor(proto.prototype, "value")!.set!.call(element, value);
+                element.dispatchEvent(new Event("input", { bubbles: true }));
+            });
+        };
+        await type(sheet.querySelector<HTMLInputElement>("#mj-routine-name")!, "spare");
+        await type(sheet.querySelector<HTMLInputElement>("#mj-routine-title")!, "Spare");
+        await type(sheet.querySelector<HTMLTextAreaElement>("#mj-routine-prompt")!, "Spend it.");
+        await act(async () => button(sheet, "When something happens").click());
+        const select = sheet.querySelector<HTMLSelectElement>("#mj-routine-trigger")!;
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(
+                select,
+                "allowance_expiring",
+            );
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        expect(sheet.querySelector('input[aria-label="Percent"]')).toBeNull();
+        expect(sheet.textContent).toContain(
+            "When a weekly limit has 50% unused with 12 h left or 25% unused with 2 h left",
+        );
+        await type(sheet.querySelector<HTMLInputElement>('input[aria-label="Tier 2 hours left"]')!, "3");
+        await act(async () => button(sheet, "Add tier").click());
+        await type(sheet.querySelector<HTMLInputElement>('input[aria-label="Tier 3 unused percent"]')!, "10");
+        await type(sheet.querySelector<HTMLInputElement>('input[aria-label="Tier 3 hours left"]')!, "1");
+        await act(async () => sheet.querySelector<HTMLButtonElement>('button[aria-label="Remove tier 1"]')!.click());
+        await act(async () => sheet.querySelector<HTMLButtonElement>('button[data-action="save-routine"]')!.click());
+        expect(createRoutine).toHaveBeenCalledWith({
+            name: "spare",
+            title: "Spare",
+            prompt: "Spend it.",
+            trigger: {
+                kind: "allowance_expiring",
+                tiers: [
+                    { unused_pct: 25, hours_left: 3 },
+                    { unused_pct: 10, hours_left: 1 },
+                ],
+            },
+            tz: "Europe/London",
+            enabled: true,
+        });
+    });
 });

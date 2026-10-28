@@ -580,6 +580,48 @@ describe("Composer voice recording", () => {
         expect(composerTextarea(container).value).toBe("keep me");
     });
 
+    it("has one send while recording: the composer's own send gives way to the recording bar", async () => {
+        const { container } = await renderComposer();
+        await typeDraft(container, "look at this");
+        expect(button(container, "Send message")).toBeTruthy();
+
+        await startRecording(container);
+
+        expect(container.querySelector('button[aria-label="Send message"]')).toBeNull();
+        expect(container.querySelector('button[aria-label="Record voice message"]')).toBeNull();
+        expect(container.querySelector('textarea[aria-label="Message your agent"]')).toBeNull();
+    });
+
+    it("holds the typed send while the microphone starts, then sends the text with the note", async () => {
+        const request = deferred<MediaStream>();
+        const stream = harness.stream();
+        harness.getUserMedia.mockReturnValueOnce(request.promise);
+        const client = makeClient();
+        const sendMessage = jest.spyOn(client, "sendMessage").mockResolvedValue(true);
+        const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");
+        const { container } = await renderComposer(false, client);
+        await typeDraft(container, "look at this");
+
+        await click(container, "Record voice message");
+
+        expect(button(container, "Send message").disabled).toBe(true);
+        await act(async () => {
+            composerTextarea(container).dispatchEvent(
+                new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+            );
+        });
+        expect(sendMessage).not.toHaveBeenCalled();
+        expect(composerTextarea(container).value).toBe("look at this");
+
+        await act(async () => request.resolve(stream));
+        await click(container, "Stop and send voice message");
+        await advance(0);
+
+        expect(sendMessage).not.toHaveBeenCalled();
+        expect(sendVoiceNote).toHaveBeenCalledTimes(1);
+        expect(sendVoiceNote.mock.calls[0][3]).toBe("look at this");
+    });
+
     it("sends no caption when the draft is empty", async () => {
         const client = makeClient();
         const sendVoiceNote = jest.spyOn(client, "sendVoiceNote").mockResolvedValue("sent");

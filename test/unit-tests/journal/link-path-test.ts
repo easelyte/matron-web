@@ -7,7 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 import { JournalApiError } from "../../../src/journal/api";
 import { MatronJournalClient } from "../../../src/journal/client";
-import { parseOwnTrackerUrl, parseTrackerLinkPath } from "../../../src/journal/link-path";
+import { othersLinkMessage, parseOwnTrackerUrl, parseTrackerLinkPath } from "../../../src/journal/link-path";
 import type { ClientState } from "../../../src/journal/types";
 
 interface Internals {
@@ -79,12 +79,13 @@ describe("MatronJournalClient.openPathLink", () => {
         expect(lookup).toHaveBeenCalledWith("alice", 5, undefined);
     });
 
-    it("leaves another user's link alone", async () => {
+    it("says another user's link can't be shown here, without looking it up", async () => {
         const lookup = jest.fn();
         const client = clientAt("/u/bob/5", lookup);
         await client.openPathLink();
         expect(lookup).not.toHaveBeenCalled();
-        expect(client.getSnapshot().controlError).toBeUndefined();
+        expect(client.getSnapshot().controlError).toBe(othersLinkMessage({ user: "bob", num: 5 }));
+        expect(othersLinkMessage({ user: "bob", num: 5 })).toMatch(/^#5 is on bob's tracker\./);
     });
 
     it("does nothing on a page that is not a link", async () => {

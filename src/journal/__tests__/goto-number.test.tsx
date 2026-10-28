@@ -23,6 +23,7 @@ interface FakeClient {
     lookupNumber: jest.Mock<Promise<NumberLookupOutcome>, [number, AbortSignal?]>;
     openNumberHit: jest.Mock;
     openGoToNumber: jest.Mock;
+    openSearch: jest.Mock;
     closeGoToNumber: jest.Mock;
 }
 
@@ -31,6 +32,7 @@ function fakeClient(outcome: NumberLookupOutcome = { status: "none" }): FakeClie
         lookupNumber: jest.fn().mockResolvedValue(outcome),
         openNumberHit: jest.fn().mockReturnValue(true),
         openGoToNumber: jest.fn(),
+        openSearch: jest.fn(),
         closeGoToNumber: jest.fn(),
     };
 }
@@ -127,18 +129,19 @@ describe("useGoToNumberShortcut", () => {
     const press = (): boolean =>
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", ctrlKey: true, cancelable: true }));
 
-    it("opens the field and swallows the key", async () => {
+    it("opens Search, which does Go to as well, and swallows the key", async () => {
         const client = fakeClient();
         await mount(<Host client={client} enabled />);
         expect(press()).toBe(false);
-        expect(client.openGoToNumber).toHaveBeenCalledTimes(1);
+        expect(client.openSearch).toHaveBeenCalledTimes(1);
+        expect(client.openGoToNumber).not.toHaveBeenCalled();
     });
 
     it("leaves the key alone while disabled", async () => {
         const client = fakeClient();
         await mount(<Host client={client} enabled={false} />);
         expect(press()).toBe(true);
-        expect(client.openGoToNumber).not.toHaveBeenCalled();
+        expect(client.openSearch).not.toHaveBeenCalled();
     });
 });
 

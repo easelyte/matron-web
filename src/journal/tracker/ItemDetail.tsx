@@ -54,6 +54,7 @@ import {
     offeredItemActions,
     resolveActionLabel,
     ROUTE_ELSEWHERE_LABEL,
+    contributorWords,
     spawnConsentRequestId,
     statusRowText,
 } from "./format";
@@ -183,12 +184,15 @@ function useSpawnConsentRows(
 function SpawnConsentCard({
     rows,
     closed,
+    answersBelow,
     onAnswer,
     onOpenRoom,
     onStopSession,
 }: {
     rows: SpawnConsentRows;
     closed: boolean;
+    /** The item carries its own Approve and Decline, drawn under its body. */
+    answersBelow: boolean;
     onAnswer: (decision: AgentSpawnDecision, signal?: AbortSignal) => Promise<void>;
     onOpenRoom: (roomId: string) => void;
     onStopSession: (convoId: string) => void;
@@ -223,7 +227,10 @@ function SpawnConsentCard({
                         ? spawnOutcomeSnippet(outcome)
                         : closed
                           ? "This request is no longer waiting for an answer."
-                          : "The request card hasn't reached this browser yet. It can be approved once it arrives, or from the conversation it was asked in."}
+                          : "The request card hasn't reached this browser yet." +
+                            (answersBelow
+                                ? " Approve or Decline below answers it as the card would."
+                                : " It can be approved once it arrives, or from the conversation it was asked in.")}
                 </p>
                 {roomId ? (
                     <div className="mj_PromptResolved">
@@ -260,7 +267,9 @@ function CommentCard({
 }): React.ReactElement {
     // An agent's comment is headed with the box that wrote it and, when the journal knows it, the
     // conversation (which opens on click); "Agent" only when neither is known.
-    const who = comment.author === "user" ? "You" : author?.box || (author?.conversation ? null : "Agent");
+    // Another person's comment comes with its attribution as `author.box` even when it is marked
+    // as the user's.
+    const who = comment.author === "user" && !author ? "You" : author?.box || (author?.conversation ? null : "Agent");
     const convoId = author?.convoId;
     return (
         <div className={`mj_TrackerComment mj_TrackerComment_${comment.author}`}>
@@ -747,6 +756,7 @@ export function ItemDetail({
     // Always drawn for an item filed from a conversation, unless the detail is shown inside that
     // conversation; a granted or shared item has no origin ("") and so no row.
     const showOrigin = item.origin_convo_id !== "" && item.origin_convo_id !== selectedConvoId;
+    const filedBy = contributorWords(item.contributor);
     const handoverCaption = useHandoverCaption(item.handover);
 
     // The item's mission, named from the missions list (it follows renames live).
@@ -774,10 +784,12 @@ export function ItemDetail({
     // Send then retries exactly what is left: the failed comment again as the same files, and each
     // comment keeps its key across retries of the same draft so the server can dedupe an
     // ambiguous-delivery replay (F1).
+    // While the microphone is starting for this box, a send would post the text alone and leave the
+    // note to follow as a comment of its own; the recording bar's stop-and-send is the one send then.
     const send = async (): Promise<void> => {
         const body = reply.trim();
         const files = staged;
-        if ((!body && files.length === 0) || busy) return;
+        if ((!body && files.length === 0) || busy || voice.voiceState === "requesting") return;
         setBusy(true);
         setReplyFailure(null);
         try {
@@ -931,7 +943,13 @@ export function ItemDetail({
     // label gets a fresh one. Both the slot and the marker name the item they belong to: this view
     // is reused when another item is opened, and a key from one item's failed tap must never be
     // replayed as another item's answer.
-    const offeredActions = offeredItemActions(item);
+    // A spawn item whose answerable card is drawn above answers on the card's own buttons; the
+    // item's Approve and Decline (the same answer on the journal) would only repeat them. Until the
+    // card read finishes neither is offered, so a button cannot appear and then vanish under a tap.
+    const cardAnswers =
+        !!spawnRequestId &&
+        (spawnRows === undefined || (!!spawnRows.request && isAnswerableAgentSpawn(spawnRows.request.payload)));
+    const offeredActions = cardAnswers ? [] : offeredItemActions(item);
     const [sendingAction, setSendingAction] = useState<{ itemId: string; label: string } | null>(null);
     const itemTapKeyRef = useRef<{ itemId: string; label: string; key: string } | null>(null);
     const chosenAction =
@@ -1125,7 +1143,7 @@ export function ItemDetail({
             </div>
 
             <div className="mj_TrackerDetail_scroll" ref={scrollRef}>
-                {missionNum || showOrigin || handoverCaption ? (
+                {missionNum || showOrigin || filedBy || handoverCaption ? (
                     <div className="mj_TrackerContext">
                         {missionNum ? (
                             <button
@@ -1154,6 +1172,9 @@ export function ItemDetail({
                                 </span>
                                 <span className="mj_TrackerContext_text">Opened from {originLabel}</span>
                             </button>
+                        ) : null}
+                        {filedBy ? (
+                            <div className="mj_TrackerContext_row mj_TrackerContributor">Filed by {filedBy}</div>
                         ) : null}
                         {handoverCaption ? <div className="mj_TrackerHandover">{handoverCaption}</div> : null}
                     </div>
@@ -1189,6 +1210,7 @@ export function ItemDetail({
 
                 {spawnRequestId && spawnRows ? (
                     <SpawnConsentCard
+                        answersBelow={offeredActions.length > 0}
                         rows={spawnRows}
                         closed={item.state === "closed"}
                         onAnswer={answerSpawn}
@@ -1347,7 +1369,9 @@ export function ItemDetail({
                             type="button"
                             className="mj_TrackerComposer_send"
                             aria-label="Send reply"
-                            disabled={(!reply.trim() && staged.length === 0) || busy}
+                            disabled={
+                                (!reply.trim() && staged.length === 0) || busy || voice.voiceState === "requesting"
+                            }
                             onClick={() => void send()}
                         >
                             <SendIcon />

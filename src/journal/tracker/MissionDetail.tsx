@@ -39,6 +39,7 @@ import {
     kindLabel,
     missionItemGroups,
     missionLabel,
+    contributorWords,
     oneLine,
     statusByline,
 } from "./format";
@@ -56,6 +57,7 @@ function MilestoneRow({
 }): React.ReactElement {
     const hint = [convo?.box, convo?.title ? displayRawTitle(convo.title) : undefined].filter(Boolean).join(" · ");
     const body = oneLine(milestone.body);
+    const by = contributorWords(milestone.contributor);
     return (
         <button
             type="button"
@@ -74,6 +76,7 @@ function MilestoneRow({
                 {body ? <span className="mj_TrackerMilestoneRow_body">{body}</span> : null}
                 <span className="mj_TrackerMilestoneRow_meta">
                     <span>{formatRelativeTime(milestone.created_at)}</span>
+                    {by ? <span className="mj_TrackerContributor">by {by}</span> : null}
                     {hint ? <span className="mj_TrackerMilestoneRow_hint">{hint}</span> : null}
                 </span>
             </span>
@@ -301,7 +304,10 @@ export function MissionDetail({
     const { mission } = detail;
     const closed = mission.state === "closed";
     const status = mission.status?.trim() ? mission.status : null;
-    const byline = status ? statusByline(mission.status_updated_at, mission.status_by, now) : null;
+    const byline = status
+        ? statusByline(mission.status_updated_at, mission.status_by, now, mission.status_contributor)
+        : null;
+    const handedTo = closed ? mission.handed_over?.to?.trim() || null : null;
 
     // Every open project; the button only when there is one besides the mission's own.
     const targets = moveTargets(projects);
@@ -379,7 +385,7 @@ export function MissionDetail({
                                 closed ? "mj_TrackerStateLabel_closed" : "mj_TrackerStateLabel_open"
                             }`}
                         >
-                            {closed ? "Closed" : "Open"}
+                            {handedTo ? `Handed to ${handedTo}` : closed ? "Closed" : "Open"}
                         </span>
                         {canMove ? (
                             <button

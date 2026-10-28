@@ -721,6 +721,149 @@ if (new URLSearchParams(window.location.search).has("notices")) {
     );
 }
 
+// ?people=out swaps c1's thread for the user's own agent asking for a room with bob's agent;
+// ?people=talk for the card alice's talk request draws in the People conversation. Both are
+// answered on their tracker item, which the fixture client "finds" as #31.
+const peopleParam = new URLSearchParams(window.location.search).get("people");
+// ?people=handover-out: the user's agent asks to hand a mission over to bob (the owner's card,
+// with the files to tick); ?people=handover-in: alice's hand-over waiting in the People
+// conversation. Neither answer is sent anywhere: the fixture client answers as the journal would.
+if (peopleParam === "handover-out" || peopleParam === "handover-in") {
+    const out = peopleParam === "handover-out";
+    const brief = [
+        "**Where it stands.** The cover editor ships colour themes and the palette tokens are final.",
+        "",
+        "**Next.** The export dialog: PDF works, the PNG path still drops the bleed.",
+        "",
+        "**Watch out.** Proofs print darker than the screen; compare against the printed swatch.",
+    ].join("\n");
+    const card: JournalEvent = {
+        seq: 3,
+        convo_id: "c1",
+        ts: T + 2 * 60_000,
+        sender: "journal",
+        type: "permission_request",
+        payload: {
+            kind: "mission_handover",
+            direction: out ? "out" : "in",
+            grant_id: out ? "gr_1" : "gr_2",
+            level: "owner",
+            owner: { user_id: out ? 1 : 2, name: out ? "operator" : "alice" },
+            grantee: out ? { name: "bob", address: "bob" } : { name: "operator", address: "operator" },
+            subject: out
+                ? { kind: "mission", id: "ms_1", num: 4, title: "Cover editor colour themes" }
+                : { kind: "mission", title: "Cover editor colour themes" },
+            brief,
+            preview: {
+                missions: 1,
+                milestones: 6,
+                items: 4,
+                comments: 11,
+                attachments: out
+                    ? [
+                          {
+                              media_id: "md_1",
+                              name: "palette-tokens.png",
+                              mime: "image/png",
+                              size: 182_000,
+                              item_num: 12,
+                          },
+                          {
+                              media_id: "md_2",
+                              name: "proof-gloss.pdf",
+                              mime: "application/pdf",
+                              size: 2_400_000,
+                              item_num: 14,
+                          },
+                          {
+                              media_id: "md_3",
+                              name: "proof-matte.pdf",
+                              mime: "application/pdf",
+                              size: 2_300_000,
+                              item_num: 14,
+                          },
+                      ]
+                    : 3,
+            },
+            ...(out ? { from_device_id: 1, from_name: "box-a", from_convo_id: "c1" } : {}),
+        },
+    };
+    const lead: JournalEvent[] = out
+        ? [
+              {
+                  seq: 1,
+                  convo_id: "c1",
+                  ts: T,
+                  sender: "user:operator",
+                  type: "text",
+                  payload: { body: "bob is taking over the cover editor. Hand the mission over to him.", from: "user" },
+              },
+              {
+                  seq: 2,
+                  convo_id: "c1",
+                  ts: T + 60_000,
+                  sender: "agent:box-a",
+                  type: "text",
+                  payload: {
+                      body: "I wrote a brief and asked to hand it over; it needs your OK below.",
+                      from: "assistant",
+                  },
+              },
+          ]
+        : [];
+    events.splice(0, events.length, ...lead, card);
+}
+if (peopleParam === "out" || peopleParam === "talk") {
+    const out = peopleParam === "out";
+    const card: JournalEvent = {
+        seq: 3,
+        convo_id: "c1",
+        ts: T + 2 * 60_000,
+        sender: out ? "agent:box-a" : "journal",
+        type: "permission_request",
+        payload: {
+            kind: "person_room",
+            direction: out ? "out" : "in",
+            room_link_id: out ? "rl_1" : "rl_2",
+            person: { name: out ? "bob" : "alice" },
+            session_title: out ? "Cover editor" : null,
+            topic: "Cover editor colours",
+            justification: out
+                ? "bob's session owns the palette tokens the editor reads."
+                : "We need the palette tokens before the cover editor ships.",
+            mission: null,
+            ...(out
+                ? { from_device_id: 1, from_name: "box-a" }
+                : {
+                      talk: true,
+                      contact_pending: true,
+                      choices: ["New session", "My Coordinator", "Pick a session", "Decline"],
+                  }),
+        },
+    };
+    const lead: JournalEvent[] = out
+        ? [
+              {
+                  seq: 1,
+                  convo_id: "c1",
+                  ts: T,
+                  sender: "user:operator",
+                  type: "text",
+                  payload: { body: "Can you check the cover editor colours with bob's agent?", from: "user" },
+              },
+              {
+                  seq: 2,
+                  convo_id: "c1",
+                  ts: T + 60_000,
+                  sender: "agent:box-a",
+                  type: "text",
+                  payload: { body: "Asking for a room with bob's session now.", from: "assistant" },
+              },
+          ]
+        : [];
+    events.splice(0, events.length, ...lead, card);
+}
+
 // ?toolstream adds a running tool_stream tile with more output than its collapsed pane shows.
 const toolStreams: ClientState["toolStreams"] = {};
 if (new URLSearchParams(window.location.search).has("toolstream")) {
@@ -894,11 +1037,63 @@ const signedOutState: ClientState = {
 // The client keeps its state private; mirror the test harness's internal override.
 (client as unknown as { state: ClientState }).state = fixtureParams.get("screen") === "login" ? signedOutState : state;
 
+// ?links=1: an agent message whose tracker links show what each number points at — a bare link
+// (title shown), a link that carries the right title (kind only), one whose title belongs to
+// another number (flagged), and a number that does not exist (flagged).
+if (fixtureParams.get("links") === "1") {
+    const own = `${window.location.origin}/u/${encodeURIComponent(SESSION.username)}`;
+    state.events = [
+        ...state.events,
+        {
+            seq: 40,
+            convo_id: "c1",
+            ts: T + 900,
+            sender: "agent:claude",
+            type: "text",
+            payload: {
+                body: [
+                    `Filed the follow-ups: [#412](${own}/412) for the backup check, and [#415 Rotate the API keys](${own}/415).`,
+                    "",
+                    `The merge question is [#418 Merge: nginx config](${own}/418). The old runbook was [#9999](${own}/9999).`,
+                ].join("\n"),
+            },
+        },
+    ];
+    const titles: Record<number, { kind: "item" | "mission"; title: string }> = {
+        412: { kind: "item", title: "Verify last night's backup with a test restore" },
+        415: { kind: "item", title: "Rotate the API keys before Friday" },
+        418: { kind: "mission", title: "Postgres upgrade dry-run" },
+    };
+    (client as unknown as Record<string, unknown>).trackerLinkInfo = async (_user: string | null, num: number) => {
+        const row = titles[num];
+        return row
+            ? { status: "found", hit: { kind: row.kind, id: `x${num}`, num, title: row.title } }
+            : { status: "none" };
+    };
+}
+
 // ?missions=1 puts the selected conversation on missions, so the header shows its mission chip
 // (current one, +2 for an also-on and an earlier one).
 {
     const stub = client as unknown as Record<string, unknown>;
     stub.loadConversationMissions = async () => undefined;
+    if (peopleParam) stub.findConsentItem = async () => 31;
+    if (peopleParam === "handover-out" || peopleParam === "handover-in") {
+        const out = peopleParam === "handover-out";
+        const grant = (state: string) => ({
+            id: out ? "gr_1" : "gr_2",
+            direction: out ? "out" : "in",
+            subject_kind: "mission",
+            level: "owner",
+            state,
+        });
+        // ?answered=1 draws the card as the journal reports it after the answer.
+        const answered = fixtureParams.get("answered") === "1";
+        stub.loadGrant = async () =>
+            grant(answered ? (out ? "pending" : "active") : out ? "awaiting_owner" : "pending");
+        stub.answerGrant = async (_id: string, answer: { decision: string }) =>
+            grant(answer.decision === "decline" ? "declined" : out ? "pending" : "active");
+    }
     if (fixtureParams.get("missions") === "1") {
         const now = Date.now();
         const link = (
@@ -1048,6 +1243,102 @@ const signedOutState: ClientState = {
 // ?tracker=inbox | ?tracker=item opens the tracker pane on canned data (unify step 5); the
 // network loads are stubbed so the fixture stays offline.
 const trackerMode = fixtureParams.get("tracker");
+// ?tracker=search opens the Search page with canned results (?q= sets its text; default "nginx").
+if (trackerMode === "search") {
+    const stub = client as unknown as Record<string, unknown>;
+    for (const name of ["loadInbox", "loadMissions", "loadItem", "loadMemories", "loadMission"]) {
+        stub[name] = async () => undefined;
+    }
+    const q = fixtureParams.get("q") ?? "nginx";
+    const results = [
+        {
+            kind: "item",
+            id: "it_1",
+            num: 1755,
+            name: null,
+            title: "Pick the nginx timeout for the proxy",
+            state: "open",
+            mission_num: 1706,
+            why: "exact",
+            field: "title",
+            snippet: null,
+        },
+        {
+            kind: "item",
+            id: "it_2",
+            num: 1712,
+            name: null,
+            title: "Roll the nginx config to box-b",
+            state: "open",
+            mission_num: 1706,
+            why: "words",
+            field: "title",
+            snippet: null,
+        },
+        {
+            kind: "mission",
+            id: "ms_1",
+            num: 1706,
+            name: "Proxy",
+            title: "Proxy hardening",
+            state: "open",
+            mission_num: null,
+            why: "exact",
+            field: "milestone",
+            snippet: "**nginx** reload is now zero-downtime",
+        },
+        {
+            kind: "project",
+            id: "pj_1",
+            num: 1700,
+            name: null,
+            title: "Platform launch",
+            state: "open",
+            mission_num: null,
+            why: "similar",
+            field: "project",
+            snippet: null,
+        },
+        {
+            kind: "memory",
+            id: "proxy-timeouts",
+            num: null,
+            name: "proxy-timeouts",
+            title: "Keep nginx proxy_read_timeout at 120s on every box",
+            state: null,
+            mission_num: null,
+            why: "exact",
+            field: "description",
+            snippet: null,
+        },
+    ];
+    const chats = [
+        {
+            convo_id: "c1",
+            title: "🐣 [dc] matron-web · deploy",
+            count: 3,
+            exact: true,
+            live: true,
+            top: {
+                seq: 4,
+                ts: Date.now(),
+                sender: "agent:box-a",
+                excerpt: "…restarted **nginx** on box-a, then checked the error rate…",
+            },
+        },
+    ];
+    stub.searchEverything = async (raw: string) => {
+        const query = raw.trim();
+        if (!query) return;
+        (client as unknown as { patch(p: Partial<ClientState>): void }).patch({
+            globalSearch: { query, results, chats, loading: false, failed: false },
+        } as Partial<ClientState>);
+    };
+    const tracker = state as unknown as Record<string, unknown>;
+    tracker.globalSearchQuery = q;
+    tracker.trackerView = { open: true, view: "search" };
+}
+
 if (trackerMode === "projects" || trackerMode === "project" || trackerMode === "mission") {
     const now = Date.now();
     const project = (
@@ -1397,6 +1688,66 @@ if (trackerMode === "inbox" || trackerMode === "item") {
         stub[name] = async () => undefined;
     }
     const tracker = state as unknown as Record<string, unknown>;
+    // The spare-allowance backlog tab: two tasks in order, the first already started.
+    items.push(
+        {
+            ...baseItem,
+            id: "it_1801",
+            num: 1801,
+            kind: "task",
+            awaiting: "agent",
+            rank: 1,
+            labels: ["spare-allowance", "dispatched"],
+            title: "Flaky-test hunt: storefront suite",
+            created_at: now - 2 * day,
+            updated_at: now - 3_600_000,
+        } as (typeof items)[number],
+        {
+            ...baseItem,
+            id: "it_1802",
+            num: 1802,
+            kind: "task",
+            awaiting: "agent",
+            rank: 2,
+            labels: ["spare-allowance"],
+            title: "Dependency upgrade sweep: infrastructure repo",
+            created_at: now - 2 * day,
+            updated_at: now - 2 * day,
+        } as (typeof items)[number],
+    );
+    // ?consentrows=1: consent requests waiting on the user, each answered from its own row.
+    if (fixtureParams.has("consentrows")) {
+        const ask = (num: number, title: string, body: string, origin: string): (typeof items)[number] =>
+            ({
+                ...baseItem,
+                id: `it_${num}`,
+                num,
+                kind: "question",
+                awaiting: "user",
+                labels: ["consent"],
+                actions: ["Approve", "Decline"],
+                title,
+                body,
+                origin_convo_id: origin,
+                created_at: now - 4 * 60_000,
+                updated_at: now - 4 * 60_000,
+            }) as (typeof items)[number];
+        items.unshift(
+            ask(1901, "box-b asks to chat with box-a — review", "**box-b** asks to open a chat with **box-a**.", "c2"),
+            ask(
+                1902,
+                "Approve spawn on box-a — Run the suite and fix flakes",
+                "**box-b** asks to start a new agent session on **box-a**.",
+                "c2",
+            ),
+            ask(
+                1903,
+                "Approve file transfer: build.log (2.1 MB) from box-b to review",
+                '**box-b** asks to send a file into the room "review".',
+                "c3",
+            ),
+        );
+    }
     tracker.inboxItems = items;
     tracker.missions = [
         {
@@ -1494,8 +1845,36 @@ if (trackerMode === "inbox" || trackerMode === "item") {
                     author: "agent",
                     device_id: 3,
                     kind: "comment",
-                    body: "A comment whose session is not named shows the box alone.",
-                    attachments: [],
+                    body:
+                        fixtureParams.get("images") === "1"
+                            ? "The divider at full size:\n\n![](attachment:fixture-photo-2)\n\nAnd the two crops:"
+                            : "A comment whose session is not named shows the box alone.",
+                    // ?images=1: an inline image and two trailing ones, each captioned `name · size`.
+                    attachments:
+                        fixtureParams.get("images") === "1"
+                            ? [
+                                  {
+                                      blob_ref: "fixture-photo-2",
+                                      mime: "image/png",
+                                      name: "divider_4867x3071_final_export_for_print_reviewed_v2.png",
+                                      size: 40_789_000,
+                                      width: 320,
+                                      height: 240,
+                                  },
+                                  {
+                                      blob_ref: "fixture-photo-4",
+                                      mime: "image/png",
+                                      name: "crop-left.png",
+                                      size: 812_000,
+                                  },
+                                  {
+                                      blob_ref: "fixture-photo-6",
+                                      mime: "image/jpeg",
+                                      name: "Screenshot 2026-10-22 at 09.14.03.jpg",
+                                      size: 2_300_000,
+                                  },
+                              ]
+                            : [],
                     meta: null,
                     created_at: now - 20 * 60_000,
                     device_name: "build-box",
@@ -1555,6 +1934,57 @@ if (trackerMode === "inbox" || trackerMode === "item") {
             tracker.inboxItems = [consentItem, ...items];
             tracker.trackerView = { open: true, view: "inbox", selectedItemId: 42 };
             tracker.trackerItem = { item: consentItem, comments: [] };
+        }
+        // ?contributor=1: an item bob's agent filed in one of the user's missions under a
+        // contribute share, with bob's own reply and the user's answer.
+        if (fixtureParams.get("contributor") === "1") {
+            const contributed = {
+                ...baseItem,
+                id: "it_61",
+                num: 61,
+                kind: "question",
+                awaiting: "user",
+                title: "Use the matte paper stock for the cover proofs?",
+                body: "The gloss proofs show banding on the dark gradient. Matte hides it and costs the same.",
+                mission_id: "ms_1706",
+                mission_num: 1706,
+                origin_device_id: 0,
+                created_at: now - 3 * 3_600_000,
+                updated_at: now - 20 * 60_000,
+                comment_count: 2,
+                last_comment_at: now - 20 * 60_000,
+                contributor: { name: "bob", via: "agent" },
+            };
+            const contributedComment = (id: string, over: Record<string, unknown>) => ({
+                id,
+                item_id: "it_61",
+                author: "agent",
+                device_id: 0,
+                kind: "comment",
+                attachments: [],
+                meta: null,
+                convo_id: null,
+                ...over,
+            });
+            tracker.inboxItems = [contributed, ...items];
+            tracker.trackerView = { open: true, view: "inbox", selectedItemId: 61 };
+            tracker.trackerItem = {
+                item: contributed,
+                comments: [
+                    contributedComment("cm_61a", {
+                        body: "I checked both proofs on the light table: matte is the clear winner.",
+                        created_at: now - 2 * 3_600_000,
+                        contributor: { name: "bob", via: "user" },
+                        attribution: "bob",
+                    }),
+                    contributedComment("cm_61b", {
+                        author: "user",
+                        device_id: 1,
+                        body: "Agreed on matte. Can you send the updated proof once it is printed?",
+                        created_at: now - 20 * 60_000,
+                    }),
+                ],
+            };
         }
     }
 }
@@ -1825,6 +2255,26 @@ let opsMode: OpsFixtureMode | null = null;
             last_fired_at: null,
             last_outcome: null,
         },
+        {
+            ...base,
+            id: "rt_6",
+            name: "spare-allowance",
+            title: "Spare weekly allowance before its reset",
+            schedule: null,
+            trigger: {
+                kind: "allowance_expiring",
+                threshold: 50,
+                tiers: [
+                    { unusedPct: 50, hoursLeft: 12 },
+                    { unusedPct: 25, hoursLeft: 2 },
+                ],
+            },
+            prompt: "Routine spare-allowance: follow the Spare weekly allowance section of your playbook.",
+            enabled: true,
+            next_at: null,
+            last_fired_at: null,
+            last_outcome: null,
+        },
     ];
     state.coordinatorConvoId = fixtureParams.get("coordinator") === "none" ? null : "c2";
     const current = (): Routine[] => client.getSnapshot().routines?.list ?? routines;
@@ -1937,6 +2387,51 @@ let opsMode: OpsFixtureMode | null = null;
             : { status: "waiting", expires_in: 290 };
     stub.linkApprove = async () => undefined;
     stub.linkDeny = async () => undefined;
+    // Settings → Security: two-factor on, and Change Password… accepts "old-password" as the
+    // current password (anything else is a wrong password), signing out the phone when asked.
+    stub.twoFactorStatus = async () => ({
+        enabled: true,
+        enabled_at: now - 12 * DAY_MS,
+        recovery_codes_left: 8,
+        required: false,
+        available: true,
+    });
+    // ?admin=1 makes the fixture account an admin, so Settings → Users shows.
+    stub.isAdmin = async () => fixtureParams.has("admin");
+    stub.changePassword = async (current: string, _next: string, signOutOthers: boolean) => {
+        if (current !== "old-password") throw new JournalApiError("That password is incorrect.", 401, "bad_password");
+        if (!signOutOthers) return { signed_out: 0 };
+        roster = roster.filter((device) => device.is_self || device.kind === "agent");
+        return { signed_out: 1 };
+    };
+    // Email address: ?email=none starts without one; "old-password" is the right password here too.
+    let accountEmail: string | null = fixtureParams.get("email") === "none" ? null : "operator@example.com";
+    stub.accountEmail = async () => ({ email: accountEmail, reset_by_email: !fixtureParams.has("nomail") });
+    stub.setAccountEmail = async (password: string, email: string | null) => {
+        if (password !== "old-password") throw new JournalApiError("That password is incorrect.", 401, "bad_password");
+        if (email === "alice@example.com") {
+            throw new JournalApiError("Another account already uses that address.", 409, "email_taken");
+        }
+        accountEmail = email;
+        return { email };
+    };
+    let users = [
+        { id: 1, name: "alice", email: "alice@example.com", is_admin: true },
+        { id: 2, name: "bob", email: null as string | null, is_admin: false },
+        { id: 3, name: "carol", email: "carol@example.com", is_admin: false },
+        { id: 4, name: "operator", email: accountEmail, is_admin: true },
+    ];
+    stub.listUsers = async () => users;
+    stub.setUserEmail = async (id: number, email: string | null) => {
+        users = users.map((user) => (user.id === id ? { ...user, email } : user));
+        return users.find((user) => user.id === id);
+    };
+    // Password reset: the server mails links; a reset link whose token is "spent" has been used.
+    stub.forgotPasswordEnabled = async () => true;
+    stub.forgotPassword = async () => undefined;
+    stub.resetPassword = async (_server: string, token: string) => {
+        if (token === "spent") throw new JournalApiError("This link has expired.", 400, "invalid_token");
+    };
 }
 
 // Media stubs: a short generated tone for the voice note, a 404 for the reaped blob.
@@ -2579,6 +3074,41 @@ const trackerMissionDetail: MissionDetail = {
 // Expose hooks so the Playwright driver can drive states (stage files → upload modal, etc.).
 const runbook = (): File => new File([new Uint8Array(1024)], "deploy-runbook.pdf", { type: "application/pdf" });
 const errorLog = (): File => new File([new Uint8Array(512)], "error-log.txt", { type: "text/plain" });
+
+// Expose hooks so the Playwright driver can drive states (stage files → attachment tray, etc.).
+// ?boxes=1: the New session sheet's box list with each box's limits, their resets (session and
+// week, with how long until a far one) and capacity — open it with the rail's New session button.
+if (fixtureParams.get("boxes") === "1") {
+    const stub = client as unknown as Record<string, unknown>;
+    const now = Date.now();
+    const hours = (h: number): string => new Date(now + h * 3_600_000).toISOString();
+    const box = (device_id: number, name: string) => ({
+        device_id,
+        kind: "agent",
+        name,
+        connected: true,
+        is_self: false,
+    });
+    stub.listAgents = async () => [box(52, "box-a"), box(56, "box-b"), box(63, "box-c")];
+    const status = (session: number, sessionReset: number, week: number, weekReset: number, live: number) => ({
+        reported_at: now - 4 * 60_000,
+        activity: { live_sessions: live, last_hour: [] },
+        limits: {
+            as_of: now - 4 * 60_000,
+            lines: [
+                { id: "session", label: "Session", percent: session, resets_at: hours(sessionReset) },
+                { id: "week_all", label: "Week (all models)", percent: week, resets_at: hours(weekReset) },
+            ],
+        },
+        disk: { free_bytes: 35 * 1024 ** 3, total_bytes: 145 * 1024 ** 3 },
+    });
+    state.boxStatuses = {
+        52: status(0, 4.3, 53, 6.2, 2),
+        56: status(4, 3, 88, 21, 3),
+        63: status(7, 3, 5, 162, 6),
+    } as ClientState["boxStatuses"];
+}
+
 (window as unknown as { __matron: unknown }).__matron = {
     client,
     openFiles: (path: string = FILES_ROOT) => {

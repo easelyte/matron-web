@@ -6,6 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    type AccountEmail,
     type BoxDefaults,
     type BoxDefaultsPatch,
     type BoxStatus,
@@ -14,10 +15,15 @@ import {
     type DeviceDTO,
     type DevicesResponse,
     endpointUrl,
+    type Grant,
+    type GrantAnswer,
     type LinkStart,
     type LinkStatus,
     type PairPreview,
     type LoginResponse,
+    type TwoFactorLoginResponse,
+    type TwoFactorSetup,
+    type TwoFactorStatus,
     type MatronConfig,
     type MessagesResponse,
     type ConversationMissionLink,
@@ -25,6 +31,7 @@ import {
     type MissionDetail,
     type NumberLookup,
     type SearchResponse,
+    type GlobalSearchResponse,
     type SnapshotResponse,
     type TrackerAwaiting,
     type TrackerComment,
@@ -43,6 +50,7 @@ import {
     type ProjectFeedKind,
     type ProjectFeedPage,
     type UserDefaults,
+    type JournalUser,
 } from "./types";
 import { parseMetrics, type JournalMetrics } from "./ops/model";
 
@@ -101,6 +109,34 @@ interface ItemPatch {
     links?: TrackerLink[];
     awaiting?: TrackerAwaiting | null;
     mission?: string | number | null;
+}
+
+// Media bytes are uploaded by agents and other people, and every blob: URL made from them has the
+// app's own origin. A blob typed text/html or image/svg+xml would run as a document on that origin
+// if the user opened its URL in a new tab (the `download` attribute does not apply there), so a
+// fetched blob keeps its type only when the browser can never treat it as a scriptable document:
+// raster images, audio and video. Everything else becomes application/octet-stream. The viewer
+// re-types bytes for the kinds it paints itself (media-viewer.tsx: viewerRetypeMime).
+const INERT_IMAGE_TYPES = new Set([
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/avif",
+    "image/bmp",
+    "image/heic",
+    "image/heif",
+    "image/tiff",
+    "image/x-icon",
+    "image/vnd.microsoft.icon",
+]);
+
+export function inertMediaType(contentType: string | null | undefined): string {
+    const type = (contentType ?? "").trim().toLowerCase();
+    const base = type.split(";")[0].trim();
+    if (INERT_IMAGE_TYPES.has(base)) return base;
+    if (/^(?:audio|video)\/[a-z0-9.+-]+$/.test(base)) return type;
+    return "application/octet-stream";
 }
 
 export class JournalApiError extends Error {
@@ -390,6 +426,26 @@ export function knownErrorMessage(code: string | undefined): string | undefined 
     switch (code) {
         case "bad_credentials":
             return "The username or password is incorrect.";
+        case "bad_password":
+            return "That password is incorrect.";
+        case "weak_password":
+            return "Use at least 8 characters.";
+        case "bad_email":
+            return "Enter a valid email address.";
+        case "email_taken":
+            return "Another account already uses that address.";
+        case "invalid_token":
+            return "This link has expired or has already been used. Ask for a new one.";
+        case "bad_code":
+            return "That code didn't work. Check your authenticator app and try again.";
+        case "two_factor_ticket_invalid":
+            return "Sign-in timed out. Enter your password again.";
+        case "two_factor_unavailable":
+            return "This server isn't set up for two-factor sign-in.";
+        case "no_pending_setup":
+            return "That setup expired. Start again.";
+        case "two_factor_required":
+            return "This server requires two-factor sign-in, so it can't be turned off.";
         case "locked_out":
             return "Too many failed attempts. Try again later.";
         case "rate_limited":
@@ -417,6 +473,19 @@ export function knownErrorMessage(code: string | undefined): string | undefined 
     }
 }
 
+/** One row of GET /users, or undefined for anything malformed. */
+export function parseJournalUser(raw: unknown): JournalUser | undefined {
+    if (typeof raw !== "object" || raw === null) return undefined;
+    const user = raw as Record<string, unknown>;
+    if (typeof user.id !== "number" || typeof user.name !== "string") return undefined;
+    return {
+        id: user.id,
+        name: user.name,
+        email: typeof user.email === "string" && user.email ? user.email : null,
+        is_admin: user.is_admin === true,
+    };
+}
+
 export class JournalApi {
     private devicesRequest?: { promise: Promise<unknown>; controller: AbortController };
 
@@ -440,6 +509,152 @@ export class JournalApi {
     /** GET /metrics: journal health for the Ops page (head seq, per-device lag, DB size). */
     public async metrics(): Promise<JournalMetrics | null> {
         return parseMetrics(await this.json<unknown>("/metrics"));
+    }
+
+    /** POST /login/2fa: trade the sign-in ticket from /login and a code for a token. */
+    public loginTwoFactor(ticket: string, code: string): Promise<TwoFactorLoginResponse> {
+        return this.json<TwoFactorLoginResponse>("/login/2fa", {
+            method: "POST",
+            authenticated: false,
+            body: { ticket, code },
+        });
+    }
+
+    /** POST /login/2fa/setup: a new secret for a user who must enrol before signing in. */
+    public loginTwoFactorSetup(ticket: string): Promise<TwoFactorSetup> {
+        return this.json<TwoFactorSetup>("/login/2fa/setup", {
+            method: "POST",
+            authenticated: false,
+            body: { ticket },
+        });
+    }
+
+    /** POST /login/2fa/enable: confirm that enrolment with a code; returns the token and recovery codes. */
+    public loginTwoFactorEnable(ticket: string, code: string): Promise<LoginResponse & { recovery_codes: string[] }> {
+        return this.json<LoginResponse & { recovery_codes: string[] }>("/login/2fa/enable", {
+            method: "POST",
+            authenticated: false,
+            body: { ticket, code },
+        });
+    }
+
+    public twoFactorStatus(): Promise<TwoFactorStatus> {
+        return this.json<TwoFactorStatus>("/2fa");
+    }
+
+    public twoFactorSetup(password: string, code?: string): Promise<TwoFactorSetup> {
+        return this.json<TwoFactorSetup>("/2fa/setup", {
+            method: "POST",
+            body: code === undefined ? { password } : { password, code },
+        });
+    }
+
+    public twoFactorEnable(
+        code: string,
+        signOutOthers: boolean,
+    ): Promise<{ recovery_codes: string[]; signed_out: number }> {
+        return this.json("/2fa/enable", { method: "POST", body: { code, sign_out_others: signOutOthers } });
+    }
+
+    public async twoFactorDisable(password: string, code: string): Promise<void> {
+        await this.json<unknown>("/2fa/disable", { method: "POST", body: { password, code } });
+    }
+
+    public twoFactorRecoveryCodes(password: string, code: string): Promise<{ recovery_codes: string[] }> {
+        return this.json("/2fa/recovery-codes", { method: "POST", body: { password, code } });
+    }
+
+    public twoFactorPolicy(required: boolean): Promise<{ required: boolean }> {
+        return this.json("/2fa/policy", { method: "PUT", body: { required } });
+    }
+
+    /**
+     * POST /password: change this account's password, and optionally revoke the account's other
+     * client devices (agent boxes are never signed out). A wrong current password is a 401
+     * `bad_password`, which says nothing about this device's token. An older journal answers
+     * without `signed_out`; that reads as 0.
+     */
+    public async changePassword(
+        oldPassword: string,
+        newPassword: string,
+        signOutOthers: boolean,
+    ): Promise<{ signed_out: number }> {
+        const result = await this.json<{ signed_out?: unknown }>("/password", {
+            method: "POST",
+            body: { old_password: oldPassword, new_password: newPassword, sign_out_others: signOutOthers },
+        });
+        const signedOut = result?.signed_out;
+        return { signed_out: typeof signedOut === "number" && signedOut > 0 ? signedOut : 0 };
+    }
+
+    // ── Password reset by email (no auth) and the account's address ─────────────────────────
+
+    /** GET /password/forgot: whether this journal can mail reset links. An older journal (404) can't. */
+    public async forgotPasswordEnabled(): Promise<boolean> {
+        try {
+            const result = await this.json<{ enabled?: unknown }>("/password/forgot", { authenticated: false });
+            return result?.enabled === true;
+        } catch (error) {
+            if (error instanceof JournalApiError && error.status === 404) return false;
+            throw error;
+        }
+    }
+
+    /** POST /password/forgot: always `{ok:true}` for a well-formed ask, whether or not the account exists. */
+    public async forgotPassword(identifier: string): Promise<void> {
+        await this.json<unknown>("/password/forgot", { method: "POST", authenticated: false, body: { identifier } });
+    }
+
+    /** POST /password/reset: spend a reset link. Every client device of the account is signed out. */
+    public async resetPassword(token: string, newPassword: string): Promise<{ signed_out: number }> {
+        const result = await this.json<{ signed_out?: unknown }>("/password/reset", {
+            method: "POST",
+            authenticated: false,
+            body: { token, new_password: newPassword },
+        });
+        const signedOut = result?.signed_out;
+        return { signed_out: typeof signedOut === "number" && signedOut > 0 ? signedOut : 0 };
+    }
+
+    /** GET /account/email: this account's address, and whether the journal can mail reset links. */
+    public async accountEmail(): Promise<AccountEmail> {
+        const result = await this.json<{ email?: unknown; reset_by_email?: unknown }>("/account/email");
+        return {
+            email: typeof result?.email === "string" && result.email ? result.email : null,
+            reset_by_email: result?.reset_by_email === true,
+        };
+    }
+
+    /**
+     * PUT /account/email: set (or, with null, remove) this account's address. Needs the current
+     * password; a wrong one is a 401 `bad_password`, which says nothing about this device's token.
+     */
+    public async setAccountEmail(password: string, email: string | null): Promise<{ email: string | null }> {
+        const result = await this.json<{ email?: unknown }>("/account/email", {
+            method: "PUT",
+            body: { password, email },
+        });
+        return { email: typeof result?.email === "string" && result.email ? result.email : null };
+    }
+
+    /** GET /users (admins): every account on the journal. */
+    public async listUsers(): Promise<JournalUser[]> {
+        const result = await this.json<{ users?: unknown }>("/users");
+        return Array.isArray(result?.users) ? result.users.map(parseJournalUser).filter((u) => u !== undefined) : [];
+    }
+
+    /** PUT /users/:id/email (admins): set or (null) clear another account's address. */
+    public async setUserEmail(userId: number, email: string | null): Promise<JournalUser | undefined> {
+        const result = await this.json<{ user?: unknown }>(`/users/${encodeURIComponent(String(userId))}/email`, {
+            method: "PUT",
+            body: { email },
+        });
+        return parseJournalUser(result?.user);
+    }
+
+    /** GET /me: who this device belongs to (for the admin-only parts of Settings). */
+    public me(): Promise<{ user: { id: number; name: string; is_admin: boolean } }> {
+        return this.json("/me");
     }
 
     public snapshot(signal?: AbortSignal): Promise<SnapshotResponse> {
@@ -537,6 +752,23 @@ export class JournalApi {
             signal,
         });
         return response?.delivered === true;
+    }
+
+    /** GET /grants/:id — one share, as the caller's side reads it. */
+    public async grant(grantId: string, signal?: AbortSignal): Promise<Grant> {
+        const response = await this.json<{ grant: Grant }>(`/grants/${encodeURIComponent(grantId)}`, { signal });
+        return response.grant;
+    }
+
+    // Answers a mission share or hand-over (client devices only). 409 (answered elsewhere,
+    // expired, or the subject can no longer be handed over) and 404 surface as a JournalApiError.
+    public async answerGrant(grantId: string, answer: GrantAnswer, signal?: AbortSignal): Promise<Grant> {
+        const response = await this.json<{ grant: Grant }>(`/grants/${encodeURIComponent(grantId)}/answer`, {
+            method: "POST",
+            body: answer,
+            signal,
+        });
+        return response.grant;
     }
 
     // ── Tracker: missions / milestones / items (all at journal root, Bearer-auth, user-global) ──
@@ -944,10 +1176,19 @@ export class JournalApi {
     public patchSettings(body: {
         notices?: boolean;
         auto_approve_coordinator_spawns?: boolean;
-    }): Promise<{ notices?: unknown; auto_approve_coordinator_spawns?: unknown }> {
-        return this.json<{ notices?: unknown; auto_approve_coordinator_spawns?: unknown }>("/settings", {
-            method: "PATCH",
-            body,
+        auto_archive_days?: number;
+    }): Promise<{ notices?: unknown; auto_approve_coordinator_spawns?: unknown; auto_archive_days?: unknown }> {
+        return this.json<{ notices?: unknown; auto_approve_coordinator_spawns?: unknown; auto_archive_days?: unknown }>(
+            "/settings",
+            { method: "PATCH", body },
+        );
+    }
+
+    /** POST /archive — archive or unarchive up to 500 of the user's conversations. */
+    public setArchived(convoIds: string[], archived: boolean): Promise<{ changes?: unknown }> {
+        return this.json<{ changes?: unknown }>("/archive", {
+            method: "POST",
+            body: { convo_ids: convoIds, archived },
         });
     }
 
@@ -1022,6 +1263,15 @@ export class JournalApi {
     }
 
     /**
+     * Search everything (`GET /search/all`): missions, items, memories and projects, best match
+     * first, plus the conversations whose messages match. Same query rules as `search`.
+     */
+    public searchAll(query: string, limit = 30, signal?: AbortSignal): Promise<GlobalSearchResponse> {
+        const params = new URLSearchParams({ q: query, limit: String(limit) });
+        return this.json<GlobalSearchResponse>(`/search/all?${params.toString()}`, { signal });
+    }
+
+    /**
      * Find in chat: every message in one conversation matching `query`, newest first
      * (`GET /search?mode=recent&convo_id=…`). Hits carry only convo_id/seq/ts/sender. A journal
      * scoped to one conversation returns up to 500; one that predates the mode ignores it and
@@ -1052,9 +1302,11 @@ export class JournalApi {
     }
 
     public async media(mediaId: string): Promise<Blob> {
+        // encodeURIComponent leaves "." and ".." intact, and as a whole path segment those would
+        // resolve to a different journal path than /media/<id>. No real media id looks like that.
+        if (mediaId === "" || mediaId === "." || mediaId === "..") throw new JournalApiError("Media not found", 404);
         const response = await this.request(`/media/${encodeURIComponent(mediaId)}`);
-        const contentType = response.headers.get("content-type") ?? "application/octet-stream";
-        return new Blob([response.body], { type: contentType });
+        return new Blob([response.body], { type: inertMediaType(response.headers.get("content-type")) });
     }
 
     public async uploadMedia(

@@ -76,6 +76,8 @@ const BOX_B: DeviceDTO = {
 type DevicesApi = {
     devices: jest.Mock<Promise<{ devices: DeviceDTO[] }>, []>;
     defaults: jest.Mock;
+    twoFactorStatus: jest.Mock;
+    accountEmail: jest.Mock;
     renameDevice: jest.Mock<Promise<void>, [number, string]>;
     setDeviceTag: jest.Mock<Promise<void>, [number, string | null]>;
     revokeDevice: jest.Mock<Promise<void>, [number]>;
@@ -107,6 +109,9 @@ function signedInClient(devices: DeviceDTO[]): { client: MatronJournalClient; ap
     const api: DevicesApi = {
         devices: jest.fn(() => Promise.resolve({ devices: roster })),
         defaults: jest.fn(() => new Promise(() => undefined)),
+        // An older journal: no two-factor rows beside Devices.
+        twoFactorStatus: jest.fn().mockRejectedValue(new JournalApiError("Not found", 404, "not_found")),
+        accountEmail: jest.fn().mockRejectedValue(new JournalApiError("Not found", 404, "not_found")),
         renameDevice: jest.fn(async (id: number, name: string) => {
             roster = roster.map((device) => (device.device_id === id ? { ...device, name } : device));
         }),

@@ -3050,7 +3050,9 @@ textarea {
 }
 
 /* §10.4 native text input: explicit background/colour/border in BOTH themes. */
-.mj_NewSessionSheet input[type="text"] {
+.mj_NewSessionSheet input[type="text"],
+.mj_NewSessionSheet input[type="email"],
+.mj_NewSessionSheet input[type="password"] {
     display: block;
     width: 100%;
     min-height: 34px;
@@ -3063,12 +3065,17 @@ textarea {
     font: 400 13.5px/20px var(--mj-font-family-ui);
 }
 
-.mj_NewSessionSheet input[type="text"]::placeholder {
+.mj_NewSessionSheet input[type="text"]::placeholder,
+.mj_NewSessionSheet input[type="email"]::placeholder {
     color: var(--mj-color-text-tertiary);
 }
 
 .mj_NewSessionSheet input[type="text"]:focus,
-.mj_NewSessionSheet input[type="text"]:focus-visible {
+.mj_NewSessionSheet input[type="text"]:focus-visible,
+.mj_NewSessionSheet input[type="email"]:focus,
+.mj_NewSessionSheet input[type="email"]:focus-visible,
+.mj_NewSessionSheet input[type="password"]:focus,
+.mj_NewSessionSheet input[type="password"]:focus-visible {
     border-color: var(--mj-color-border-interactive-primary);
     outline: none;
 }
@@ -3593,6 +3600,130 @@ li.mj_AttachmentChip_error {
 
 .mj_PromptCard_chat .mj_PromptLabel {
     color: var(--mj-color-text-action-accent);
+}
+
+/* Person-to-person consent card (contact, mission share, session share, room, talk). It is
+   answered on its tracker item, so it carries no Allow/Deny: only a link to that item, or a
+   muted line saying where to answer when the item can't be found. */
+.mj_PeopleCard {
+    border-color: var(--mj-color-border-accent);
+}
+
+.mj_PeopleCard .mj_PromptLabel {
+    color: var(--mj-color-text-action-accent);
+}
+
+.mj_PeopleCard_footer {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    min-height: 30px;
+}
+
+.mj_PeopleCard_hint {
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+}
+
+/* A hand-over card: the brief (scrolls past a few paragraphs), what will be copied, the files
+   with a tick box each on the owner's side, and its own Approve/Accept and Decline. */
+.mj_HandoverBrief {
+    display: grid;
+    gap: 4px;
+    font: var(--mj-font-body-sm-regular);
+}
+
+.mj_HandoverBrief_body {
+    max-height: 220px;
+    overflow: auto;
+    border-radius: 8px;
+    background: var(--mj-color-bg-subtle-secondary);
+    padding: 8px 12px;
+    font: var(--mj-font-body-sm-regular);
+}
+
+.mj_HandoverBrief_body > :first-child {
+    margin-top: 0;
+}
+
+.mj_HandoverBrief_body > :last-child {
+    margin-bottom: 0;
+}
+
+.mj_HandoverFiles {
+    display: grid;
+    gap: 4px;
+    font: var(--mj-font-body-sm-regular);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+}
+
+.mj_HandoverFiles legend {
+    padding: 0;
+    margin-bottom: 4px;
+}
+
+.mj_HandoverFile {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    font: var(--mj-font-body-sm-regular);
+    cursor: pointer;
+}
+
+.mj_HandoverFiles:disabled .mj_HandoverFile {
+    cursor: default;
+    opacity: 0.7;
+}
+
+.mj_HandoverFile_name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mj_HandoverFile_meta,
+.mj_HandoverHint {
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+}
+
+.mj_HandoverHint {
+    margin: 0;
+}
+
+.mj_HandoverKeep {
+    display: grid;
+    gap: 2px;
+}
+
+.mj_HandoverKeep_toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: var(--mj-font-body-sm-regular);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.mj_HandoverKeep_toggle:has(input:disabled) {
+    cursor: default;
+    opacity: 0.7;
+}
+
+.mj_HandoverKeep_hint {
+    margin: 0;
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-body-sm-regular);
+}
+
+/* "by bob" / "bob's agent": another person's write in one of the user's missions. */
+.mj_TrackerContributor {
+    color: var(--mj-color-text-secondary);
+    font-style: italic;
 }
 
 /* An agent request the client can't answer (malformed payload): one inert muted line. */
@@ -5722,9 +5853,20 @@ button.mj_File {
     color: inherit;
 }
 
-button.mj_TrackerAttachmentChip_preview {
+button.mj_TrackerAttachmentChip_preview,
+button.mj_TrackerAttachmentChip_download {
     border: 1px solid var(--mj-color-border-interactive-secondary);
     cursor: pointer;
+}
+
+button.mj_TrackerAttachmentChip_download:disabled {
+    cursor: progress;
+}
+
+.mj_TrackerAttachmentChip_icon {
+    width: 14px;
+    height: 14px;
+    flex: none;
 }
 
 @media (max-width: 700px) {

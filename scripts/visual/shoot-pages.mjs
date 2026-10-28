@@ -11,7 +11,7 @@ Please see LICENSE files in the repository root for full details.
  * real MatronApp fixture at 1280×860, 2×. Outputs /tmp/vf-tokens/<tag>-<theme>.png.
  *
  * Run:  node scripts/visual/shoot-pages.mjs <tag> [--screen=login] [--fixed] [--tracker=inbox|item|memories|memory]
- *       [--click=<css selector>] [--scroll=<css selector>] [--param=key=value] [--width=1280] [--height=860]
+ *       [--click=<css selector> (repeatable, in order)] [--scroll=<css selector>] [--param=key=value] [--width=1280] [--height=860]
  *   --scroll scrolls the first match into view (after any click) before the shot.
  *   --param adds one more fixture query parameter (repeatable), e.g. --param=missions=1.
  *   --screen=login shoots the signed-out sign-in screen; --fixed adds a config-fixed server
@@ -31,7 +31,8 @@ const tag = args.find((a) => !a.startsWith("--")) || "shot";
 const screen = flag("screen") || "chat";
 const fixed = args.includes("--fixed");
 const tracker = flag("tracker");
-const click = flag("click");
+const clicks = args.filter((a) => a.startsWith("--click=")).map((a) => a.slice("--click=".length));
+const click = clicks[0];
 const params = args.filter((a) => a.startsWith("--param=")).map((a) => a.slice("--param=".length));
 const scroll = flag("scroll");
 const width = Number(flag("width") || 1280);
@@ -118,8 +119,8 @@ for (const theme of ["light", "dark"]) {
         document.documentElement.dataset.theme = t;
     }, theme);
     await page.waitForTimeout(800);
-    if (click) {
-        await page.click(click);
+    for (const selector of clicks) {
+        await page.click(selector);
         await page.waitForTimeout(300);
     }
     if (scroll) {

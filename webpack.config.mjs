@@ -6,6 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import dotenv from "dotenv";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import CopyWebpackPlugin from "copy-webpack-plugin";
@@ -36,6 +37,51 @@ class VersionAssetPlugin {
                 },
                 () => compilation.emitAsset("version", new webpack.sources.RawSource(this.version)),
             );
+        });
+    }
+}
+
+// A Content-Security-Policy for index.html, as a <meta> so it ships with the app wherever it is
+// served (the browser build and the desktop shell alike). It limits script to the app's own
+// bundles plus the one inline theme script, which is allowed by its hash, worked out from the
+// emitted page so the two cannot drift apart. The journal can be on any https origin the user
+// signs in to, so connect-src stays open to https:/wss: (and plain http/ws on loopback only, as
+// normalizeServerUrl allows). Media and SVG previews load from blob: and data: URLs. A meta
+// policy cannot carry frame-ancestors; that has to come from the server's response headers.
+class ContentSecurityPolicyPlugin {
+    constructor(scriptOrigins) {
+        this.scriptOrigins = scriptOrigins;
+    }
+
+    apply(compiler) {
+        compiler.hooks.compilation.tap("ContentSecurityPolicyPlugin", (compilation) => {
+            HtmlWebpackPlugin.getHooks(compilation).beforeEmit.tap("ContentSecurityPolicyPlugin", (data) => {
+                const hashes = [...data.html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(
+                    ([, body]) => `'sha256-${createHash("sha256").update(body).digest("base64")}'`,
+                );
+                const loopback = "http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*";
+                const policy = [
+                    "default-src 'self'",
+                    `script-src 'self' ${[...this.scriptOrigins, ...hashes].join(" ")} 'wasm-unsafe-eval'`.replace(
+                        / +/g,
+                        " ",
+                    ),
+                    "style-src 'self' 'unsafe-inline'",
+                    "img-src 'self' blob: data:",
+                    "media-src 'self' blob:",
+                    "font-src 'self' data:",
+                    `connect-src 'self' blob: https: wss: ${loopback}`,
+                    "worker-src 'self' blob:",
+                    "object-src 'none'",
+                    "base-uri 'self'",
+                    "form-action 'self'",
+                ].join("; ");
+                const meta = `<meta http-equiv="Content-Security-Policy" content="${policy}">`;
+                data.html = data.html.replace(/<meta charset="utf-8"\s*\/?>/i, (charset) => `${charset}${meta}`);
+                if (!data.html.includes(meta))
+                    throw new Error("ContentSecurityPolicyPlugin: no <meta charset> to follow");
+                return data;
+            });
         });
     }
 }
@@ -116,6 +162,8 @@ export default (_environment, arguments_) => {
         plugins: [
             new MiniCssExtractPlugin({ filename: "assets/[name].[contenthash:8].css" }),
             new HtmlWebpackPlugin({ template: "./src/index.html", minify: !development }),
+            // Bundles served from another origin (an absolute PUBLIC_PATH) must be allowed too.
+            new ContentSecurityPolicyPlugin(/^https?:\/\//.test(publicPath) ? [new URL(publicPath).origin] : []),
             new CopyWebpackPlugin({
                 patterns: [
                     { from: "res/manifest.json", noErrorOnMissing: true },

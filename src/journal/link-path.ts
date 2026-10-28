@@ -47,3 +47,11 @@ export function parseOwnTrackerUrl(href: string, origin: string = window.locatio
     }
     return url.origin === origin ? parseTrackerLinkPath(url.pathname) : null;
 }
+
+/**
+ * What the web app says about a link to another user's number, which it cannot show: the
+ * tracker here lists the signed-in user's own rows. The Mac app shows one shared with the user.
+ */
+export function othersLinkMessage(link: TrackerLinkPath): string {
+    return `#${link.num} is on ${link.user}'s tracker. The web app shows only your own; the Matron app for Mac opens what ${link.user} shares with you.`;
+}

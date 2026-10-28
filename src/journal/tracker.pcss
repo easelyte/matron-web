@@ -268,6 +268,20 @@ Please see LICENSE files in the repository root for full details.
     right: 12px;
     transform: translateY(-50%);
 }
+/* A consent request's Approve and Decline sit under the row, aligned with its title (row padding
+   12 + glyph 20 + gap 10); the row's divider moves below them. */
+.mj_TrackerItemRow_answerWrap {
+    border-bottom: 1px solid var(--mj-color-border-subtle);
+}
+.mj_TrackerItemRow_withAnswers {
+    border-bottom: 0;
+}
+.mj_TrackerItemRow_answers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 2px 12px 10px 42px;
+}
 
 .mj_TrackerItemRow_glyph,
 .mj_TrackerMissionRow_glyph {
@@ -433,6 +447,99 @@ Please see LICENSE files in the repository root for full details.
 }
 
 /* — Inbox filter toggle — */
+/* The For you search field: the Conversations field's look, the list's width. */
+.mj_TrackerInboxSearch {
+    padding: var(--mj-space-3x) var(--mj-space-4x) 0;
+}
+.mj_TrackerInboxSearchAll {
+    align-self: center;
+    margin-top: var(--mj-space-4x);
+}
+
+/* The Search page: the Conversations field, kind chips, then one section per kind. */
+.mj_SearchPage {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: var(--mj-space-3x) 0 var(--mj-space-8x);
+}
+.mj_SearchPage_field {
+    padding: 0 var(--mj-space-4x);
+}
+.mj_SearchPage_filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--mj-space-1x);
+    padding: var(--mj-space-2x) var(--mj-space-4x) var(--mj-space-1x);
+}
+.mj_SearchPage_chip {
+    border: 0;
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-subtle-primary);
+    color: var(--mj-color-text-primary);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 10px;
+    cursor: pointer;
+}
+.mj_SearchPage_chip_active {
+    background: var(--mj-color-text-action-accent);
+    color: var(--mj-color-bg-canvas-default);
+}
+.mj_SearchPage_section {
+    margin-top: var(--mj-space-2x);
+}
+.mj_SearchPage_row {
+    display: flex;
+    width: calc(100% - var(--mj-space-3x));
+    box-sizing: border-box;
+    align-items: flex-start;
+    gap: var(--mj-space-3x);
+    margin: 0 var(--mj-space-2x) 1px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: var(--mj-radius-md);
+    background: transparent;
+    color: var(--mj-color-text-primary);
+    text-align: left;
+    cursor: pointer;
+}
+.mj_SearchPage_row:hover {
+    background: var(--mj-state-hover);
+}
+.mj_SearchPage_icon {
+    display: flex;
+    flex: 0 0 auto;
+    color: var(--mj-color-text-action-accent);
+    padding-top: 1px;
+}
+.mj_SearchPage_icon svg {
+    width: 16px;
+    height: 16px;
+}
+.mj_SearchPage_text {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+}
+.mj_SearchPage_why {
+    flex: 0 0 auto;
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-subtle-primary);
+    color: var(--mj-color-text-secondary);
+    font-size: 11px;
+    padding: 1px 8px;
+}
+.mj_SearchPage_status {
+    padding: var(--mj-space-3x) var(--mj-space-4x);
+    color: var(--mj-color-text-secondary);
+    font-size: 13px;
+}
+
 .mj_TrackerInboxToggle {
     align-self: center;
     margin: var(--mj-space-2x) 0;
@@ -597,6 +704,20 @@ button.mj_TrackerCrumb:hover {
     font: var(--mj-font-body);
     color: var(--mj-color-text-primary);
     overflow-wrap: anywhere;
+}
+
+/* Links in tracker text take the same accent as chat's markdown (`.mj_Markdown a`). Without a
+   rule they fell back to the browser's default blue, which is unreadable on the dark theme. */
+.mj_TrackerProse a,
+.mj_TrackerMissionStatus_text a,
+.mj_HandoverBrief_body a {
+    color: var(--mj-color-text-action-accent);
+}
+
+.mj_TrackerProse a:hover,
+.mj_TrackerMissionStatus_text a:hover,
+.mj_HandoverBrief_body a:hover {
+    text-decoration: underline;
 }
 
 .mj_TrackerProse > :first-child {
@@ -1031,6 +1152,27 @@ button.mj_TrackerCrumb:hover {
     white-space: nowrap;
     text-overflow: ellipsis;
 }
+/* What a tracker link in markdown points at: its kind, and its title unless the link says it. */
+.mj_TrackerLinkTarget {
+    display: inline-block;
+    max-width: 40ch;
+    margin-left: var(--mj-space-1x);
+    padding: 0 var(--mj-space-2x);
+    border-radius: var(--mj-radius-pill);
+    background: var(--mj-color-bg-subtle-secondary);
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-meta);
+    vertical-align: baseline;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-decoration: none;
+}
+/* The link's text names something else, or the number does not exist. */
+.mj_TrackerLinkTarget--mismatch {
+    color: var(--mj-color-text-critical-primary);
+    box-shadow: inset 0 0 0 1px var(--mj-color-text-critical-primary);
+}
 /* A link whose scheme the client will not open (not http(s), not a valid in-app item link). */
 .mj_TrackerLinkChip_inert {
     color: var(--mj-color-text-secondary);
@@ -1158,6 +1300,13 @@ button.mj_TrackerCrumb:hover {
     margin-top: 0;
     margin-bottom: 18px;
 }
+/* A consent request's yes, as the request card draws its Approve: filled with the accent. */
+.mj_TrackerAction_affirmative,
+.mj_TrackerAction_affirmative:hover:not(:disabled) {
+    background: var(--mj-color-bg-accent);
+    border-color: var(--mj-color-bg-accent);
+    color: var(--mj-color-text-on-accent);
+}
 /* The user's answer: filled, and it stays fully legible on a closed item. */
 .mj_TrackerAction_chosen,
 .mj_TrackerAction_chosen:hover:not(:disabled),
@@ -1189,8 +1338,54 @@ button.mj_TrackerCrumb:hover {
 
 /* — Images: inline in a body or comment, and thumbnails for the attachments no ref placed — */
 .mj_TrackerImage {
+    /* As wide as its image; the name line under it is `contain: inline-size`, so it never widens it. */
+    width: fit-content;
     margin: var(--mj-space-2x) 0;
     max-width: min(560px, 100%);
+}
+.mj_TrackerThumbTile {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 72px;
+}
+/* `name · size` under an image: the name's head ellipsizes, its tail (extension) and the size stay. */
+.mj_TrackerImageName {
+    display: flex;
+    min-width: 0;
+    margin-top: var(--mj-space-1x);
+    color: var(--mj-color-text-tertiary);
+    font: var(--mj-font-meta);
+    white-space: pre;
+    contain: inline-size;
+    overflow: hidden;
+}
+.mj_TrackerImageName_stacked {
+    flex-direction: column;
+    margin-top: 0;
+}
+.mj_TrackerImageName_name {
+    display: flex;
+    min-width: 0;
+    overflow: hidden;
+}
+.mj_TrackerImageName_head {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* The tail only gives way once the head is gone (a long extension in a 72px tile). */
+.mj_TrackerImageName_tail {
+    flex: 0 0.0001 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.mj_TrackerImageName_size {
+    flex: none;
+}
+/* A markdown caption wraps at the image's width rather than widening the figure. */
+.mj_TrackerImage figcaption {
+    contain: inline-size;
 }
 .mj_TrackerThumb {
     display: inline-flex;

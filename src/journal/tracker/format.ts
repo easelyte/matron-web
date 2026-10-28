@@ -14,11 +14,27 @@ import type {
     Mission,
     TrackerActor,
     TrackerComment,
+    TrackerContributor,
     TrackerItem,
     TrackerItemKind,
     TrackerMilestoneKind,
     TrackerResolution,
 } from "../types";
+
+/** Another person's write in words: "bob" when they wrote it, "bob's agent" when their agent did;
+ *  null when there is no usable contributor. */
+export function contributorWords(contributor: TrackerContributor | null | undefined): string | null {
+    const name = typeof contributor?.name === "string" ? contributor.name.trim() : "";
+    if (!name) return null;
+    return contributor?.via === "agent" ? `${name}'s agent` : name;
+}
+
+/** Who wrote a comment when it is not this log's own: the journal's `attribution` first, then the
+ *  contributor; null for the user's and their agents' own comments. */
+export function commentAttribution(comment: Pick<TrackerComment, "attribution" | "contributor">): string | null {
+    const attribution = typeof comment.attribution === "string" ? comment.attribution.trim() : "";
+    return attribution || contributorWords(comment.contributor);
+}
 
 /** An open item that is waiting on the user — the one urgent "needs you" state (orange). */
 export function needsUser(item: Pick<TrackerItem, "state" | "awaiting">): boolean {
@@ -50,6 +66,31 @@ export function doneSortKey(item: Pick<TrackerItem, "last_user_input_at" | "clos
 /** A notice the user has not marked seen yet: it offers the one-tap Seen button. */
 export function awaitsSeen(item: Pick<TrackerItem, "kind" | "state">): boolean {
     return item.kind === "notice" && item.state === "open";
+}
+
+/** The label the journal puts on every consent request's item (journal `CONSENT_LABEL`). */
+export const CONSENT_LABEL = "consent";
+// The answers a For you row may offer in place: each is final in one tap. A request whose buttons
+// need more (a hand-over's "Pick a box" opens a picker) is answered from its item instead.
+const ROW_ANSWERS: ReadonlySet<string> = new Set(["Approve", "Accept", "Decline"]);
+const AFFIRMATIVE_ANSWERS: ReadonlySet<string> = new Set(["Approve", "Accept"]);
+
+/**
+ * A consent request's one-tap answers for its For you row: its own Approve and Decline (or Accept
+ * and Decline) while it waits on the user, so it can be answered without finding the request card.
+ * The journal answers the tap exactly as the card. Empty for anything else.
+ */
+export function rowConsentAnswers(
+    item: Pick<TrackerItem, "kind" | "state" | "awaiting" | "labels" | "actions">,
+): string[] {
+    if (item.kind !== "question" || !needsUser(item) || !item.labels.includes(CONSENT_LABEL)) return [];
+    const actions = item.actions ?? [];
+    return actions.length > 0 && actions.every((label) => ROW_ANSWERS.has(label)) ? actions : [];
+}
+
+/** Whether a consent answer says yes, for the filled button. */
+export function isAffirmativeAnswer(label: string): boolean {
+    return AFFIRMATIVE_ANSWERS.has(label);
 }
 
 /**
@@ -212,10 +253,12 @@ export function resolveActionLabel(resolution: TrackerResolution): string {
  * NEVER the raw body (which may be privacy-elided). Returns null when the transition carries no
  * displayable change, so the caller can fall back to the body if one is present.
  */
-export function statusRowText(comment: Pick<TrackerComment, "author" | "meta">): string | null {
+export function statusRowText(
+    comment: Pick<TrackerComment, "author" | "meta" | "attribution" | "contributor">,
+): string | null {
     const to = comment.meta?.to;
     const from = comment.meta?.from;
-    const who = comment.author === "user" ? "You" : "Agent";
+    const who = commentAttribution(comment) ?? (comment.author === "user" ? "You" : "Agent");
     if (!to) return null;
     if (to.state === "closed") {
         return `${who} closed this${to.resolution ? ` as ${resolutionLabel(to.resolution).toLowerCase()}` : ""}`;
@@ -291,6 +334,18 @@ export function humanizeSize(bytes: number): string {
 }
 
 /**
+ * A filename split for middle truncation: `head` may be cut with an ellipsis, `tail` (the last few
+ * characters of the stem and the extension) always shows, so "divider_4867x3071.png" narrows to
+ * "divid…3071.png" rather than losing its extension.
+ */
+export function splitFilenameForMiddleTruncation(name: string): { head: string; tail: string } {
+    const dot = name.lastIndexOf(".");
+    const extension = dot > 0 && name.length - dot <= 10 ? name.length - dot : 0;
+    const cut = Math.max(0, name.length - extension - 4);
+    return { head: name.slice(0, cut), tail: name.slice(cut) };
+}
+
+/**
  * A status line's byline: "Updated 12m ago by an agent" / "… by you", a week or more back
  * "Updated on <date> …". Null when the status carries no time; no "by" clause when the author is
  * unknown.
@@ -299,8 +354,15 @@ export function statusByline(
     updatedAt: number | null | undefined,
     by: TrackerActor | null | undefined,
     now: number = Date.now(),
+    contributor?: string | null,
 ): string | null {
     const when = formatRelativeTime(updatedAt, now);
+    const name = contributor?.trim();
+    // A contributor's status names them; the owner's next status clears the field.
+    if (name)
+        return when
+            ? `Status by ${name} · updated ${when.endsWith(" ago") || when === "just now" ? when : `on ${when}`}`
+            : `Status by ${name}`;
     if (!when) return null;
     const phrase = when === "just now" || when.endsWith(" ago") ? when : `on ${when}`;
     const who = by === "user" ? " by you" : by === "agent" ? " by an agent" : "";

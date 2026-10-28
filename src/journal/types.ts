@@ -42,6 +42,43 @@ export interface LoginResponse {
     user_id: number;
 }
 
+/** POST /login/2fa: the token, and whether a recovery code was spent to get it. */
+export interface TwoFactorLoginResponse extends LoginResponse {
+    used_recovery_code: boolean;
+    recovery_codes_left: number;
+}
+
+/** POST /2fa/setup and /login/2fa/setup: the new secret, as text and as an otpauth:// URI for the QR. */
+export interface TwoFactorSetup {
+    secret: string;
+    otpauth_uri: string;
+    issuer: string;
+    account: string;
+}
+
+/** GET /2fa. `available` is false on a server that cannot store two-factor secrets. */
+export interface TwoFactorStatus {
+    enabled: boolean;
+    enabled_at: number | null;
+    recovery_codes_left: number;
+    required: boolean;
+    available: boolean;
+}
+
+/** GET /account/email. `reset_by_email` is false while the journal cannot send mail. */
+export interface AccountEmail {
+    email: string | null;
+    reset_by_email: boolean;
+}
+
+/** A row of GET /users (admins), as far as this client uses it. */
+export interface JournalUser {
+    id: number;
+    name: string;
+    email: string | null;
+    is_admin: boolean;
+}
+
 // A box's last capacity report (protocol.md "Box status (`box_status`)"): served as `status`
 // on GET /devices for agent devices that have ever reported, and pushed live to client sockets
 // as `{kind:'box_status', device_id, reported_at, ...blocks}`. Every block is optional — the
@@ -275,6 +312,53 @@ export interface SearchResponse {
     hits: SearchHit[];
 }
 
+/** What `GET /search/all` can find besides conversations. */
+export type GlobalSearchKind = "mission" | "item" | "memory" | "project";
+
+/**
+ * One tracker hit from `GET /search/all`: the entity a match rolled up to (a milestone's mission,
+ * a comment's item). `why` is the tier it was found in ("number", "exact", "words", "stemmed",
+ * "similar", "some_words"); `snippet` carries `**…**` markers like a message hit. A memory has a
+ * `name` and no `num`; its `title` is the memory's one-line description.
+ */
+export interface GlobalSearchResult {
+    kind: GlobalSearchKind;
+    id: string;
+    num: number | null;
+    name: string | null;
+    title: string;
+    state: string | null;
+    mission_num: number | null;
+    why: string;
+    field: string;
+    snippet: string | null;
+}
+
+/** A conversation whose messages match, from `GET /search/all`: its newest matching message. */
+export interface GlobalSearchChat {
+    convo_id: string;
+    title: string;
+    parent_title?: string | null;
+    count: number;
+    exact: boolean;
+    live: boolean;
+    top: { seq: number; ts: number; sender: string; excerpt: string };
+}
+
+export interface GlobalSearchResponse {
+    results: GlobalSearchResult[];
+    chats?: GlobalSearchChat[];
+}
+
+/** The Search page's results, bound to the query that produced them (like MessageSearchState). */
+export interface GlobalSearchState {
+    query: string;
+    results: GlobalSearchResult[];
+    chats: GlobalSearchChat[];
+    loading: boolean;
+    failed: boolean;
+}
+
 /**
  * What a tracker number is (`GET /lookup`). Items, missions, milestones and projects share one
  * per-user number space, so a number alone does not say which kind it names. `num` and `title`
@@ -335,6 +419,8 @@ export interface JournalControlFrame {
     settings?: unknown;
     /** hello_ok: the user's Coordinator conversation (null for none); absent on an older journal. */
     coordinator_convo_id?: unknown;
+    /** hello_ok: archive changes since the hello's `archive_since`; absent on an older journal. */
+    archive?: unknown;
 }
 
 export interface JournalRpcFrame {
@@ -463,6 +549,13 @@ export interface JournalPinsFrame {
     pins: unknown;
 }
 
+// Journal archive fan-out (client sockets only): archive/unarchive changes, the sweep's included.
+export interface JournalArchiveFrame {
+    kind: "archive";
+    changes: unknown;
+    at?: unknown;
+}
+
 export type ServerFrame =
     | JournalEvent
     | JournalControlFrame
@@ -473,7 +566,8 @@ export type ServerFrame =
     | JournalBriefingFrame
     | JournalDefaultsFrame
     | JournalBoxDefaultsFrame
-    | JournalPinsFrame;
+    | JournalPinsFrame
+    | JournalArchiveFrame;
 
 export interface SessionStatus {
     model?: string;
@@ -747,6 +841,11 @@ export interface ClientState {
     // discriminant, one surface at a time with Files and the tracker. The pane owns its fetched
     // data; the store only carries the open flag (live box reports live in `boxStatuses`).
     opsView?: { open: true };
+    /** The Search page's text and results; kept when the page is left, so returning shows them. */
+    /** Bumped each time Search is opened, so an open page focuses its field again. */
+    globalSearchFocus?: number;
+    globalSearchQuery?: string;
+    globalSearch?: GlobalSearchState;
     /** The "Go to number" field is open (the shortcut and both header buttons set it). */
     goToNumberOpen?: boolean;
     /** The subagent open in the pane beside its parent chat (see chatSidePane). It belongs to
@@ -810,6 +909,8 @@ export interface ClientState {
     userSettingsUnsupported?: boolean;
     /** The last failed settings save; cleared by the next save. */
     userSettingsError?: string;
+    /** The last failed save of the auto-archive setting (shown in Settings → Archive). */
+    autoArchiveError?: string;
     /** Settings → Coordinator: whether the Coordinator may answer chat and spawn asks (`consent`
      *  on GET /coordinator). `enabled` undefined = not known yet, or a journal without the switch. */
     coordinatorConsent?: { enabled?: boolean; error?: string };
@@ -891,6 +992,8 @@ export interface UserSettings {
     notices?: boolean;
     /** False by default; absent on journals that do not support spawn auto-approval. */
     auto_approve_coordinator_spawns?: boolean;
+    /** Auto-archive idle conversations after this many days (0 = off); absent on an older journal. */
+    auto_archive_days?: number;
 }
 
 /**
@@ -978,7 +1081,7 @@ export interface FilesViewState {
 /** Which tracker surface the pane shows; `selected*Id` are #num values (integers). */
 export interface TrackerViewState {
     open: boolean;
-    view?: "missions" | "inbox" | "memories";
+    view?: "missions" | "inbox" | "memories" | "search";
     selectedItemId?: number;
     selectedMissionId?: number;
     /** Projects view: the open project's number; undefined = the dashboard. */
@@ -1030,6 +1133,43 @@ export type TrackerAwaiting = "user" | "agent";
 export type TrackerMilestoneKind = "user_input" | "progress";
 export type TrackerMissionState = "open" | "closed";
 export type TrackerActor = "user" | "agent";
+
+/**
+ * Another person writing into one of the user's missions under a `contribute` share: their name,
+ * and whether they wrote it themselves or their agent did. Absent (not null) on everything else.
+ */
+export interface TrackerContributor {
+    name: string;
+    via: "user" | "agent";
+}
+
+/** A share of a mission or project with another person (journal `GET /grants/:id`), as much of it
+ *  as the apps read. */
+export interface Grant {
+    id: string;
+    direction: "out" | "in";
+    subject_kind: "mission" | "project";
+    level: "read" | "contribute" | "owner";
+    state: "awaiting_owner" | "pending" | "active" | "declined" | "revoked" | "expired";
+    owner?: { user_id?: number; name?: string };
+    grantee?: { name?: string; address?: string };
+    /** A raise of an active share waiting on its two yeses; null otherwise. */
+    pending_level?: "read" | "contribute" | "owner" | null;
+    pending_state?: "awaiting_owner" | "pending" | null;
+    revoked_by?: "owner" | "grantee" | "contact_removed" | null;
+    /** The recipient's copy once a hand-over is accepted. */
+    copy_id?: string | null;
+    /** On a hand-over: what the old owner keeps on the copy. */
+    keep_level?: "read" | "contribute";
+}
+
+/** `POST /grants/:id/answer` body. `exclude_media` is the owner's, on a hand-over only. */
+export interface GrantAnswer {
+    decision: "approve" | "decline";
+    exclude_media?: string[];
+    /** The owner's say on what they keep on the copy, on a hand-over approval only. */
+    keep_level?: "read" | "contribute";
+}
 export type TrackerCommentKind = "comment" | "status";
 
 export interface TrackerLink {
@@ -1115,6 +1255,8 @@ export interface TrackerItem {
     working?: TrackerWorking | null;
     /** Null when no handover waits; absent on older journals and cached items. */
     handover?: TrackerHandover | null;
+    /** Filed by another person (or their agent) under a `contribute` share. */
+    contributor?: TrackerContributor;
 }
 
 export interface TrackerComment {
@@ -1142,6 +1284,11 @@ export interface TrackerComment {
     device_name?: string | null;
     convo_id?: string | null;
     convo_title?: string | null;
+    /** Written by another person (or their agent) under a `contribute` share. */
+    contributor?: TrackerContributor;
+    /** Who wrote it, in words, when that is not this log's own user or agents: "bob" or "bob's
+     *  agent" on a contributor's comment and on every comment copied in by a hand-over. */
+    attribution?: string;
 }
 
 /** `POST /items/:id/comments` body. `action` + `reply_to` is a tap on a comment's button. */
@@ -1210,6 +1357,10 @@ export interface Mission {
     status?: string | null;
     status_by?: TrackerActor | null;
     status_updated_at?: number | null;
+    /** The contributor who set the current status, until the owner next sets it. */
+    status_contributor?: string;
+    /** Set on a mission closed by handing it over to another person. */
+    handed_over?: { to: string };
 }
 
 export interface Milestone {
@@ -1224,6 +1375,8 @@ export interface Milestone {
     device_id: number;
     created_by: TrackerActor;
     created_at: number;
+    /** Posted by another person (or their agent) under a `contribute` share. */
+    contributor?: TrackerContributor;
 }
 
 /** The reduced open-item shape a mission detail lists (awaiting-user first). */
@@ -1732,6 +1885,12 @@ export function eventSnippet(type: string, payload: EventPayload): string {
         // flip-flops across a resume (same ruling just applied to the Android client).
         if (asString(payload.kind) === "agent_spawn") return "🤝 Agent spawn request";
         if (asString(payload.kind) === "agent_chat") return "🤝 Agent chat request";
+        // Person-to-person asks: the journal's own snapshot strings, byte-exact for the same reason.
+        if (asString(payload.kind) === "contact_request") return "🤝 Contact request";
+        if (asString(payload.kind) === "mission_share") return "🤝 Mission share request";
+        if (asString(payload.kind) === "mission_handover") return "🤝 Hand-over request";
+        if (asString(payload.kind) === "person_room") return "🤝 Room with another person";
+        if (asString(payload.kind) === "session_share") return "🤝 Session share request";
         return `Permission: ${asString(payload.description).slice(0, 100)}`;
     }
     if (type === "spawn_outcome") {

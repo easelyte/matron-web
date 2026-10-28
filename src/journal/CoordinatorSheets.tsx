@@ -29,6 +29,9 @@ import { AlarmIcon, ComposeIcon, PlusCircleIcon, RefreshIcon, WarningTriangleIco
 import { SheetHead, useSheetLifecycle } from "./PinDialogs";
 import { pinChooserView } from "./pins";
 import {
+    type AllowanceTier,
+    AllowanceTierRules,
+    DEFAULT_ALLOWANCE_TIERS,
     type Routine,
     ROUTINE_TRIGGER_KINDS,
     normalizeRoutinePrompt,
@@ -483,6 +486,65 @@ function RoutineRow({
     );
 }
 
+/** An allowance_expiring routine's tiers: rows of unused percent and hours left. */
+function TierEditor({
+    tiers,
+    onChange,
+}: {
+    tiers: AllowanceTier[];
+    onChange: (tiers: AllowanceTier[]) => void;
+}): React.ReactElement {
+    const set = (index: number, change: Partial<AllowanceTier>): void =>
+        onChange(tiers.map((tier, i) => (i === index ? { ...tier, ...change } : tier)));
+    return (
+        <div className="mj_RoutineEditor_tiers">
+            {tiers.map((tier, index) => (
+                <div className="mj_RoutineEditor_threshold" key={index}>
+                    <input
+                        type="number"
+                        aria-label={`Tier ${index + 1} unused percent`}
+                        min={1}
+                        max={99}
+                        step={5}
+                        value={Number.isFinite(tier.unusedPct) ? tier.unusedPct : ""}
+                        onChange={(event) => set(index, { unusedPct: event.target.valueAsNumber })}
+                    />
+                    <span>% unused with</span>
+                    <input
+                        type="number"
+                        aria-label={`Tier ${index + 1} hours left`}
+                        min={1}
+                        max={AllowanceTierRules.maxHours}
+                        step={1}
+                        value={Number.isFinite(tier.hoursLeft) ? tier.hoursLeft : ""}
+                        onChange={(event) => set(index, { hoursLeft: event.target.valueAsNumber })}
+                    />
+                    <span>h left</span>
+                    {tiers.length > 1 && (
+                        <button
+                            type="button"
+                            className="mj_RoutineEditor_tierRemove"
+                            aria-label={`Remove tier ${index + 1}`}
+                            onClick={() => onChange(tiers.filter((_, i) => i !== index))}
+                        >
+                            Remove
+                        </button>
+                    )}
+                </div>
+            ))}
+            {tiers.length < AllowanceTierRules.maxTiers && (
+                <button
+                    type="button"
+                    className="mj_RoutineEditor_tierAdd"
+                    onClick={() => onChange([...tiers, { unusedPct: 25, hoursLeft: 2 }])}
+                >
+                    Add tier
+                </button>
+            )}
+        </div>
+    );
+}
+
 // ── Editor ────────────────────────────────────────────────────────────────────────────────────
 
 const CRON_LABELS = ["Minute", "Hour", "Day", "Month", "Weekday"];
@@ -499,7 +561,18 @@ interface EditorDraft {
     cron: string[];
     triggerKind: RoutineTriggerKind;
     threshold: number;
+    /** An allowance_expiring routine's reset window, kept as it is: the editor changes the percent. */
+    window: Pick<RoutineTrigger, "fromHours" | "toHours">;
+    /** An allowance_expiring routine's tiers; absent on one saved with a single threshold. */
+    tiers?: AllowanceTier[];
     enabled: boolean;
+}
+
+function draftTrigger(draft: EditorDraft): RoutineTrigger {
+    if (draft.triggerKind !== "allowance_expiring") return { kind: draft.triggerKind, threshold: draft.threshold };
+    return draft.tiers
+        ? { kind: draft.triggerKind, threshold: draft.tiers[0]?.unusedPct ?? 0, tiers: draft.tiers }
+        : { kind: draft.triggerKind, threshold: draft.threshold, ...draft.window };
 }
 
 function initialDraft(routine: Routine | undefined): EditorDraft {
@@ -513,6 +586,7 @@ function initialDraft(routine: Routine | undefined): EditorDraft {
             cron: DEFAULT_CRON,
             triggerKind: "context_over",
             threshold: 40,
+            window: {},
             enabled: true,
         };
     }
@@ -526,6 +600,8 @@ function initialDraft(routine: Routine | undefined): EditorDraft {
         cron: cron.length === 5 ? cron : DEFAULT_CRON,
         triggerKind: routine.trigger?.kind ?? "context_over",
         threshold: routine.trigger?.threshold ?? 40,
+        window: { fromHours: routine.trigger?.fromHours, toHours: routine.trigger?.toHours },
+        tiers: routine.trigger?.tiers,
         enabled: routine.enabled,
     };
 }
@@ -534,7 +610,7 @@ function initialDraft(routine: Routine | undefined): EditorDraft {
 function editorRoutineDraft(draft: EditorDraft, isNew: boolean): RoutineDraft {
     const out: RoutineDraft = { title: draft.title, prompt: draft.prompt, tz: draft.tz };
     if (draft.mode === "schedule") out.schedule = draft.cron.map((field) => field.trim()).join(" ");
-    else out.trigger = { kind: draft.triggerKind, threshold: draft.threshold };
+    else out.trigger = draftTrigger(draft);
     if (isNew) out.enabled = draft.enabled;
     return out;
 }
@@ -556,7 +632,7 @@ function RoutineEditor({
     const [confirmingDelete, setConfirmingDelete] = useState(false);
     const update = (change: Partial<EditorDraft>): void => setDraft((current) => ({ ...current, ...change }));
     const schedule = draft.cron.map((field) => field.trim()).join(" ");
-    const trigger: RoutineTrigger = { kind: draft.triggerKind, threshold: draft.threshold };
+    const trigger = draftTrigger(draft);
     const range = triggerThresholdRange(draft.triggerKind);
 
     const save = async (): Promise<void> => {
@@ -715,7 +791,12 @@ function RoutineEditor({
                                 const kind = event.target.value as RoutineTriggerKind;
                                 if (kind === draft.triggerKind) return;
                                 const initial = ROUTINE_TRIGGER_KINDS.find((option) => option.kind === kind)?.initial;
-                                update({ triggerKind: kind, threshold: initial ?? draft.threshold });
+                                update({
+                                    triggerKind: kind,
+                                    threshold: initial ?? draft.threshold,
+                                    // A new allowance trigger starts in tiers, the form the journal suggests.
+                                    tiers: kind === "allowance_expiring" ? [...DEFAULT_ALLOWANCE_TIERS] : undefined,
+                                });
                             }}
                         >
                             {ROUTINE_TRIGGER_KINDS.map((option) => (
@@ -724,18 +805,22 @@ function RoutineEditor({
                                 </option>
                             ))}
                         </select>
-                        <div className="mj_RoutineEditor_threshold">
-                            <input
-                                type="number"
-                                aria-label={draft.triggerKind === "stalled" ? "Minutes" : "Percent"}
-                                min={range.min}
-                                max={range.max}
-                                step={range.step}
-                                value={Number.isFinite(draft.threshold) ? draft.threshold : ""}
-                                onChange={(event) => update({ threshold: event.target.valueAsNumber })}
-                            />
-                            <span>{triggerThresholdLabel(trigger)}</span>
-                        </div>
+                        {draft.tiers ? (
+                            <TierEditor tiers={draft.tiers} onChange={(tiers) => update({ tiers })} />
+                        ) : (
+                            <div className="mj_RoutineEditor_threshold">
+                                <input
+                                    type="number"
+                                    aria-label={draft.triggerKind === "stalled" ? "Minutes" : "Percent"}
+                                    min={range.min}
+                                    max={range.max}
+                                    step={range.step}
+                                    value={Number.isFinite(draft.threshold) ? draft.threshold : ""}
+                                    onChange={(event) => update({ threshold: event.target.valueAsNumber })}
+                                />
+                                <span>{triggerThresholdLabel(trigger)}</span>
+                            </div>
+                        )}
                         <p className="mj_RoutineEditor_preview">{triggerWords(trigger)}</p>
                         <p className="mj_RoutineEditor_help">
                             It fires once for each session or box that crosses the line, at most every{" "}

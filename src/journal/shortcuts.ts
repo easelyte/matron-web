@@ -42,6 +42,7 @@ export const SECTION_KEYS: ReadonlyArray<{ key: string; section: Section }> = [
 ];
 
 export type ShortcutCommand =
+    | { kind: "search" }
     | { kind: "commandPalette" }
     | { kind: "newSession" }
     | { kind: "searchAllChats" }
@@ -61,9 +62,11 @@ export function matchShortcut(event: ShortcutKey, mac: boolean): ShortcutCommand
     const key = event.key.toLowerCase();
     if (event.shiftKey) {
         if (key === "f") return { kind: "searchAllChats" };
+        // ⇧⌘K: the slash palette; ⌘K is Search, as on the Mac.
+        if (key === "k") return { kind: "commandPalette" };
         return null;
     }
-    if (key === "k") return { kind: "commandPalette" };
+    if (key === "k") return { kind: "search" };
     if (key === "n") return { kind: "newSession" };
     const section = SECTION_KEYS.find((entry) => entry.key === key)?.section;
     return section ? { kind: "section", section } : null;
@@ -138,7 +141,7 @@ export function showSection(client: MatronJournalClient, section: Section): Prom
 export interface AppShortcutHandlers {
     /** False while a modal holds the app (the upload sheet): no shortcut fires. */
     enabled: boolean;
-    /** ⌘K: toggles the palette. Unset when no conversation with a composer is open. */
+    /** ⇧⌘K: toggles the palette. Unset when no conversation with a composer is open. */
     onCommandPalette?: () => void;
 }
 
@@ -157,7 +160,7 @@ export function useAppShortcuts(client: MatronJournalClient, handlers: AppShortc
             if (command.kind === "jumpToLastOwnMessage" && !mac && isTextField(event.target)) return;
             // Another sheet or dialog is up: it owns the keyboard. The palette closes itself on ⌘K.
             if (modalDialogOpen()) return;
-            // A held key repeats: one press, one action (⌘K would otherwise flicker open and shut),
+            // A held key repeats: one press, one action (⇧⌘K would otherwise flicker open and shut),
             // but the repeats are still ours, not the browser's (tab switching, its search bar).
             if (event.repeat) {
                 if (command.kind !== "commandPalette" || handlersRef.current.onCommandPalette) event.preventDefault();
@@ -171,6 +174,10 @@ export function useAppShortcuts(client: MatronJournalClient, handlers: AppShortc
                     open();
                     return;
                 }
+                case "search":
+                    event.preventDefault();
+                    client.openSearch();
+                    return;
                 case "newSession":
                 case "searchAllChats":
                     event.preventDefault();

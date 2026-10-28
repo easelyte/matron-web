@@ -415,6 +415,11 @@ button {
     text-align: center;
 }
 
+/* Pushes Search and the footer to the foot of the rail. */
+.mj_NavRail_spacer {
+    flex: 1 1 auto;
+}
+
 .mj_NavRail_footer {
     display: flex;
     flex-direction: column;
@@ -2113,6 +2118,11 @@ label.mj_SettingsSheet_row {
     font-weight: 500;
 }
 
+/* An error under a sheet's fields reads as one, not as the grey lead-in text of a sheet. */
+.mj_DeviceSheet > .mj_UploadConfirm_error {
+    color: var(--mj-color-text-critical-primary);
+}
+
 .mj_DeviceSheet .mj_DeviceSheet_success {
     color: var(--mj-color-text-success);
 }
@@ -2158,6 +2168,170 @@ label.mj_SettingsSheet_row {
 
 .mj_LinkDeviceSheet_decide {
     justify-content: center;
+}
+
+/* Two-factor sign-in (TwoFactor.tsx): the QR and key, the recovery codes, and the code step on the
+   sign-in screen. */
+.mj_TwoFactorSetup {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    text-align: center;
+}
+
+.mj_TwoFactorSetup .mj_TwoFactorSetup_hint {
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-meta);
+}
+
+.mj_TwoFactorSetup_secret {
+    margin: 0;
+    font: 600 15px/20px var(--mj-font-family-mono, monospace);
+    letter-spacing: 0.06em;
+    user-select: all;
+    word-break: break-all;
+}
+
+.mj_TwoFactorSetup_actions {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    font: var(--mj-font-meta);
+}
+
+.mj_TwoFactorSetup_actions button {
+    border: 0;
+    background: none;
+    color: var(--mj-color-text-action-accent);
+    font: inherit;
+    cursor: pointer;
+}
+
+.mj_TwoFactorSetup_actions a {
+    color: var(--mj-color-text-action-accent);
+}
+
+.mj_RecoveryCodes {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.mj_RecoveryCodes > p {
+    margin: 0;
+    font: var(--mj-font-body-sm-regular);
+}
+
+.mj_RecoveryCodes_list {
+    display: grid;
+    grid-template-columns: repeat(2, max-content);
+    justify-content: space-evenly;
+    gap: 6px 40px;
+    margin: 0;
+    padding: 10px 12px 10px 36px;
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-md);
+    font: 500 12.5px/18px var(--mj-font-family-mono, monospace);
+    user-select: all;
+}
+
+.mj_RecoveryCodes_saved {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: var(--mj-font-body-sm-regular);
+}
+
+.mj_RecoveryCodes_done {
+    align-self: flex-end;
+    min-width: 96px;
+    height: 28px;
+    border: 0;
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-accent);
+    color: var(--mj-color-text-on-accent);
+    font: 600 13px/17px var(--mj-font-family-ui);
+}
+
+.mj_RecoveryCodes_done:disabled {
+    opacity: 0.5;
+}
+
+.mj_TwoFactorStep .mj_TwoFactorStep_text {
+    margin: 0;
+    font: var(--mj-font-body-sm-regular);
+}
+
+.mj_TwoFactorStep .mj_TwoFactorStep_hint {
+    margin: calc(-1 * var(--mj-space-2x)) 0 0;
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-micro);
+}
+
+.mj_TwoFactorStep .mj_RecoveryCodes_done {
+    width: 100%;
+    height: 32px;
+}
+
+.mj_TwoFactorStep_back {
+    border: 0;
+    background: none;
+    color: var(--mj-color-text-secondary);
+    font: var(--mj-font-meta);
+    cursor: pointer;
+}
+
+.mj_TwoFactorSheet .mj_RecoveryCodes_saved {
+    display: flex;
+    margin: 0;
+    color: var(--mj-color-text-primary);
+    font: 400 13px/18px var(--mj-font-family-ui);
+}
+
+/* Settings → Security → Change Password…: the sign-out checkbox with its note under the label. */
+.mj_ChangePasswordSheet .mj_RecoveryCodes_saved {
+    display: flex;
+    margin: 0;
+    color: var(--mj-color-text-primary);
+    font: 400 13px/18px var(--mj-font-family-ui);
+}
+
+.mj_ChangePasswordSheet .mj_ChangePassword_hint {
+    margin: 2px 0 0 21px;
+    color: var(--mj-color-text-secondary);
+    font: 400 12px/16px var(--mj-font-family-ui);
+}
+
+/* Settings → Security → Email address: the address itself, under the row's label. */
+.mj_AccountEmail_value {
+    color: var(--mj-color-text-secondary);
+    overflow-wrap: anywhere;
+}
+
+.mj_UploadConfirm_actions button.mj_AccountEmail_remove {
+    margin-right: auto;
+    color: var(--mj-color-text-critical-primary);
+}
+
+/* Sign-in screen: "Forgot password?" under the password field. */
+.mj_LoginForgot {
+    align-self: flex-end;
+    margin-top: calc(-1 * var(--mj-space-2x));
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--mj-color-text-action-accent);
+    font: var(--mj-font-meta);
+    cursor: pointer;
+}
+
+.mj_LoginForgot:hover {
+    text-decoration: underline;
+}
+
+.mj_SettingsSheet_help.mj_ChangePassword_done {
+    color: var(--mj-color-text-success);
 }
 
 /* ⌘K slash-command palette: a sheet near the top of the window, the composer palette's rows under

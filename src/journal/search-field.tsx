@@ -26,6 +26,9 @@ export function SearchField({
     id,
     className,
     maxLength,
+    inputRef: externalRef,
+    testId,
+    onEnter,
 }: {
     value: string;
     onChange: (next: string) => void;
@@ -36,8 +39,14 @@ export function SearchField({
     /** Extra classes on the bar, e.g. a variant or a layout hook. */
     className?: string;
     maxLength?: number;
+    /** The input element, for a caller that moves focus into it. */
+    inputRef?: React.RefObject<HTMLInputElement | null>;
+    testId?: string;
+    /** Enter pressed in the field (not while an IME candidate is open). */
+    onEnter?: () => void;
 }): React.ReactElement {
-    const inputRef = useRef<HTMLInputElement>(null);
+    const ownRef = useRef<HTMLInputElement>(null);
+    const inputRef = externalRef ?? ownRef;
     const clear = (): void => {
         onChange("");
         inputRef.current?.focus();
@@ -61,11 +70,13 @@ export function SearchField({
             <input
                 ref={inputRef}
                 id={id}
+                data-testid={testId}
                 className="mj_SearchField_input"
                 type="search"
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
                 onKeyDown={(event) => {
+                    if (event.key === "Enter" && onEnter && !isImeComposing(event)) onEnter();
                     if (event.key !== "Escape") return;
                     // An Escape that cancels an IME candidate belongs to the input method: no clear,
                     // default left alone, but it must not reach the app's Escape ladder either.

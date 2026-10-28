@@ -24,11 +24,12 @@ import {
     isObject,
     type EventPayload,
     type JournalEvent,
+    type TrackerContributor,
     type TrackerItemKind,
     type TrackerMilestoneKind,
     type TrackerResolution,
 } from "../types";
-import { itemStatusText, kindLabel, milestoneKindLabel, oneLine } from "./format";
+import { contributorWords, itemStatusText, kindLabel, milestoneKindLabel, oneLine } from "./format";
 import { MilestoneGlyph, TrackerGlyph } from "./glyphs";
 import { inlineRefsToText } from "./inline-attachments";
 
@@ -45,7 +46,16 @@ function resolution(payload: EventPayload): TrackerResolution | null {
     return (RESOLUTIONS as readonly string[]).includes(value) ? (value as TrackerResolution) : null;
 }
 
+function parseContributor(value: unknown): TrackerContributor | null {
+    if (!isObject(value)) return null;
+    const name = asString(value.name).trim();
+    return name ? { name, via: asString(value.via) === "agent" ? "agent" : "user" } : null;
+}
+
 function actorLabel(payload: EventPayload): string {
+    // Another person's write (a contributor's reply, or the owner's on a contributor's item).
+    const person = contributorWords(parseContributor(payload.person));
+    if (person) return person;
     return asString(payload.by) === "user" ? "You" : "Agent";
 }
 
@@ -288,6 +298,9 @@ export function MilestoneCard({
     const body = oneLine(asString(payload.body));
     const missionLabelText = asString(payload.mission_title).trim() || `#${missionNum}`;
     const userInput = kind === "user_input";
+    // Another person's milestone in one of the user's missions: the row carries `contributor`,
+    // the marker `person`.
+    const by = contributorWords(parseContributor(payload.contributor) ?? parseContributor(payload.person));
 
     return (
         <button
@@ -306,6 +319,7 @@ export function MilestoneCard({
             {body ? <p className="mj_TrackerCard_milestoneBody">{body}</p> : null}
             <p className="mj_TrackerCard_subtitle">
                 {milestoneKindLabel(kind)} · {missionLabelText}
+                {by ? <span className="mj_TrackerContributor"> · by {by}</span> : null}
             </p>
         </button>
     );
@@ -356,9 +370,13 @@ export function MissionNotice({
     const num = asNumber(payload.num);
     const title = asString(payload.title).trim();
     const action = asString(payload.action);
+    // A mission handed over to another person: its `closed` marker and each `left` marker say who.
+    const handedTo = isObject(payload.handed_over) ? asString(payload.handed_over.to).trim() : "";
 
     let text: string;
-    if (action === "created") {
+    if (handedTo && (action === "closed" || action === "left")) {
+        text = `Mission #${num} handed to ${handedTo}${title ? ` · ${title}` : ""}`;
+    } else if (action === "created") {
         text = `Mission #${num} started${title ? ` · ${title}` : ""}`;
     } else if (action === "joined") {
         text = `Joined mission #${num}`;

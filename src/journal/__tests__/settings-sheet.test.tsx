@@ -29,6 +29,9 @@ const CONVERSATION: Conversation = {
     read_up_to_seq: 1,
 };
 
+/** GET /2fa or /account/email on an older journal: Security shows only Password. */
+const olderJournal = (): jest.Mock => jest.fn().mockRejectedValue(new JournalApiError("Not found", 404, "not_found"));
+
 function signedInClient(): MatronJournalClient {
     const client = new MatronJournalClient();
     (client as unknown as { state: ClientState }).state = {
@@ -96,6 +99,7 @@ describe("Settings sheet (Mac grouped form)", () => {
         expect([...dialog.querySelectorAll(".mj_SettingsSheet_groupTitle")].map((el) => el.textContent)).toEqual([
             "Account",
             "Appearance",
+            "Security",
             "Devices",
             "Notifications",
             "Developer",
@@ -192,10 +196,19 @@ describe("Settings sheet (Mac grouped form)", () => {
     });
 
     describe("For you: the notices switch", () => {
-        type Api = { settings: jest.Mock; patchSettings: jest.Mock };
+        type Api = {
+            settings: jest.Mock;
+            patchSettings: jest.Mock;
+            twoFactorStatus: jest.Mock;
+            accountEmail: jest.Mock;
+        };
         const withApi = (api: Partial<Api>): MatronJournalClient => {
             const client = signedInClient();
-            (client as unknown as { api: Partial<Api> }).api = api;
+            (client as unknown as { api: Partial<Api> }).api = {
+                twoFactorStatus: olderJournal(),
+                accountEmail: olderJournal(),
+                ...api,
+            };
             return client;
         };
         const toggle = (): HTMLButtonElement | null =>
@@ -297,6 +310,144 @@ describe("Settings sheet (Mac grouped form)", () => {
             expect(spawnToggle()?.getAttribute("aria-checked")).toBe("true");
             expect(sheet()!.textContent).toContain("Couldn't save: offline");
         });
+
+        it("shows the auto-archive choice when the journal has it, and saves a change", async () => {
+            const select = (): HTMLSelectElement | null =>
+                sheet()?.querySelector<HTMLSelectElement>('select[data-setting="auto_archive_days"]') ?? null;
+            const patchSettings = jest.fn().mockResolvedValue({ notices: true, auto_archive_days: 90 });
+            await openSettings(
+                withApi({
+                    settings: jest.fn().mockResolvedValue({ notices: true, auto_archive_days: 30 }),
+                    patchSettings,
+                }),
+            );
+            expect(select()?.value).toBe("30");
+            expect([...select()!.options].map((o) => o.text)).toEqual([
+                "Off",
+                "After 14 days",
+                "After 30 days",
+                "After 90 days",
+            ]);
+            await act(async () => {
+                select()!.value = "90";
+                select()!.dispatchEvent(new Event("change", { bubbles: true }));
+            });
+            expect(patchSettings).toHaveBeenCalledWith({ auto_archive_days: 90 });
+            expect(select()?.value).toBe("90");
+        });
+
+        it("keeps the auto-archive choice when a settings frame carries only notices", async () => {
+            const client = withApi({ settings: jest.fn().mockResolvedValue({ notices: true, auto_archive_days: 30 }) });
+            await openSettings(client);
+            await act(async () => {
+                await (client as unknown as { handleFrame(frame: unknown): Promise<void> }).handleFrame({
+                    kind: "control",
+                    op: "settings",
+                    settings: { notices: false },
+                });
+            });
+            expect(sheet()?.querySelector<HTMLSelectElement>('select[data-setting="auto_archive_days"]')?.value).toBe(
+                "30",
+            );
+        });
+
+        it("sends auto-archive picks in order and shows a failure in the Archive group", async () => {
+            const sent: number[] = [];
+            let release!: () => void;
+            const patchSettings = jest.fn(async (body: { auto_archive_days: number }) => {
+                sent.push(body.auto_archive_days);
+                if (sent.length === 1) await new Promise<void>((resolve) => (release = resolve));
+                if (body.auto_archive_days === 90) throw new Error("offline");
+                return { notices: true, auto_archive_days: body.auto_archive_days };
+            });
+            await openSettings(
+                withApi({
+                    settings: jest.fn().mockResolvedValue({ notices: true, auto_archive_days: 30 }),
+                    patchSettings,
+                }),
+            );
+            const select = (): HTMLSelectElement =>
+                sheet()!.querySelector<HTMLSelectElement>('select[data-setting="auto_archive_days"]')!;
+            await act(async () => {
+                select().value = "14";
+                select().dispatchEvent(new Event("change", { bubbles: true }));
+                select().value = "90";
+                select().dispatchEvent(new Event("change", { bubbles: true }));
+            });
+            expect(sent).toEqual([14]);
+            await act(async () => {
+                release();
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            });
+            expect(sent).toEqual([14, 90]);
+            const group = sheet()!.querySelector('section[aria-labelledby="mj-settings-archive"]')!;
+            expect(group.textContent).toContain("Couldn't save: offline");
+            expect(select().value).toBe("14");
+            expect(sheet()!.querySelector('section[aria-labelledby="mj-settings-foryou"]')!.textContent).not.toContain(
+                "Couldn't save",
+            );
+        });
+
+        const select = (): HTMLSelectElement =>
+            sheet()!.querySelector<HTMLSelectElement>('select[data-setting="auto_archive_days"]')!;
+        const pick = (value: string): void => {
+            select().value = value;
+            select().dispatchEvent(new Event("change", { bubbles: true }));
+        };
+        const frame = (client: MatronJournalClient, settings: unknown): Promise<void> =>
+            (client as unknown as { handleFrame(frame: unknown): Promise<void> }).handleFrame({
+                kind: "control",
+                op: "settings",
+                settings,
+            });
+
+        it("puts a refused pick back even when a notices-only frame came in meanwhile", async () => {
+            let fail!: (e: Error) => void;
+            const patchSettings = jest.fn(() => new Promise((_resolve, reject) => (fail = reject)));
+            const client = withApi({
+                settings: jest.fn().mockResolvedValue({ notices: true, auto_archive_days: 30 }),
+                patchSettings,
+            });
+            await openSettings(client);
+            await act(async () => pick("90"));
+            await act(async () => frame(client, { notices: false }));
+            expect(select().value).toBe("90");
+            await act(async () => {
+                fail(new Error("offline"));
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            });
+            expect(select().value).toBe("30");
+            expect(sheet()!.querySelector('section[aria-labelledby="mj-settings-archive"]')!.textContent).toContain(
+                "Couldn't save: offline",
+            );
+        });
+
+        it("a failed save goes back to a newer frame's value, not an older save's answer", async () => {
+            const answers: Array<{ resolve: (v: unknown) => void; reject: (e: Error) => void }> = [];
+            const patchSettings = jest.fn(() => new Promise((resolve, reject) => answers.push({ resolve, reject })));
+            const client = withApi({
+                settings: jest.fn().mockResolvedValue({ notices: true, auto_archive_days: 30 }),
+                patchSettings,
+            });
+            await openSettings(client);
+            await act(async () => pick("14"));
+            await act(async () => frame(client, { notices: true, auto_archive_days: 0 }));
+            await act(async () => pick("90"));
+            await act(async () => {
+                answers[0].resolve({ notices: true, auto_archive_days: 14 });
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            });
+            await act(async () => {
+                answers[1].reject(new Error("offline"));
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            });
+            expect(select().value).toBe("0");
+        });
+
+        it("hides the auto-archive choice on a journal without it", async () => {
+            await openSettings(withApi({ settings: jest.fn().mockResolvedValue({ notices: true }) }));
+            expect(sheet()?.querySelector('select[data-setting="auto_archive_days"]')).toBeNull();
+        });
     });
 });
 
@@ -329,7 +480,15 @@ describe("Settings sheet: Coordinator consent approval", () => {
 
     function withApi(api: Partial<CoordinatorApi>): MatronJournalClient {
         const client = signedInClient();
-        (client as unknown as { api: Partial<CoordinatorApi> }).api = api;
+        (
+            client as unknown as {
+                api: Partial<CoordinatorApi> & { twoFactorStatus: jest.Mock; accountEmail: jest.Mock };
+            }
+        ).api = {
+            twoFactorStatus: olderJournal(),
+            accountEmail: olderJournal(),
+            ...api,
+        };
         return client;
     }
 
@@ -434,6 +593,8 @@ describe("Settings sheet: New chats defaults", () => {
         defaults: jest.Mock<Promise<UserDefaults>, []>;
         putDefaults: jest.Mock<Promise<UserDefaults>, [Partial<UserDefaults>]>;
         devices: jest.Mock;
+        twoFactorStatus: jest.Mock;
+        accountEmail: jest.Mock;
     };
 
     beforeAll(() => {
@@ -465,6 +626,9 @@ describe("Settings sheet: New chats defaults", () => {
             defaults: jest.fn().mockResolvedValue(stored),
             putDefaults: jest.fn((body: Partial<UserDefaults>) => Promise.resolve({ ...stored, ...body })),
             devices: jest.fn().mockResolvedValue({ devices: [] }),
+            // An older journal: no two-factor rows.
+            twoFactorStatus: olderJournal(),
+            accountEmail: olderJournal(),
         };
         (client as unknown as { api: DefaultsApi }).api = api;
         return { client, api };
@@ -610,6 +774,8 @@ describe("Settings sheet: Boxes defaults", () => {
         defaults: jest.Mock<Promise<UserDefaults>, []>;
         putDefaults: jest.Mock;
         devices: jest.Mock<Promise<{ devices: DeviceDTO[] }>, []>;
+        twoFactorStatus: jest.Mock;
+        accountEmail: jest.Mock;
         putBoxDefaults: jest.Mock<Promise<Record<string, unknown>>, [number, BoxPut]>;
     };
 
@@ -659,6 +825,8 @@ describe("Settings sheet: Boxes defaults", () => {
             defaults: jest.fn().mockResolvedValue({ default_model: null, default_effort: null }),
             putDefaults: jest.fn(),
             devices: jest.fn().mockResolvedValue({ devices }),
+            twoFactorStatus: olderJournal(),
+            accountEmail: olderJournal(),
             putBoxDefaults: jest.fn((deviceId: number, body: BoxPut) => {
                 const current = devices.find((device) => device.device_id === deviceId)!.defaults!;
                 return Promise.resolve({
@@ -701,7 +869,7 @@ describe("Settings sheet: Boxes defaults", () => {
             [...document.querySelectorAll(".mj_SettingsSheet .mj_SettingsSheet_groupTitle")].map(
                 (el) => el.textContent,
             ),
-        ).toEqual(["Account", "Appearance", "Devices", "Notifications", "Developer", "New chats", "Boxes"]);
+        ).toEqual(["Account", "Appearance", "Security", "Devices", "Notifications", "Developer", "New chats", "Boxes"]);
         expect(box(10).querySelector(".mj_SettingsSheet_boxName")?.textContent).toBe("elm");
         expect(optionValues(10, "agent")).toEqual(["", "claude", "codex"]);
         expect([...field(10, "agent").options].map((option) => option.textContent)).toEqual([

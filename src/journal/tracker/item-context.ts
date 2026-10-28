@@ -13,7 +13,7 @@ Please see LICENSE files in the repository root for full details.
 import { conversationBox } from "../boxes";
 import { displayRawTitle } from "../SessionTag";
 import type { AgentRosterEntry, Conversation, Mission, TrackerComment, TrackerItem } from "../types";
-import { itemOriginTitle } from "./format";
+import { commentAttribution, itemOriginTitle } from "./format";
 
 /** The label for a conversation no source could name. */
 export const UNNAMED_CONVERSATION = "Conversation";
@@ -91,10 +91,17 @@ export interface CommentAuthor {
  * own comment, which is headed "You".
  */
 export function commentAuthor(
-    comment: Pick<TrackerComment, "author" | "device_id" | "device_name" | "convo_id" | "convo_title">,
+    comment: Pick<
+        TrackerComment,
+        "author" | "device_id" | "device_name" | "convo_id" | "convo_title" | "attribution" | "contributor"
+    >,
     conversations: Conversation[],
     agents: AgentRosterEntry[] | undefined,
 ): CommentAuthor | null {
+    // Another person's comment (a contributor's, or one copied in by a hand-over) is headed with
+    // who wrote it in words: no box or conversation of theirs is ever named.
+    const attribution = commentAttribution(comment);
+    if (attribution) return { box: attribution, conversation: null, convoId: null };
     if (comment.author !== "agent") return null;
     const box =
         comment.device_name?.trim() || agents?.find((entry) => entry.device_id === comment.device_id)?.name || null;
