@@ -136,6 +136,11 @@ async function applyEventToConversation(
     event: JournalEvent,
     eventStore: IDBObjectStore,
 ): Promise<void> {
+    // Diagnostic: a live append that is not newer than the conversation's newest seq means
+    // out-of-order delivery, which can hide a reply until the next repaint from history.
+    if (event.seq <= conversation.last_seq) {
+        console.debug("matron:seq-order", { convo: event.convo_id, seq: event.seq, lastSeq: conversation.last_seq });
+    }
     conversation.last_seq = Math.max(conversation.last_seq, event.seq);
     // last_ts (the conversation-list sort key and the "last activity" time)
     // advances ONLY on a MESSAGE event — see the message branch below. A
@@ -551,6 +556,7 @@ export class JournalDatabase {
         for (const incomingEvent of incomingEvents) {
             const event = enforceToolLogTtl(incomingEvent);
             if (cursor !== undefined && event.seq <= cursor) {
+                console.debug("matron:seq-dropped", { convo: event.convo_id, seq: event.seq, cursor });
                 results.push(false);
                 continue;
             }
