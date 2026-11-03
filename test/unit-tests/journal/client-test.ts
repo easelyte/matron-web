@@ -136,6 +136,7 @@ interface ClientInternals {
     uploadPendingAttachment(message: PendingMessage, file: File, owner: unknown): Promise<void>;
     handleEphemeral(frame: JournalEphemeralFrame): void;
     handleJournal(event: JournalEvent): Promise<void>;
+    handleJournalBatch(events: JournalEvent[]): Promise<void>;
     handleFrame(frame: ServerFrame): Promise<void>;
 }
 
@@ -586,6 +587,41 @@ describe("MatronJournalClient state handling", () => {
 
         client.clearSelection();
         expect(localStorage.getItem(selectionKey!)).toBeNull();
+    });
+
+    it.each([1, 2])("shows %i live background events immediately when returning to a conversation", async (count) => {
+        jest.useFakeTimers();
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const initialEvents = [textEvent("c1", 10)];
+        const database = historyWindowDatabase(initialEvents);
+        const messages = jest.fn(async (conversationId: string) => ({
+            events: conversationId === "c1" ? initialEvents : [],
+        }));
+        state.state = signedInState(client, "c2");
+        state.database = database;
+        state.api = { messages };
+        state.connection = { send: jest.fn().mockReturnValue(true) };
+
+        await client.selectConversation("c1");
+        expect(state.history.get("c1")).toMatchObject({
+            initialized: true,
+            newestSeq: 10,
+            hasMoreNewer: false,
+        });
+        expect(client.getSnapshot().events).toEqual(initialEvents);
+        await client.selectConversation("c2");
+
+        const liveEvents = Array.from({ length: count }, (_, index) => textEvent("c1", 21 + index));
+        // The connection's batch handler delegates a single frame to handleJournal.
+        await state.handleJournalBatch(liveEvents);
+        expect(await database.events("c1")).toEqual([...initialEvents, ...liveEvents]);
+        expect(client.getSnapshot()).toMatchObject({ selectedConversationId: "c2", events: [] });
+
+        await client.selectConversation("c1");
+
+        expect(client.getSnapshot().events).toEqual([...initialEvents, ...liveEvents]);
+        expect(messages).toHaveBeenCalledTimes(2);
     });
 
     it("loads and exposes a historical window around a selected message sequence", async () => {
@@ -1075,6 +1111,7 @@ describe("MatronJournalClient state handling", () => {
         });
 
         await state.handleJournal(textEvent("c1", 103));
+        await state.refreshSelectedConversation("c1");
 
         expect(client.getSnapshot().events).toEqual(historicalEvents);
         expect(client.getSnapshot().conversations.find((conversation) => conversation.id === "c1")?.unread_count).toBe(

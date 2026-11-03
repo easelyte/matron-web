@@ -2059,12 +2059,9 @@ export class MatronJournalClient {
             // one could wedge it. No-forward-progress costs at most one extra overlap-only request
             // at the true tail and can neither hide nor skip rows.
             const reachedTail = maximum === undefined || maximum <= anchorNewestSeq;
-            // On collapse the upper bound must cover any live frame that raced in and was persisted
-            // (with a higher seq) while the window was open — handleJournal suppresses the newestSeq
-            // bump during a historical window, so a stale response maximum would filter that frame
-            // out of the "live" timeline. Take the max with the canonical last_seq (the DB's newest
-            // applied seq); max() also means a stale-LOW last_seq can never pull the bound below the
-            // fetched edge. While still paging the bound stays at the fetched maximum.
+            // On collapse keep the newest edge in step with live frames persisted while the window
+            // was open. Live refreshes read through the newest persisted event regardless of this
+            // edge; while still paging, the upper bound stays at the fetched maximum.
             const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
             const liveNewestSeq =
                 reachedTail && maximum !== undefined ? Math.max(maximum, conversation?.last_seq ?? maximum) : maximum;
@@ -7090,7 +7087,7 @@ export class MatronJournalClient {
         const events = persistedEvents.filter(
             (event) =>
                 (history?.oldestSeq === undefined || event.seq >= history.oldestSeq) &&
-                (history?.newestSeq === undefined || event.seq <= history.newestSeq),
+                (history?.hasMoreNewer !== true || history.newestSeq === undefined || event.seq <= history.newestSeq),
         );
         const visiblePending = new Map<string, PendingMessage>();
         if (!history?.hasMoreNewer) {
