@@ -23,6 +23,11 @@ import type {
 
 /** Another person's write in words: "bob" when they wrote it, "bob's agent" when their agent did;
  *  null when there is no usable contributor. */
+/** "1 item", "3 items"; pass the plural when it isn't the noun plus "s". */
+export function plural(count: number, noun: string, nounPlural = `${noun}s`): string {
+    return `${count} ${count === 1 ? noun : nounPlural}`;
+}
+
 export function contributorWords(contributor: TrackerContributor | null | undefined): string | null {
     const name = typeof contributor?.name === "string" ? contributor.name.trim() : "";
     if (!name) return null;

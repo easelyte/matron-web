@@ -21,7 +21,10 @@ import { createPortal } from "react-dom";
 import { useFocusTrap } from "./use-focus-trap";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
+import { namedPastedFiles } from "./pasted-files";
 import { leaveResetPage, takeResetLink, useForgotPasswordEnabled } from "./reset-link";
+// Loaded for its side effect: applies the saved theme and follows the system setting from first paint on.
+import "./theme";
 import {
     AgentSpawnCard,
     isAnswerableAgentSpawn,
@@ -77,10 +80,12 @@ import {
     systemNotice,
     type SystemNotice,
 } from "./system-notice";
-import { dateTimeFormat } from "./date-format";
+import { dateTimeFormat, formatClockTime } from "./date-format";
 import {
+    AcceptInviteSheet,
     ChatTasksPane,
     CoordinatorChooserSheet,
+    MintedInviteSheet,
     RoutinesSheet,
     SettingsSheet,
     TrackerPane,
@@ -142,6 +147,7 @@ import {
     RefreshIcon,
     ArrowUpCircleIcon,
     ProjectsIcon,
+    PromptGlyph,
 } from "./icons";
 import { FilesPane } from "./files/FilesPane";
 import { SearchField } from "./search-field";
@@ -456,7 +462,7 @@ export function makeRelativeDayFormatter(): (timestamp: number, now: number) => 
 }
 
 // EXPORTED: the render callsite uses it, and unit tests import it directly to inject `now`.
-// `formatTime` stays private; only this helper needs the test seam.
+// The clock time comes from date-format; only this helper needs the test seam.
 export function formatRelativeDay(timestamp: number, now: number = Date.now()): string {
     return makeRelativeDayFormatter()(timestamp, now);
 }
@@ -1006,19 +1012,7 @@ export function NewSessionSheet({
                         {title}
                     </h2>
                     <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={dismiss}>
-                        <svg
-                            viewBox="0 0 24 24"
-                            width="16"
-                            height="16"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            aria-hidden="true"
-                        >
-                            <path d="M18 6 6 18M6 6l12 12" />
-                        </svg>
+                        <CloseIcon width="16" height="16" strokeWidth="2" />
                     </button>
                 </div>
 
@@ -2510,6 +2504,17 @@ function ConversationListView({
                 />
             )}
             {coordinatorSheet?.kind === "routines" && <RoutinesSheet client={client} onClose={closeCoordinatorSheet} />}
+            {state.contactInviteLink !== undefined && (
+                <AcceptInviteSheet
+                    key={state.contactInviteLink}
+                    client={client}
+                    link={state.contactInviteLink}
+                    onClose={() => client.closeContactInvite()}
+                />
+            )}
+            {state.mintedInviteLink !== undefined && (
+                <MintedInviteSheet link={state.mintedInviteLink} onClose={() => client.dismissMintedInvite()} />
+            )}
             {pinDialog && (
                 <PinDialog client={client} state={state} target={pinDialog} onClose={() => setPinDialog(undefined)} />
             )}
@@ -4576,7 +4581,7 @@ export function QueuedReleaseCard({
             <div className="mj_PromptHeader">
                 <span className="mj_PromptLabel">Queued message</span>
                 <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
-                    {formatTime(event.ts)}
+                    {formatClockTime(event.ts)}
                 </time>
             </div>
             <div className="mj_PromptBody">
@@ -4760,7 +4765,7 @@ function PromptCard({
             <div className="mj_PromptHeader">
                 <span className="mj_PromptLabel">{permission ? "Permission request" : "Question"}</span>
                 <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
-                    {formatTime(event.ts)}
+                    {formatClockTime(event.ts)}
                 </time>
             </div>
             <div className="mj_PromptBody">
@@ -4897,52 +4902,26 @@ const PROMPT_AFFIRMATIVE = /^(send|yes|continue|confirm|ok|okay|approve|proceed|
 
 function PromptMailGlyph(): React.ReactElement {
     return (
-        <svg
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
+        <PromptGlyph>
             <path d="M4 6h16v12H4z" />
             <path d="m4 7 8 6 8-6" />
-        </svg>
+        </PromptGlyph>
     );
 }
 
 function PromptCheckGlyph(): React.ReactElement {
     return (
-        <svg
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
+        <PromptGlyph strokeWidth="2.4">
             <path d="m5 12 4 4 10-10" />
-        </svg>
+        </PromptGlyph>
     );
 }
 
 function PromptDeniedGlyph(): React.ReactElement {
     return (
-        <svg
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.4"
-            strokeLinecap="round"
-        >
+        <PromptGlyph strokeWidth="2.4">
             <path d="m6 6 12 12M18 6 6 18" />
-        </svg>
+        </PromptGlyph>
     );
 }
 
@@ -5073,7 +5052,7 @@ function AgentChatRequestCard({
             <div className="mj_PromptHeader">
                 <span className="mj_PromptLabel">Agent chat request</span>
                 <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
-                    {formatTime(event.ts)}
+                    {formatClockTime(event.ts)}
                 </time>
             </div>
             <div className="mj_PromptBody">
@@ -5215,7 +5194,7 @@ function SystemNoticeRow({
                 </span>
                 <span className="mj_SystemNotice_summary">{notice.summary}</span>
                 <time className="mj_SystemNotice_time" dateTime={new Date(event.ts).toISOString()}>
-                    {formatTime(event.ts)}
+                    {formatClockTime(event.ts)}
                 </time>
             </summary>
             <div className="mj_SystemNotice_body mj_Markdown">
@@ -5286,7 +5265,7 @@ function ToolOutput({
                 </code>
             </summary>
             <div className="mj_ToolCard_meta">
-                {outcome} · <time dateTime={new Date(event.ts).toISOString()}>{formatTime(event.ts)}</time>
+                {outcome} · <time dateTime={new Date(event.ts).toISOString()}>{formatClockTime(event.ts)}</time>
             </div>
             <div className="mj_ToolCommand">
                 <code>{command}</code>
@@ -6175,6 +6154,10 @@ export function EventContent({
                         // A read-only transcript (a sub-chat or a subagent pane) shows how a
                         // hand-over stands but never answers it.
                         answerGrant={isReadOnly ? undefined : (grantId, answer) => client.answerGrant(grantId, answer)}
+                        answerInviteAsk={
+                            isReadOnly ? undefined : (askId, decision) => client.answerInviteAsk(askId, decision)
+                        }
+                        loadConsentItem={(convoId, url) => client.findConsentItemRow(convoId, url)}
                     />
                 );
             }
@@ -6332,7 +6315,7 @@ function EventRow({
                     {event.type !== "tool_output" && event.type !== "prompt" && event.type !== "permission_request" && (
                         <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
                             <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
-                                {formatTime(event.ts)}
+                                {formatClockTime(event.ts)}
                             </time>
                         </a>
                     )}
@@ -6346,7 +6329,7 @@ function EventRow({
                 {own && event.type !== "tool_output" && (
                     <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
                         <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
-                            {formatTime(event.ts)}
+                            {formatClockTime(event.ts)}
                         </time>
                     </a>
                 )}
@@ -8700,7 +8683,7 @@ function Composer({
                                         }
                                     }}
                                     onPaste={(event) => {
-                                        const files = [...event.clipboardData.files];
+                                        const files = namedPastedFiles(event.clipboardData);
                                         if (files.length > 0) {
                                             // preventDefault() marks this paste as consumed; the upload
                                             // modal's document-level paste listener (mounted synchronously by

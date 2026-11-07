@@ -18,7 +18,7 @@ import React, { useState } from "react";
 
 import { SearchField } from "../search-field";
 import type { Mission, Project } from "../types";
-import { formatRelativeTime, oneLine } from "./format";
+import { formatRelativeTime, oneLine, plural } from "./format";
 import { NewProjectSheet, useRowMove } from "./ProjectFiling";
 import { filterProjects, filterTerms, missionMatches } from "./projectsFilter";
 
@@ -58,10 +58,6 @@ export function NeedsYouPill({ count }: { count: number }): React.ReactElement |
 export function openMissionCount(project: Project): number {
     const { running, waiting, idle, quiet } = project.missions;
     return running + waiting + idle + quiet;
-}
-
-export function plural(count: number, noun: string, nounPlural = `${noun}s`): string {
-    return `${count} ${count === 1 ? noun : nounPlural}`;
 }
 
 function ProjectCard({

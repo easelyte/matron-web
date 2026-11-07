@@ -17,6 +17,8 @@ Please see LICENSE files in the repository root for full details.
  * codes, move to a new app, turn off, and (admins) require it for everyone.
  * Devices (DevicesSettings.tsx) is the Mac's Devices tab: rename, tag and revoke each device, and
  * the Add Agent and Link a Device pairing flows.
+ * People (PeopleSettings.tsx): contacts with their full address, and contacts on other journals by
+ * invite link — make one, withdraw an open one, or open one someone sent.
  *
  * For you: the journal's per-user `notices` setting (agents file things to read as items with a
  * Seen button instead of leaving them in chat). The sheet asks the client to load it on open; the
@@ -35,6 +37,7 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import type { MatronJournalClient } from "./client";
 import { UsersSettings } from "./AccountEmail";
 import { DevicesSettings } from "./DevicesSettings";
+import { PeopleSettings } from "./PeopleSettings";
 import { SecuritySettings } from "./TwoFactor";
 import {
     activeOverrides,
@@ -855,6 +858,7 @@ export function SettingsSheet({
                 </section>
                 <SecuritySettings client={client} onPasswordChanged={() => setDevicesRevision((n) => n + 1)} />
                 <DevicesSettings client={client} session={session} revision={devicesRevision} />
+                <PeopleSettings client={client} session={session} />
                 <UsersSettings client={client} />
                 <DesktopNotifications client={client} />
                 <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-developer">

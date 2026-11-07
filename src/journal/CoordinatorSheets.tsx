@@ -26,8 +26,7 @@ import { createPortal } from "react-dom";
 
 import type { MatronJournalClient } from "./client";
 import { AlarmIcon, ComposeIcon, PlusCircleIcon, RefreshIcon, WarningTriangleIcon } from "./icons";
-import { SheetHead, useSheetLifecycle } from "./PinDialogs";
-import { pinChooserView } from "./pins";
+import { ConversationChooserFilter, SheetHead, useConversationChooser, useSheetLifecycle } from "./PinDialogs";
 import {
     type AllowanceTier,
     AllowanceTierRules,
@@ -114,8 +113,6 @@ export function CoordinatorChooserSheet({
     /** "New coordinator chat…": the parent runs the new-session sheet and stores the result. */
     onNewChat: () => void;
 }): React.ReactElement {
-    const [query, setQuery] = useState("");
-    const [box, setBox] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | undefined>(initialError);
     const mountedRef = useSheetLifecycle(onClose);
@@ -126,8 +123,8 @@ export function CoordinatorChooserSheet({
     const eligible = state.conversations.filter(
         (conversation: Conversation) => !conversation.parent_convo_id && !state.archivedIds.has(conversation.id),
     );
-    const view = pinChooserView(eligible, state.agents, query, box);
-    if (box !== null && view.box === null) setBox(null);
+    const chooser = useConversationChooser(eligible, state.agents);
+    const { view } = chooser;
 
     const pick = async (convoId: string): Promise<void> => {
         if (saving) return;
@@ -159,41 +156,11 @@ export function CoordinatorChooserSheet({
                     onClose={onClose}
                 />
                 <p>The Coordinator hands out your work as missions, and the journal sends it your routines.</p>
-                <div>
-                    <label htmlFor="mj-coordinator-chooser-search">Conversation</label>
-                    <input
-                        id="mj-coordinator-chooser-search"
-                        type="text"
-                        value={query}
-                        autoFocus
-                        autoComplete="off"
-                        placeholder="Search conversations"
-                        onChange={(event) => setQuery(event.target.value)}
-                    />
-                </div>
-                {view.boxes.length > 0 && (
-                    <div className="mj_ConversationListTabs mj_PinSheet_boxes" role="group" aria-label="Filter by box">
-                        <button
-                            type="button"
-                            className={`mj_ConversationListTab${view.box === null ? " mj_ConversationListTab_active" : ""}`}
-                            aria-pressed={view.box === null}
-                            onClick={() => setBox(null)}
-                        >
-                            All
-                        </button>
-                        {view.boxes.map((option) => (
-                            <button
-                                key={option.name}
-                                type="button"
-                                className={`mj_ConversationListTab${view.box === option.name ? " mj_ConversationListTab_active" : ""}`}
-                                aria-pressed={view.box === option.name}
-                                onClick={() => setBox(view.box === option.name ? null : option.name)}
-                            >
-                                {option.name} {option.count}
-                            </button>
-                        ))}
-                    </div>
-                )}
+                <ConversationChooserFilter
+                    inputId="mj-coordinator-chooser-search"
+                    placeholder="Search conversations"
+                    chooser={chooser}
+                />
                 <div role="list" aria-label="Conversations" className="mj_PinSheet_list">
                     <button
                         type="button"

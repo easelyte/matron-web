@@ -8,7 +8,7 @@ import { useFocusTrap } from "./use-focus-trap";
 import { createPortal } from "react-dom";
 
 import type { MatronJournalClient } from "./client";
-import { modalDialogOpen } from "./jump-to-message";
+import { isMacPlatform, modalDialogOpen } from "./jump-to-message";
 import { SheetHead, useSheetLifecycle } from "./PinDialogs";
 import type { NumberLookup, NumberLookupKind, NumberLookupOutcome } from "./types";
 
@@ -39,17 +39,12 @@ export function isGoToNumberShortcut(
     return mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
 }
 
-const isMac = (): boolean => /Mac|iPhone|iPad/.test(navigator.platform);
-
-/** The shortcut's name for a button tooltip (it opens Search). */
-export const goToNumberShortcutLabel = (): string => (isMac() ? "⌘J" : "Ctrl+J");
-
 /** Binds the shortcut for as long as the host is mounted; `enabled` false leaves the key alone. */
 export function useGoToNumberShortcut(client: MatronJournalClient, enabled: boolean): void {
     useEffect(() => {
         if (!enabled) return undefined;
         const onKeyDown = (event: KeyboardEvent): void => {
-            if (event.defaultPrevented || !isGoToNumberShortcut(event, isMac())) return;
+            if (event.defaultPrevented || !isGoToNumberShortcut(event, isMacPlatform())) return;
             // A sheet or dialog owns the keyboard; Search would open beneath it.
             if (modalDialogOpen()) return;
             event.preventDefault();

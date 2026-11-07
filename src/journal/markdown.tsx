@@ -37,6 +37,7 @@ import { unified } from "unified";
 import { copyText } from "./clipboard";
 import { filesDeepLinkHash, handleFilesLinkClick } from "./files-link";
 import { parseOwnTrackerUrl } from "./link-path";
+import { parseContactLink } from "./contact-link";
 import { TrackerLinkTarget } from "./tracker-link-title";
 import type { MatronLinkKind, TrackerLinkHandler } from "./types";
 
@@ -318,6 +319,7 @@ export function parseTrackerHref(href: string): { kind: "item" | "mission"; num:
  */
 export function parseMatronHref(href: string): { kind: MatronLinkKind; target: number | string } | null {
     if (parseOwnTrackerUrl(href)) return { kind: "link", target: href };
+    if (parseContactLink(href)) return { kind: "contact", target: href };
     const tracker = parseTrackerHref(href);
     if (tracker) return { kind: tracker.kind, target: tracker.num };
     const project = /^matron:\/\/project\/([0-9]+)$/.exec(href);
@@ -371,13 +373,20 @@ const BARE_ITEM_URL = /(?<![\w/?#&=%~+@.:-])matron:\/\/item\/[1-9][0-9]*(?![\w/?
 // `text` children, so they are never visited at all.
 const NO_LINKIFY_PARENTS = new Set(["link", "linkReference"]);
 
+/** A bare contact invite link (`matron://contact?…`); parseContactLink decides whether it is one. */
+const BARE_CONTACT_URL = /(?<![\w/?#&=%~+@.:-])matron:\/\/contact\?[A-Za-z0-9_.:&=-]+/g;
+
 function linkifyText(value: string): LinkifyNode[] | null {
     const out: LinkifyNode[] = [];
     let last = 0;
-    for (const match of value.matchAll(BARE_ITEM_URL)) {
-        const url = match[0];
-        // Same predicate the renderer applies (rejects out-of-range integers).
-        if (!parseTrackerHref(url)) continue;
+    const matches = [...value.matchAll(BARE_ITEM_URL), ...value.matchAll(BARE_CONTACT_URL)].sort(
+        (a, b) => a.index - b.index,
+    );
+    for (const match of matches) {
+        // Sentence punctuation after a contact link is not part of it.
+        const url = match[0].startsWith("matron://contact?") ? match[0].replace(/[.:]+$/, "") : match[0];
+        // Same predicates the renderer applies (rejects out-of-range integers, malformed invites).
+        if (!parseTrackerHref(url) && !parseContactLink(url)) continue;
         const start = match.index;
         if (start > last) out.push({ type: "text", value: value.slice(last, start) });
         out.push({ type: "link", url, title: null, children: [{ type: "text", value: url }] });
@@ -393,7 +402,8 @@ function linkifyText(value: string): LinkifyNode[] | null {
  * through the same `a()` path as `[#N](matron://item/N)`. GFM's autolink-literal only covers http(s),
  * www and email, and CommonMark autolinks need angle brackets, so without this a note like
  * "the steps are on #68 (matron://item/68)" stays dead text. Only applied where an in-app
- * handler exists. Bare `matron://convo/…` is deliberately left alone.
+ * handler exists. A bare contact invite link (`matron://contact?…`) is linked the same way, so a
+ * tap opens its accept sheet. Bare `matron://convo/…` is deliberately left alone.
  */
 export function remarkBareItemLinks() {
     return (tree: LinkifyNode): void => {
@@ -404,7 +414,10 @@ export function remarkBareItemLinks() {
             const next: LinkifyNode[] = [];
             let changed = false;
             for (const child of node.children) {
-                if (child.type === "text" && child.value?.includes("matron://item/")) {
+                if (
+                    child.type === "text" &&
+                    (child.value?.includes("matron://item/") || child.value?.includes("matron://contact?"))
+                ) {
                     const replaced = linkifyText(child.value);
                     if (replaced) {
                         next.push(...replaced);

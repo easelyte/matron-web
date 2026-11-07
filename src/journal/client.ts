@@ -17,6 +17,7 @@ import {
     parseBoxStatus,
     parseUserDefaults,
 } from "./api";
+import type { Contact, ContactInvite, InviteAskAnswer, InviteAskDecision, InviteOpened } from "./contacts";
 import { JournalConnection } from "./connection";
 import { FilesApi } from "./files/filesApi";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
@@ -3316,6 +3317,11 @@ export class MatronJournalClient {
      * mirror is filed in the same conversation as its card, open or already decided.
      */
     public async findConsentItem(convoId: string, consentUrl: string): Promise<number | null> {
+        return (await this.findConsentItemRow(convoId, consentUrl))?.num ?? null;
+    }
+
+    /** The consent mirror item itself (its state says whether the ask is still open); null as above. */
+    public async findConsentItemRow(convoId: string, consentUrl: string): Promise<TrackerItem | null> {
         const api = this.api;
         if (!api || !convoId || !consentUrl) return null;
         try {
@@ -3328,7 +3334,7 @@ export class MatronJournalClient {
                     cursor,
                 });
                 const hit = items.find((item) => (item.links ?? []).some((link) => link?.url === consentUrl));
-                if (hit) return hit.num;
+                if (hit) return hit;
                 if (!next_cursor) return null;
                 cursor = next_cursor;
             }
@@ -3348,6 +3354,55 @@ export class MatronJournalClient {
     public async answerGrant(grantId: string, answer: GrantAnswer, signal?: AbortSignal): Promise<Grant> {
         if (!this.api) throw new Error("Not signed in.");
         return this.api.answerGrant(grantId, answer, signal);
+    }
+
+    // ── People: contacts, and contacts on other journals by invite link ─────────────────────
+
+    public async listContacts(): Promise<Contact[]> {
+        return this.deviceAdminApi().contacts();
+    }
+
+    public async createContactInvite(): Promise<{ invite: ContactInvite; link: string }> {
+        return this.deviceAdminApi().createContactInvite();
+    }
+
+    public async listContactInvites(): Promise<ContactInvite[]> {
+        return this.deviceAdminApi().contactInvites();
+    }
+
+    public async withdrawContactInvite(id: string): Promise<ContactInvite> {
+        return this.deviceAdminApi().withdrawContactInvite(id);
+    }
+
+    public async openContactInviteLink(link: string): Promise<InviteOpened> {
+        return this.deviceAdminApi().openContactInvite(link);
+    }
+
+    public async acceptContactInvite(link: string): Promise<Contact> {
+        return this.deviceAdminApi().acceptContactInvite(link);
+    }
+
+    public async answerInviteAsk(askId: string, decision: InviteAskDecision): Promise<InviteAskAnswer> {
+        return this.deviceAdminApi().answerInviteAsk(askId, decision);
+    }
+
+    /** Shows the accept sheet for a contact invite link (nothing is sent until Accept). */
+    public openContactInvite(link: string): void {
+        this.patch({ contactInviteLink: link });
+    }
+
+    public closeContactInvite(): void {
+        if (this.state.contactInviteLink !== undefined) this.patch({ contactInviteLink: undefined });
+    }
+
+    /** Shows a just-minted invite link over the app, once. */
+    public showMintedInvite(link: string): void {
+        this.patch({ mintedInviteLink: link });
+    }
+
+    /** Drops the once-shown link of an approved invite ask. */
+    public dismissMintedInvite(): void {
+        if (this.state.mintedInviteLink !== undefined) this.patch({ mintedInviteLink: undefined });
     }
 
     /** Opens a project page on the Projects view (the tracker's "missions" view key). */
@@ -3386,6 +3441,10 @@ export class MatronJournalClient {
         }
         if (kind === "convo") {
             if (typeof target === "string" && target) void this.selectConversation(target, { suppressNotFound: true });
+            return;
+        }
+        if (kind === "contact") {
+            if (typeof target === "string") this.openContactInvite(target);
             return;
         }
         const num = typeof target === "number" ? target : Number(target);
@@ -5215,7 +5274,11 @@ export class MatronJournalClient {
         if (!api) return { ok: false };
         let written: TrackerItem | undefined;
         try {
-            ({ item: written } = await api.postItemComment(id, body, idempotencyKey ?? crypto.randomUUID()));
+            let link: string | undefined;
+            ({ item: written, link } = await api.postItemComment(id, body, idempotencyKey ?? crypto.randomUUID()));
+            // Approving an agent's invite ask on its item mints the invite, and the journal hands
+            // the link to this tap alone: show it once.
+            if (typeof link === "string" && link && this.api === api) this.patch({ mintedInviteLink: link });
         } catch (error) {
             return this.api === api ? { ok: false, reason: commentFailureMessage(error) } : { ok: false };
         }

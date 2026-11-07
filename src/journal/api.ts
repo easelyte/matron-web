@@ -6,6 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import {
+    isObject,
     type AccountEmail,
     type BoxDefaults,
     type BoxDefaultsPatch,
@@ -53,6 +54,7 @@ import {
     type JournalUser,
 } from "./types";
 import { parseMetrics, type JournalMetrics } from "./ops/model";
+import type { Contact, ContactInvite, InviteAskAnswer, InviteAskDecision, InviteOpened } from "./contacts";
 
 interface ElectronJournalResponse {
     status: number;
@@ -245,29 +247,25 @@ function idempotencyHeader(key?: string): { headers?: Record<string, string> } {
 // Without it the journal rewrites each ref to its caption text, so it rides on the same requests.
 const ITEM_KINDS_HEADER = { "X-Matron-Item-Kinds": "notice", "X-Matron-Item-Inline": "attachments" };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isCount(value: unknown): value is number {
     return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 function parseBoxActivity(raw: unknown): BoxStatus["activity"] | undefined {
-    if (!isRecord(raw) || !isCount(raw.live_sessions)) return undefined;
+    if (!isObject(raw) || !isCount(raw.live_sessions)) return undefined;
     const lastHour = Array.isArray(raw.last_hour) ? raw.last_hour : [];
     const entries = lastHour.flatMap((entry: unknown) => {
-        if (!isRecord(entry) || typeof entry.path !== "string" || !entry.path || !isCount(entry.sessions)) return [];
+        if (!isObject(entry) || typeof entry.path !== "string" || !entry.path || !isCount(entry.sessions)) return [];
         return [{ path: entry.path, sessions: entry.sessions }];
     });
     return { live_sessions: raw.live_sessions, last_hour: entries };
 }
 
 function parseBoxLimits(raw: unknown): BoxStatus["limits"] | undefined {
-    if (!isRecord(raw) || !Array.isArray(raw.lines)) return undefined;
+    if (!isObject(raw) || !Array.isArray(raw.lines)) return undefined;
     if (typeof raw.as_of !== "number" || !Number.isFinite(raw.as_of)) return undefined;
     const lines = raw.lines.flatMap((line: unknown): BoxStatusLimitLine[] => {
-        if (!isRecord(line)) return [];
+        if (!isObject(line)) return [];
         if (typeof line.id !== "string" || !line.id || typeof line.label !== "string" || !line.label) return [];
         if (typeof line.percent !== "number" || !Number.isFinite(line.percent)) return [];
         const parsed: BoxStatusLimitLine = { id: line.id, label: line.label, percent: line.percent };
@@ -280,20 +278,20 @@ function parseBoxLimits(raw: unknown): BoxStatus["limits"] | undefined {
 }
 
 function parseBoxDisk(raw: unknown): BoxStatus["disk"] | undefined {
-    if (!isRecord(raw) || !isCount(raw.free_bytes) || !isCount(raw.total_bytes)) return undefined;
+    if (!isObject(raw) || !isCount(raw.free_bytes) || !isCount(raw.total_bytes)) return undefined;
     if (raw.total_bytes === 0 || raw.free_bytes > raw.total_bytes) return undefined;
     return { free_bytes: raw.free_bytes, total_bytes: raw.total_bytes };
 }
 
 function parseBoxVitals(raw: unknown): BoxStatus["vitals"] | undefined {
-    if (!isRecord(raw)) return undefined;
+    if (!isObject(raw)) return undefined;
     const pct = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100;
     if (!pct(raw.cpu_pct) || !pct(raw.ram_pct) || !Number.isSafeInteger(raw.sampled_at_ms)) return undefined;
     return { cpu_pct: raw.cpu_pct, ram_pct: raw.ram_pct, sampled_at_ms: raw.sampled_at_ms as number };
 }
 
 function parseBoxAccount(raw: unknown): BoxStatus["account"] | undefined {
-    if (!isRecord(raw) || typeof raw.email !== "string" || !raw.email) return undefined;
+    if (!isObject(raw) || typeof raw.email !== "string" || !raw.email) return undefined;
     return { email: raw.email };
 }
 
@@ -301,7 +299,7 @@ function parseBoxAccount(raw: unknown): BoxStatus["account"] | undefined {
 // `kind`/`device_id` fields are simply ignored here). `reported_at` is required; every block is
 // optional and dropped on its own when malformed, so one bad block never hides the others.
 export function parseBoxStatus(raw: unknown): BoxStatus | undefined {
-    if (!isRecord(raw)) return undefined;
+    if (!isObject(raw)) return undefined;
     if (typeof raw.reported_at !== "number" || !Number.isFinite(raw.reported_at)) return undefined;
     const activity = parseBoxActivity(raw.activity);
     const limits = parseBoxLimits(raw.limits);
@@ -327,7 +325,7 @@ function parseDefaultValue(raw: unknown): string | null | undefined {
 // frame (whose `kind` is ignored here). A missing, null or empty value is "Box default" (null);
 // any other non-string rejects the whole body, so a malformed frame never half-applies.
 export function parseUserDefaults(raw: unknown): UserDefaults | undefined {
-    if (!isRecord(raw)) return undefined;
+    if (!isObject(raw)) return undefined;
     const model = parseDefaultValue(raw.default_model);
     const effort = parseDefaultValue(raw.default_effort);
     if (model === undefined || effort === undefined) return undefined;
@@ -337,7 +335,7 @@ export function parseUserDefaults(raw: unknown): UserDefaults | undefined {
 // A box's `defaults` block on GET /devices. A missing key is unset (null); any non-string value
 // drops the whole block, so the box shows no editor rather than a half-read one.
 export function parseBoxDefaults(raw: unknown): BoxDefaults | undefined {
-    if (!isRecord(raw)) return undefined;
+    if (!isObject(raw)) return undefined;
     const agent = parseDefaultValue(raw.agent);
     const model = parseDefaultValue(raw.model);
     const effort = parseDefaultValue(raw.effort);
@@ -347,7 +345,7 @@ export function parseBoxDefaults(raw: unknown): BoxDefaults | undefined {
 
 // The PUT /devices/:id/defaults answer, or a live `box_defaults` frame (whose `kind` is ignored).
 export function parseBoxDefaultsState(raw: unknown): (Required<BoxDefaultsPatch> & { device_id: number }) | undefined {
-    if (!isRecord(raw) || typeof raw.device_id !== "number" || !Number.isFinite(raw.device_id)) return undefined;
+    if (!isObject(raw) || typeof raw.device_id !== "number" || !Number.isFinite(raw.device_id)) return undefined;
     const agent = parseDefaultValue(raw.default_agent);
     const model = parseDefaultValue(raw.default_model);
     const effort = parseDefaultValue(raw.default_effort);
@@ -771,6 +769,55 @@ export class JournalApi {
         return response.grant;
     }
 
+    // ── Contacts, and contacts on other journals by invite link (client devices only) ──
+
+    /** GET /contacts — the live contact rows. */
+    public async contacts(signal?: AbortSignal): Promise<Contact[]> {
+        const response = await this.json<{ contacts?: Contact[] }>("/contacts", { signal });
+        return Array.isArray(response.contacts) ? response.contacts : [];
+    }
+
+    /** POST /contacts/invites — mints an invite; the link comes back this once. */
+    public createContactInvite(): Promise<{ invite: ContactInvite; link: string }> {
+        return this.json<{ invite: ContactInvite; link: string }>("/contacts/invites", { method: "POST", body: {} });
+    }
+
+    /** GET /contacts/invites — the last 30 days' invites, newest first. */
+    public async contactInvites(signal?: AbortSignal): Promise<ContactInvite[]> {
+        const response = await this.json<{ invites?: ContactInvite[] }>("/contacts/invites", { signal });
+        return Array.isArray(response.invites) ? response.invites : [];
+    }
+
+    /** DELETE /contacts/invites/:id — withdraws an open invite. */
+    public async withdrawContactInvite(id: string): Promise<ContactInvite> {
+        const response = await this.json<{ invite: ContactInvite }>(`/contacts/invites/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+        });
+        return response.invite;
+    }
+
+    /** POST /contacts/invites/open — who sent a link; changes nothing and sends nothing. */
+    public openContactInvite(link: string): Promise<InviteOpened> {
+        return this.json<InviteOpened>("/contacts/invites/open", { method: "POST", body: { link } });
+    }
+
+    /** POST /contacts/invites/accept — the user's consent to a link they opened. */
+    public async acceptContactInvite(link: string): Promise<Contact> {
+        const response = await this.json<{ contact: Contact }>("/contacts/invites/accept", {
+            method: "POST",
+            body: { link },
+        });
+        return response.contact;
+    }
+
+    /** POST /contacts/invites/asks/:id/answer — an agent's invite ask; approve returns the link once. */
+    public answerInviteAsk(askId: string, decision: InviteAskDecision): Promise<InviteAskAnswer> {
+        return this.json<InviteAskAnswer>(`/contacts/invites/asks/${encodeURIComponent(askId)}/answer`, {
+            method: "POST",
+            body: { decision },
+        });
+    }
+
     // ── Tracker: missions / milestones / items (all at journal root, Bearer-auth, user-global) ──
 
     /** GET /missions?state= — the mission list rows (counts + last-milestone digest baked in). */
@@ -887,12 +934,15 @@ export class JournalApi {
         id: string | number,
         body: TrackerCommentWrite,
         idemKey?: string,
-    ): Promise<{ item: TrackerItem; comment: TrackerComment }> {
-        return this.json<{ item: TrackerItem; comment: TrackerComment }>(`/items/${encodeTrackerId(id)}/comments`, {
-            method: "POST",
-            body,
-            ...idempotencyHeader(idemKey),
-        });
+    ): Promise<{ item: TrackerItem; comment: TrackerComment; link?: string }> {
+        return this.json<{ item: TrackerItem; comment: TrackerComment; link?: string }>(
+            `/items/${encodeTrackerId(id)}/comments`,
+            {
+                method: "POST",
+                body,
+                ...idempotencyHeader(idemKey),
+            },
+        );
     }
 
     /** POST /items/:id/close — resolve the item (optional closing note). */
