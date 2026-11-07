@@ -20,7 +20,7 @@ import type {
     ProjectFeedPage,
     ProjectFileRow,
 } from "../types";
-import { oneLine } from "./format";
+import { oneLine, plural } from "./format";
 
 export type ActivityEvent =
     | { kind: "milestone"; id: string; at: number; missionNum: number | null; milestone: Milestone }
@@ -342,10 +342,6 @@ export function sessionsLine(detail: ProjectDetail, relative: (ms: number) => st
     else parts.push(`${plural(sessions, "session")} on ${plural(boxes.length, "box", "boxes")}`);
     if (detail.project.last_activity_at) parts.push(`last activity ${relative(detail.project.last_activity_at)}`);
     return parts.join(" · ");
-}
-
-function plural(count: number, noun: string, nounPlural = `${noun}s`): string {
-    return `${count} ${count === 1 ? noun : nounPlural}`;
 }
 
 /** The headline card's caption: "Status" over the status, "About" over the description when there

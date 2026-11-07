@@ -220,7 +220,7 @@ describe("ItemDetail reply box", () => {
         await act(async () => {
             input(container).dispatchEvent(paste);
         });
-        expect(chips(container)).toEqual(["image.png"]);
+        expect(chips(container)).toEqual([expect.stringMatching(/^pasted-image-\d{4}-\d{2}-\d{2}-\d{6}\.png$/)]);
         expect(paste.defaultPrevented).toBe(true);
     });
 

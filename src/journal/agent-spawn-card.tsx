@@ -14,36 +14,24 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { JournalApiError } from "./api";
+import { formatClockTime } from "./date-format";
 import {
     coordinatorBadgeText,
     type CoordinatorDecision,
     sessionStopState,
     subscribeSessionStops,
 } from "./coordinator-consent";
-import { ShieldCheckIcon, ShieldXIcon } from "./icons";
+import { PromptGlyph, ShieldCheckIcon, ShieldXIcon } from "./icons";
 import { asString, type EventPayload, type JournalEvent, spawnOutcomeKind, type SpawnOutcomeKind } from "./types";
-
-function formatTime(timestamp: number): string {
-    return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
-}
 
 export const PROMPT_REPLY_CONFIRMATION_TIMEOUT_MS = 10_000;
 
 export function PromptTerminalGlyph(): React.ReactElement {
     return (
-        <svg
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
+        <PromptGlyph>
             <path d="m5 7 5 5-5 5" />
             <path d="M13 17h6" />
-        </svg>
+        </PromptGlyph>
     );
 }
 
@@ -255,7 +243,7 @@ export function AgentSpawnCard({
             <div className="mj_PromptHeader">
                 <span className="mj_PromptLabel">Agent spawn request</span>
                 <time className="mj_PromptTime" dateTime={new Date(event.ts).toISOString()}>
-                    {formatTime(event.ts)}
+                    {formatClockTime(event.ts)}
                 </time>
             </div>
             <div className="mj_PromptBody">

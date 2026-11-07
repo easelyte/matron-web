@@ -877,6 +877,13 @@ export interface ClientState {
     trackerLoading?: boolean;
     /** Last tracker fetch/mutation error; cleared on the next successful load. */
     trackerError?: string;
+    /** A contact invite link to open in the accept sheet (pasted, or a `matron://contact` link
+     *  tapped in a message). Never stored. */
+    contactInviteLink?: string;
+    /** An invite link the journal minted for this device (a tap on an agent's invite ask, or an
+     *  invite whose sheet closed before it arrived), shown once in a sheet and dropped when it
+     *  closes. Never stored or sent anywhere. */
+    mintedInviteLink?: string;
     /** Error from the last inbox load only. Unlike trackerError, which any tracker load clears, this
      *  is cleared only by the next inbox load, so a never-loaded inbox can tell "failed" from
      *  "still loading" while other loads come and go. */
@@ -961,8 +968,6 @@ export interface DefaultsState {
 // null = the bridge's own fallback (its MATRON_DEFAULT_* environment). The model and effort belong
 // to the box's default agent: a Claude alias on a Claude box, a Codex model id on a Codex box.
 
-export type BoxAgent = "claude" | "codex";
-
 /** GET /devices `defaults` on an agent box. */
 export interface BoxDefaults {
     agent: string | null;
@@ -1000,8 +1005,9 @@ export interface UserSettings {
  * The in-app links the markdown renderer activates (markdown.tsx parseMatronHref): the `matron://`
  * deep links, and `link` for an https `/u/<name>/<n>` link to this deployment (link-path.ts).
  */
-export type MatronLinkKind = "item" | "mission" | "project" | "convo" | "link";
-/** `target` is the #num for item/mission/project, the conversation id for convo, the URL for link. */
+export type MatronLinkKind = "item" | "mission" | "project" | "convo" | "link" | "contact";
+/** `target` is the #num for item/mission/project, the conversation id for convo, the URL for link
+ *  and contact. */
 export type TrackerLinkHandler = (kind: MatronLinkKind, target: number | string) => void;
 
 // ── Coordinator briefings (journal /briefings, spec 2026-10-04 latest briefing) ─────────────────
@@ -1891,6 +1897,7 @@ export function eventSnippet(type: string, payload: EventPayload): string {
         if (asString(payload.kind) === "mission_handover") return "🤝 Hand-over request";
         if (asString(payload.kind) === "person_room") return "🤝 Room with another person";
         if (asString(payload.kind) === "session_share") return "🤝 Session share request";
+        if (asString(payload.kind) === "contact_invite") return "🤝 Invite link request";
         return `Permission: ${asString(payload.description).slice(0, 100)}`;
     }
     if (type === "spawn_outcome") {

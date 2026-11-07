@@ -17,28 +17,14 @@ Please see LICENSE files in the repository root for full details.
 
 import React from "react";
 
+import { Icon } from "../icons";
+
 import type { TrackerItemKind, TrackerMilestoneKind, TrackerMissionState } from "../types";
 
 type GlyphProps = React.SVGProps<SVGSVGElement> & { className?: string };
 
-function Glyph({ children, className, ...props }: GlyphProps & { children: React.ReactNode }): React.ReactElement {
-    return (
-        <svg
-            viewBox="0 0 24 24"
-            width="1em"
-            height="1em"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-            className={className}
-            {...props}
-        >
-            {children}
-        </svg>
-    );
+function Glyph({ children, ...props }: GlyphProps & { children: React.ReactNode }): React.ReactElement {
+    return <Icon {...props}>{children}</Icon>;
 }
 
 /** Question item — orange (needs-you semantic). A speech bubble carrying a question mark. */

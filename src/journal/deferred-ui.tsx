@@ -18,6 +18,9 @@ import { CloseIcon } from "./icons";
 import { deferred } from "./lazy";
 
 type SettingsSheetProps = ComponentProps<typeof import("./SettingsSheet").SettingsSheet>;
+type AcceptInviteSheetProps = ComponentProps<typeof import("./PeopleSettings").AcceptInviteSheet>;
+type MintedInviteSheetProps = ComponentProps<typeof import("./PeopleSettings").MintedInviteSheet>;
+type InviteAskSectionProps = ComponentProps<typeof import("./invite-ask").InviteAskSection>;
 type CoordinatorChooserProps = ComponentProps<typeof import("./CoordinatorSheets").CoordinatorChooserSheet>;
 type RoutinesSheetProps = ComponentProps<typeof import("./CoordinatorSheets").RoutinesSheet>;
 type ChatTasksPaneProps = ComponentProps<typeof import("./tracker/ChatTasksPane").ChatTasksPane>;
@@ -260,4 +263,58 @@ export const ResetPasswordPage = deferred<ResetPasswordPageProps>(
             </main>
         </div>
     ),
+);
+
+export const AcceptInviteSheet = deferred<AcceptInviteSheetProps>(
+    () => import("./PeopleSettings").then((module) => module.AcceptInviteSheet),
+    (props, failed) => (
+        <SheetFrame
+            scrimClassName="mj_UploadConfirm_scrim mj_DeviceSheet_scrim"
+            sheetClassName="mj_UploadConfirm mj_NewSessionSheet mj_DeviceSheet"
+            label="Contact invite"
+            failed={failed}
+            onClose={props.onClose}
+        />
+    ),
+);
+
+/**
+ * The journal hands a minted link over once, so until the sheet's chunk arrives (or if it never
+ * does) the frame shows the link as text, and closing it only drops a link already on screen.
+ */
+export const MintedInviteSheet = deferred<MintedInviteSheetProps>(
+    () => import("./PeopleSettings").then((module) => module.MintedInviteSheet),
+    (props) => <MintedInviteFrame {...props} />,
+);
+
+function MintedInviteFrame({ link, onClose }: MintedInviteSheetProps): React.ReactElement {
+    useModalKeys(onClose);
+    return createPortal(
+        <div className="mj_UploadConfirm_scrim mj_DeviceSheet_scrim">
+            <div
+                className="mj_UploadConfirm mj_NewSessionSheet mj_DeviceSheet"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Invite link"
+            >
+                <div className="mj_InviteLink">
+                    <p className="mj_InviteLink_url" data-invite-link>
+                        {link}
+                    </p>
+                </div>
+                <div className="mj_UploadConfirm_actions">
+                    <button type="button" className="mj_UploadConfirm_send" onClick={onClose}>
+                        Done
+                    </button>
+                </div>
+            </div>
+        </div>,
+        document.body,
+    );
+}
+
+/** An invite ask's buttons on its card: nothing until its chunk arrives. */
+export const InviteAskSection = deferred<InviteAskSectionProps>(
+    () => import("./invite-ask").then((module) => module.InviteAskSection),
+    () => null,
 );

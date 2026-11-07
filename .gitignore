@@ -22,3 +22,6 @@ package-lock.json
 .fixtures-dist/
 /.perf/
 perf-results.json
+
+# Agent scratch (PR bodies, screenshots): never committed
+.superpowers/

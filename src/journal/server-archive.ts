@@ -17,7 +17,7 @@ Please see LICENSE files in the repository root for full details.
  * journal does not have are carried over once.
  */
 
-import { type Session } from "./types";
+import { isObject, type Session } from "./types";
 
 export interface ArchiveChange {
     convo_id: string;
@@ -39,12 +39,8 @@ export const ARCHIVE_BATCH_MAX = 500;
 /** The auto-archive choices offered in Settings, in days (0 = off). */
 export const AUTO_ARCHIVE_CHOICES: readonly number[] = [0, 14, 30, 90];
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function parseChange(raw: unknown): ArchiveChange | undefined {
-    if (!isRecord(raw) || typeof raw.convo_id !== "string" || !raw.convo_id) return undefined;
+    if (!isObject(raw) || typeof raw.convo_id !== "string" || !raw.convo_id) return undefined;
     const archivedAt = raw.archived_at;
     if (archivedAt !== null && (typeof archivedAt !== "number" || !Number.isFinite(archivedAt))) return undefined;
     return { convo_id: raw.convo_id, archived_at: archivedAt, auto: raw.auto === true };
@@ -53,7 +49,7 @@ function parseChange(raw: unknown): ArchiveChange | undefined {
 /** `{changes, at}` from hello_ok's `archive`, an `archive` frame or GET /archive; undefined when
  *  `raw` does not have that shape. Malformed changes are dropped. */
 export function parseArchiveDelta(raw: unknown): ArchiveDelta | undefined {
-    if (!isRecord(raw) || !Array.isArray(raw.changes)) return undefined;
+    if (!isObject(raw) || !Array.isArray(raw.changes)) return undefined;
     const at = typeof raw.at === "number" && Number.isFinite(raw.at) && raw.at >= 0 ? raw.at : 0;
     const changes = raw.changes.map(parseChange).filter((c): c is ArchiveChange => c !== undefined);
     return { changes, at };

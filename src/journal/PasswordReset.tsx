@@ -25,13 +25,7 @@ import { JournalApiError } from "./api";
 import { newPasswordProblem } from "./password-rules";
 import { errorMessage, type MatronJournalClient } from "./client";
 
-export {
-    FORGOT_CHECK_DEBOUNCE_MS,
-    leaveResetPage,
-    resetTakenLinkForTests,
-    takeResetLink,
-    useForgotPasswordEnabled,
-} from "./reset-link";
+export { FORGOT_CHECK_DEBOUNCE_MS, resetTakenLinkForTests, takeResetLink } from "./reset-link";
 
 /** The sentence for a refused forgot-password or reset ask. */
 export function resetFailure(error: unknown): string {

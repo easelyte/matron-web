@@ -22,7 +22,7 @@ import type { MatronJournalClient } from "./client";
 import { DeviceSheet } from "./DevicesSettings";
 import { lockedOutMessage, passwordProblem } from "./password-rules";
 
-export { lockedOutMessage, newPasswordProblem, PASSWORD_MIN_LENGTH, passwordProblem } from "./password-rules";
+export { passwordProblem } from "./password-rules";
 
 /** The sentence for a failed change. */
 export function changePasswordFailure(error: unknown): string {

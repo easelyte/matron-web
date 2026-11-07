@@ -7,9 +7,10 @@ Please see LICENSE files in the repository root for full details.
 
 // The title beside a tracker link. Agents sometimes link a real number that is not the one they
 // meant, and a bare `#412` gives the reader no way to tell. So every tracker link in rendered
-// markdown shows what its number really is: its kind, and its title unless the link text already
-// says it. When the link text names a different title (or a number that does not exist), the
-// chip is marked as a mismatch, so the wrong link stands out at a glance.
+// markdown that does not already name its target shows what its number really is: its kind and
+// title. A link whose text carries the right title gets no chip. When the link text names a
+// different title (or a number that does not exist), the chip is marked as a mismatch, so the
+// wrong link stands out at a glance.
 
 import React, { useContext, useEffect, useState } from "react";
 
@@ -61,37 +62,92 @@ const GENERIC = new Set([
     "it",
 ]);
 
-function tokens(text: string): string[] {
+// An address in a title is one word, compared whole and as written (paths are case-sensitive): its
+// pieces (https, the host, the path's words) would otherwise match any other title that carries an
+// address on the same site.
+const URL_IN_TITLE_RE = /[a-z][a-z0-9+.-]*:\/\/[^\s<>"'[\]]+/giu;
+
+// The address as written, without what wraps or follows it: a full stop, a trailing slash, or a
+// closing parenthesis it did not open ("(see https://…)"). A trailing "..." becomes "…": cut short.
+function trimAddress(text: string): string {
+    let t = text;
+    // One character at a time, so "..." is seen wherever it ends up last: "(https://…/pull/1...)"
+    // and "https://…/pull/1...," are both cut short.
+    for (;;) {
+        if (t.endsWith("...")) t = `${t.slice(0, -3)}…`;
+        else if (/[.,;:!?/]$/u.test(t)) t = t.slice(0, -1);
+        else if (t.endsWith(")") && t.split("(").length < t.split(")").length) t = t.slice(0, -1);
+        else return t;
+    }
+}
+
+function plainWords(text: string): string[] {
     return text
-        .normalize("NFKD")
-        .replace(/\p{M}+/gu, "")
         .toLowerCase()
-        .replace(/(\.\.\.|…)\s*$/u, "")
         .split(/[^\p{L}\p{N}]+/u)
         .filter(Boolean);
 }
 
+function tokens(text: string): string[] {
+    const plain = text.normalize("NFKD").replace(/\p{M}+/gu, "");
+    const out: string[] = [];
+    let last = 0;
+    for (const m of plain.matchAll(URL_IN_TITLE_RE)) {
+        out.push(...plainWords(plain.slice(last, m.index)));
+        out.push(trimAddress(m[0]));
+        last = m.index + m[0].length;
+    }
+    out.push(...plainWords(plain.slice(last)));
+    return out;
+}
+
+const isAddress = (t: string): boolean => t.includes("://");
+
+// The same address, or one cut short with an ellipsis and the address it starts: ".../pull/1" is
+// not ".../pull/10", ".../pu…" is.
+function sameAddress(t: string, x: string | undefined): boolean {
+    return t === x || (t.endsWith("…") && !!x && isAddress(x) && x.startsWith(t.slice(0, -1)));
+}
+
 function sameWord(a: string, b: string): boolean {
     if (a === b) return true;
+    if (isAddress(a) || isAddress(b)) return false;
     return Math.min(a.length, b.length) >= 3 && (a.startsWith(b) || b.startsWith(a));
 }
 
 /**
  * Does a title written in a link name this record? The same rule the bridge checks agents' links
  * with: a prefix (the last word possibly cut short), an abbreviation, or a paraphrase that keeps
- * most of the words passes; a title about something else does not.
+ * most of the words passes; a title about something else does not, and neither does one naming an
+ * address the record's title does not have.
  */
 export function titleMatches(written: string, actual: string): boolean {
     const w = tokens(written);
     const a = tokens(actual);
     if (!w.length || !a.length) return false;
-    if (w.length <= a.length && w.every((t, i) => t === a[i] || (i === w.length - 1 && a[i].startsWith(t)))) {
-        return true;
-    }
+    // An address names one thing: every address written must be in the title.
+    if (!w.every((t) => !isAddress(t) || a.some((x) => sameAddress(t, x)))) return false;
+    const atPosition = (t: string, i: number): boolean =>
+        isAddress(t) ? sameAddress(t, a[i]) : t === a[i] || (i === w.length - 1 && a[i].startsWith(t));
+    if (w.length <= a.length && w.every(atPosition)) return true;
+    // Most of the written words appear in the title (each address already does).
     const content = w.filter((t) => !STOPWORDS.has(t));
     const words = content.length ? content : w;
-    const hits = words.filter((t) => a.some((x) => sameWord(t, x))).length;
+    const hits = words.filter((t) => isAddress(t) || a.some((x) => sameWord(t, x))).length;
     return hits >= Math.min(2, words.length) && hits / words.length >= 0.6;
+}
+
+/**
+ * Does a link's text say which record it means? A number does, an address does, and so do two or
+ * more words beyond the stopwords and pointing words ("here", "read more").
+ */
+function claims(written: { num: number | null; title: string }): boolean {
+    const words = tokens(written.title);
+    return (
+        written.num !== null ||
+        words.some(isAddress) ||
+        words.filter((t) => !STOPWORDS.has(t) && !GENERIC.has(t)).length >= 2
+    );
 }
 
 const TEXT_RE =
@@ -120,7 +176,7 @@ interface TrackerLinkTargetProps {
     linkText: string;
 }
 
-/** The chip inside a tracker link: what the number points at. Nothing while unknown. */
+/** The chip inside a tracker link: what the number points at. Nothing while unknown, or when the link text already names it. */
 export function TrackerLinkTarget({ user, num, linkText }: TrackerLinkTargetProps): React.ReactElement | null {
     const info = useContext(TrackerLinkInfoContext);
     const [outcome, setOutcome] = useState<NumberLookupOutcome | null>(null);
@@ -167,18 +223,13 @@ export function TrackerLinkTarget({ user, num, linkText }: TrackerLinkTargetProp
             <span className="mj_TrackerLinkTarget">{kind}</span>
         );
     }
-    if (!wrongNumber && written.title && titleMatches(written.title, title)) {
-        return (
-            <span className="mj_TrackerLinkTarget" title={title}>
-                {kind}
-            </span>
-        );
-    }
+    // The link already says what it points at: a chip would only repeat it. A label like "here" or
+    // a lone word that happens to start the title says nothing, so it keeps the chip.
+    const claimed = claims(written);
+    if (!wrongNumber && claimed && written.title && titleMatches(written.title, title)) return null;
     // Link text that names something ("#12 Some title", or a few words) and does not match is
     // flagged; a label like "here" or "read more" is not a claim about the target.
-    const claims =
-        written.num !== null || tokens(written.title).filter((t) => !STOPWORDS.has(t) && !GENERIC.has(t)).length >= 2;
-    const mismatch = wrongNumber || (claims && !!written.title);
+    const mismatch = wrongNumber || (claimed && !!written.title);
     let hint = title;
     if (wrongNumber) hint = `This link says #${written.num} but goes to #${num}, the ${kind} "${title}".`;
     else if (mismatch) hint = `#${num} is not "${written.title}": it is the ${kind} "${title}".`;

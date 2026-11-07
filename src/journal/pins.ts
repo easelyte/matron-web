@@ -14,6 +14,7 @@ Please see LICENSE files in the repository root for full details.
 import { JournalApiError } from "./api";
 import { conversationBox, splitTitle } from "./boxes";
 import {
+    isObject,
     type AgentRosterEntry,
     type Conversation,
     type ConvoPin,
@@ -28,16 +29,12 @@ export const DEFAULT_PIN_LIMIT = 5;
 export const PIN_LABEL_MAX = 24;
 export const PIN_LABEL_FALLBACK = "Pinned chat";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function finite(value: unknown): number | undefined {
     return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function parseSuccessor(raw: unknown): ConvoPinSuccessor | undefined {
-    if (!isRecord(raw) || typeof raw.convo_id !== "string" || !raw.convo_id) return undefined;
+    if (!isObject(raw) || typeof raw.convo_id !== "string" || !raw.convo_id) return undefined;
     return {
         convo_id: raw.convo_id,
         title: typeof raw.title === "string" ? raw.title : "",
@@ -47,7 +44,7 @@ function parseSuccessor(raw: unknown): ConvoPinSuccessor | undefined {
 
 /** One pin, or undefined when the row lacks what the sidebar needs (id + label). */
 export function parsePin(raw: unknown): ConvoPin | undefined {
-    if (!isRecord(raw) || typeof raw.convo_id !== "string" || !raw.convo_id) return undefined;
+    if (!isObject(raw) || typeof raw.convo_id !== "string" || !raw.convo_id) return undefined;
     if (typeof raw.label !== "string" || !raw.label.trim()) return undefined;
     const successor = parseSuccessor(raw.successor);
     return {
@@ -82,13 +79,13 @@ export function parsePinList(raw: unknown): ConvoPin[] | undefined {
  * null when the key is absent (an older journal) or unusable.
  */
 export function pinsFromContainer(container: unknown): ConvoPin[] | null {
-    if (!isRecord(container) || !("pins" in container)) return null;
+    if (!isObject(container) || !("pins" in container)) return null;
     return parsePinList(container.pins) ?? null;
 }
 
 /** A `{pins, limit}` body from any /pins route; throws on a body with no pin array. */
 export function parsePinsResponse(raw: unknown): { pins: ConvoPin[]; limit: number } {
-    const pins = isRecord(raw) ? parsePinList(raw.pins) : undefined;
+    const pins = isObject(raw) ? parsePinList(raw.pins) : undefined;
     if (!pins) throw new Error("The journal server returned a malformed pins response.");
     const limit = finite((raw as Record<string, unknown>).limit);
     return { pins, limit: limit !== undefined && limit > 0 ? limit : DEFAULT_PIN_LIMIT };

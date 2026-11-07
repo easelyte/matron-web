@@ -28,6 +28,7 @@ import { ChevronLeftIcon, CloseIcon, KebabIcon, PlusCircleIcon, SendIcon } from 
 import { parseOwnTrackerUrl } from "../link-path";
 import { parseTrackerHref } from "../markdown";
 import { MediaViewer, MediaViewerContext, type MediaViewerContextValue } from "../media-viewer";
+import { namedPastedFiles } from "../pasted-files";
 import {
     asString,
     type SpawnConsentRows,
@@ -57,6 +58,7 @@ import {
     contributorWords,
     spawnConsentRequestId,
     statusRowText,
+    plural,
 } from "./format";
 import { CommentBubbleGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
 import { useHandoverCaption } from "./handover";
@@ -574,8 +576,6 @@ function voiceFailureMessage(outcome: TrackerCommentOutcome): string {
     const reason = outcome.ok ? undefined : outcome.reason;
     return reason ? `Couldn't send the voice note — ${reason}` : "Couldn't send the voice note — try again.";
 }
-
-const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 /** "Reply not sent." or, after earlier comments of the reply went, which of its files did not. */
 function replyFailureHeadline(failure: ReplyFailure): string {
@@ -1347,7 +1347,7 @@ export function ItemDetail({
                             disabled={busy}
                             onChange={(event) => editReply(event.target.value)}
                             onPaste={(event) => {
-                                const files = [...(event.clipboardData?.files ?? [])];
+                                const files = event.clipboardData ? namedPastedFiles(event.clipboardData) : [];
                                 if (files.length > 0) {
                                     event.preventDefault();
                                     addFiles(files);

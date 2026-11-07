@@ -8,8 +8,6 @@ Please see LICENSE files in the repository root for full details.
 import { readFileSync } from "node:fs";
 import { TextEncoder as NodeTextEncoder } from "node:util";
 
-jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
-
 type ThemeModule = typeof import("../../../src/journal/theme");
 
 let theme: ThemeModule;
@@ -142,12 +140,6 @@ describe("theme preference state machine", () => {
         dispatchSystemTheme(false);
         expect(document.documentElement.dataset.theme).toBe("light");
         expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe("#ffffff");
-    });
-
-    it("cycles System to Light to Dark to System", () => {
-        expect(theme.nextThemePref(null)).toBe("light");
-        expect(theme.nextThemePref("light")).toBe("dark");
-        expect(theme.nextThemePref("dark")).toBeNull();
     });
 
     it("survives denied storage, warns once, and applies explicit session preferences", () => {

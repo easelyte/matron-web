@@ -18,6 +18,7 @@ import { useFocusTrap } from "./use-focus-trap";
 import { createPortal } from "react-dom";
 
 import type { MatronJournalClient } from "./client";
+import { CloseIcon } from "./icons";
 import { clampPinLabel, PIN_LABEL_MAX, pinChooserView, pinLabelFromTitle } from "./pins";
 import { displayTitle } from "./SessionTag";
 import { type ClientState, type Conversation, conversationTitle } from "./types";
@@ -59,19 +60,7 @@ export function SheetHead({
                 {title}
             </h2>
             <button type="button" className="mj_NewSessionSheet_close" aria-label="Close" onClick={onClose}>
-                <svg
-                    viewBox="0 0 24 24"
-                    width="16"
-                    height="16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                >
-                    <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
+                <CloseIcon width="16" height="16" strokeWidth="2" />
             </button>
         </div>
     );
@@ -96,6 +85,77 @@ export function useSheetLifecycle(onClose: () => void): React.RefObject<boolean>
         };
     }, []);
     return mountedRef;
+}
+
+/** A conversation chooser's search text, box filter and filtered view; both chooser sheets share it. */
+export function useConversationChooser(
+    eligible: Conversation[],
+    roster: ClientState["agents"],
+): {
+    query: string;
+    setQuery: (query: string) => void;
+    setBox: (box: string | null) => void;
+    view: ReturnType<typeof pinChooserView>;
+} {
+    const [query, setQuery] = useState("");
+    const [box, setBox] = useState<string | null>(null);
+    const view = pinChooserView(eligible, roster, query, box);
+    // The chosen box has no candidates left (pinned, archived or gone): drop it, so All stays in
+    // force rather than the old box coming back if a conversation on it reappears.
+    if (box !== null && view.box === null) setBox(null);
+    return { query, setQuery, setBox, view };
+}
+
+/** The search field and, across two or more boxes, the box filter above a conversation chooser's list. */
+export function ConversationChooserFilter({
+    inputId,
+    placeholder,
+    chooser,
+}: {
+    inputId: string;
+    placeholder: string;
+    chooser: ReturnType<typeof useConversationChooser>;
+}): React.ReactElement {
+    const { query, setQuery, setBox, view } = chooser;
+    return (
+        <>
+            <div>
+                <label htmlFor={inputId}>Conversation</label>
+                <input
+                    id={inputId}
+                    type="text"
+                    value={query}
+                    autoFocus
+                    autoComplete="off"
+                    placeholder={placeholder}
+                    onChange={(event) => setQuery(event.target.value)}
+                />
+            </div>
+            {view.boxes.length > 0 && (
+                <div className="mj_ConversationListTabs mj_PinSheet_boxes" role="group" aria-label="Filter by box">
+                    <button
+                        type="button"
+                        className={`mj_ConversationListTab${view.box === null ? " mj_ConversationListTab_active" : ""}`}
+                        aria-pressed={view.box === null}
+                        onClick={() => setBox(null)}
+                    >
+                        All
+                    </button>
+                    {view.boxes.map((option) => (
+                        <button
+                            key={option.name}
+                            type="button"
+                            className={`mj_ConversationListTab${view.box === option.name ? " mj_ConversationListTab_active" : ""}`}
+                            aria-pressed={view.box === option.name}
+                            onClick={() => setBox(view.box === option.name ? null : option.name)}
+                        >
+                            {option.name} {option.count}
+                        </button>
+                    ))}
+                </div>
+            )}
+        </>
+    );
 }
 
 function PinEditSheet({
@@ -204,8 +264,6 @@ function MovePinSheet({
     onClose: () => void;
 }): React.ReactElement {
     const pin = state.journalPins?.find((candidate) => candidate.convo_id === convoId);
-    const [query, setQuery] = useState("");
-    const [box, setBox] = useState<string | null>(null);
     const [moving, setMoving] = useState(false);
     const [error, setError] = useState<string>();
     const mountedRef = useSheetLifecycle(onClose);
@@ -215,11 +273,8 @@ function MovePinSheet({
         (conversation: Conversation) =>
             !conversation.parent_convo_id && !state.archivedIds.has(conversation.id) && !pinned.has(conversation.id),
     );
-    const view = pinChooserView(eligible, state.agents, query, box);
-    // The chosen box has no candidates left (pinned, archived or gone): drop it, so All stays in
-    // force rather than the old box coming back if a conversation on it reappears.
-    if (box !== null && view.box === null) setBox(null);
-    const candidates = view.conversations;
+    const chooser = useConversationChooser(eligible, state.agents);
+    const candidates = chooser.view.conversations;
 
     const move = async (toConvoId: string): Promise<void> => {
         if (moving) return;
@@ -245,41 +300,7 @@ function MovePinSheet({
             <div className="mj_UploadConfirm mj_NewSessionSheet mj_PinSheet">
                 <SheetHead id="mj-pin-move-title" title="Move pin" onClose={onClose} />
                 {pin && <p>Point “{pin.label}” at another conversation.</p>}
-                <div>
-                    <label htmlFor="mj-pin-move-search">Conversation</label>
-                    <input
-                        id="mj-pin-move-search"
-                        type="text"
-                        value={query}
-                        autoFocus
-                        autoComplete="off"
-                        placeholder="Search"
-                        onChange={(event) => setQuery(event.target.value)}
-                    />
-                </div>
-                {view.boxes.length > 0 && (
-                    <div className="mj_ConversationListTabs mj_PinSheet_boxes" role="group" aria-label="Filter by box">
-                        <button
-                            type="button"
-                            className={`mj_ConversationListTab${view.box === null ? " mj_ConversationListTab_active" : ""}`}
-                            aria-pressed={view.box === null}
-                            onClick={() => setBox(null)}
-                        >
-                            All
-                        </button>
-                        {view.boxes.map((option) => (
-                            <button
-                                key={option.name}
-                                type="button"
-                                className={`mj_ConversationListTab${view.box === option.name ? " mj_ConversationListTab_active" : ""}`}
-                                aria-pressed={view.box === option.name}
-                                onClick={() => setBox(view.box === option.name ? null : option.name)}
-                            >
-                                {option.name} {option.count}
-                            </button>
-                        ))}
-                    </div>
-                )}
+                <ConversationChooserFilter inputId="mj-pin-move-search" placeholder="Search" chooser={chooser} />
                 {candidates.length === 0 ? (
                     <p>No conversations to move the pin to.</p>
                 ) : (

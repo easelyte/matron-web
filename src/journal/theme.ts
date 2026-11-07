@@ -83,12 +83,6 @@ export function setTheme(preference: ThemePref): ThemePref {
     return preference;
 }
 
-export function nextThemePref(current: ThemePref): ThemePref {
-    if (current === null) return "light";
-    if (current === "light") return "dark";
-    return null;
-}
-
 applyTheme();
 colorScheme.addEventListener("change", () => {
     applyTheme();
