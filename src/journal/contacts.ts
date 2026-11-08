@@ -16,7 +16,7 @@ import { JournalApiError } from "./api";
 import { formatShortDate } from "./date-format";
 import { asString } from "./types";
 
-export { looksLikeContactLink, parseContactLink, type ContactLink } from "./contact-link";
+export { looksLikeContactLink, parseContactLink, shareableInviteLink, type ContactLink } from "./contact-link";
 
 export type ContactState =
     "awaiting_user" | "pending_out" | "pending_in" | "active" | "blocked" | "declined" | "removed" | "expired";
@@ -61,6 +61,8 @@ export interface InviteAskAnswer {
     ask: { id: string; state: "awaiting_user" | "approved" | "declined" | "expired" };
     invite?: ContactInvite;
     link?: string;
+    /** The https form of `link`, from journals that make one: the form to share. */
+    web_link?: string;
 }
 
 /** The name a contact row leads with. */
@@ -107,7 +109,7 @@ export function inviteCaption(invite: ContactInvite): string {
 }
 
 export const INVITE_SHEET_NOTE =
-    "Send this link to them yourself. It is shown only now, works once and lasts 7 days. Nobody becomes a contact until they open it and accept.";
+    "Send this link to them yourself, over any chat app or email. It is shown only now, works once and lasts 7 days. Nobody becomes a contact until they open it and accept.";
 
 export const ASK_LINK_NOTE = "Shown only on this device, this once. Send it to them yourself.";
 

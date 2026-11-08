@@ -778,8 +778,11 @@ export class JournalApi {
     }
 
     /** POST /contacts/invites — mints an invite; the link comes back this once. */
-    public createContactInvite(): Promise<{ invite: ContactInvite; link: string }> {
-        return this.json<{ invite: ContactInvite; link: string }>("/contacts/invites", { method: "POST", body: {} });
+    public createContactInvite(): Promise<{ invite: ContactInvite; link: string; web_link?: string }> {
+        return this.json<{ invite: ContactInvite; link: string; web_link?: string }>("/contacts/invites", {
+            method: "POST",
+            body: {},
+        });
     }
 
     /** GET /contacts/invites — the last 30 days' invites, newest first. */
@@ -934,8 +937,8 @@ export class JournalApi {
         id: string | number,
         body: TrackerCommentWrite,
         idemKey?: string,
-    ): Promise<{ item: TrackerItem; comment: TrackerComment; link?: string }> {
-        return this.json<{ item: TrackerItem; comment: TrackerComment; link?: string }>(
+    ): Promise<{ item: TrackerItem; comment: TrackerComment; link?: string; web_link?: string }> {
+        return this.json<{ item: TrackerItem; comment: TrackerComment; link?: string; web_link?: string }>(
             `/items/${encodeTrackerId(id)}/comments`,
             {
                 method: "POST",

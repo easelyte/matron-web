@@ -37,7 +37,9 @@ const CONVERSATION: Conversation = {
     read_up_to_seq: 1,
 };
 
-const LINK = `matron://contact?v=1&j=b.example&u=bob&t=${"A".repeat(43)}&fp=gs462nr3vwew6cbb2cxzvrtide`;
+const FIELDS = `v=1&j=b.example&u=bob&t=${"A".repeat(43)}&fp=gs462nr3vwew6cbb2cxzvrtide`;
+const LINK = `matron://contact?${FIELDS}`;
+const WEB_LINK = `https://b.example/contact#${FIELDS}`;
 const OWN_LINK = `matron://contact?v=1&j=a.example&u=carol&t=${"B".repeat(43)}&fp=pa5pus3ihkp6rxwrt5wxofen7e`;
 const BOB: Contact = {
     id: "ct_1",
@@ -95,7 +97,7 @@ function signedInClient() {
         createContactInvite: jest.fn(async () => {
             const invite = { ...OPEN_INVITE, id: "inv_new" };
             invites = [invite, ...invites];
-            return { invite, link: LINK };
+            return { invite, link: LINK, web_link: WEB_LINK as string | undefined };
         }),
         withdrawContactInvite: jest.fn(async (id: string) => {
             invites = invites.map((invite) => (invite.id === id ? { ...invite, state: "revoked" as const } : invite));
@@ -172,13 +174,27 @@ describe("People", () => {
         expect(document.querySelectorAll("[data-invite]")).toHaveLength(1);
         await click('[data-action="invite-remote"]');
         expect(api.createContactInvite).toHaveBeenCalledTimes(1);
-        expect(sheet()!.querySelector("[data-invite-link]")!.textContent).toBe(LINK);
+        // The https form is the one to share: chat apps make it tappable.
+        expect(sheet()!.querySelector("[data-invite-link]")!.textContent).toBe(WEB_LINK);
         expect(sheet()!.querySelector('svg[aria-label="Invite QR code"]')).not.toBeNull();
+        expect(sheet()!.textContent).toContain("over any chat app or email");
         expect(sheet()!.textContent).toContain("It is shown only now, works once and lasts 7 days.");
         await act(async () => buttonIn(sheet()!, "Done").click());
         expect(sheet()).toBeNull();
         expect(document.querySelectorAll("[data-invite]")).toHaveLength(2);
-        expect(document.body.textContent).not.toContain(LINK);
+        expect(document.body.textContent).not.toContain(WEB_LINK);
+    });
+
+    it("shares the matron:// form from a journal that sends no https form", async () => {
+        const { client, api } = signedInClient();
+        api.createContactInvite.mockImplementationOnce(async () => ({
+            invite: OPEN_INVITE,
+            link: LINK,
+            web_link: undefined,
+        }));
+        await openSettings(client);
+        await click('[data-action="invite-remote"]');
+        expect(sheet()!.querySelector("[data-invite-link]")!.textContent).toBe(LINK);
     });
 
     it("withdraws an open invite", async () => {
@@ -189,25 +205,28 @@ describe("People", () => {
         expect(document.querySelectorAll("[data-invite]")).toHaveLength(0);
     });
 
-    it("opens a pasted link, shows who sent it, and accepts", async () => {
+    it.each([
+        ["https", WEB_LINK],
+        ["matron://", LINK],
+    ])("opens a pasted %s link, shows who sent it, and accepts", async (_, pasted) => {
         const { client, api } = signedInClient();
         await openSettings(client);
         await click('[data-action="paste-invite"]');
         const input = sheet()!.querySelector<HTMLInputElement>("input")!;
         await act(async () => {
-            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, LINK);
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, pasted);
             input.dispatchEvent(new Event("input", { bubbles: true }));
         });
         await act(async () => buttonIn(sheet()!, "Open").click());
         const card = document.querySelector<HTMLElement>(".mj_AcceptInvite")!;
-        expect(api.openContactInvite).toHaveBeenCalledWith(LINK);
+        expect(api.openContactInvite).toHaveBeenCalledWith(pasted);
         expect(card.querySelector('[data-field="address"]')!.textContent).toBe("bob@b.example");
         expect(card.querySelector('[data-field="journal"]')!.textContent).toBe("b.example");
         expect(card.querySelector('[data-field="fingerprint"]')!.textContent).toBe("gs46 2nr3 vwew 6cbb 2cxz vrti de");
         expect(card.textContent).toContain("Compare this fingerprint with them another way");
         expect(api.acceptContactInvite).not.toHaveBeenCalled();
         await click('[data-action="accept-invite"]', card);
-        expect(api.acceptContactInvite).toHaveBeenCalledWith(LINK);
+        expect(api.acceptContactInvite).toHaveBeenCalledWith(pasted);
         expect(card.textContent).toContain("Sent. You become contacts when their journal confirms.");
     });
 
@@ -281,7 +300,11 @@ describe("The invite ask card", () => {
         const card = parsePeopleCard(event.payload)!;
         expect(card.label).toBe("Invite link request");
         expect(card.consentUrl).toBe("matron://consent/invite/ask_1");
-        const answer = jest.fn(async () => ({ ask: { id: "ask_1", state: "approved" as const }, link: LINK }));
+        const answer = jest.fn(async () => ({
+            ask: { id: "ask_1", state: "approved" as const },
+            link: LINK,
+            web_link: WEB_LINK,
+        }));
         await act(async () =>
             root.render(
                 <PeopleCardView
@@ -297,7 +320,7 @@ describe("The invite ask card", () => {
             container.querySelector<HTMLButtonElement>('[data-action="approve-invite-ask"]')!.click(),
         );
         expect(answer).toHaveBeenCalledWith("ask_1", "approve");
-        expect(container.querySelector("[data-invite-link]")!.textContent).toBe(LINK);
+        expect(container.querySelector("[data-invite-link]")!.textContent).toBe(WEB_LINK);
         expect(container.textContent).toContain("Shown only on this device, this once.");
     });
 

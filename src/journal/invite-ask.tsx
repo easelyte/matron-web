@@ -14,7 +14,14 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useState } from "react";
 
 import { JournalApiError } from "./api";
-import { ASK_LINK_NOTE, refusalCode, refusalText, type InviteAskAnswer, type InviteAskDecision } from "./contacts";
+import {
+    ASK_LINK_NOTE,
+    refusalCode,
+    refusalText,
+    shareableInviteLink,
+    type InviteAskAnswer,
+    type InviteAskDecision,
+} from "./contacts";
 import { InviteLinkView } from "./PeopleSettings";
 import type { TrackerItem } from "./types";
 
@@ -77,7 +84,8 @@ export function InviteAskSection({
         setPhase({ kind: "sending", decision });
         try {
             const answer = await answerInviteAsk(askId, decision);
-            if (decision === "approve" && answer.link) setPhase({ kind: "approved", link: answer.link });
+            const link = shareableInviteLink(answer);
+            if (decision === "approve" && link) setPhase({ kind: "approved", link });
             else if (decision === "approve") setPhase({ kind: "closed", message: "Approved" });
             else setPhase({ kind: "declined" });
         } catch (error) {

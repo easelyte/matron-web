@@ -18,6 +18,7 @@ import {
     parseUserDefaults,
 } from "./api";
 import type { Contact, ContactInvite, InviteAskAnswer, InviteAskDecision, InviteOpened } from "./contacts";
+import { shareableInviteLink } from "./contact-link";
 import { JournalConnection } from "./connection";
 import { FilesApi } from "./files/filesApi";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
@@ -3362,8 +3363,10 @@ export class MatronJournalClient {
         return this.deviceAdminApi().contacts();
     }
 
+    /** Mints an invite; `link` is the form to share (https when the journal makes one). */
     public async createContactInvite(): Promise<{ invite: ContactInvite; link: string }> {
-        return this.deviceAdminApi().createContactInvite();
+        const minted = await this.deviceAdminApi().createContactInvite();
+        return { invite: minted.invite, link: shareableInviteLink(minted) ?? minted.link };
     }
 
     public async listContactInvites(): Promise<ContactInvite[]> {
@@ -5274,8 +5277,9 @@ export class MatronJournalClient {
         if (!api) return { ok: false };
         let written: TrackerItem | undefined;
         try {
-            let link: string | undefined;
-            ({ item: written, link } = await api.postItemComment(id, body, idempotencyKey ?? crypto.randomUUID()));
+            const posted = await api.postItemComment(id, body, idempotencyKey ?? crypto.randomUUID());
+            written = posted.item;
+            const link = shareableInviteLink(posted);
             // Approving an agent's invite ask on its item mints the invite, and the journal hands
             // the link to this tap alone: show it once.
             if (typeof link === "string" && link && this.api === api) this.patch({ mintedInviteLink: link });

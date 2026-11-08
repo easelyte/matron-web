@@ -18,16 +18,48 @@ export interface ContactLink {
 }
 
 /**
- * Reads a `matron://contact?v=1&j=<host>&u=<name>&t=<token>&fp=<fingerprint>` link, as the journal
- * would: exactly those five fields, each once. Null for anything else. The journal checks it again
- * (and checks the fingerprint against the inviter's journal), so this only decides whether the app
- * treats the text as an invite at all.
+ * Reads a contact invite link, as the journal would, in either of its two forms:
+ *
+ *     https://<host>/contact#v=1&j=<host>&u=<name>&t=<token>&fp=<fingerprint>
+ *     matron://contact?v=1&j=<host>&u=<name>&t=<token>&fp=<fingerprint>
+ *
+ * Exactly those five fields, each once. The https form (the one chat apps make tappable) carries
+ * them in the fragment, must be on the journal it names, at exactly `/contact`, with no query or
+ * user info. Null for anything else. The journal checks it again (and checks the fingerprint
+ * against the inviter's journal), so this only decides whether the app treats the text as an
+ * invite at all.
  */
 export function parseContactLink(text: string): ContactLink | null {
     const link = text.trim();
-    const match = /^matron:\/\/contact\?([^#\s]*)$/.exec(link);
-    if (!match) return null;
-    const params = new URLSearchParams(match[1]);
+    if (link.length > 1024) return null;
+    const app = /^matron:\/\/contact\?([^#\s]*)$/.exec(link);
+    if (app) return parseFields(app[1]);
+    if (!/^https:\/\//i.test(link) || /\s/.test(link)) return null;
+    let url: URL;
+    try {
+        url = new URL(link);
+    } catch {
+        return null;
+    }
+    if (url.protocol !== "https:" || url.pathname !== "/contact" || url.search || url.username || url.password) {
+        return null;
+    }
+    if (url.hash.length < 2) return null;
+    const fields = parseFields(url.hash.slice(1));
+    if (!fields) return null;
+    // `j` as a URL writes it, as the journal reads it: an explicit default port (`:443`) is
+    // dropped, and a port the URL parser refuses is no link.
+    let named: string;
+    try {
+        named = new URL(`https://${fields.journal}`).host;
+    } catch {
+        return null;
+    }
+    return named === url.host ? fields : null;
+}
+
+function parseFields(query: string): ContactLink | null {
+    const params = new URLSearchParams(query);
     const keys = [...params.keys()];
     if (keys.length !== CONTACT_LINK_FIELDS.length) return null;
     if (new Set(keys).size !== keys.length) return null;
@@ -43,5 +75,10 @@ export function parseContactLink(text: string): ContactLink | null {
 
 /** Whether a string claims to be a contact invite link, valid or not. */
 export function looksLikeContactLink(text: string): boolean {
-    return /^\s*matron:\/\/contact\b/i.test(text);
+    return /^\s*(?:matron:\/\/contact\b|https:\/\/[^/\s]+\/contact#)/i.test(text);
+}
+
+/** The link to hand on from a mint: the https form when the journal sent one, else `matron://`. */
+export function shareableInviteLink(minted: { link?: string; web_link?: string }): string | undefined {
+    return minted.web_link || minted.link || undefined;
 }

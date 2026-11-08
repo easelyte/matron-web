@@ -9,8 +9,10 @@ import { JournalApiError } from "../api";
 import {
     contactCaption,
     isRemoteContact,
+    looksLikeContactLink,
     parseContactLink,
     refusalText,
+    shareableInviteLink,
     sortContacts,
     unreachableCaption,
     type Contact,
@@ -19,7 +21,9 @@ import { parseMatronHref, remarkBareItemLinks } from "../markdown";
 
 const TOKEN = "A".repeat(43);
 const FP = "gs462nr3vwew6cbb2cxzvrtide";
-const LINK = `matron://contact?v=1&j=b.example&u=bob&t=${TOKEN}&fp=${FP}`;
+const FIELDS = `v=1&j=b.example&u=bob&t=${TOKEN}&fp=${FP}`;
+const LINK = `matron://contact?${FIELDS}`;
+const WEB_LINK = `https://b.example/contact#${FIELDS}`;
 
 const contact = (over: Partial<Contact> = {}): Contact => ({
     id: "ct_1",
@@ -52,6 +56,58 @@ describe("parseContactLink", () => {
         expect(parseContactLink(LINK.replace("b.example", "b.example/evil"))).toBeNull();
         expect(parseContactLink("https://b.example/contact")).toBeNull();
         expect(parseContactLink(`${LINK}#x`)).toBeNull();
+    });
+
+    it("reads the https form, with every field in the fragment", () => {
+        expect(
+            parseContactLink(`https://b.example/contact#${FIELDS.replace("j=b.example", "j=b.example:443")}`),
+        ).toEqual({
+            journal: "b.example:443",
+            user: "bob",
+        });
+        expect(parseContactLink(WEB_LINK)).toEqual({ journal: "b.example", user: "bob" });
+        expect(parseContactLink(` ${WEB_LINK}\n`)).toEqual({ journal: "b.example", user: "bob" });
+        expect(parseContactLink(WEB_LINK.replace("https://b.example", "https://B.Example"))).not.toBeNull();
+        expect(
+            parseContactLink(`https://b.example:8443/contact#${FIELDS.replace("b.example", "b.example:8443")}`),
+        ).toEqual({ journal: "b.example:8443", user: "bob" });
+    });
+
+    it.each([
+        ["on another journal than it names", `https://a.example/contact#${FIELDS}`],
+        ["over http", `http://b.example/contact#${FIELDS}`],
+        ["at another path", `https://b.example/contacts#${FIELDS}`],
+        ["with a trailing slash", `https://b.example/contact/#${FIELDS}`],
+        ["under a prefix", `https://b.example/app/contact#${FIELDS}`],
+        ["with a query", `https://b.example/contact?x=1#${FIELDS}`],
+        ["with the fields in the query", `https://b.example/contact?${FIELDS}`],
+        ["with user info", `https://eve@b.example/contact#${FIELDS}`],
+        ["with an empty fragment", "https://b.example/contact#"],
+        ["with an extra field", `${WEB_LINK}&x=1`],
+        ["with a field twice", `${WEB_LINK}&u=eve`],
+        ["with a field missing", WEB_LINK.replace(`&fp=${FP}`, "")],
+        ["with a bad token", WEB_LINK.replace(TOKEN, "short")],
+        ["with a bad fingerprint", WEB_LINK.replace(FP, "NOT-A-FINGERPRINT")],
+        ["with a space inside", WEB_LINK.replace("&u=", " &u=")],
+        [
+            "naming a port no URL can carry",
+            `https://b.example/contact#${FIELDS.replace("j=b.example", "j=b.example:99999")}`,
+        ],
+        ["naming another port", `https://b.example/contact#${FIELDS.replace("j=b.example", "j=b.example:8443")}`],
+    ])("refuses an https link %s", (_, link) => {
+        expect(parseContactLink(link)).toBeNull();
+    });
+
+    it("tells a damaged invite link from other text", () => {
+        expect(looksLikeContactLink("https://b.example/contact#v=1")).toBe(true);
+        expect(looksLikeContactLink("matron://contact?v=1")).toBe(true);
+        expect(looksLikeContactLink("https://b.example/u/bob/12")).toBe(false);
+    });
+
+    it("shares the https form when the journal sends one", () => {
+        expect(shareableInviteLink({ link: LINK, web_link: WEB_LINK })).toBe(WEB_LINK);
+        expect(shareableInviteLink({ link: LINK })).toBe(LINK);
+        expect(shareableInviteLink({})).toBeUndefined();
     });
 });
 
@@ -119,6 +175,12 @@ describe("contact links in messages", () => {
     it("is an in-app link", () => {
         expect(parseMatronHref(LINK)).toEqual({ kind: "contact", target: LINK });
         expect(parseMatronHref(`${LINK}&x=1`)).toBeNull();
+    });
+
+    it("opens the https form in-app too, and leaves other https links alone", () => {
+        expect(parseMatronHref(WEB_LINK)).toEqual({ kind: "contact", target: WEB_LINK });
+        expect(parseMatronHref(`https://a.example/contact#${FIELDS}`)).toBeNull();
+        expect(parseMatronHref("https://b.example/contact")).toBeNull();
     });
 
     it("links a bare invite link in prose, leaving the full stop after it", () => {

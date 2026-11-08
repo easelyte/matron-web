@@ -125,6 +125,25 @@ describe("Consent requests answered from their For you row", () => {
         unsubscribe();
     });
 
+    it("an Approve tap on an invite ask shows the minted link once, in its https form", async () => {
+        const fields = `v=1&j=a.example&u=alice&t=${"A".repeat(43)}&fp=gs462nr3vwew6cbb2cxzvrtide`;
+        const ask = chatAsk({ links: [{ url: "matron://consent/invite/ask_1", title: "Invite link request" }] });
+        const answered = { ...ask, state: "closed" as const, awaiting: null, resolution: "decided" as const };
+        const postItemComment = jest.fn().mockResolvedValue({
+            item: answered,
+            link: `matron://contact?${fields}`,
+            web_link: `https://a.example/contact#${fields}`,
+        });
+        const items = jest.fn().mockResolvedValue({ items: [], next_cursor: null });
+        const client = clientWith({ inboxItems: [ask] }, { postItemComment, items });
+
+        await act(async () => {
+            await client.postTrackerComment(7, { action: "Approve", body: "Approve" });
+        });
+
+        expect(client.getSnapshot().mintedInviteLink).toBe(`https://a.example/contact#${fields}`);
+    });
+
     it("a tap on a request already answered elsewhere drops the stale row and says so in the journal's words", async () => {
         const refused = new JournalApiError("conflict", 409, "conflict", undefined, {
             error: "conflict",
