@@ -27,6 +27,8 @@ Please see LICENSE files in the repository root for full details.
  */
 
 import { indicatorStep, payloadStep } from "./activity-text";
+import { isPersonSender } from "./room-sender";
+import { isSystemNoticeEvent } from "./system-notice";
 import { type JournalEvent } from "./types";
 import { type Step, stepsOf, type TurnItem } from "./turn-grouping";
 
@@ -224,6 +226,18 @@ function emptyTurn(first: JournalEvent, operator?: JournalEvent): Turn {
     };
 }
 
+const SYSTEM_SPEAKER = "system:";
+
+/** Who a non-operator event speaks for: its sender, or the bridge itself for a notice row. */
+function speakerOf(event: JournalEvent): string {
+    return isSystemNoticeEvent(event) ? SYSTEM_SPEAKER : event.sender;
+}
+
+/** Speakers that always get a turn of their own: another person's side, and the bridge. */
+function isSeparateSpeaker(speaker: string): boolean {
+    return speaker === SYSTEM_SPEAKER || isPersonSender(speaker);
+}
+
 /** Group visible journal events (already filtered by the timeline) into operator turns. */
 export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
     const turns: Turn[] = [];
@@ -232,6 +246,10 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
     // into narration vs answer once the turn's last step is known.
     let texts: Array<{ event: JournalEvent; text: string; itemIndex: number }> = [];
     let lastTs: number | undefined;
+    // Who speaks for the current turn (its first non-operator sender, or "system" for a bridge
+    // notice). The other person's messages, our agent's, and the bridge's own notices must never
+    // share one turn: the turn's header names one side.
+    let speaker: string | undefined;
 
     const finish = (): void => {
         if (!current) return;
@@ -258,6 +276,7 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
         texts = [];
         turns.push(turn);
         current = null;
+        speaker = undefined;
     };
 
     for (const event of events) {
@@ -267,7 +286,17 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
             lastTs = event.ts;
             continue;
         }
+        if (
+            current &&
+            speaker !== undefined &&
+            !isOperatorEvent(event) &&
+            speakerOf(event) !== speaker &&
+            (isSeparateSpeaker(speakerOf(event)) || isSeparateSpeaker(speaker))
+        ) {
+            finish();
+        }
         if (!current) current = emptyTurn(event);
+        if (speaker === undefined && !isOperatorEvent(event)) speaker = speakerOf(event);
         const turn = current;
         turn.events.push(event);
         // Duration ends at the turn's last own event: bridge notices and peers don't extend it.
