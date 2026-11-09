@@ -27,6 +27,7 @@ Please see LICENSE files in the repository root for full details.
  */
 
 import { indicatorStep, payloadStep } from "./activity-text";
+import { isPersonSender } from "./room-sender";
 import { type JournalEvent } from "./types";
 import { type Step, stepsOf, type TurnItem } from "./turn-grouping";
 
@@ -232,6 +233,11 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
     // into narration vs answer once the turn's last step is known.
     let texts: Array<{ event: JournalEvent; text: string; itemIndex: number }> = [];
     let lastTs: number | undefined;
+    // Who speaks for the current turn (its first non-operator sender). In a room with another
+    // person, their messages and our agent's never share one turn: the turn's header names one
+    // side. Only a `person:` sender splits, so an ordinary session's turns are unchanged (a bridge
+    // notice landing mid-run stays inside the running turn, with its live card).
+    let speaker: string | undefined;
 
     const finish = (): void => {
         if (!current) return;
@@ -258,6 +264,7 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
         texts = [];
         turns.push(turn);
         current = null;
+        speaker = undefined;
     };
 
     for (const event of events) {
@@ -267,7 +274,17 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
             lastTs = event.ts;
             continue;
         }
+        if (
+            current &&
+            speaker !== undefined &&
+            !isOperatorEvent(event) &&
+            event.sender !== speaker &&
+            (isPersonSender(event.sender) || isPersonSender(speaker))
+        ) {
+            finish();
+        }
         if (!current) current = emptyTurn(event);
+        if (speaker === undefined && !isOperatorEvent(event)) speaker = event.sender;
         const turn = current;
         turn.events.push(event);
         // Duration ends at the turn's last own event: bridge notices and peers don't extend it.

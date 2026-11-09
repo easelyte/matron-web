@@ -153,6 +153,7 @@ import { FilesPane } from "./files/FilesPane";
 import { SearchField } from "./search-field";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
 import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
+import { formatFullTime, formatMessageTime, isPersonSender, journalHost, roomSenderLabel } from "./room-sender";
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
 import { ConvoNotifyBell, OverflowRoomsAndNotify, RoomsControl } from "./ChatHeaderRooms";
 import { useDismissablePopover } from "./use-dismissable-popover";
@@ -416,10 +417,6 @@ function useLeftPanelResize(): {
 /** A group break inside a menu (before Archive, Sign out, View source): one full-bleed hairline. */
 export function MenuSeparator(): React.ReactElement {
     return <div className="mj_MenuSeparator" role="separator" />;
-}
-
-function formatTime(timestamp: number): string {
-    return dateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(timestamp));
 }
 
 /**
@@ -6305,21 +6302,17 @@ function EventRow({
             onClickCapture={handlers.onClickCapture}
         >
             {!own && !continuation && !noticeRow && (
-                <span className="mj_SenderName">
-                    <MsgAvatar />
-                    <span className="mj_SenderName_displayName">{displaySender(event.sender)}</span>
-                    {/* tool_output owns its timestamp inline (after the exit badge); prompt /
-                        permission cards own theirs in the card header (§10.2). Suppress the
-                        profile-row time for all three so a first-in-section event never shows
-                        two identical timestamps. */}
-                    {event.type !== "tool_output" && event.type !== "prompt" && event.type !== "permission_request" && (
-                        <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                            <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
-                                {formatClockTime(event.ts)}
-                            </time>
-                        </a>
-                    )}
-                </span>
+                /* tool_output owns its timestamp inline (after the exit badge); prompt /
+                    permission cards own theirs in the card header (§10.2). Suppress the
+                    profile-row time for all three so a first-in-section event never shows
+                    two identical timestamps. */
+                <SenderHeader
+                    client={client}
+                    event={event}
+                    showTime={
+                        event.type !== "tool_output" && event.type !== "prompt" && event.type !== "permission_request"
+                    }
+                />
             )}
             <div className="mj_EventTile_line">
                 {/* Own bubbles carry an inline timestamp (design: "…text <09:58>"). Agent
@@ -6328,8 +6321,12 @@ function EventRow({
                     edge with no reserved timestamp gutter (kills the first-block spill). */}
                 {own && event.type !== "tool_output" && (
                     <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                        <time className="mj_MessageTimestamp" dateTime={new Date(event.ts).toISOString()}>
-                            {formatClockTime(event.ts)}
+                        <time
+                            className="mj_MessageTimestamp"
+                            dateTime={new Date(event.ts).toISOString()}
+                            title={formatFullTime(event.ts)}
+                        >
+                            {formatMessageTime(event.ts)}
                         </time>
                     </a>
                 )}
@@ -6635,17 +6632,7 @@ function AgentTurnRow({
             data-self="false"
             data-turn={turn.key}
         >
-            {first && (
-                <span className="mj_SenderName">
-                    <MsgAvatar />
-                    <span className="mj_SenderName_displayName">{displaySender(first.sender)}</span>
-                    <a href={`#event-${first.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
-                        <time className="mj_MessageTimestamp" dateTime={new Date(first.ts).toISOString()}>
-                            {formatTime(first.ts)}
-                        </time>
-                    </a>
-                </span>
-            )}
+            {first && <SenderHeader client={client} event={first} />}
             <div className="mj_EventTile_line">
                 <div className="mj_TextBody mj_EventTile_content">
                     <div className="markdown-body mj_AgentTurn_blocks">
@@ -6772,6 +6759,54 @@ function TurnNoticeRow({
 // maps, the menu handlers), so a streamed token re-renders only the streaming bubble instead of
 // every row in a long transcript.
 const MemoEventRow = React.memo(EventRow);
+
+/**
+ * The header above a message section: who wrote it and when. In an agent-chat room it says which
+ * side wrote it (ours, the other person's, or the bridge itself) with names that carry the journal
+ * host, and the time carries the date on any day but today.
+ */
+function SenderHeader({
+    client,
+    event,
+    showTime = true,
+}: {
+    client: MatronJournalClient;
+    event: JournalEvent;
+    showTime?: boolean;
+}): React.ReactElement {
+    // Subscribed, so a memoised row picks up a room title or session that arrives after it drew.
+    const session = useSyncExternalStore(client.subscribe, () => client.getSnapshot().session);
+    const roomTitle = useSyncExternalStore(client.subscribe, () =>
+        isAgentRoomTitle(
+            client.getSnapshot().conversations.find((candidate) => candidate.id === event.convo_id)?.title ?? "",
+        ),
+    );
+    const inRoom = isPersonSender(event.sender) || roomTitle;
+    const label = inRoom
+        ? roomSenderLabel(event, { username: session?.username, host: journalHost(session?.serverUrl) })
+        : null;
+    const sideText = label?.side === "ours" ? "Our side" : label?.side === "theirs" ? "Their side" : undefined;
+    return (
+        <span className={`mj_SenderName${label ? ` mj_SenderName_room mj_SenderName_${label.side}` : ""}`}>
+            {label?.side !== "system" && <MsgAvatar />}
+            <span className="mj_SenderName_displayName">{label ? label.name : displaySender(event.sender)}</span>
+            {label?.detail && <span className="mj_SenderName_detail">{label.detail}</span>}
+            {sideText && <span className="mj_SenderName_side">{sideText}</span>}
+            {/* A notice row carries its own time on the right. */}
+            {showTime && label?.side !== "system" && (
+                <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
+                    <time
+                        className="mj_MessageTimestamp"
+                        dateTime={new Date(event.ts).toISOString()}
+                        title={formatFullTime(event.ts)}
+                    >
+                        {formatMessageTime(event.ts)}
+                    </time>
+                </a>
+            )}
+        </span>
+    );
+}
 
 function MsgAvatar(): React.ReactElement {
     const mask = `url("${matronLogo}")`;

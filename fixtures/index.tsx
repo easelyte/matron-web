@@ -42,6 +42,7 @@ import type {
 } from "../src/journal/types";
 import { SHOW_THE_WORK_KEY } from "../src/journal/show-the-work";
 import { v6Fixture, type V6Scenario } from "./v6-thread";
+import { ROOM_TITLE, roomFixture } from "./room";
 import { opsDevices, opsMetrics, opsReply, type OpsFixtureMode } from "./ops";
 import { parseBoxStatus, parseMetrics, sectionStateFromReply, type OpsSection } from "../src/journal/ops/model";
 import { REAL_STATUS, subagentFixture, type SubagentScenario } from "./subagents";
@@ -1007,6 +1008,19 @@ if (v6Scenario) {
                 : conversation,
         );
     }
+}
+
+// `?room=1`: an agent-chat room with another person's agent (fixtures/room.ts).
+if (v6Params.get("room")) {
+    state.session = { ...SESSION, username: "operator" };
+    state.events = roomFixture();
+    state.toolStreams = {};
+    state.activity = {};
+    state.conversations = state.conversations.map((conversation) =>
+        conversation.id === "c1"
+            ? { ...conversation, title: ROOM_TITLE, session_state: "waiting", summary: "" }
+            : conversation,
+    );
 }
 
 // Subagent cards + sidebar child rows: `?sub=thread|child|codex` swaps in a parent session with

@@ -26,6 +26,45 @@ beforeEach(() => {
     seq = 0;
 });
 
+describe("assembleTurns: room sides", () => {
+    const theirs = (body: string): JournalEvent =>
+        ev("text", { body, person: { name: "dan@peer.example" }, via: "agent" }, { sender: "person:dan@peer.example" });
+    const notice = (body: string): JournalEvent =>
+        ev("text", { body, notice: { kind: "agent_chat", icon: "💬", summary: "You are now in a room" } });
+
+    it("never puts the other person's messages and ours in one turn", () => {
+        const turns = assembleTurns([
+            say("Here is the list."),
+            theirs("Thanks, it arrived."),
+            theirs("One more thing."),
+            say("Noted."),
+        ]);
+        expect(turns.map((turn) => turn.events.map((event) => event.sender))).toEqual([
+            ["agent:box"],
+            ["person:dan@peer.example", "person:dan@peer.example"],
+            ["agent:box"],
+        ]);
+    });
+
+    it("keeps a bridge notice that lands mid-run inside the running turn", () => {
+        const turns = assembleTurns([
+            user("go"),
+            say("Running tests."),
+            cmd("ls"),
+            notice("Spawn outcome"),
+            say("ok"),
+            cmd("pytest"),
+        ]);
+        expect(turns).toHaveLength(1);
+        expect(turns[0].items.some((item) => item.kind === "narration" && item.text === "Running tests.")).toBe(true);
+    });
+
+    it("keeps one sender's work in one turn", () => {
+        const turns = assembleTurns([user("go"), say("Looking."), cmd("ls"), say("Done.")]);
+        expect(turns).toHaveLength(1);
+    });
+});
+
 describe("assembleTurns", () => {
     it("keeps the final text as the answer when a late tool event trails it", () => {
         const turns = assembleTurns([
