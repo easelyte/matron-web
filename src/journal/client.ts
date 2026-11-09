@@ -8,6 +8,8 @@ Please see LICENSE files in the repository root for full details.
 import { parseSessionOptions, type SessionOptions } from "./new-session";
 import {
     JOURNAL_ATTACHMENTS_MAX,
+    JOURNAL_BODY_MAX,
+    bodyTooLongMessage,
     JournalApi,
     JournalApiError,
     isMediaExpiredError,
@@ -7525,6 +7527,9 @@ export function commentFailureMessage(error: unknown): string {
     if (error.code === "too_many_attachments") {
         const max = typeof body.max === "number" && body.max > 0 ? body.max : JOURNAL_ATTACHMENTS_MAX;
         return `The journal takes at most ${max} attachments on one comment.`;
+    }
+    if (error.code === "body_too_long") {
+        return bodyTooLongMessage(typeof body.max === "number" && body.max > 0 ? body.max : JOURNAL_BODY_MAX);
     }
     if (typeof body.reason === "string" && body.reason.trim()) {
         return `The server refused it: ${body.reason.trim().replace(/_/g, " ")}.`;

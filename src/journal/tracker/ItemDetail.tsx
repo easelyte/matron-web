@@ -20,7 +20,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { AgentSpawnCard, type AgentSpawnDecision, isAnswerableAgentSpawn } from "../agent-spawn-card";
-import { JOURNAL_ATTACHMENTS_MAX } from "../api";
+import { JOURNAL_ATTACHMENTS_MAX, JOURNAL_BODY_MAX, bodyTooLongMessage } from "../api";
 import { type MatronJournalClient, type TrackerCommentOutcome, voiceNoteFile } from "../client";
 import { stopSpawnedSession } from "../coordinator-consent";
 import { filesDeepLinkHash, handleFilesLinkClick } from "../files-link";
@@ -1308,6 +1308,11 @@ export function ItemDetail({
                     </div>
                 ) : null}
                 <StagedTray staged={staged} locked={busy} onRemove={removeStaged} />
+                {reply.trim().length > JOURNAL_BODY_MAX ? (
+                    <div className="mj_TrackerComposer_limit" role="status">
+                        {bodyTooLongMessage()} ({reply.trim().length.toLocaleString("en-US")} now.)
+                    </div>
+                ) : null}
                 {staged.length > JOURNAL_ATTACHMENTS_MAX ? (
                     <div className="mj_TrackerComposer_limit" role="status">
                         {staged.length} files will go as {planReply(reply.trim(), staged, attemptedRef.current).length}{" "}

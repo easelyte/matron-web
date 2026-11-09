@@ -415,6 +415,17 @@ export async function loadMatronConfig(): Promise<MatronConfig> {
  */
 export const JOURNAL_ATTACHMENTS_MAX = 20;
 
+/**
+ * The longest item or comment body the journal takes, in UTF-16 code units (JavaScript string
+ * length, the journal's own measure); a longer one is refused (HTTP 400 `body_too_long`).
+ */
+export const JOURNAL_BODY_MAX = 32768;
+
+/** What to tell the user when a reply is over the journal's length limit. */
+export function bodyTooLongMessage(max: number = JOURNAL_BODY_MAX): string {
+    return `Too long to send: a reply takes at most ${max.toLocaleString("en-US")} characters. Split it into several replies, or attach the text as a file.`;
+}
+
 function messageForCode(code: string | undefined, status: number): string {
     return knownErrorMessage(code) ?? `The journal server returned HTTP ${status}.`;
 }
