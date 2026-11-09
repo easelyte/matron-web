@@ -46,10 +46,17 @@ describe("assembleTurns: room sides", () => {
         ]);
     });
 
-    it("gives a bridge notice its own turn", () => {
-        const turns = assembleTurns([notice("You are now in a room with dan"), say("Hello.")]);
-        expect(turns.map((turn) => turn.events.length)).toEqual([1, 1]);
-        expect(turns[1].answer[0].payload.body).toBe("Hello.");
+    it("keeps a bridge notice that lands mid-run inside the running turn", () => {
+        const turns = assembleTurns([
+            user("go"),
+            say("Running tests."),
+            cmd("ls"),
+            notice("Spawn outcome"),
+            say("ok"),
+            cmd("pytest"),
+        ]);
+        expect(turns).toHaveLength(1);
+        expect(turns[0].items.some((item) => item.kind === "narration" && item.text === "Running tests.")).toBe(true);
     });
 
     it("keeps one sender's work in one turn", () => {

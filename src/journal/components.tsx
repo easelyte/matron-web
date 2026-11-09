@@ -6774,13 +6774,14 @@ function SenderHeader({
     event: JournalEvent;
     showTime?: boolean;
 }): React.ReactElement {
-    const snapshot = client.getSnapshot();
-    const session = snapshot.session;
-    const conversation = snapshot.conversations.find((candidate) => candidate.id === event.convo_id);
-    const inRoom =
-        isPersonSender(event.sender) ||
-        isSystemNoticeEvent(event) ||
-        (conversation ? isAgentRoomTitle(conversation.title) : false);
+    // Subscribed, so a memoised row picks up a room title or session that arrives after it drew.
+    const session = useSyncExternalStore(client.subscribe, () => client.getSnapshot().session);
+    const roomTitle = useSyncExternalStore(client.subscribe, () =>
+        isAgentRoomTitle(
+            client.getSnapshot().conversations.find((candidate) => candidate.id === event.convo_id)?.title ?? "",
+        ),
+    );
+    const inRoom = isPersonSender(event.sender) || roomTitle;
     const label = inRoom
         ? roomSenderLabel(event, { username: session?.username, host: journalHost(session?.serverUrl) })
         : null;
