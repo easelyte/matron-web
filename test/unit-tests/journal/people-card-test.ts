@@ -116,6 +116,8 @@ const shareOut = {
     preview: { milestones: 1, items: 2, comments: 0, attachments: 0 },
 };
 const shareIn = { ...shareOut, direction: "in", grant_id: "gr_2", owner: { user_id: 3, name: "alice" } };
+// The owner raising a read share the user already has to contribute: the journal's raise card.
+const shareRaiseIn = { ...shareIn, grant_id: "gr_3", level: "contribute", raise: true, from_level: "read" };
 const sessionShareOut = {
     kind: "session_share",
     direction: "out",
@@ -210,6 +212,32 @@ describe("parsePeopleCard", () => {
         expect(parsePeopleCard(roomIn)!.headline).toBe("alice's agent wants to talk with your session");
         expect(parsePeopleCard(talkOut)!.headline).toBe("Your agent asks to talk with bob");
         expect(parsePeopleCard(talkIn)!.headline).toBe("alice's agent wants to talk");
+    });
+
+    it("words a raise of an existing share as a raise, not as a new share", () => {
+        const card = parsePeopleCard(shareRaiseIn)!;
+        expect(card.headline).toBe("alice asks you to contribute to Cover editor (you can read it now)");
+        expect(card.access).toBe("can contribute");
+        expect(card.topic).toBe("Cover editor");
+        expect(card.consentUrl).toBe("matron://consent/share/gr_3");
+        expect(parsePeopleCard({ ...shareRaiseIn, mission: null })!.headline).toBe(
+            "alice asks you to contribute to a mission (you can read it now)",
+        );
+        expect(parsePeopleCard({ ...shareRaiseIn, from_level: undefined })!.headline).toBe(
+            "alice asks you to contribute to Cover editor",
+        );
+    });
+
+    it("keeps the new-share wording when the payload is not a raise", () => {
+        expect(parsePeopleCard({ ...shareIn, raise: false, from_level: "read" })!.headline).toBe(
+            "alice wants to share a mission with you",
+        );
+        expect(parsePeopleCard({ ...shareIn, level: "contribute" })!.headline).toBe(
+            "alice wants to share a mission with you",
+        );
+        expect(parsePeopleCard({ ...shareOut, raise: true, from_level: "read" })!.headline).toBe(
+            "Your agent asks to share a mission with bob",
+        );
     });
 
     it("carries the topic: the room's topic, the mission title or the session title", () => {
@@ -342,6 +370,26 @@ describe("person-to-person card in the timeline", () => {
         expect(card.textContent).toContain("Cover editor colours");
         expect(card.textContent).toContain("bob owns the palette");
         expect(card.querySelector(".mj_PromptLabel")?.textContent).toBe("Talk request");
+    });
+
+    it.each([
+        ["a new share", shareIn, "alice wants to share a mission with you", "can read"],
+        [
+            "a raise",
+            shareRaiseIn,
+            "alice asks you to contribute to Cover editor (you can read it now)",
+            "can contribute",
+        ],
+    ])("draws an incoming mission share card for %s", async (_name, payload, headline, access) => {
+        const client = signedInClient();
+        jest.spyOn(client, "findConsentItem").mockResolvedValue(null);
+        const container = await render(client, cardEvent(payload));
+        const card = container.querySelector(".mj_PeopleCard")!;
+
+        expect(card.querySelector(".mj_PromptLabel")?.textContent).toBe("Mission share");
+        expect(card.querySelector(".mj_PromptQuestion")?.textContent).toBe(headline);
+        expect(card.querySelector(".mj_PeopleDetail_topic .mj_SpawnDetail_value")?.textContent).toBe("Cover editor");
+        expect(card.querySelector(".mj_PeopleDetail_access .mj_SpawnDetail_value")?.textContent).toBe(access);
     });
 
     it("offers Answer in the tracker when the mirror item is found, and opens it", async () => {

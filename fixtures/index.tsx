@@ -865,6 +865,30 @@ if (peopleParam === "out" || peopleParam === "talk") {
     events.splice(0, events.length, ...lead, card);
 }
 
+// ?people=share-in: alice's new read share waiting in the People conversation; ?people=share-raise:
+// alice asking to raise the read share the user already has to contribute.
+if (peopleParam === "share-in" || peopleParam === "share-raise") {
+    const raise = peopleParam === "share-raise";
+    const card: JournalEvent = {
+        seq: 3,
+        convo_id: "c1",
+        ts: T + 2 * 60_000,
+        sender: "journal",
+        type: "permission_request",
+        payload: {
+            kind: "mission_share",
+            direction: "in",
+            grant_id: raise ? "gr_4" : "gr_3",
+            level: raise ? "contribute" : "read",
+            owner: { user_id: null, name: "alice", address: "alice" },
+            mission: { id: null, num: 4, title: "Cover editor" },
+            preview: { milestones: 3, items: 5, comments: 2, attachments: 1 },
+            ...(raise ? { raise: true, from_level: "read" } : {}),
+        },
+    };
+    events.splice(0, events.length, card);
+}
+
 // ?toolstream adds a running tool_stream tile with more output than its collapsed pane shows.
 const toolStreams: ClientState["toolStreams"] = {};
 if (new URLSearchParams(window.location.search).has("toolstream")) {

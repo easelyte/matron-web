@@ -133,6 +133,20 @@ export function accessWords(level: unknown): string {
     return "";
 }
 
+/**
+ * The headline of an incoming raise: the other person asks to lift a share the user already has
+ * (`raise: true`), say from read to contribute. The parenthetical says what `from_level` lets the
+ * user do meanwhile, and is left out for a level the apps do not know.
+ */
+function raiseHeadline(who: string, level: unknown, fromLevel: unknown, title: string): string {
+    const mission = title || "a mission";
+    const ask = level === "read" ? `to read ${mission}` : `to contribute to ${mission}`;
+    let now = "";
+    if (fromLevel === "read") now = " (you can read it now)";
+    else if (fromLevel === "contribute") now = " (you can contribute to it now)";
+    return `${who} asks you ${ask}${now}`;
+}
+
 function parseHandover(payload: EventPayload, direction: "in" | "out"): HandoverDetails {
     const subject = payload.subject && typeof payload.subject === "object" ? (payload.subject as EventPayload) : {};
     const preview = payload.preview && typeof payload.preview === "object" ? (payload.preview as EventPayload) : {};
@@ -226,10 +240,12 @@ export function parsePeopleCard(payload: EventPayload): PeopleCard | null {
             break;
         case "mission_share":
             label = "Mission share";
+            topic = fieldOf(payload.mission, "title");
             headline = out
                 ? `Your agent asks to share a mission with ${person || "someone"}`
-                : `${who} wants to share a mission with you`;
-            topic = fieldOf(payload.mission, "title");
+                : payload.raise === true
+                  ? raiseHeadline(who, payload.level, payload.from_level, topic)
+                  : `${who} wants to share a mission with you`;
             topicLabel = "Mission";
             access = accessWords(payload.level);
             break;
