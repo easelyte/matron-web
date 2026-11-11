@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
+import { FILE_VIEWER_OPEN } from "../files-link";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
@@ -715,20 +716,21 @@ describe("ItemDetail", () => {
             />,
         );
         const [filesChip, prChip] = Array.from(container.querySelectorAll<HTMLAnchorElement>(".mj_TrackerLinkChip"));
-        const hashes: string[] = [];
-        const onHashChange = (): void => void hashes.push(window.location.hash);
-        window.addEventListener("hashchange", onHashChange);
+        const openedPaths: string[] = [];
+        const onViewerOpen = (event: Event): void =>
+            void openedPaths.push((event as CustomEvent<{ path: string }>).detail.path);
+        window.addEventListener(FILE_VIEWER_OPEN, onViewerOpen);
         const click = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
 
         await act(async () => {
             filesChip.dispatchEvent(click);
         });
-        window.removeEventListener("hashchange", onHashChange);
+        window.removeEventListener(FILE_VIEWER_OPEN, onViewerOpen);
         window.history.replaceState(null, "", "/");
 
         expect(filesChip.hasAttribute("target")).toBe(false);
         expect(click.defaultPrevented).toBe(true);
-        expect(hashes).toEqual([`#files=${encodeURIComponent("/root/a/plan.md")}`]);
+        expect(openedPaths).toEqual(["/root/a/plan.md"]);
         expect(prChip.getAttribute("target")).toBe("_blank");
     });
 

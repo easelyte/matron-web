@@ -23,7 +23,7 @@ import { AgentSpawnCard, type AgentSpawnDecision, isAnswerableAgentSpawn } from 
 import { JOURNAL_ATTACHMENTS_MAX, JOURNAL_BODY_MAX, bodyTooLongMessage } from "../api";
 import { type MatronJournalClient, type TrackerCommentOutcome, voiceNoteFile } from "../client";
 import { stopSpawnedSession } from "../coordinator-consent";
-import { filesDeepLinkHash, handleFilesLinkClick } from "../files-link";
+import { filesDeepLinkHash, handleViewerLinkClick, viewerFilePath } from "../files-link";
 import { ChevronLeftIcon, CloseIcon, KebabIcon, PlusCircleIcon, SendIcon } from "../icons";
 import { parseOwnTrackerUrl } from "../link-path";
 import { parseTrackerHref } from "../markdown";
@@ -398,13 +398,14 @@ function LinkChip({
             </a>
         );
     }
-    const filesHash = filesDeepLinkHash(link.url);
-    if (filesHash) {
+    const filePath = viewerFilePath(link.url);
+    if (filePath) {
         return (
             <a
                 className="mj_TrackerLinkChip"
                 href={link.url}
-                onClick={(clickEvent) => handleFilesLinkClick(clickEvent, filesHash)}
+                {...(!filesDeepLinkHash(link.url) ? { target: "_blank", rel: "noopener noreferrer nofollow" } : {})}
+                onClick={(clickEvent) => handleViewerLinkClick(clickEvent, filePath)}
             >
                 {label}
             </a>

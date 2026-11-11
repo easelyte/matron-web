@@ -9,7 +9,8 @@ Please see LICENSE files in the repository root for full details.
  * Attachments in a tracker item: the item body and each comment render as segments (text through
  * the markdown renderer, an inline `![caption](attachment:<ref>)` as the attachment in place), then
  * the attachments no ref placed. Images load through the client's authenticated blob cache and open
- * the media viewer lightbox on click; other files are a name chip that downloads the file.
+ * the media viewer lightbox on click; renderable file chips also open it, markdown opens the side
+ * preview, and other files download.
  */
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -18,7 +19,7 @@ import type { MatronJournalClient } from "../client";
 import { DownloadIcon } from "../icons";
 import { MarkdownBody } from "../markdown";
 import { isPreviewableMarkdown, useMarkdownPreview } from "../markdown-preview";
-import { type MediaItem, mediaRenderKind, useMediaViewer } from "../media-viewer";
+import { isRenderableInViewer, type MediaItem, mediaRenderKind, useMediaViewer } from "../media-viewer";
 import {
     fileKindFromMime,
     IMAGE_FRAME_MAX_HEIGHT_PX,
@@ -63,14 +64,18 @@ export function trackerMediaItem(attachment: TrackerAttachment, caption?: string
 }
 
 /**
- * The lightbox corpus for an item: every image in the body and then each comment, in the order
+ * The lightbox corpus for an item: every renderable media file in the body and then each comment, in the order
  * they render (inline placements first in text order, then that body's trailing attachments).
  */
 export function buildTrackerMediaCorpus(item: TrackerItem, comments: readonly TrackerComment[]): MediaItem[] {
     const corpus: MediaItem[] = [];
     const seen = new Set<string>();
     const add = (attachment: TrackerAttachment, caption?: string): void => {
-        if (!isImageAttachment(attachment) || seen.has(attachment.blob_ref)) return;
+        if (
+            (!isImageAttachment(attachment) && !isRenderableInViewer(attachment.mime, attachment.name)) ||
+            seen.has(attachment.blob_ref)
+        )
+            return;
         seen.add(attachment.blob_ref);
         corpus.push(trackerMediaItem(attachment, caption));
     };
@@ -89,8 +94,7 @@ export function buildTrackerMediaCorpus(item: TrackerItem, comments: readonly Tr
 /**
  * The name-and-size chip a non-image attachment renders as. A markdown file up to 2 MB is a button
  * that opens the side preview panel (where it can also be downloaded) when the app provides one.
- * Any other file is a button that downloads it under its own name: a chip that only showed the
- * name left no way to get the file at all.
+ * Other renderable media opens the lightbox; remaining files download under their own names.
  */
 export function AttachmentChip({
     client,
@@ -100,6 +104,7 @@ export function AttachmentChip({
     attachment: TrackerAttachment;
 }): React.ReactElement {
     const markdownPreview = useMarkdownPreview();
+    const viewer = useMediaViewer();
     const [state, setState] = useState<"idle" | "loading" | "failed">("idle");
     if (markdownPreview && isPreviewableMarkdown(attachment)) {
         return (
@@ -114,6 +119,19 @@ export function AttachmentChip({
                         size: attachment.size,
                     })
                 }
+            >
+                {attachment.name}
+                <span className="mj_TrackerAttachmentChip_size">{humanizeSize(attachment.size)}</span>
+            </button>
+        );
+    }
+    if (viewer && isRenderableInViewer(attachment.mime, attachment.name)) {
+        return (
+            <button
+                type="button"
+                className="mj_TrackerAttachmentChip mj_TrackerAttachmentChip_preview"
+                aria-label={`Preview ${attachment.name}`}
+                onClick={(event) => viewer.openViewer(attachment.blob_ref, event.currentTarget)}
             >
                 {attachment.name}
                 <span className="mj_TrackerAttachmentChip_size">{humanizeSize(attachment.size)}</span>

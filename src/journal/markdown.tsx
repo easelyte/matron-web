@@ -35,7 +35,7 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 
 import { copyText } from "./clipboard";
-import { filesDeepLinkHash, handleFilesLinkClick } from "./files-link";
+import { filesDeepLinkHash, handleViewerLinkClick, viewerFilePath } from "./files-link";
 import { parseOwnTrackerUrl } from "./link-path";
 import { parseContactLink } from "./contact-link";
 import { TrackerLinkTarget } from "./tracker-link-title";
@@ -614,12 +614,16 @@ function componentsFor(source: string, onTrackerLink?: TrackerLinkHandler): Comp
                     </a>
                 );
             }
-            // A Files deep link into this app opens the Files pane in the current window (plain
-            // click); modified/middle clicks keep the browser default, so no target="_blank".
-            const filesHash = filesDeepLinkHash(href);
-            if (filesHash) {
+            // File links preview in place; modified clicks retain the original anchor behaviour.
+            const filePath = viewerFilePath(href);
+            if (filePath) {
                 return (
-                    <a {...props} href={href} onClick={(clickEvent) => handleFilesLinkClick(clickEvent, filesHash)}>
+                    <a
+                        {...props}
+                        href={href}
+                        {...(!filesDeepLinkHash(href) ? { target: "_blank", rel: "noopener noreferrer nofollow" } : {})}
+                        onClick={(clickEvent) => handleViewerLinkClick(clickEvent, filePath)}
+                    >
                         {children}
                     </a>
                 );
