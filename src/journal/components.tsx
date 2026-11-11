@@ -191,6 +191,7 @@ import {
     useMarkdownPreview,
     useMarkdownPreviewPanel,
 } from "./markdown-preview";
+import { FileViewerPanel, useFileViewerPanel } from "./file-viewer";
 import { TrackerLinkInfoContext, type TrackerLinkInfo } from "./tracker-link-title";
 import { MediaBrowserSheet } from "./media-browser";
 import { paneCoversChat, SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
@@ -9349,18 +9350,25 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
 
     // Markdown attachment preview: a side panel to the right of the conversation or item.
     const markdownPreview = useMarkdownPreviewPanel();
+    const fileViewer = useFileViewerPanel(markdownPreview.close);
+    const closeFileViewer = fileViewer.close;
+    useEffect(() => {
+        if (markdownPreview.target) closeFileViewer();
+    }, [markdownPreview.target, closeFileViewer]);
     // Every tracker link in markdown shows what its number points at (tracker-link-title.tsx).
     const trackerLinkInfo = useCallback<TrackerLinkInfo>((user, num) => client.trackerLinkInfo(user, num), [client]);
     const closeMarkdownPreview = markdownPreview.close;
     // It belongs to the view it was opened from: moving to another conversation or item closes it.
     useEffect(() => {
         closeMarkdownPreview();
+        closeFileViewer();
     }, [
         state.selectedConversationId,
         state.trackerView?.open,
         state.trackerView?.view,
         state.trackerView?.selectedItemId,
         closeMarkdownPreview,
+        closeFileViewer,
     ]);
 
     const isFileDrag = (event: React.DragEvent): boolean => Array.from(event.dataTransfer.types).includes("Files");
@@ -9572,6 +9580,9 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                                 convoId={sidePane.convoId}
                                 conversations={state.conversations}
                             />
+                        ) : null}
+                        {fileViewer.target ? (
+                            <FileViewerPanel client={client} target={fileViewer.target} onClose={fileViewer.close} />
                         ) : null}
                         {markdownPreview.target ? (
                             <MarkdownPreviewPanel

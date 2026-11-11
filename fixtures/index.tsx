@@ -2514,6 +2514,32 @@ function fixturePhoto(seed: number): Promise<Blob> {
     return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob!), "image/png"));
 }
 
+// ?filelinks=1: an agent message with the file links agents post (a Files deep link and a signed
+// bridge viewer link), for shooting where a click on each opens.
+if (fixtureParams.get("filelinks") === "1") {
+    const at = events[events.length - 1].ts;
+    const token = btoa(JSON.stringify({ path: "/home/user/workspace/diagram.png", exp: 4102444800 }))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+    events.push({
+        seq: 950,
+        convo_id: "c1",
+        ts: at + 60_000,
+        sender: "agent:claude",
+        type: "text",
+        payload: {
+            body: [
+                "Report is ready.",
+                "",
+                `📁 Open README.md in Files: ${window.location.origin}/#files=${encodeURIComponent("/home/user/workspace/README.md")}`,
+                "",
+                `Diagram: [diagram.png](https://files.example.com/view?token=${token}.sig)`,
+            ].join("\n"),
+        },
+    });
+}
+
 // ?subchats=1: a "Subtask" line in the deploy chat that opens its subagent, which has a transcript
 // of its own for the pane beside the chat. ?media=1: photos, files and links for the media
 // browser. ?pane=1 opens the subagent pane on load.

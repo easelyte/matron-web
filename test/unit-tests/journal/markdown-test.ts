@@ -9,6 +9,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { toString } from "hast-util-to-string";
 
+import { FILE_VIEWER_OPEN } from "../../../src/journal/files-link";
 import { copyText } from "../../../src/journal/clipboard";
 import { HIGHLIGHT_MAX, MARKDOWN_MAX, MARKDOWN_MAX_LINES, MarkdownBody } from "../../../src/journal/markdown";
 import type { TrackerLinkHandler } from "../../../src/journal/types";
@@ -381,18 +382,18 @@ test("resets a tripped boundary when the same row receives new text", async () =
 describe("Files deep links (#files=<abs>) open in the current window", () => {
     const FILE = "/home/user/workspace/docs/plan.md";
     const HREF = `${window.location.origin}/#files=${encodeURIComponent(FILE)}`;
-    let hashchanges: string[];
-    const onHashChange = (): void => {
-        hashchanges.push(window.location.hash);
+    let openedPaths: string[];
+    const onViewerOpen = (event: Event): void => {
+        openedPaths.push((event as CustomEvent<{ path: string }>).detail.path);
     };
 
     beforeEach(() => {
-        hashchanges = [];
-        window.addEventListener("hashchange", onHashChange);
+        openedPaths = [];
+        window.addEventListener(FILE_VIEWER_OPEN, onViewerOpen);
     });
 
     afterEach(() => {
-        window.removeEventListener("hashchange", onHashChange);
+        window.removeEventListener(FILE_VIEWER_OPEN, onViewerOpen);
         window.history.replaceState(null, "", "/");
     });
 
@@ -404,7 +405,7 @@ describe("Files deep links (#files=<abs>) open in the current window", () => {
         expect(link?.hasAttribute("target")).toBe(false);
     });
 
-    test("a plain click routes the hash in-app without navigating or adding history", async () => {
+    test("a plain click opens the viewer in-app without navigating or adding history", async () => {
         const container = await renderMarkdown(`see ${HREF}`);
         const link = container.querySelector("a")!;
         const historyLength = window.history.length;
@@ -415,7 +416,7 @@ describe("Files deep links (#files=<abs>) open in the current window", () => {
         });
 
         expect(event.defaultPrevented).toBe(true);
-        expect(hashchanges).toEqual([`#files=${encodeURIComponent(FILE)}`]);
+        expect(openedPaths).toEqual([FILE]);
         expect(window.history.length).toBe(historyLength);
     });
 
@@ -440,7 +441,7 @@ describe("Files deep links (#files=<abs>) open in the current window", () => {
             });
 
             expect(claimedByApp).toBe(false);
-            expect(hashchanges).toEqual([]);
+            expect(openedPaths).toEqual([]);
         },
     );
 
@@ -454,7 +455,7 @@ describe("Files deep links (#files=<abs>) open in the current window", () => {
         });
 
         expect(event.defaultPrevented).toBe(true);
-        expect(hashchanges).toEqual([`#files=${encodeURIComponent(FILE)}`]);
+        expect(openedPaths).toEqual([FILE]);
     });
 
     test("a Files-shaped link on a foreign origin stays an external new-tab link", async () => {
@@ -469,7 +470,20 @@ describe("Files deep links (#files=<abs>) open in the current window", () => {
         });
 
         expect(link.getAttribute("target")).toBe("_blank");
-        expect(hashchanges).toEqual([]);
+        expect(openedPaths).toEqual([]);
+    });
+
+    test("a signed viewer link previews in-app and keeps its new-tab target for modified clicks", async () => {
+        const token = Buffer.from(JSON.stringify({ path: FILE })).toString("base64url") + ".sig";
+        const container = await renderMarkdown(`[plan](https://files.example/view?token=${token})`);
+        const link = container.querySelector("a")!;
+        expect(link.getAttribute("target")).toBe("_blank");
+        const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+        await act(async () => {
+            link.dispatchEvent(event);
+        });
+        expect(event.defaultPrevented).toBe(true);
+        expect(openedPaths).toEqual([FILE]);
     });
 
     test("an ordinary same-origin https link is unchanged (still a new tab)", async () => {

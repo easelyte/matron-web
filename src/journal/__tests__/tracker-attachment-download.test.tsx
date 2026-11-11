@@ -9,7 +9,9 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import type { MatronJournalClient } from "../client";
-import { AttachmentChip } from "../tracker/ItemAttachments";
+import { MediaViewerContext } from "../media-viewer";
+import { AttachmentChip, buildTrackerMediaCorpus } from "../tracker/ItemAttachments";
+import { trackerItem } from "./tracker-fixtures";
 import type { TrackerAttachment } from "../types";
 
 const pdf: TrackerAttachment = { blob_ref: "pp44", mime: "application/pdf", name: "Cover proof.pdf", size: 577_000 };
@@ -79,4 +81,27 @@ describe("AttachmentChip download", () => {
         expect(view.querySelector("button")).toBeNull();
         expect(view.querySelector(".mj_TrackerAttachmentChip")?.textContent).toContain("Cover proof.pdf");
     });
+});
+
+it.each([
+    ["application/pdf", "proof.pdf"],
+    ["video/mp4", "clip.mp4"],
+    ["audio/mpeg", "voice.mp3"],
+    ["application/octet-stream", "diagram.svg"],
+])("previews renderable tracker attachments (%s) through MediaViewer", async (mime, name) => {
+    const attachment = { ...pdf, mime, name };
+    const openViewer = jest.fn();
+    const mediaUrl = jest.fn();
+    const view = await mount(
+        <MediaViewerContext.Provider value={{ openViewer }}>
+            <AttachmentChip client={{ mediaUrl } as unknown as MatronJournalClient} attachment={attachment} />
+        </MediaViewerContext.Provider>,
+    );
+    const button = view.querySelector<HTMLButtonElement>("button")!;
+    await act(async () => button.click());
+    expect(openViewer).toHaveBeenCalledWith(attachment.blob_ref, button);
+    expect(mediaUrl).not.toHaveBeenCalled();
+    expect(
+        buildTrackerMediaCorpus(trackerItem({ attachments: [attachment] }), []).map((entry) => entry.mediaId),
+    ).toEqual([attachment.blob_ref]);
 });
