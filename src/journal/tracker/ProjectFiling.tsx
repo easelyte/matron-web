@@ -12,13 +12,13 @@ Please see LICENSE files in the repository root for full details.
  */
 
 import React, { useRef, useState } from "react";
-import { useFocusTrap } from "../use-focus-trap";
 import { createPortal } from "react-dom";
 
 import { useRowContextMenu } from "../context-menu";
 import { CheckIcon } from "../icons";
 import { SheetHead, useSheetLifecycle } from "../PinDialogs";
 import type { Project } from "../types";
+import { useFocusTrap } from "../use-focus-trap";
 
 /** The journal's cap on a project title, counted as the Mac counts it (UTF-16 code units). */
 export const PROJECT_TITLE_LIMIT = 200;

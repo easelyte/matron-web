@@ -148,6 +148,45 @@ beforeEach(() => {
     resetShowTheWorkForTests();
 });
 
+describe("browser tools header indicator", () => {
+    let rendered: { container: HTMLDivElement; root: Root } | undefined;
+
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(async () => {
+        if (rendered) {
+            await act(async () => rendered?.root.unmount());
+            rendered.container.remove();
+            rendered = undefined;
+        }
+    });
+
+    it.each([
+        { extras: ["browser"], shown: true },
+        { extras: ["share", "browser"], shown: true },
+        { extras: [], shown: false },
+        { extras: ["share"], shown: false },
+        { extras: undefined, shown: false },
+    ])("shows=$shown for extras=$extras", async ({ extras, shown }) => {
+        const client = signedInClient();
+        internals(client).state = {
+            ...client.getSnapshot(),
+            sessionStatus: extras === undefined ? { model: "model" } : { model: "model", extras },
+        };
+        rendered = await renderClient(client);
+
+        const indicator = rendered.container.querySelector('.mj_ChatHeader [aria-label="Browser tools on"]');
+        if (shown) {
+            expect(indicator?.textContent).toBe("Browser tools");
+            expect(indicator?.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+        } else {
+            expect(indicator).toBeNull();
+        }
+    });
+});
+
 describe("session-control banners", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 

@@ -463,6 +463,46 @@ describe("useAdaptiveHeader", () => {
         expect(probe.container.textContent).toBe('{"usageCollapsed":true,"titleCollapsed":false}');
     });
 
+    it("shows only the browser tools icon in the compact subtitle", async () => {
+        const client = signedInClient();
+        const internals = clientInternals(client);
+        internals.state = {
+            ...internals.state,
+            selectedConversationId: PARENT.id,
+            sessionStatus: { model: "claude-opus-5-5", extras: ["browser"] },
+        };
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        mountedProbes.push({ container, root });
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+
+        const body = container.querySelector<HTMLElement>(".mj_ChatView_body")!;
+        const observer = observers.find((observer) => observer.observe.mock.calls.some(([target]) => target === body))!;
+        resize(observer, body, 400);
+        await flushFrames();
+
+        const compact = container.querySelector(".mj_HeaderTitleDisclosure")!;
+        const indicator = compact.querySelector('[aria-label="Browser tools on"]');
+        expect(indicator).not.toBeNull();
+        expect(indicator?.getAttribute("title")).toBe("Browser tools on");
+        expect(indicator?.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+        expect(indicator?.textContent).toBe("");
+        expect(compact.textContent).not.toContain("Browser tools");
+        expect(compact.querySelector(".mj_HeaderModelShort")?.textContent).toBe("opus-5-5");
+
+        await act(async () => compact.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+        expect(container.querySelector('.mj_TitlePopover [aria-label="Browser tools on"]')?.textContent).toBe(
+            "Browser tools",
+        );
+
+        resize(observer, body, 900);
+        await flushFrames();
+        expect(container.querySelector('.mj_ChatHeader [aria-label="Browser tools on"]')?.textContent).toBe(
+            "Browser tools",
+        );
+    });
+
     it("reattaches after the full app returns home and remounts a conversation", async () => {
         const client = signedInClient();
         const container = document.createElement("div");

@@ -18,7 +18,6 @@ import React, {
     useSyncExternalStore,
 } from "react";
 import { createPortal } from "react-dom";
-import { useFocusTrap } from "./use-focus-trap";
 
 import matronLogo from "../../res/matron-logo-simple.svg";
 import { namedPastedFiles } from "./pasted-files";
@@ -142,6 +141,7 @@ import {
     StopIcon,
     UnarchiveIcon,
     CheckCircleIcon,
+    Icon,
     XOctagonIcon,
     PlusCircleIcon,
     RefreshIcon,
@@ -157,6 +157,7 @@ import { formatFullTime, formatMessageTime, isPersonSender, journalHost, roomSen
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
 import { ConvoNotifyBell, OverflowRoomsAndNotify, RoomsControl } from "./ChatHeaderRooms";
 import { useDismissablePopover } from "./use-dismissable-popover";
+import { useFocusTrap } from "./use-focus-trap";
 import { displayTitle, TaggedTitle } from "./SessionTag";
 import { groupByDay } from "./sidebar-groups";
 import { observeSeenRows } from "./seen-tracker";
@@ -4240,13 +4241,24 @@ function ChatHeader({
     const limits = status?.limits?.filter((limit) => limit.label.trim());
     const meters = buildUsageMeters(status, limits, state.hostVitals);
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
-    const hasSubtitle = Boolean(status?.model || status?.email || runState);
     const browserQueued = useMemo(
         () =>
             conversation?.agent_kind !== "codex" &&
             browserToolsState(state.events, runState === "running", status?.extras) === "queued",
         [conversation?.agent_kind, state.events, runState, status?.extras],
     );
+    const browserTools = status?.extras?.includes("browser");
+    const browserToolsIndicator = (label?: string): React.ReactNode =>
+        browserTools && (
+            <span className="mj_HeaderMetaCompact" aria-label="Browser tools on" title="Browser tools on">
+                <Icon>
+                    <circle cx="12" cy="12" r="9" />
+                    <ellipse cx="12" cy="12" rx="4" ry="9" />
+                    <path d="M3 12h18" />
+                </Icon>
+                {label}
+            </span>
+        );
     // The mission chip's data: fetched whenever another conversation comes on screen (mission
     // markers keep it fresh after that), and only ever shown for the conversation it was fetched for.
     const convoId = conversation?.id;
@@ -4269,20 +4281,22 @@ function ChatHeader({
                     {/* The account the session runs under, after its workdir, as on the Mac. */}
                     {status?.email && <span className="mj_HeaderEmail">{status.email}</span>}
                     {runState && <span className={`mj_HeaderState mj_HeaderState_${runState}`}>{runState}</span>}
+                    {browserToolsIndicator("Browser tools")}
                 </>
             }
             subtitleCompact={
-                (shortModel || runState) && (
+                (shortModel || runState || browserTools) && (
                     <span className="mj_HeaderMetaCompact">
                         {runState && (
                             <span className={`mj_HeaderStatusDot mj_HeaderStatusDot_${runState}`} aria-hidden="true" />
                         )}
                         {runState && <span className="mj_SrOnly">{runState}</span>}
                         {shortModel && <span className="mj_HeaderModelShort">{shortModel}</span>}
+                        {browserToolsIndicator()}
                     </span>
                 )
             }
-            hasSubtitle={hasSubtitle}
+            hasSubtitle={Boolean(status?.model || status?.workdir || status?.email || runState || browserTools)}
             titleAccessory={
                 conversation && missionLinks.length > 0 ? (
                     <MissionChip client={client} conversation={conversation} links={missionLinks} />

@@ -12,13 +12,16 @@ import { useFocusTrap } from "../use-focus-trap";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-function Modal(): React.ReactElement {
+function Modal({ autoFocusLast = false }: { autoFocusLast?: boolean }): React.ReactElement {
     const ref = useRef<HTMLDivElement>(null);
     useFocusTrap(ref);
     return (
         <div ref={ref} role="dialog" aria-modal="true">
             <button id="first">First</button>
-            <button id="last">Last</button>
+            {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
+            <button id="last" autoFocus={autoFocusLast}>
+                Last
+            </button>
         </div>
     );
 }
@@ -28,13 +31,13 @@ describe("useFocusTrap", () => {
     let root: Root;
     let outside: HTMLButtonElement;
 
-    beforeEach(async () => {
+    beforeEach(() => {
         outside = document.createElement("button");
+        outside.id = "outside";
         document.body.append(outside);
         container = document.createElement("div");
         document.body.append(container);
         root = createRoot(container);
-        await act(async () => root.render(<Modal />));
     });
 
     afterEach(async () => {
@@ -43,13 +46,29 @@ describe("useFocusTrap", () => {
         outside.remove();
     });
 
+    const open = async (props: { autoFocusLast?: boolean } = {}): Promise<void> => {
+        outside.focus();
+        await act(async () => root.render(<Modal {...props} />));
+    };
+
     const tab = (shiftKey: boolean): KeyboardEvent => {
         const event = new KeyboardEvent("keydown", { key: "Tab", shiftKey, bubbles: true, cancelable: true });
         document.activeElement!.dispatchEvent(event);
         return event;
     };
 
-    it("wraps Tab from the last control to the first, and Shift+Tab back", () => {
+    it("moves focus to the first control on open", async () => {
+        await open();
+        expect(document.activeElement?.id).toBe("first");
+    });
+
+    it("keeps focus on a control that already took it, such as an autoFocus field", async () => {
+        await open({ autoFocusLast: true });
+        expect(document.activeElement?.id).toBe("last");
+    });
+
+    it("wraps Tab from the last control to the first, and Shift+Tab back", async () => {
+        await open();
         container.querySelector<HTMLElement>("#last")!.focus();
         expect(tab(false).defaultPrevented).toBe(true);
         expect(document.activeElement?.id).toBe("first");
@@ -57,14 +76,30 @@ describe("useFocusTrap", () => {
         expect(document.activeElement?.id).toBe("last");
     });
 
-    it("pulls focus back in when it sits outside the dialog", () => {
+    it("pulls focus back in when it sits outside the dialog", async () => {
+        await open();
         outside.focus();
         tab(false);
         expect(document.activeElement?.id).toBe("first");
     });
 
-    it("leaves Tab between inner controls alone", () => {
+    it("leaves Tab between inner controls alone", async () => {
+        await open();
         container.querySelector<HTMLElement>("#first")!.focus();
         expect(tab(false).defaultPrevented).toBe(false);
+    });
+
+    it("restores focus to the opener when the dialog closes after an autoFocus field took focus", async () => {
+        await open({ autoFocusLast: true });
+        expect(document.activeElement?.id).toBe("last");
+        await act(async () => root.render(<div />));
+        expect(document.activeElement?.id).toBe("outside");
+    });
+
+    it("restores focus to the opener when the dialog closes", async () => {
+        await open();
+        expect(document.activeElement?.id).toBe("first");
+        await act(async () => root.render(<div />));
+        expect(document.activeElement?.id).toBe("outside");
     });
 });

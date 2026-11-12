@@ -4,13 +4,13 @@
 // the sidebar search when the query is just a number.
 
 import React, { useEffect, useRef, useState } from "react";
-import { useFocusTrap } from "./use-focus-trap";
 import { createPortal } from "react-dom";
 
 import type { MatronJournalClient } from "./client";
 import { isMacPlatform, modalDialogOpen } from "./jump-to-message";
 import { SheetHead, useSheetLifecycle } from "./PinDialogs";
 import type { NumberLookup, NumberLookupKind, NumberLookupOutcome } from "./types";
+import { useFocusTrap } from "./use-focus-trap";
 
 /** Keystrokes settle for this long before the search box asks the journal about a number. */
 export const NUMBER_SEARCH_DEBOUNCE_MS = 200;

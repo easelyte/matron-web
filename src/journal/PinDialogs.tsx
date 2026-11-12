@@ -14,7 +14,6 @@ Please see LICENSE files in the repository root for full details.
  */
 
 import React, { useEffect, useRef, useState } from "react";
-import { useFocusTrap } from "./use-focus-trap";
 import { createPortal } from "react-dom";
 
 import type { MatronJournalClient } from "./client";
@@ -22,6 +21,7 @@ import { CloseIcon } from "./icons";
 import { clampPinLabel, PIN_LABEL_MAX, pinChooserView, pinLabelFromTitle } from "./pins";
 import { displayTitle } from "./SessionTag";
 import { type ClientState, type Conversation, conversationTitle } from "./types";
+import { useFocusTrap } from "./use-focus-trap";
 
 export type PinDialogTarget = { kind: "edit"; convoId: string } | { kind: "move"; convoId: string };
 
