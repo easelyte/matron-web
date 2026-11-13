@@ -18,7 +18,7 @@ import type { RendererProps } from "./types";
 // paints to canvas; the bytes are NEVER handed to a document/plugin context, so no JS-in-PDF, form
 // actions, or external fetches execute — the exact hardening `pdf-render.ts` + the media viewer
 // rely on. A native `<object>`/`<iframe>` blob embed (which DOES execute the document) is not used.
-export function PdfPreview({ api, path, meta }: RendererProps): React.ReactElement {
+export function PdfPreview({ api, path, meta, onUnavailable }: RendererProps): React.ReactElement {
     const pagesRef = useRef<HTMLDivElement>(null);
     const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
     const [error, setError] = useState<string | undefined>(undefined);
@@ -78,6 +78,9 @@ export function PdfPreview({ api, path, meta }: RendererProps): React.ReactEleme
         };
     }, [api, path, meta.mtime, reloadTick]);
 
+    useEffect(() => {
+        if (status === "error") onUnavailable?.();
+    }, [status, onUnavailable]);
     if (status === "error") return <MediaError error={error} onRetry={() => setReloadTick((value) => value + 1)} />;
 
     return (
@@ -85,7 +88,7 @@ export function PdfPreview({ api, path, meta }: RendererProps): React.ReactEleme
             {status === "loading" ? <PreviewStatus variant="loading">Loading PDF…</PreviewStatus> : null}
             <div ref={pagesRef} className="mj_FilesPdf_pages" />
             {numPages > PDF_PAGE_CAP ? (
-                <p className="mj_FilesPane_truncated">
+                <p className="mj_FilesPreview_truncated">
                     Showing the first {PDF_PAGE_CAP} of {numPages} pages — download for the rest.
                 </p>
             ) : null}

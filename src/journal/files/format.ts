@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-// Pure display helpers for the Files pane. Unit-tested; no DOM, no React.
+// Display helpers for file previews.
 
 const UNITS = ["B", "KB", "MB", "GB", "TB"];
 
@@ -44,43 +44,4 @@ export function extensionOf(name: string): string {
     const dot = name.lastIndexOf(".");
     if (dot <= 0 || dot === name.length - 1) return "";
     return name.slice(dot + 1).toLowerCase();
-}
-
-/** Join a directory path with a child name (single separator, no trailing slash). */
-export function joinPath(dir: string, name: string): string {
-    return `${dir.replace(/\/+$/, "")}/${name}`;
-}
-
-export interface Crumb {
-    label: string;
-    path: string;
-}
-
-function basename(path: string): string {
-    const clean = path.replace(/\/+$/, "");
-    return clean === "" ? "/" : clean.slice(clean.lastIndexOf("/") + 1) || "/";
-}
-
-/**
- * Breadcrumb from the configured read-`root` DOWN to `path`, inclusive — NEVER above the jail (F4).
- * The first crumb is the root (labelled by its basename); segments above root are never rendered or
- * navigable. When `path` is not under `root` (shouldn't happen), only the root crumb is returned.
- */
-export function breadcrumb(root: string, path: string): Crumb[] {
-    const cleanRoot = root.replace(/\/+$/, "") || "/";
-    const cleanPath = path.replace(/\/+$/, "") || "/";
-    const crumbs: Crumb[] = [{ label: basename(cleanRoot), path: cleanRoot }];
-    if (cleanPath === cleanRoot) return crumbs;
-    const prefix = cleanRoot === "/" ? "/" : `${cleanRoot}/`;
-    if (!cleanPath.startsWith(prefix)) return crumbs;
-    const rest = cleanPath
-        .slice(cleanRoot === "/" ? 1 : cleanRoot.length)
-        .split("/")
-        .filter(Boolean);
-    let acc = cleanRoot === "/" ? "" : cleanRoot;
-    for (const part of rest) {
-        acc += `/${part}`;
-        crumbs.push({ label: part, path: acc });
-    }
-    return crumbs;
 }

@@ -884,7 +884,7 @@ describe("New session sheet box usage", () => {
                 ],
             },
             disk: { free_bytes: 56_908_316_672, total_bytes: 1_979_120_929_996 },
-            account: { email: "dan@example.com" },
+            account: { email: "alice@example.com" },
         };
     }
 

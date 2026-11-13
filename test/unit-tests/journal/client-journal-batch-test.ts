@@ -39,7 +39,7 @@ interface Internals {
     state: ClientState;
     database?: Record<string, jest.Mock>;
     connection?: { send: jest.Mock; forceResync?: jest.Mock };
-    history: Map<string, { initialized: boolean; hasMore: boolean; newestSeq?: number; hasMoreNewer?: boolean }>;
+    history: Map<string, { initialized: boolean; hasMore: boolean }>;
     handleJournalBatch(events: JournalEvent[]): Promise<void>;
 }
 
@@ -72,7 +72,7 @@ function setup(withBatch = true) {
         send: jest.fn().mockReturnValue(true),
         forceResync: jest.fn().mockResolvedValue(undefined),
     };
-    internal.history.set("c1", { initialized: true, hasMore: false, newestSeq: 10, hasMoreNewer: false });
+    internal.history.set("c1", { initialized: true, hasMore: false });
     return { client, internal, database };
 }
 
@@ -101,7 +101,6 @@ describe("MatronJournalClient.handleJournalBatch", () => {
         expect(sent).toContainEqual({ op: "ack", cursor: 14 });
         // Read position follows the newest non-own message in the open conversation (13, not 14).
         expect(sent).toContainEqual({ op: "read_marker", convo_id: "c1", up_to_seq: 13 });
-        expect(internal.history.get("c1")?.newestSeq).toBe(14);
     });
 
     it("acks only the applied rows of a run that overlaps the cursor", async () => {
@@ -163,7 +162,6 @@ describe("MatronJournalClient.handleJournalBatch", () => {
         const sent = internal.connection!.send.mock.calls.map(([operation]) => operation);
         expect(sent).toContainEqual({ op: "ack", cursor: 14 });
         expect(sent).toContainEqual({ op: "read_marker", convo_id: "c1", up_to_seq: 14 });
-        expect(internal.history.get("c1")?.newestSeq).toBe(14);
     });
 });
 

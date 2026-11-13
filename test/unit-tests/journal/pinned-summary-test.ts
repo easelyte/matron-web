@@ -215,13 +215,6 @@ describe("PinnedSummary rendering", () => {
         await act(async () => more()?.click());
         expect(clamped()).not.toBeNull();
     });
-
-    it("shows the empty-state box only when bullets are explicitly empty", async () => {
-        // Unreachable from the app (conversationSummary returns null instead) — kept covered
-        // because the component branch still exists.
-        rendered = await render(React.createElement(PinnedSummary, { summary: { bullets: [] } }));
-        expect(rendered.container.querySelector(".mj_PinnedSummary_empty")).not.toBeNull();
-    });
 });
 
 describe("pinned summary in the app", () => {

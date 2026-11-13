@@ -54,14 +54,14 @@ async function open(
     path?: string,
 ): Promise<{ opener: HTMLAnchorElement; api: FilesApiLike; client: MatronJournalClient }> {
     const api = {
-        listDir: jest.fn(),
         fileMeta: error
             ? jest.fn().mockRejectedValue(error)
             : jest.fn().mockResolvedValue({ kind: "file", mime: "text/markdown", isText: true, mtime: 1, size: 10 }),
         textContent: jest.fn().mockResolvedValue("# A report"),
+        contentUrl: jest.fn().mockRejectedValue(new Error("Unavailable")),
         download: jest.fn(),
     } as unknown as FilesApiLike;
-    const client = { filesApi: () => api, openFilesView: jest.fn() } as unknown as MatronJournalClient;
+    const client = { filesApi: () => api } as unknown as MatronJournalClient;
     await act(async () => root.render(<Harness client={client} path={path} />));
     const opener = container.querySelector("a")!;
     await act(async () => opener.click());
@@ -72,7 +72,6 @@ it("reads just one file through the Files API, and Escape restores focus to the 
     const { opener, api } = await open();
     expect(container.querySelector("aside h1")?.textContent).toBe("A report");
     expect(api.fileMeta).toHaveBeenCalledWith("/home/report.md", expect.any(AbortSignal));
-    expect(api.listDir).not.toHaveBeenCalled();
     expect(container.querySelector(".mj_MdPreview_name")?.getAttribute("title")).toBe("/home/report.md");
     expect(document.activeElement?.getAttribute("aria-label")).toBe("Close preview");
     await act(async () => {
@@ -82,27 +81,53 @@ it("reads just one file through the Files API, and Escape restores focus to the 
     expect(document.activeElement).toBe(opener);
 });
 
-it.each(["/home/report.md", "/report.md"])(
-    "Show in Files closes the panel and selects %s in its directory",
-    async (path) => {
-        const { client } = await open(undefined, path);
-        const show = Array.from(container.querySelectorAll("button")).find(
-            (button) => button.textContent === "Show in Files",
-        )!;
-        await act(async () => show.click());
-        expect(container.querySelector("aside")).toBeNull();
-        expect(client.openFilesView).toHaveBeenCalledWith(path === "/report.md" ? "/" : "/home", path);
-    },
-);
-
-it.each([403, 404, 413])("retains Show in Files when the normal preview reports %s", async (status) => {
+it.each([403, 404, 413])("reports preview failure %s without explorer navigation", async (status) => {
     await open(new JournalApiError("File unavailable", status));
     expect(container.querySelector("[role='alert']")?.textContent).toContain(messageForFileStatus(status));
-    expect(container.textContent).toContain("Show in Files");
 });
 
-it("shows an offline error with Show in Files still available", async () => {
-    await open(new Error("Offline"));
-    expect(container.querySelector("[role='alert']")?.textContent).toContain("Offline");
-    expect(container.textContent).toContain("Show in Files");
+it("opens a hash present before the viewer mounts and handles later hash changes", async () => {
+    window.history.replaceState(null, "", "/#files=%2Fhome%2Fboot.md");
+    await open();
+    expect(window.location.hash).toBe("");
+    await act(async () => {
+        window.history.replaceState(null, "", "/#files=%2Fhome%2Fnext.md");
+        window.dispatchEvent(new Event("hashchange"));
+    });
+    expect(container.querySelector(".mj_MdPreview_name")?.textContent).toBe("next.md");
+    expect(window.location.hash).toBe("");
+});
+
+it("opens an unsupported hash-linked file's authenticated bytes in a browser tab", async () => {
+    const browser = jest.spyOn(window, "open").mockImplementation(() => null);
+    const api = {
+        fileMeta: jest
+            .fn()
+            .mockResolvedValue({ kind: "file", mime: "application/zip", isText: false, mtime: 2, size: 10 }),
+        contentUrl: jest.fn().mockResolvedValue("blob:file-archive"),
+        download: jest.fn(),
+    } as unknown as FilesApiLike;
+    await act(async () =>
+        root.render(
+            <Harness client={{ filesApi: () => api } as unknown as MatronJournalClient} path="/home/archive.zip" />,
+        ),
+    );
+    await act(async () => container.querySelector("a")!.click());
+    expect(browser).toHaveBeenCalledWith("blob:file-archive", "_blank", "noopener,noreferrer");
+    expect(container.querySelector("aside")).toBeNull();
+    browser.mockRestore();
+});
+
+it("opens the original signed bridge link in a browser tab when metadata is unavailable", async () => {
+    const browser = jest.spyOn(window, "open").mockImplementation(() => null);
+    const client = {
+        filesApi: () => ({ fileMeta: jest.fn().mockRejectedValue(new Error("Unavailable")), download: jest.fn() }),
+    } as unknown as MatronJournalClient;
+    await act(async () => root.render(<Harness client={client} />));
+    const opener = container.querySelector("a")!;
+    opener.href = "https://bridge.example/view?token=signed";
+    await act(async () => opener.click());
+    expect(browser).toHaveBeenCalledWith(opener.href, "_blank", "noopener,noreferrer");
+    expect(container.querySelector("aside")).toBeNull();
+    browser.mockRestore();
 });

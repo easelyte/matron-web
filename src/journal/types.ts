@@ -10,7 +10,6 @@ import type { Routine } from "./routines";
 
 export const MESSAGE_EVENT_TYPES = new Set([
     "text",
-    "peer_message",
     "tool_output",
     "diff",
     "prompt",
@@ -131,8 +130,6 @@ export interface DeviceDTO {
     created_at?: number;
     /** How many events the device's cursor trails the user's head. */
     lag?: number;
-    // The box's last capacity report (journal `box_status`). Absent for a
-    // device that never reported (clients, non-bridge agents) or an older journal.
     status?: BoxStatus;
     /** An agent box's stored defaults for new sessions (see BoxDefaults). Absent on journals
      *  that predate per-box defaults, and on client devices. */
@@ -583,8 +580,10 @@ export interface SessionStatus {
         pct: number;
     };
     limits?: Array<{
-        // Stable machine key from the bridge (v5+): `session`, `week_all`, `week_fable`,
-        // `week_<slug>` (e.g. `week_sonnet_5`), and host meters `host_cpu` / `host_ram`.
+        // Stable machine key. The bridge (final #156 contract) emits `session`, `week_all`,
+        // and `week_<model-slug>` (e.g. `week_fable`, `week_sonnet_5`); `context` and the
+        // host meters `host_cpu` / `host_ram` are client-synthesized (from `context` and the
+        // top-level `vitals` below — the bridge never sends host meters inside limits[]).
         // Absent on older/cached frames — the client falls back to parsing `label`.
         id?: string;
         label: string;
@@ -596,31 +595,30 @@ export interface SessionStatus {
         unit?: string;
         model?: string;
         resets?: string;
-        // ISO string (KEPT — the bridge did not change this). resetDisplay still accepts a
-        // number here too as a belt-and-suspenders fallback for any pre-contract frame.
+        // Final #156 contract: an OPTIONAL ISO-8601 string — omitted when the reset text is
+        // absent or unparseable, never null. resetDisplay still accepts a number here too as
+        // a belt-and-suspenders fallback for any pre-contract frame.
         resets_at?: string | number;
-        // Epoch ms (number, NEW — the bridge adds this alongside the ISO `resets_at`).
-        // resetDisplay PREFERS this when present.
+        // NOT a wire field: the merged #156 contract has no epoch-ms reset (an early draft
+        // carried `resets_at_ms` and dropped it as redundant — `Date.parse(resets_at)`
+        // recovers it). Kept only as a client-side tolerance; resetDisplay prefers it if a
+        // frame ever carries one.
         resets_at_ms?: number;
-        // Epoch ms of the last REAL sample for this meter (host vitals only: host_cpu /
-        // host_ram). Host readings only refresh on turn-end and get replayed verbatim to new
-        // viewers, so on an idle conversation the displayed value can be minutes/hours stale
-        // while looking current. When present, the client expires stale readings (renders a
-        // muted state past HOST_VITALS_STALE_MS). Absent on older bridges / non-host meters →
-        // no staleness logic (current behaviour). See status.ts HOST_VITALS_STALE_MS.
+        // Epoch ms of the last REAL sample for this meter. NOT sent by the bridge inside
+        // limits[] (#156 keeps vitals at top level): the client copies it from
+        // `vitals.sampled_at_ms` onto the host_cpu / host_ram meters it synthesizes. Host
+        // readings only refresh on turn-end and get replayed verbatim to new viewers, so on
+        // an idle conversation the displayed value can be minutes/hours stale while looking
+        // current. When present, the client expires stale readings (renders a muted state
+        // past HOST_VITALS_STALE_MS). Absent → no staleness logic. See status.ts.
         sampled_at_ms?: number;
     }>;
-    // Host machine vitals (bridge status frame, TOP LEVEL — never a limits[] entry). This is
-    // the upstream and the only surface host CPU/RAM is read from: matron-web
-    // (here) and matron-apple (WireModels decodes status["vitals"].cpu_pct / .ram_pct) both
-    // synthesize their host meters from it. limits[] stays the account's subscription-quota
-    // list; a synthetic host entry there renders CPU/RAM twice and displaces a real quota bar
-    // on iOS (limits.prefix(3)). Absent on bridges that don't publish vitals → the host meters
-    // simply don't render (graceful degradation).
-    //
-    // Nullable halves (divergence from upstream's `number`, deliberate): the bridge emits
-    // cpu_pct: null until its CPU sampler has two ticks after boot, so the render path must
-    // narrow before using either value.
+    // Host machine vitals (bridge status frame, top-level — NOT a limits[] entry). CPU/RAM
+    // percentages plus the epoch-ms time of their last real sample. Absent on bridges that
+    // don't publish vitals → the CPU/RAM meters simply don't render (graceful degradation).
+    // `sampled_at_ms` drives the same staleness muting as the per-meter field on limits[]:
+    // host readings only refresh on turn-end and get replayed verbatim to new viewers, so an
+    // idle conversation can show a minutes-old reading as live. See status.ts HOST_VITALS_STALE_MS.
     vitals?: {
         cpu_pct: number | null;
         ram_pct: number | null;
@@ -770,9 +768,9 @@ export interface ClientState {
     favoriteIds: Set<string>;
     unreadOverrideIds: Set<string>;
     /**
-     * parent conversation ids whose subagent child rows the user has manually collapsed.
-     * Session-local UI state (not server-persisted); default empty = every parent expanded.
-     * Threaded into every buildSidebarIndex call so render/selection/unread/mark-all agree.
+     * Parent conversation ids whose subagent child rows the user has manually collapsed in the
+     * sidebar. Persisted per session/user like the other row flags; default empty = every parent
+     * expanded. Threaded into every buildSidebarIndex call so render/selection/unread/mark-all agree.
      */
     collapsedSubagentParentIds: Set<string>;
     /**
@@ -791,10 +789,6 @@ export interface ClientState {
     connectionErrorSeq: number;
     loadingHistory: boolean;
     hasOlderHistory: boolean;
-    /** Sequence to scroll to after loading a message-search deep link. */
-    pendingScrollSeq?: number;
-    /** True while the selected timeline is a bounded historical window rather than the live tail. */
-    viewingHistoryWindow: boolean;
     activity?: JournalEphemeralFrame["activity"];
     sessionStatus?: SessionStatus;
     // Host-global vitals: one host reading (cpu/ram/sample stamp) shared by the whole app,
@@ -819,21 +813,15 @@ export interface ClientState {
     // Message-content search hits (Apple-parity "Messages" section). Undefined until the first
     // search of a session; cleared back to undefined when the search box empties.
     messageSearch?: MessageSearchState;
-    // Files pane (Matron File Explorer, Phase 1b). Undefined = pane closed (main region shows
-    // the conversation view / HomePage). Present = pane open; `path` is the last-browsed dir so
-    // reopening returns there. This is the SOLE app-global Files state — directory listing,
-    // selection, and preview are FilesPane-local (like the conversation timeline is RoomView-local).
-    // Mirrors how `selectedConversationId` is the only main-region discriminant today.
-    filesView?: FilesViewState;
     // Find in chat: the search bar over the open conversation, while it is up.
     chatSearch?: ChatSearchState;
-    // Tracker pane (Missions / Milestones / Decisions-Inbox / Memories). `trackerView` is the
-    // main-region discriminant (checked alongside filesView — one surface at a time).
-    // The rest are store-resident so sidebar badges stay live off WS invalidation:
+    // Tracker pane (Missions / Milestones / Decisions-Inbox). `trackerView` is the main-region
+    // discriminant (checked ahead of selectedConversationId — one surface at a time). The rest are
+    // store-resident so sidebar badges stay live off WS invalidation:
     //   missions/inboxItems  = the two list views;
     //   trackerItem          = the open item detail (item + its comment thread), null = none;
     //   trackerMission       = the open mission detail, null = none.
-    // Undefined = never loaded this session; all reset to undefined via `...blankState()` on logout.
+    // Undefined = never loaded this session.
     trackerView?: TrackerViewState;
     // Ops pane: boxes, host, alerts, timers, usage. Another main-region
     // discriminant, one surface at a time with Files and the tracker. The pane owns its fetched
@@ -1057,26 +1045,7 @@ export interface BriefingState {
     retryAt?: number;
 }
 
-export interface FilesViewState {
-    open: boolean;
-    /** Last-browsed absolute directory path; seeds FilesPane on (re)open. */
-    path?: string;
-    /**
-     * Deep-link target: an ABSOLUTE file path the pane should auto-open a preview for once its
-     * containing directory listing lands (see FilesPane's auto-select effect). Set only by a
-     * `#files=<abs>` deep link (client.applyFilesDeepLink); `path` is then that file's directory.
-     */
-    targetFile?: string;
-    /**
-     * Monotonic per-invocation token bumped by openFilesView every time a `targetFile` is supplied.
-     * FilesPane keys its fire-once auto-select on THIS, not on `targetFile`, so re-clicking the SAME
-     * link after navigating away re-navigates and re-selects (a new token) rather than being
-     * permanently deduped by an unchanged path string.
-     */
-    targetToken?: number;
-}
-
-// ── Tracker (Missions / Milestones / Decisions-Inbox / Memories) ───────────────────
+// ── Tracker (Missions / Milestones / Decisions-Inbox) ──────────────────────────
 // Wire shapes bind EXACTLY to the journal tracker API (src/items.js, src/missions.js
 // @dd9c04a): `id`/`mission_id`/`supersedes`/`origin_convo_id` are opaque TEXT ids
 // (strings); `num` is the human #number (integer); every timestamp is epoch-ms INTEGER
@@ -1522,25 +1491,6 @@ export function childrenOf(conversations: Conversation[], parentId: string | nul
 }
 
 /**
- * childrenOf for every parent at once: parent id → its children, in childrenOf's order. One pass
- * over the list, for renders that ask for many parents' children (the sidebar asks per row).
- */
-export function groupChildrenByParent(conversations: Conversation[]): Map<string, Conversation[]> {
-    const byParent = new Map<string, Conversation[]>();
-    for (const conversation of conversations) {
-        const parentId = conversation.parent_convo_id;
-        if (!parentId) continue;
-        const siblings = byParent.get(parentId);
-        if (siblings) siblings.push(conversation);
-        else byParent.set(parentId, [conversation]);
-    }
-    for (const siblings of byParent.values()) {
-        siblings.sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    }
-    return byParent;
-}
-
-/**
  * Every parent's children in one pass, each list ordered as `childrenOf` orders it. The sidebar
  * looks up a row's children once per row; scanning the whole list each time made a render
  * quadratic in the number of conversations.
@@ -1589,11 +1539,11 @@ export interface SidebarIndex {
     /** id → fully-resolved Active/Favorites placement (memoized, cycle-safe). */
     placement: Map<string, ChildSidebarPlacement>;
     /**
-     * parent ids that host at least one subagent child row — a running child whose
-     * direct parent is a real, non-archived top-level row (i.e. the child renders nested, or
-     * WOULD render nested if the parent were not collapsed). Independent of the collapsed set,
-     * so the sidebar row menu can gate its "Collapse/Show subagents" item on the child rows
-     * EXISTING, even while they are hidden by an active collapse.
+     * Parent ids that host at least one subagent child row — a running child whose direct parent
+     * is a real, non-archived top-level row (i.e. the child renders nested, or WOULD render nested
+     * if the parent were not collapsed). Independent of the collapsed set, so the sidebar row menu
+     * can gate its "Collapse/Show subagents" item on the child rows EXISTING, even while they are
+     * hidden by an active collapse.
      */
     parentsWithChildRows: Set<string>;
 }
@@ -1614,10 +1564,10 @@ export interface SidebarIndex {
  *  - subchat, parent present, NOT running → "hidden" (one-shot: a finished child lingers
  *    nowhere in Active).
  *  - subchat, parent present, running → "nested" iff the parent is a non-archived row whose
- *    resolved placement is "top-level" AND the user has not collapsed that parent; if the
- *    parent is a valid host but collapsed, the child is "hidden" (suppressed from the
- *    sidebar, but the parent still hosts it, so it is counted in `parentsWithChildRows`);
- *    otherwise (parent not a valid host) "top-level".
+ *    resolved placement is "top-level" AND the user has not collapsed that parent; if the parent
+ *    is a valid host but collapsed, the child is "hidden" (suppressed from the sidebar, but the
+ *    parent still hosts it, so it is counted in `parentsWithChildRows`); otherwise (parent not a
+ *    valid host) "top-level".
  */
 export function buildSidebarIndex(
     conversations: Conversation[],
@@ -1709,10 +1659,10 @@ export function rendersAsTopLevelRow(conversation: Conversation, index: SidebarI
 }
 
 /**
- * does this conversation currently host any subagent child rows? True when at least one
- * running child nests (or would nest, if the parent is collapsed) directly beneath it. Gates
- * the sidebar-row-menu "Collapse subagents" / "Show subagents" toggle so it appears ONLY for a
- * parent that actually has child rows — collapse state does not change the answer.
+ * does this conversation currently host any subagent child rows? True when at least one running
+ * child nests (or would nest, if the parent is collapsed) directly beneath it. Gates the sidebar-
+ * row-menu "Collapse subagents" / "Show subagents" toggle so it appears ONLY for a parent that
+ * actually has child rows — collapse state does not change the answer.
  */
 export function hasSubagentChildRows(conversation: Pick<Conversation, "id">, index: SidebarIndex): boolean {
     return index.parentsWithChildRows.has(conversation.id);
@@ -1743,21 +1693,24 @@ export function asNumber(value: unknown, fallback = 0): number {
     return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-// Image intrinsic pixel dimensions. The bridge attaches these (client-measured on the
-// common upload path) to image/file payloads as `dims: { width, height }` so the web
-// client can reserve an aspect-ratio box BEFORE the blob decodes — this is what kills the
-// thread reflow that otherwise happens as each image finishes loading.
+// Image intrinsic pixel dimensions, normalized to `{ width, height }` for this client. The value
+// is OPTIONAL and originates UPSTREAM of the bridge: the bridge is a pure pass-through and passes
+// Matrix's values when present. Matrix `m.image` `info` spells them `w`/`h`, so `payload.dims` may
+// arrive as `{ w, h }` OR `{ width, height }` — parseMediaDims accepts both. When present, the web
+// client reserves an aspect-ratio box BEFORE the blob decodes, avoiding the thread reflow that
+// otherwise happens as each image finishes loading.
 export interface MediaDims {
     width: number;
     height: number;
 }
 
-// Parse `payload.dims`. Returns undefined when absent or non-positive (bridge-originated
-// images / clients that didn't measure) so the caller falls back to the un-reserved render.
+// Parse `payload.dims`, accepting BOTH the Matrix `{ w, h }` spelling and the `{ width, height }`
+// spelling. Returns undefined when absent or non-positive (images with no upstream dims / clients
+// that did not measure) so the caller falls back to the un-reserved render.
 export function parseMediaDims(value: unknown): MediaDims | undefined {
     if (!isObject(value)) return undefined;
-    const width = asNumber(value.width, 0);
-    const height = asNumber(value.height, 0);
+    const width = asNumber(value.width ?? value.w, 0);
+    const height = asNumber(value.height ?? value.h, 0);
     return width > 0 && height > 0 ? { width, height } : undefined;
 }
 
@@ -1784,12 +1737,12 @@ export function imageFrameStyle(dims: MediaDims): { aspectRatio: string; width: 
 }
 
 // Coarse file buckets used to pick a file-tile affordance from a MIME type. A few sensible
-// buckets + a generic fallback — deliberately NOT an exhaustive icon library.
+// buckets plus a generic fallback; deliberately NOT an exhaustive icon library.
 export type FileKind = "image" | "pdf" | "text" | "audio" | "video" | "archive" | "generic";
 
 const ARCHIVE_MIME = /(zip|tar|gzip|x-7z-compressed|x-rar|x-bzip|compress)/;
 
-// Map a MIME (`payload.content_type`) to a coarse FileKind. Absent/blank → "generic".
+// Map a MIME (`payload.content_type`) to a coarse FileKind. Absent/blank maps to "generic".
 export function fileKindFromMime(contentType: unknown): FileKind {
     const mime = asString(contentType).trim().toLowerCase();
     if (!mime) return "generic";
@@ -1809,16 +1762,6 @@ export function displaySender(sender: string): string {
 
 export function conversationTitle(conversation: Conversation): string {
     return conversation.title.trim() || conversation.id;
-}
-
-export const PEER_BODY_CAP = 2000;
-export const PEER_NAME_CAP = 80;
-
-const PEER_CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/gu;
-
-export function sanitizePeerText(value: unknown, max = PEER_BODY_CAP): string {
-    if (value == null) return "";
-    return String(value).replace(PEER_CONTROL_OR_FORMAT, " ").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
 export type SpawnOutcomeKind = "started" | "declined" | "expired" | "failed" | "unknown";
@@ -1877,7 +1820,6 @@ export function spawnOutcomeSnippet(payload: EventPayload): string {
 
 export function eventSnippet(type: string, payload: EventPayload): string {
     if (type === "text") return asString(payload.body).slice(0, 120);
-    if (type === "peer_message") return sanitizePeerText(payload.body, 120);
     if (type === "file") return `📎 ${asString(payload.caption) || mediaFileName(payload) || "File"}`.slice(0, 120);
     if (type === "image") return `🖼 ${asString(payload.caption) || mediaFileName(payload) || "Image"}`.slice(0, 120);
     if (type === "prompt") return `? ${asString(payload.question).slice(0, 110)}`;

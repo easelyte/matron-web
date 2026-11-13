@@ -19,7 +19,6 @@ Please see LICENSE files in the repository root for full details.
  *   notices    the bridge talking about the session (compaction, idle resume, queued sends,
  *              restarts) — one tertiary line each, outside the agent tile
  *   errors     a turn-ending error (session ended non-zero, couldn't resume) — .mj_TurnError
- *   peers      peer messages — their own rows, as today
  *
  * Pure; no React. The bridge publishes its notices as ordinary `text` events, so
  * bridgeTextKind() recognises them by an allowlist of the bridge's fixed wordings. That is a
@@ -177,25 +176,18 @@ export interface Turn {
     answer: JournalEvent[];
     errors: JournalEvent[];
     notices: JournalEvent[];
-    peers: JournalEvent[];
     /** ms: operator message (decision §7.5) or the first event → the last event. */
     startTs: number;
     endTs: number;
 }
 
 export type ThreadRow =
-    | { kind: "operator"; event: JournalEvent }
-    | { kind: "turn"; turn: Turn }
-    | { kind: "notice"; event: JournalEvent }
-    | { kind: "peer"; event: JournalEvent };
+    { kind: "operator"; event: JournalEvent } | { kind: "turn"; turn: Turn } | { kind: "notice"; event: JournalEvent };
 
 type Classified =
-    | { bucket: "step"; step: Step }
-    | { bucket: "text"; text: string }
-    | { bucket: "break" | "error" | "notice" | "peer" };
+    { bucket: "step"; step: Step } | { bucket: "text"; text: string } | { bucket: "break" | "error" | "notice" };
 
 function classifyAgentEvent(event: JournalEvent, previousTs: number | undefined): Classified {
-    if (event.type === "peer_message") return { bucket: "peer" };
     const step = eventToStep(event, previousTs);
     if (step) return { bucket: "step", step };
     if (event.type === "text") {
@@ -219,7 +211,6 @@ function emptyTurn(first: JournalEvent, operator?: JournalEvent): Turn {
         answer: [],
         errors: [],
         notices: [],
-        peers: [],
         startTs: first.ts,
         endTs: first.ts,
     };
@@ -287,8 +278,8 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
         if (speaker === undefined && !isOperatorEvent(event)) speaker = event.sender;
         const turn = current;
         turn.events.push(event);
-        // Duration ends at the turn's last own event: bridge notices and peers don't extend it.
-        if (event.type !== "peer_message" && !(event.type === "text" && bridgeTextKind(agentText(event)) === "notice"))
+        // Duration ends at the turn's last own event: bridge notices don't extend it.
+        if (!(event.type === "text" && bridgeTextKind(agentText(event)) === "notice"))
             turn.endTs = Math.max(turn.endTs, event.ts);
         if (isOperatorEvent(event)) {
             turn.replies.push(event);
@@ -314,9 +305,6 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
             case "notice":
                 turn.notices.push(event);
                 noticeTextCount += 1;
-                break;
-            case "peer":
-                turn.peers.push(event);
                 break;
         }
     }
@@ -353,7 +341,7 @@ export function liveTurnOf(turns: readonly Turn[]): Turn | undefined {
 
 /**
  * The thread as rows: each turn's operator bubble, then its agent tile (only when it has
- * anything to show), then its notices and peer messages in the order they happened.
+ * anything to show), then its notices in the order they happened.
  */
 export function threadRows(turns: readonly Turn[], options: { liveLastTurn?: boolean } = {}): ThreadRow[] {
     const rows: ThreadRow[] = [];
@@ -371,9 +359,9 @@ export function threadRows(turns: readonly Turn[], options: { liveLastTurn?: boo
         ) {
             rows.push({ kind: "turn", turn });
         }
-        const trailing = [...turn.notices, ...turn.peers].sort((left, right) => left.seq - right.seq);
+        const trailing = [...turn.notices].sort((left, right) => left.seq - right.seq);
         for (const event of trailing) {
-            rows.push(event.type === "peer_message" ? { kind: "peer", event } : { kind: "notice", event });
+            rows.push({ kind: "notice", event });
         }
     }
     return rows;

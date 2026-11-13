@@ -84,7 +84,7 @@ describe("subchat conversation list", () => {
 
         const rows = [...container.querySelectorAll<HTMLButtonElement>(".mj_ConversationListItem")];
         const names = rows.map((row) => row.querySelector('[data-testid="conversation-name"]')?.textContent);
-        // the linked child now renders nested (indented on a rail) beneath its parent; the orphan
+        // the linked child now renders nested (↳ prefix) beneath its parent; the orphan
         // (missing parent) stays a top-level fallback.
         expect(names).toEqual(["Root", "Linked child", "Orphan child"]);
         const childRow = rows[1];
@@ -135,7 +135,7 @@ describe("subchat conversation list", () => {
         expect(client.getSnapshot().conversations.some((c) => c.id === "root:sub:done")).toBe(true);
 
         // Archived tab: the archived child is discoverable regardless of its (done) session state
-        // — the active-only gate does not apply here.
+        // — the active-only gate does not apply here (behavior unchanged).
         await clickTab("Archived");
         expect(names()).toEqual(["Archived child"]);
     });
@@ -588,9 +588,9 @@ describe("subchat conversation list", () => {
     });
 
     it("an archived parent with persisted collapse shows NO hidden-count; its children promote to top-level", async () => {
-        // : collapse P, then archive P. Collapse state persists through archival, but an
-        // archived parent hosts no child rows (running children promote to top-level Active rows).
-        // The count affordance must follow the canonical index — NOT leak a false "N hidden".
+        // Collapse P, then archive P. Collapse state persists through archival, but an archived
+        // parent hosts no child rows (running children promote to top-level Active rows). The count
+        // affordance must follow the canonical index — NOT leak a false "N hidden".
         const client = new MatronJournalClient();
         (client as unknown as ClientInternals).state = {
             ...client.getSnapshot(),
@@ -624,5 +624,112 @@ describe("subchat conversation list", () => {
         await clickTab("Archived");
         expect(names()).toEqual(["Root"]);
         expect(container.querySelector(".mj_ConversationListCollapsedSubs")).toBeNull();
+    });
+
+    it("flags the collapsed hidden-count chip as unread when a hidden running child is unread", async () => {
+        // Regression guard: collapsing a parent removes the child's own inline row (which carried
+        // its own unread badge). The replacement "N hidden" chip must not silence a streaming
+        // child's unread — otherwise the unread state surfaces nowhere (row gone, aggregate badge
+        // already excludes nested children, strip pills never show unread).
+        const client = new MatronJournalClient();
+        (client as unknown as ClientInternals).state = {
+            ...client.getSnapshot(),
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("root", "Root", undefined, "running"),
+                { ...conversation("root:sub:linked", "Linked child", "root", "running"), unread_count: 3 },
+            ],
+            collapsedSubagentParentIds: new Set(["root"]),
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+
+        const chip = container.querySelector(".mj_ConversationListCollapsedSubs");
+        expect(chip).not.toBeNull();
+        expect(chip?.textContent).toContain("1");
+        // Visual: the chip carries the unread accent.
+        expect(chip?.classList.contains("mj_ConversationListCollapsedSubs_unread")).toBe(true);
+        // Accessible: the chip is decorative, so the hidden-child count + unread state are
+        // announced through the containing row button's aria-label (a nested label would be silent).
+        expect(chip?.getAttribute("aria-hidden")).toBe("true");
+        const rootLabel =
+            [...container.querySelectorAll<HTMLButtonElement>(".mj_ConversationListItem")]
+                .map((b) => b.getAttribute("aria-label") ?? "")
+                .find((l) => l.startsWith("Open room Root")) ?? "";
+        expect(rootLabel).toContain("1 subagent hidden");
+        expect(rootLabel).toContain("unread");
+    });
+
+    it("does NOT flag the collapsed hidden-count chip when the hidden child has no unread", async () => {
+        const client = new MatronJournalClient();
+        (client as unknown as ClientInternals).state = {
+            ...client.getSnapshot(),
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("root", "Root", undefined, "running"),
+                conversation("root:sub:linked", "Linked child", "root", "running"),
+            ],
+            collapsedSubagentParentIds: new Set(["root"]),
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+
+        const chip = container.querySelector(".mj_ConversationListCollapsedSubs");
+        expect(chip).not.toBeNull();
+        expect(chip?.classList.contains("mj_ConversationListCollapsedSubs_unread")).toBe(false);
+        // Button label announces the hidden count but NOT unread when no hidden child is unread.
+        const rootLabel =
+            [...container.querySelectorAll<HTMLButtonElement>(".mj_ConversationListItem")]
+                .map((b) => b.getAttribute("aria-label") ?? "")
+                .find((l) => l.startsWith("Open room Root")) ?? "";
+        expect(rootLabel).toContain("1 subagent hidden");
+        expect(rootLabel).not.toContain("unread");
+    });
+
+    it("folds selection up to the parent when collapsing hides the selected child", async () => {
+        // Collapsing a parent suppresses its child rows. If the reading pane is on one of those
+        // now-hidden children, selection must fold UP to the (still-visible) parent — NOT be left
+        // dangling so the next resync's firstSelectableConversation yanks the pane to an unrelated
+        // top-level convo ("Other").
+        const client = new MatronJournalClient();
+        // selectConversation short-circuits without a database; stub one so its selection patch runs.
+        (client as unknown as { database: unknown }).database = {
+            events: async () => [],
+            outbox: async () => [],
+        };
+        (client as unknown as ClientInternals).state = {
+            ...client.getSnapshot(),
+            phase: "signed-in",
+            session: SESSION,
+            conversations: [
+                conversation("root", "Root", undefined, "running"),
+                conversation("root:sub:linked", "Linked child", "root", "running"),
+                conversation("other", "Other top-level", undefined, "running"),
+            ],
+            // The nested child is the current reading-pane selection.
+            selectedConversationId: "root:sub:linked",
+            connection: "online",
+        };
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root.render(React.createElement(MatronApp, { client })));
+
+        expect(names()).toEqual(["Root", "Linked child", "Other top-level"]);
+        expect(client.getSnapshot().selectedConversationId).toBe("root:sub:linked");
+
+        // Collapse the parent → child row suppressed, selection folds to the parent (not "other").
+        await act(async () => client.toggleSubagentCollapse("root"));
+
+        expect(client.getSnapshot().selectedConversationId).toBe("root");
+        expect(names()).toEqual(["Root", "Other top-level"]);
     });
 });

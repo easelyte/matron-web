@@ -574,34 +574,11 @@ describe("JournalApi messages", () => {
         globalThis.fetch = fetchMock as unknown as typeof fetch;
         delete (window as Window & { electron?: unknown }).electron;
     });
-
-    it("requests a window around a sequence without before_seq", async () => {
+    it("requests messages before a sequence", async () => {
         const api = new JournalApi("https://journal.example", "token");
-
-        await api.messages("convo-1", undefined, 80, 1234);
-
+        await api.messages("convo-1", 900, 80);
         expect(String(fetchMock.mock.calls[0][0])).toBe(
-            "https://journal.example/convo/convo-1/messages?limit=80&around_seq=1234",
-        );
-    });
-
-    it("requests messages before a sequence without around_seq", async () => {
-        const api = new JournalApi("https://journal.example", "token");
-
-        await api.messages("convo-1", 500, 80);
-
-        expect(String(fetchMock.mock.calls[0][0])).toBe(
-            "https://journal.example/convo/convo-1/messages?limit=80&before_seq=500",
-        );
-    });
-
-    it("prefers around_seq and omits before_seq when both are provided", async () => {
-        const api = new JournalApi("https://journal.example", "token");
-
-        await api.messages("convo-1", 500, 80, 1234);
-
-        expect(String(fetchMock.mock.calls[0][0])).toBe(
-            "https://journal.example/convo/convo-1/messages?limit=80&around_seq=1234",
+            "https://journal.example/convo/convo-1/messages?limit=80&before_seq=900",
         );
     });
 });

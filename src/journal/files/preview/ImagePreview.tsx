@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import React from "react";
+import React, { useEffect } from "react";
 
 import { MediaError, PreviewStatus } from "./PreviewChrome";
 import type { RendererProps } from "./types";
@@ -13,16 +13,19 @@ import { useAsyncResource } from "./useAsyncResource";
 
 // Blob-URL <img>, mirroring the AuthenticatedMedia Bearer-fetch approach. The object URL is owned by
 // FilesApi's cache (keyed by mtime, revoked on dispose), so no per-component revoke.
-export function ImagePreview({ api, path, filename, meta }: RendererProps): React.ReactElement {
+export function ImagePreview({ api, path, filename, meta, onUnavailable }: RendererProps): React.ReactElement {
     const src = useAsyncResource(
         (signal) => api.contentUrl(path, { disposition: "inline", mtime: meta.mtime, signal }),
         `img:${path}:${meta.mtime}`,
     );
+    useEffect(() => {
+        if (src.status === "error") onUnavailable?.();
+    }, [src.status, onUnavailable]);
     if (src.status === "loading") return <PreviewStatus variant="loading">Loading image…</PreviewStatus>;
     if (src.status === "error") return <MediaError error={src.error} onRetry={src.reload} />;
     return (
         <div className="mj_FilesImage">
-            <img src={src.data} alt={filename} />
+            <img src={src.data} alt={filename} onError={onUnavailable} />
         </div>
     );
 }

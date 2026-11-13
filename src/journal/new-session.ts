@@ -7,7 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 /*
  * One-tap New session (redesign v6 surface C): the box's start options, the operator's
- * remembered defaults (client-side, per box — CONTRACTS 4), and the split button's hint.
+ * remembered defaults (client-side, per box — CONTRACTS 4).
  */
 
 import { type RecentFolder } from "./types";
@@ -100,81 +100,12 @@ export function writeRememberedDefaults(boxId: number | string, defaults: Rememb
         // Storage unavailable: the choice applies to this start only.
     }
 }
-
-export function basename(path: string): string {
-    return path.split(/[\\/]/).filter(Boolean).pop() || path;
-}
-
-/** Short model name for the hint: "Opus 4.5" → "Opus", "claude-sonnet-4-5" → "Sonnet". */
-function shortModel(model: string, models: readonly ModelOption[]): string {
-    const label = models.find((option) => option.value === model)?.label ?? model;
-    const family = /(opus|sonnet|haiku|fable)/i.exec(label)?.[1];
-    const first = family ?? label.split(/\s+/)[0] ?? label;
-    return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
-}
-
-/**
- * The split button's defaults hint ("Opus · workspace"), shown only when the defaults are
- * KNOWN: the agent/model and the folder. Undefined otherwise — never a guess.
- */
-export function defaultsHint(
-    remembered: RememberedDefaults | undefined,
-    options: SessionOptions | undefined,
-): string | undefined {
-    const folder = remembered?.folder ?? options?.defaultFolder;
-    const agent = remembered?.agent ?? options?.defaultAgent;
-    const model = remembered?.model ?? options?.defaultModel;
-    if (!folder) return undefined;
-    if (agent === "codex") return `Codex · ${basename(folder)}`;
-    if (!model) return undefined;
-    return `${shortModel(model, options?.models ?? [])} · ${basename(folder)}`;
-}
-
-/** Start parameters for one tap: the remembered defaults, else the box's own (no picks). */
-export function oneTapStart(remembered: RememberedDefaults | undefined): {
-    workdir: string;
-    model?: string;
-    agent?: AgentKind;
-    browser: false;
-} {
-    return {
-        workdir: remembered?.folder ?? "",
-        model: remembered?.agent === "codex" ? undefined : remembered?.model,
-        agent: remembered?.agent,
-        browser: false,
-    };
-}
-
 const REMEMBERED_BOX_KEY = "matron.newSessionBox";
-
-/** The box the operator last saved defaults for; one tap prefers it while it is connected. */
-export function readRememberedBox(): number | undefined {
-    try {
-        const raw = Number(localStorage.getItem(REMEMBERED_BOX_KEY));
-        return Number.isFinite(raw) && raw > 0 ? raw : undefined;
-    } catch {
-        return undefined;
-    }
-}
 
 export function writeRememberedBox(boxId: number): void {
     try {
         localStorage.setItem(REMEMBERED_BOX_KEY, String(boxId));
     } catch {
-        // Storage unavailable: one tap falls back to the first connected box.
+        // Storage unavailable: the choice applies to this start only.
     }
-}
-
-export function forgetRememberedDefaults(boxId: number | string): void {
-    try {
-        localStorage.removeItem(rememberKey(boxId));
-    } catch {
-        // Nothing to forget.
-    }
-}
-
-/** The one-tap target: the remembered box when connected, else the first connected box. */
-export function pickBox<T extends { device_id: number; connected: boolean }>(boxes: readonly T[]): T | undefined {
-    const remembered = readRememberedBox();
-    return boxes.find((box) => box.connected && box.device_id === remembered) ?? boxes.find((box) => box.connected);
 }

@@ -6,7 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 // The preview header: the file's name + metadata on the left and ONE cohesive action cluster on
-// the right (Edit · Copy · Download). Every action is an equal-size icon button with a tooltip and
+// the right (Copy · Download). Every action is an equal-size icon button with a tooltip and
 // an aria-label; Download is the filled primary (it is offered for every file), the rest are quiet
 // secondaries. Action errors surface on a single line under the header, never inside the row, so
 // the row itself never wraps or reflows.
@@ -14,7 +14,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { copyText } from "../../clipboard";
-import { CheckIcon, ClipboardIcon, DownloadIcon, FileEditIcon } from "../../icons";
+import { CheckIcon, ClipboardIcon, DownloadIcon } from "../../icons";
 import type { FileMeta, FilesApiLike } from "../filesApi";
 import { metaLine } from "./PreviewChrome";
 import type { DownloadState } from "./useDownload";
@@ -94,7 +94,6 @@ export function PreviewToolbar({
     filename,
     meta,
     copySource,
-    onEdit,
 }: {
     api: FilesApiLike | undefined;
     /**
@@ -107,8 +106,6 @@ export function PreviewToolbar({
     /** Resolved metadata, when it has loaded (the header renders before it does). */
     meta?: FileMeta;
     copySource?: CopySource;
-    /** Present only when the server said the file's directory is writable and it is editable text. */
-    onEdit?: () => void;
 }): React.ReactElement {
     const copyReady = copySource?.status === "loaded" ? (copySource.text ?? "") : undefined;
     const copy = useCopy(copyReady);
@@ -124,17 +121,6 @@ export function PreviewToolbar({
                     {meta ? <span className="mj_FilesPreview_meta">{metaLine(meta)}</span> : null}
                 </div>
                 <div className="mj_FilesPreview_actions" role="group" aria-label="File actions">
-                    {onEdit ? (
-                        <button
-                            type="button"
-                            className="mj_FilesAction mj_FilesPreview_edit"
-                            aria-label={`Edit ${filename}`}
-                            title="Edit"
-                            onClick={onEdit}
-                        >
-                            <FileEditIcon aria-hidden />
-                        </button>
-                    ) : null}
                     {copySource ? (
                         <button
                             type="button"

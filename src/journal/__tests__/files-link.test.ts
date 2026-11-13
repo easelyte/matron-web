@@ -69,12 +69,13 @@ describe("handleViewerLinkClick", () => {
         const listener = jest.fn();
         window.addEventListener(FILE_VIEWER_OPEN, listener);
         const previousUrl = window.location.href;
+        opener.href = href;
         const event = click();
         handleViewerLinkClick(event, viewerFilePath(href)!);
         expect(event.preventDefault).toHaveBeenCalledTimes(1);
         expect(event.stopPropagation).toHaveBeenCalledTimes(1);
         expect(listener).toHaveBeenCalledTimes(1);
-        expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual({ path: "/x", opener });
+        expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual({ path: "/x", opener, href: opener.href });
         expect(window.location.href).toBe(previousUrl);
         window.removeEventListener(FILE_VIEWER_OPEN, listener);
     });

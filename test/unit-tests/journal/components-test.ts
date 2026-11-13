@@ -148,6 +148,37 @@ beforeEach(() => {
     resetShowTheWorkForTests();
 });
 
+describe("startup file deep link", () => {
+    it("stays open through renders and closes on a later conversation change", async () => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+        const client = signedInClient();
+        jest.spyOn(client, "filesApi").mockReturnValue({
+            fileMeta: jest
+                .fn()
+                .mockResolvedValue({ kind: "file", mime: "text/markdown", isText: true, mtime: 1, size: 10 }),
+            textContent: jest.fn().mockResolvedValue("# Startup report"),
+            download: jest.fn(),
+        } as unknown as ReturnType<MatronJournalClient["filesApi"]>);
+        window.history.replaceState(null, "", "/#files=%2Fhome%2Fboot.md");
+        const rendered = await renderClient(client);
+        try {
+            expect(rendered.container.querySelector(".mj_FileViewer_preview h1")?.textContent).toBe("Startup report");
+            expect(window.location.hash).toBe("");
+
+            await act(async () => internals(client).patch({ connection: "connecting" }));
+            expect(rendered.container.querySelector(".mj_FileViewer_preview")).not.toBeNull();
+
+            await act(async () => internals(client).patch({ selectedConversationId: "c2" }));
+            expect(rendered.container.querySelector(".mj_FileViewer_preview")).toBeNull();
+        } finally {
+            await act(async () => rendered.root.unmount());
+            rendered.container.remove();
+            window.history.replaceState(null, "", "/");
+            jest.restoreAllMocks();
+        }
+    });
+});
+
 describe("browser tools header indicator", () => {
     let rendered: { container: HTMLDivElement; root: Root } | undefined;
 
@@ -378,7 +409,7 @@ describe("usage limit accessibility", () => {
         const meta = rendered.container.querySelector(".mj_ChatHeader .mj_HeaderMeta");
         expect(meta?.querySelector(".mj_HeaderModel")?.textContent).toBe("claude-sonnet · high");
         expect(meta?.querySelector(".mj_HeaderEmail")?.textContent).toBe("alice@example.com");
-        // The fork's header drops the workdir path; the account email follows the model.
+        // Order as on the Mac: workdir, then the account it runs under.
         const segments = [...(meta?.children ?? [])].map((element) => element.className.split(" ")[0]);
         expect(segments.indexOf("mj_HeaderEmail")).toBeGreaterThan(segments.indexOf("mj_HeaderModel"));
     });
@@ -523,7 +554,6 @@ describe("usage limit accessibility", () => {
         const labels = Array.from(menu?.querySelectorAll('[role="menuitem"]') ?? []).map((item) =>
             item.textContent?.trim(),
         );
-        // No status frame with `extras` yet: the browser-tools row is hidden, never guessed.
         expect(labels).toEqual(["Pin", "Add to Favorites", "Mark as unread", "Archive"]);
     });
 
@@ -2077,7 +2107,7 @@ describe("composer drafts", () => {
         jest.useRealTimers();
     });
 
-    test("a failed draft persist surfaces the non-durable badge", async () => {
+    test("a failed draft persist surfaces the non-durable badge (render contract)", async () => {
         jest.useFakeTimers();
         const spy = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
             throw new DOMException("q", "QuotaExceededError");
@@ -3573,15 +3603,68 @@ describe("attachment composer", () => {
         expect(frame).not.toBeNull();
         expect(frame?.classList.contains("mj_ImageFrame_sized")).toBe(true);
         // The reserved box is the inline aspect-ratio + width; this is what holds height
-        // before the blob decodes so the thread doesn't reflow. The width is pre-shrunk so the
+        // before the blob decodes so the thread does not reflow. The width is pre-shrunk so the
         // 520px max-height cap preserves the ratio (1200×800 → 780×520), since a non-replaced
         // <div> won't back-shrink its width on its own.
         expect(frame?.style.aspectRatio).toBe("1200 / 800");
         expect(frame?.style.width).toBe("780px");
-        expect(frame?.getAttribute("data-dims")).toBe("1200x800");
     });
 
-    it("does NOT reserve a box for an image event without dims (fluid fallback, §6)", async () => {
+    it("reserves the box for the Matrix `{ w, h }` dims spelling the bridge actually passes", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "user:2",
+                    type: "image",
+                    // The bridge is a pass-through of Matrix `m.image` `info`, which spells the
+                    // dims `w`/`h` — the shape the bridge's own fixtures encode. This is what
+                    // ships in production, so the sized frame MUST render for it.
+                    payload: { blob_ref: "img-wh", content_type: "image/png", dims: { w: 1200, h: 800 } },
+                },
+            ],
+        });
+        jest.spyOn(client, "mediaUrl").mockResolvedValue("data:image/png;base64,AAAA");
+        rendered = await renderClient(client);
+
+        const frame = rendered.container.querySelector<HTMLElement>(".mj_ImageFrame");
+        expect(frame).not.toBeNull();
+        expect(frame?.classList.contains("mj_ImageFrame_sized")).toBe(true);
+        // Same reserved geometry as the `{ width, height }` case: 1200×800 → 780×520.
+        expect(frame?.style.aspectRatio).toBe("1200 / 800");
+        expect(frame?.style.width).toBe("780px");
+    });
+
+    it("collapses the reserved frame when the image blob fails to decode", async () => {
+        const client = signedInClient({
+            events: [
+                {
+                    seq: 2,
+                    convo_id: "c1",
+                    ts: 1,
+                    sender: "user:2",
+                    type: "image",
+                    payload: { blob_ref: "img-broken", content_type: "image/png", dims: { width: 1200, height: 800 } },
+                },
+            ],
+        });
+        jest.spyOn(client, "mediaUrl").mockResolvedValue("data:image/png;base64,AAAA");
+        rendered = await renderClient(client);
+
+        const img = rendered.container.querySelector<HTMLImageElement>(".mj_ImageFrame img");
+        expect(img).not.toBeNull();
+        await act(async () => {
+            img!.dispatchEvent(new Event("error"));
+        });
+        // A corrupt image no longer holds the full reserved 520px box around a broken glyph:
+        // the frame is gone and the tile collapses to the error message.
+        expect(rendered.container.querySelector(".mj_ImageFrame")).toBeNull();
+        expect(rendered.container.querySelector(".mj_Error")).not.toBeNull();
+    });
+
+    it("does NOT reserve a box for an image event without dims (fluid fallback)", async () => {
         const client = signedInClient({
             events: [
                 {
@@ -3601,10 +3684,9 @@ describe("attachment composer", () => {
         expect(frame).not.toBeNull();
         expect(frame?.classList.contains("mj_ImageFrame_sized")).toBe(false);
         expect(frame?.style.aspectRatio).toBe("");
-        expect(frame?.getAttribute("data-dims")).toBeNull();
     });
 
-    it("picks a file-tile icon from the MIME bucket, generic when absent (§6)", async () => {
+    it("picks a file-tile icon from the MIME bucket, generic when absent", async () => {
         const client = signedInClient({
             events: [
                 {

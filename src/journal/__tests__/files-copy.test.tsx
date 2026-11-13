@@ -42,7 +42,6 @@ const meta = (over: Partial<FileMeta>): FileMeta => ({
 
 function mockApi(fileMeta: FileMeta, overrides: Partial<FilesApiLike> = {}): FilesApiLike {
     return {
-        listDir: jest.fn(),
         fileMeta: jest.fn().mockResolvedValue(fileMeta),
         textContent: jest.fn().mockResolvedValue(MD),
         fileBytes: jest.fn().mockResolvedValue(new Uint8Array([1, 2, 3]).buffer),

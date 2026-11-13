@@ -95,7 +95,6 @@ describe("NavRail", () => {
             "decisions",
             "conversations",
             "memories",
-            "files",
             "ops",
             "search",
         ]);
@@ -105,7 +104,6 @@ describe("NavRail", () => {
             "For you",
             "Conversations",
             "Memories",
-            "Files",
             "Ops",
             "Search",
         ]);

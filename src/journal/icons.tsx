@@ -319,8 +319,8 @@ export function FileIcon(props: IconProps): React.ReactElement {
     );
 }
 
-// File-kind affordances (§6): the file tile picks one of these from payload.content_type
-// via fileKindFromMime(). All share the folded-sheet silhouette + a kind mark; unknown MIME
+// File-kind affordances: the file tile picks one of these from payload.content_type via
+// fileKindFromMime(). All share the folded-sheet silhouette plus a kind mark; unknown MIME
 // falls back to the plain FileIcon above.
 export function ImageFileIcon(props: IconProps): React.ReactElement {
     return (
@@ -379,15 +379,6 @@ export function ArchiveFileIcon(props: IconProps): React.ReactElement {
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
             <path d="M14 2v6h6" />
             <path d="M11 12v1M11 15v1M11 18v1.5a1 1 0 0 0 2 0V18M11 13h2M11 16h2" />
-        </Icon>
-    );
-}
-
-// Directory affordance for the Files pane (§6): folder rows + the header entry-point button.
-export function FolderIcon(props: IconProps): React.ReactElement {
-    return (
-        <Icon {...props}>
-            <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
         </Icon>
     );
 }
@@ -476,15 +467,6 @@ export function ResetIcon(props: IconProps): React.ReactElement {
         <Icon {...props}>
             <path d="M4 12a8 8 0 1 1 2.34 5.66" />
             <path d="M4 20v-4h4" />
-        </Icon>
-    );
-}
-
-export function ChatsIcon(props: IconProps): React.ReactElement {
-    // Mobile nav "Chats" tab — a speech bubble, the conversation list's home.
-    return (
-        <Icon {...props}>
-            <path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.1A8 8 0 1 1 20 12Z" />
         </Icon>
     );
 }
@@ -670,16 +652,6 @@ export function BellSlashIcon(props: IconProps): React.ReactElement {
         <Icon {...props}>
             <path d="M8.5 5.9A6 6 0 0 1 18 11v4M6 11v5l-1.5 2H17" />
             <path d="M10 20.5a2 2 0 0 0 4 0M3 3l18 18" />
-        </Icon>
-    );
-}
-
-// Upload-modal header glyph: an up-arrow rising out of a tray. Fork-only panes (Files) still use it.
-export function UploadTrayIcon(props: IconProps): React.ReactElement {
-    return (
-        <Icon {...props}>
-            <path d="M12 16V4M12 4 7 9M12 4l5 5" />
-            <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
         </Icon>
     );
 }

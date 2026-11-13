@@ -44,7 +44,7 @@ export function TrackerPane({
     const selectedProjectId = state.trackerView?.selectedProjectId;
     const briefingOpen = state.trackerView?.briefingOpen === true;
 
-    // Prime the two tracker list views, but NOT while Memories is the active tab.
+    // Opening the pane primes both list views so the sidebar badges + either tab are ready.
     useEffect(() => {
         // Memories is isolated the same way: it has its own list and error, and a missions/inbox
         // failure must not raise the shared banner over a healthy Memories view.
@@ -88,13 +88,7 @@ export function TrackerPane({
     // The view switch (and the detail back buttons) clear any open detail selection; null clears a
     // selected id explicitly, in one view update.
     const switchView = (next: "missions" | "inbox" | "memories"): void =>
-        client.openTrackerView({
-            view: next,
-            itemId: null,
-            missionId: null,
-            memoryName: null,
-            projectId: null,
-        });
+        client.openTrackerView({ view: next, itemId: null, missionId: null, memoryName: null, projectId: null });
     // A mission or item opened from a project returns to that project; otherwise to its list. The
     // project id is unchanged, so the selection effect will not reload it: reload here, or a mission
     // just closed or an item just answered would still show as open on the project page.
@@ -436,6 +430,8 @@ export function TrackerPane({
             );
         }
         if (view === "memories") {
+            // A refresh that failed after a load keeps the list (loaders never clear data on
+            // failure) but says it may be out of date and offers a retry, as the item detail does.
             return (
                 <>
                     {staleNotice}

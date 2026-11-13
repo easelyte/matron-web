@@ -142,12 +142,11 @@ describe("MatronJournalClient tracker view state", () => {
         }
     });
 
-    it("openTrackerView closes the Files pane and sets the requested view", () => {
-        const { client } = makeClient({ filesView: { open: true, path: "/root" } });
+    it("openTrackerView sets the requested view", () => {
+        const { client } = makeClient();
 
         client.openTrackerView({ view: "missions" });
 
-        expect(client.getSnapshot().filesView).toBeUndefined();
         expect(client.getSnapshot().trackerView).toEqual({
             open: true,
             view: "missions",

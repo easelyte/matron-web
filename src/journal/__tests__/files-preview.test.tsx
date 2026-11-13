@@ -45,7 +45,6 @@ describe("pickPreviewKind", () => {
 // ── End-to-end: FilePreview renders the matching component for each meta ─────────────────────────
 function mockApi(meta: FileMeta, overrides: Partial<FilesApiLike> = {}): FilesApiLike {
     return {
-        listDir: jest.fn(),
         fileMeta: jest.fn().mockResolvedValue(meta),
         textContent: jest.fn().mockResolvedValue("# Title\n\ncode: `x`"),
         fileBytes: jest.fn().mockResolvedValue(new Uint8Array([1, 2, 3]).buffer),

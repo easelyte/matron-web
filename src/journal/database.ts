@@ -293,7 +293,7 @@ export class JournalDatabase {
 
         // A malformed freshness field (null/NaN/non-number last_seq) makes the terminal-state merge
         // for THAT row unassessable. We must NOT reject the whole snapshot (that would block valid
-        // parent-link repair for every other row — ship-review major 1; the "parent-link backfill
+        // parent-link repair for every other row; the "parent-link backfill
         // unchanged" contract). Instead: repair parent links for all rows, skip only the unassessable
         // session_state/session_outcome write, and DEFER sealing the completion key so the reconcile retries rather
         // than sealing a possibly-stale state (phase-1 review — P3 Fail Visible / V6 Classify Errors).
@@ -529,7 +529,7 @@ export class JournalDatabase {
         await transactionDone(transaction);
     }
 
-    /** Applies one strictly ordered row atomically; read markers clear durable unread state separately. */
+    /** Applies one strictly ordered replay/live row and advances the durable cursor atomically. */
     public async applyJournal(incomingEvent: JournalEvent): Promise<boolean> {
         const [applied] = await this.applyJournalBatch([incomingEvent]);
         return applied ?? false;
@@ -577,7 +577,7 @@ export class JournalDatabase {
             try {
                 await transactionDone(transaction);
             } catch {
-                // The abort is deliberate.
+                // The abort is deliberate: no writes were needed for a duplicate frame.
             }
             return results;
         }
@@ -642,9 +642,6 @@ export class JournalDatabase {
     }
 
     public async reconcilePersistedOwnMessages(): Promise<string[]> {
-        // Runs at startup and after every history page, so it must not scale with the size of the
-        // local journal: read the outbox first, and only the events of conversations that actually
-        // have a row awaiting its echo (matchesOwnPendingMessage requires the same convo_id).
         const transaction = this.database.transaction(["events", "outbox"], "readwrite");
         const outbox = transaction.objectStore("outbox");
         const pendingMessages = (await requestResult(outbox.getAll())) as PendingMessage[];

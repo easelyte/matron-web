@@ -6,8 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * One-tap New session (redesign v6 surface C): the split button in the sidebar and the options
- * sheet behind its ⋯. The main segment starts a session at once with the defaults — the
+ * New session options sheet. The sheet starts a session with the defaults — the
  * operator's remembered choice for this box, else the box's own — and the sheet offers folder,
  * agent, model, browser tools, a first task and "Remember as my defaults".
  */
@@ -24,18 +23,13 @@ import React, {
     useSyncExternalStore,
 } from "react";
 
-import { type MatronJournalClient, type StartOutcome } from "./client";
+import { type MatronJournalClient } from "./client";
 import {
     type AgentKind,
-    defaultsHint,
-    forgetRememberedDefaults,
-    oneTapStart,
-    pickBox,
     readRememberedDefaults,
-    type RememberedDefaults,
     type SessionOptions,
-    writeRememberedBox,
     writeRememberedDefaults,
+    writeRememberedBox,
 } from "./new-session";
 import { type BoxStatus } from "./ops/model";
 import { effectiveStatus } from "./ops/OpsPane";
@@ -136,184 +130,6 @@ async function openStarted(client: MatronJournalClient, convoId: string, task: s
     } catch (error) {
         console.warn("matron: opening the new session failed", error);
     }
-}
-
-type SplitState = { kind: "idle" } | { kind: "starting" } | { kind: "error"; message: string } | { kind: "uncertain" };
-
-/**
- * The New session split button: one tap starts with the defaults; ⋯ opens the options sheet.
- * `boxes` is the agent roster (undefined while loading); none connected → disabled.
- */
-export function NewSessionSplit({
-    client,
-    boxes,
-    onOpenSheet,
-    onStartedFocus,
-    moreRef,
-    onCheckList,
-}: {
-    client: MatronJournalClient;
-    boxes: DeviceDTO[] | undefined;
-    onOpenSheet: () => void;
-    onStartedFocus?: () => void;
-    moreRef: React.RefObject<HTMLButtonElement | null>;
-    onCheckList: () => void;
-}): React.ReactElement {
-    const [state, setState] = useState<SplitState>({ kind: "idle" });
-    const mainRef = useRef<HTMLButtonElement>(null);
-    // One key per start intent, reused by Retry, so an uncertain start can't spawn twice.
-    const intentRef = useRef<string | undefined>(undefined);
-    const box = boxes ? pickBox(boxes) : undefined;
-    const nobox = boxes !== undefined && !box;
-    const [remembered, setRemembered] = useState<RememberedDefaults | undefined>(() =>
-        box ? readRememberedDefaults(box.device_id) : undefined,
-    );
-    useEffect(() => {
-        setRemembered(box ? readRememberedDefaults(box.device_id) : undefined);
-        const onStorage = (): void => setRemembered(box ? readRememberedDefaults(box.device_id) : undefined);
-        window.addEventListener("storage", onStorage);
-        window.addEventListener("matron:new-session-defaults", onStorage);
-        return () => {
-            window.removeEventListener("storage", onStorage);
-            window.removeEventListener("matron:new-session-defaults", onStorage);
-        };
-    }, [box]);
-    const hint = box ? defaultsHint(remembered, undefined) : undefined;
-
-    const startingRef = useRef(false);
-    const start = async (): Promise<void> => {
-        if (startingRef.current) return;
-        startingRef.current = true;
-        setState({ kind: "starting" });
-        mainRef.current?.focus();
-        // Kept across an uncertain or unreachable start (a re-tap may re-answer the same session);
-        // cleared once the start is settled one way or the other.
-        if (!intentRef.current) intentRef.current = crypto.randomUUID();
-        // A fresh roster per tap: the box may have come up (or gone) since the sidebar loaded.
-        let target: DeviceDTO | undefined;
-        try {
-            target = pickBox(await client.listAgents());
-        } catch {
-            target = box;
-        }
-        if (!target) {
-            startingRef.current = false;
-            setState({ kind: "error", message: "Couldn’t reach the box." });
-            return;
-        }
-        const params = oneTapStart(readRememberedDefaults(target.device_id));
-        const outcome: StartOutcome = await client.startSessionRpc(target.device_id, params.workdir, false, {
-            model: params.model,
-            agent: params.agent,
-            idempotencyKey: intentRef.current,
-        });
-        startingRef.current = false;
-        if (outcome.kind === "created") {
-            intentRef.current = undefined;
-            setState({ kind: "idle" });
-            onStartedFocus?.();
-            void openStarted(client, outcome.convoId, "");
-        } else if (outcome.kind === "uncertain") {
-            setState({ kind: "uncertain" });
-        } else if (outcome.code === "bad_workdir" || outcome.code === "bad_model" || outcome.code === "bad_agent") {
-            // The saved defaults no longer work on this box: forget them, so the next tap uses
-            // the box's own defaults, and point at Options.
-            forgetRememberedDefaults(target.device_id);
-            setRemembered(undefined);
-            intentRef.current = undefined;
-            setState({ kind: "error", message: "Your saved defaults don’t work on this box any more." });
-        } else {
-            setState({ kind: "error", message: outcome.reach ? "Couldn’t reach the box." : outcome.message });
-        }
-    };
-
-    const starting = state.kind === "starting";
-    const disabled = starting || nobox;
-    const mainLabel = starting
-        ? "Starting a new session"
-        : hint
-          ? `Start a new session: ${hint}`
-          : "Start a new session";
-    return (
-        <div className="mj_NewSessionRow">
-            <div
-                className={`mj_NewSessionSplit${nobox ? " mj_NewSessionSplit_disabled" : ""}`}
-                role="group"
-                aria-label="New session"
-            >
-                <button
-                    ref={mainRef}
-                    type="button"
-                    className="mj_NewSessionButton mj_NewSessionSplit_main"
-                    aria-label={mainLabel}
-                    disabled={disabled}
-                    onClick={() => void start()}
-                >
-                    {starting ? (
-                        <>
-                            <span className="mj_Spinner" aria-hidden="true" />
-                            <span className="mj_NewSessionSplit_label">Starting…</span>
-                        </>
-                    ) : (
-                        <>
-                            <V6Icon name="pencil" />
-                            <span className="mj_NewSessionSplit_label">New session</span>
-                            {hint && !nobox && <span className="mj_NewSessionSplit_hint">{hint}</span>}
-                        </>
-                    )}
-                </button>
-                <span className="mj_NewSessionSplit_sep" aria-hidden="true" />
-                <button
-                    ref={moreRef}
-                    type="button"
-                    className="mj_NewSessionSplit_more"
-                    aria-label="New session options"
-                    aria-haspopup="dialog"
-                    // Stays enabled with no box: the sheet re-checks and says so itself.
-                    disabled={starting}
-                    onClick={() => {
-                        if (state.kind === "error") setState({ kind: "idle" });
-                        onOpenSheet();
-                    }}
-                >
-                    <V6Icon name="dots" />
-                </button>
-            </div>
-            {state.kind === "error" && (
-                <div className="mj_NewSessionSplit_note mj_NewSessionSplit_note_error" role="alert">
-                    {state.message}{" "}
-                    <button type="button" onClick={() => void start()}>
-                        Retry
-                    </button>{" "}
-                    ·{" "}
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setState({ kind: "idle" });
-                            onOpenSheet();
-                        }}
-                    >
-                        Options
-                    </button>
-                </div>
-            )}
-            {state.kind === "uncertain" && (
-                <div className="mj_NewSessionSplit_note" role="status">
-                    May have started.{" "}
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setState({ kind: "idle" });
-                            onCheckList();
-                        }}
-                    >
-                        Check your list
-                    </button>
-                </div>
-            )}
-            {nobox && <div className="mj_NewSessionSplit_note">No box connected</div>}
-        </div>
-    );
 }
 
 type SheetState =
