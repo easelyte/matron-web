@@ -98,10 +98,28 @@ test("a streaming message does not load the highlighter", async () => {
     expect(factory).not.toHaveBeenCalled();
 });
 
-test("needsHighlighter matches only fences that name a language", async () => {
-    const { needsHighlighter } = await import("../../../src/journal/markdown");
-    expect(needsHighlighter("```ts\nx\n```")).toBe(true);
-    expect(needsHighlighter("text\n  ~~~ python\nx\n~~~")).toBe(true);
-    expect(needsHighlighter("```\nx\n```")).toBe(false);
-    expect(needsHighlighter("no code here")).toBe(false);
+test.each([
+    ["a block quote", "> ```ts\n> const a: number = 1;\n> ```"],
+    ["a list item", "- ```ts\n  const a: number = 1;\n  ```"],
+])("a labelled fence inside %s loads the highlighter and highlights", async (_where, text) => {
+    const { markdown, act, render } = await freshModules();
+    const container = await render(text);
+    await act(async () => {
+        await markdown.loadHighlighter();
+    });
+    const code = container.querySelector("code");
+    expect(code?.classList.contains("hljs")).toBe(true);
+    expect(code?.querySelectorAll('[class^="hljs-"]').length).toBeGreaterThan(0);
+});
+
+test("a nested labelled fence starts the load by itself", async () => {
+    const factory = jest.fn(() => jest.requireActual("../../../src/journal/highlighter"));
+    jest.doMock("../../../src/journal/highlighter", factory);
+    const { act, render } = await freshModules();
+
+    await render("> ```python\n> x = 1\n> ```");
+    await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(factory).toHaveBeenCalledTimes(1);
 });

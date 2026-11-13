@@ -34,8 +34,10 @@ export const MARKDOWN_MAX_LINES = 2_000;
 export const HIGHLIGHT_MAX = 30_000;
 
 // highlight.js and the curated grammars live in ./highlighter, loaded on first use so they stay
-// out of the first download. Until it arrives, a labelled fence renders plain (with its `hljs`
-// class, as before); every MarkdownBody re-renders once it has loaded.
+// out of the first download. The highlight pass starts the load when it meets the first code block
+// that names a language, wherever the parser found it (top level, block quote, list item). Until it
+// arrives the block renders plain (with its `hljs` class, as before); every MarkdownBody
+// re-renders once it has loaded.
 let highlighter: Highlighter | null = null;
 let highlighterLoad: Promise<void> | null = null;
 const highlighterListeners = new Set<() => void>();
@@ -63,14 +65,6 @@ function subscribeHighlighter(listener: () => void): () => void {
 
 function highlighterReady(): boolean {
     return highlighter !== null;
-}
-
-// A fence that names a language, the only kind highlightCodeBlock colours. A cheap source check so
-// messages without one never fetch the highlighter.
-const LABELLED_FENCE = /(?:^|\n)[ \t]*(?:`{3,}|~{3,})[ \t]*[^\s`~]/;
-
-export function needsHighlighter(text: string): boolean {
-    return LABELLED_FENCE.test(text);
 }
 
 /**
@@ -264,7 +258,12 @@ function highlightCodeBlock(code: HighlightNode): void {
     const classes = Array.isArray(code.properties.className) ? code.properties.className : [];
     if (!classes.includes("hljs")) classes.unshift("hljs");
     code.properties.className = classes;
-    if (!highlighter?.registered(lang)) return;
+    if (!highlighter) {
+        // Idempotent: one fetch however many blocks or messages ask for it.
+        void loadHighlighter();
+        return;
+    }
+    if (!highlighter.registered(lang)) return;
     const result = highlighter.highlight(lang, toString(code as Parameters<typeof toString>[0]));
     if (result.children.length > 0) code.children = result.children as HighlightNode[];
 }
@@ -695,11 +694,7 @@ function MarkdownBodyComponent({
 }: MarkdownBodyProps): React.ReactElement {
     const isDocument = variant === "document";
     // Re-render once the highlighter arrives; the props-only memo below does not block this.
-    const highlighterLoaded = useSyncExternalStore(subscribeHighlighter, highlighterReady, highlighterReady);
-    const wantsHighlighter = !streaming && !highlighterLoaded && needsHighlighter(text);
-    useEffect(() => {
-        if (wantsHighlighter) void loadHighlighter();
-    }, [wantsHighlighter]);
+    useSyncExternalStore(subscribeHighlighter, highlighterReady, highlighterReady);
     if (exceedsMarkdownRenderLimit(text)) {
         return <div className="mj_MessageText mj_MarkdownRaw">{text}</div>;
     }
