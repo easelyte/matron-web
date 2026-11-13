@@ -595,6 +595,20 @@ interface HeldVoiceNote {
     key: string;
 }
 
+/**
+ * The reply box's send key, matching the chat composer on a desktop keyboard: Enter sends and
+ * Shift+Enter adds a line. Cmd/Ctrl+Enter also sends. On a touch-first device the return key keeps
+ * adding a line (a tracker reply is often several lines and the Send button is right there), and
+ * an IME composition's Enter only commits the candidate.
+ */
+export function isReplySendKey(event: React.KeyboardEvent): boolean {
+    // keyCode 229 covers browsers that report a composing keydown without isComposing.
+    if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return false;
+    if (event.metaKey || event.ctrlKey) return true;
+    if (event.shiftKey) return false;
+    return !(typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches);
+}
+
 export function ItemDetail({
     item,
     comments,
@@ -618,6 +632,20 @@ export function ItemDetail({
     stagedRef.current = staged;
     const busyRef = useRef(busy);
     busyRef.current = busy;
+    // The box is disabled while a reply posts, which drops its focus. A reply sent from the
+    // keyboard means the user is still typing, so hand the focus back once the post settles, but
+    // only if the focus is still nowhere (the drop itself): a deliberate move to another control
+    // while the post was pending is left alone.
+    const replyBoxRef = useRef<HTMLTextAreaElement>(null);
+    const refocusReplyRef = useRef(false);
+    useEffect(() => {
+        if (busy || !refocusReplyRef.current) return;
+        refocusReplyRef.current = false;
+        const active = document.activeElement;
+        if (active === null || active === document.body || active === replyBoxRef.current) {
+            replyBoxRef.current?.focus();
+        }
+    }, [busy]);
     const [heldVoice, setHeldVoice] = useState<HeldVoiceNote[]>([]);
     const heldVoiceRef = useRef(heldVoice);
     heldVoiceRef.current = heldVoice;
@@ -1346,6 +1374,7 @@ export function ItemDetail({
                             }}
                         />
                         <textarea
+                            ref={replyBoxRef}
                             className="mj_TrackerComposer_input"
                             rows={1}
                             placeholder="Reply…"
@@ -1360,8 +1389,9 @@ export function ItemDetail({
                                 }
                             }}
                             onKeyDown={(event) => {
-                                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                                if (isReplySendKey(event)) {
                                     event.preventDefault();
+                                    refocusReplyRef.current = true;
                                     void send();
                                 }
                             }}

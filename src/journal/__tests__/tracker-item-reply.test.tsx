@@ -265,6 +265,98 @@ describe("ItemDetail reply box", () => {
         );
     });
 
+    describe("send key", () => {
+        const press = async (container: HTMLElement, init: KeyboardEventInit): Promise<KeyboardEvent> => {
+            const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init });
+            await act(async () => {
+                input(container).dispatchEvent(event);
+            });
+            return event;
+        };
+        const originalMatchMedia = window.matchMedia;
+        afterEach(() => {
+            window.matchMedia = originalMatchMedia;
+        });
+
+        it("sends on Enter, like the chat composer, and keeps the focus in the box", async () => {
+            const client = fakeClient();
+            const container = await renderItem(client);
+            await type(container, "looks good");
+            input(container).focus();
+
+            const event = await press(container, {});
+
+            expect(event.defaultPrevented).toBe(true);
+            expect(client.postTrackerComment).toHaveBeenCalledWith(12, { body: "looks good" }, expect.any(String));
+            expect(input(container).value).toBe("");
+            expect(document.activeElement).toBe(input(container));
+        });
+
+        it("leaves the focus where the user moved it while the reply was posting", async () => {
+            const client = fakeClient();
+            let settle!: (outcome: TrackerCommentOutcome) => void;
+            client.postTrackerComment.mockReturnValueOnce(
+                new Promise<TrackerCommentOutcome>((resolve) => (settle = resolve)),
+            );
+            const container = await renderItem(client);
+            await type(container, "on my way");
+            input(container).focus();
+            await press(container, {});
+            const elsewhere = document.createElement("button");
+            document.body.append(elsewhere);
+            elsewhere.focus();
+
+            await act(async () => settle({ ok: true }));
+
+            expect(document.activeElement).toBe(elsewhere);
+            elsewhere.remove();
+        });
+
+        it("adds a new line on Shift+Enter instead of sending", async () => {
+            const client = fakeClient();
+            const container = await renderItem(client);
+            await type(container, "first line");
+
+            const event = await press(container, { shiftKey: true });
+
+            expect(event.defaultPrevented).toBe(false);
+            expect(client.postTrackerComment).not.toHaveBeenCalled();
+        });
+
+        it("never sends while an IME composition is in flight", async () => {
+            const client = fakeClient();
+            const container = await renderItem(client);
+            await type(container, "にほん");
+
+            await press(container, { isComposing: true });
+
+            expect(client.postTrackerComment).not.toHaveBeenCalled();
+        });
+
+        it("keeps return as a new line on a touch-first device; Cmd/Ctrl+Enter still sends", async () => {
+            window.matchMedia = jest.fn((query: string) => ({
+                matches: query === "(pointer: coarse)",
+                media: query,
+                onchange: null,
+                addListener: jest.fn(),
+                removeListener: jest.fn(),
+                addEventListener: jest.fn(),
+                removeEventListener: jest.fn(),
+                dispatchEvent: jest.fn(),
+            })) as unknown as typeof window.matchMedia;
+            const client = fakeClient();
+            const container = await renderItem(client);
+            await type(container, "from the phone");
+
+            const plain = await press(container, {});
+            expect(plain.defaultPrevented).toBe(false);
+            expect(client.postTrackerComment).not.toHaveBeenCalled();
+
+            await press(container, { metaKey: true });
+            expect(client.postTrackerComment).toHaveBeenCalledWith(12, { body: "from the phone" }, expect.any(String));
+        });
+    });
+
     it("keeps the draft and tray when an upload fails, and posts nothing", async () => {
         const client = fakeClient();
         client.uploadTrackerAttachment.mockResolvedValueOnce(null);
