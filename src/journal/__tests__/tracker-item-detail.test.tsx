@@ -812,6 +812,14 @@ describe("ItemDetail reply box keyboard (the chat composer's send key)", () => {
         return event;
     }
 
+    it("sends on a plain Enter and swallows the newline", async () => {
+        const { client, textarea } = await mountReply();
+        const event = await keydown(textarea, {});
+        expect(event.defaultPrevented).toBe(true);
+        expect(client.postTrackerComment).toHaveBeenCalledWith(9, { body: "ship it" }, expect.any(String));
+        expect(textarea.value).toBe("");
+    });
+
     it("leaves Shift+Enter to insert a newline", async () => {
         const { client, textarea } = await mountReply();
         const event = await keydown(textarea, { shiftKey: true });
@@ -833,6 +841,23 @@ describe("ItemDetail reply box keyboard (the chat composer's send key)", () => {
         expect(composing.defaultPrevented).toBe(false);
         expect(legacyComposing.defaultPrevented).toBe(false);
         expect(client.postTrackerComment).not.toHaveBeenCalled();
+    });
+
+    it("hands the focus back to the box once an Enter-sent reply settles", async () => {
+        const { client, textarea } = await mountReply();
+        let settle!: (outcome: { ok: boolean }) => void;
+        client.postTrackerComment.mockReturnValueOnce(new Promise<{ ok: boolean }>((resolve) => (settle = resolve)));
+        textarea.focus();
+        await keydown(textarea, {});
+        expect(textarea.disabled).toBe(true);
+        // A browser drops the focus of a field that turns disabled (to <body>); jsdom does not.
+        const activeElement = jest.spyOn(document, "activeElement", "get").mockReturnValue(document.body);
+        const focus = jest.spyOn(textarea, "focus");
+        await act(async () => settle({ ok: true }));
+        activeElement.mockRestore();
+        expect(textarea.disabled).toBe(false);
+        expect(focus).toHaveBeenCalled();
+        expect(document.activeElement).toBe(textarea);
     });
 
     it("leaves the focus where the operator moved it while the reply was posting", async () => {
