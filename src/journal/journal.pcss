@@ -1498,33 +1498,6 @@ textarea {
     scrollbar-color: var(--mj-scrollbar) transparent;
 }
 
-.mj_PinnedSummary_empty {
-    padding: 10px 14px 12px 32px;
-    color: var(--mj-color-text-tertiary);
-    font-size: 13px;
-    line-height: 19px;
-}
-
-.mj_PinnedSummary_updating .mj_PinnedSummary_item {
-    opacity: 0.5;
-}
-
-.mj_PinnedSummary_shimmer {
-    height: 2px;
-    background: linear-gradient(90deg, transparent, var(--mj-color-text-action-accent), transparent);
-    background-size: 180px 100%;
-    animation: mj-shimmer 1.1s linear infinite;
-}
-
-.mj_PinnedSummary_status {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--mj-color-text-action-accent);
-    font-size: 11px;
-    font-weight: 500;
-}
-
 .mj_PinnedSummary_more {
     margin-top: 4px;
     border: 0;
@@ -2072,9 +2045,6 @@ textarea {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .mj_PinnedSummary_shimmer {
-        animation: none;
-    }
     .mj_EventTile.mj_EventTile_focused {
         animation: none;
         background: var(--mj-color-bg-accent-tint);
@@ -3792,145 +3762,6 @@ li.mj_AttachmentChip_error {
     text-transform: uppercase;
 }
 
-/* ============================================================================
-   Surface B — Peer message (design 2026-08): migrated OFF inline styles to a
-   durable block, so continuation grouping, the priority variant, and both themes
-   are expressible. A left-aligned raised card with a coloured left edge, worker
-   mark, session name + muted `peer` tag — reads as "another AI is speaking into
-   your thread" without masquerading as your own (right, teal) or the primary
-   agent (left, no card). See GENERATIVE-SYSTEM.md · Surface B.
-   ============================================================================ */
-.mj_PeerMessage {
-    position: relative;
-    display: block;
-    box-sizing: border-box;
-    width: 100%;
-    max-width: 640px;
-    margin: 6px 0;
-    border: 1px solid var(--mj-color-border-subtle);
-    border-left: 2px solid var(--mj-color-icon-secondary);
-    border-radius: var(--mj-radius-lg);
-    background: var(--mj-color-bg-canvas-raised);
-    box-shadow: var(--mj-shadow-sm);
-    padding: 10px 12px 10px 13px;
-}
-
-.mj_PeerMessage_head {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    margin-bottom: 5px;
-}
-
-.mj_PeerMessage_mark {
-    flex: 0 0 auto;
-    width: 14px;
-    height: 14px;
-    color: var(--mj-color-text-primary);
-}
-
-.mj_PeerMessage_mark_neutral {
-    color: var(--mj-color-text-tertiary);
-}
-
-.mj_PeerMessage_name {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--mj-color-text-primary);
-    font-size: 13px;
-    font-weight: 600;
-}
-
-.mj_PeerMessage_tag {
-    flex: 0 0 auto;
-    border-radius: var(--mj-radius-pill);
-    background: var(--mj-color-bg-subtle-secondary);
-    color: var(--mj-color-text-tertiary);
-    padding: 1px 7px;
-    font-size: 10px;
-    font-weight: 500;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-}
-
-.mj_PeerMessage_time {
-    flex: 0 0 auto;
-    margin-left: auto;
-    color: var(--mj-color-text-tertiary);
-    font-size: 10px;
-}
-
-.mj_PeerMessage_body {
-    color: var(--mj-color-text-primary);
-    font-size: 14px;
-    line-height: 21px;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-}
-
-/* PEER_BODY_CAP is enforced in JS (ellipsis at the tail); this is the visual guard. */
-.mj_PeerMessage_body_clamp {
-    display: -webkit-box;
-    -webkit-line-clamp: 12;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-}
-
-/* NOTE: peer-message continuation grouping is intentionally NOT implemented here. The
-   timeline's .mj_EventTile_continuation wrapper keys on event.sender only, which for a
-   peer message is the sending DEVICE (agent:<device>), not the source session
-   (payload.from_convo). Hiding the header off that predicate would drop a different peer
-   session's name and Priority badge (false attribution / muted priority). Correct
-   from_convo-aware peer grouping is deferred to the priority-producer follow-up.
-*/
-
-.mj_PeerMessage:hover {
-    border-left-color: var(--mj-color-border-interactive-primary);
-}
-
-.mj_PeerMessage:focus-visible {
-    outline: var(--mj-focus-ring);
-    outline-offset: var(--mj-focus-offset);
-}
-
-/* Priority variant (net-new): medium loudness at rest — a 3px accent edge +
-   selected-tint surface + a PRIORITY badge. The interaction rule (never a focus steal /
-   modal / composer injection) lives in the component, not the CSS. */
-.mj_PeerMessage_priority {
-    border-left: 3px solid var(--mj-priority-accent);
-    border-color: var(--mj-accent-border);
-    background: var(--mj-state-selected);
-}
-
-[data-theme="dark"] .mj_PeerMessage_priority {
-    border-color: rgb(45 212 191 / 30%);
-}
-
-.mj_PeerMessage_priority:hover {
-    filter: brightness(1.02);
-}
-
-.mj_PeerMessage_priorityBadge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    flex: 0 0 auto;
-    border-radius: var(--mj-radius-pill);
-    background: var(--mj-color-bg-accent-emphasis);
-    color: var(--mj-color-text-on-accent);
-    padding: 1px 7px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-}
-
-[data-theme="dark"] .mj_PeerMessage_priority .mj_PeerMessage_priorityBadge {
-    color: #06231f;
-}
-
 .mj_PromptHeader {
     display: flex;
     align-items: baseline;
@@ -5016,15 +4847,6 @@ button.mj_File {
 }
 
 /* Surface A pinned-summary refresh shimmer (a 2px accent sweep under the bar). */
-@keyframes mj-shimmer {
-    0% {
-        background-position: -180px 0;
-    }
-
-    100% {
-        background-position: 180px 0;
-    }
-}
 
 @media (prefers-reduced-motion: reduce) {
     .mj_AttachmentChip_spinner,
@@ -5896,208 +5718,7 @@ button.mj_TrackerAttachmentChip_download:disabled {
     }
 }
 
-/* ─── Files pane (Matron File Explorer, Phase 1b) ──────────────────────────────────────────────
-   A new main-region pane in the established visual language. Left = breadcrumb + virtualized
-   directory list; right = inline preview. Composes the existing --cpd tokens; no new palette. */
-.mj_FilesPane {
-    display: flex;
-    flex: 1 1 0;
-    min-width: 0;
-    min-height: 0;
-    flex-direction: column;
-    width: 100%;
-    background: var(--mj-color-bg-chat-canvas, var(--mj-color-bg-canvas-default));
-}
-
-.mj_FilesPane_top {
-    display: flex;
-    align-items: center;
-    gap: var(--mj-space-2x);
-    box-sizing: border-box;
-    height: 56px;
-    padding: 0 var(--mj-space-4x);
-    border-bottom: 1px solid var(--mj-color-border-subtle);
-}
-
-.mj_FilesPane_title {
-    margin: 0;
-    font: var(--mj-font-title);
-    color: var(--mj-color-text-primary);
-}
-
-.mj_FilesPane_hidden {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--mj-space-1x);
-    margin-left: auto;
-    font: var(--mj-font-body-sm-regular);
-    color: var(--mj-color-text-secondary);
-    cursor: pointer;
-    user-select: none;
-}
-
-.mj_FilesPane_hidden input {
-    accent-color: var(--mj-color-bg-accent);
-}
-
-.mj_FilesPane_body {
-    display: flex;
-    flex: 1 1 0;
-    min-height: 0;
-}
-
-.mj_FilesPane_nav {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    width: 340px;
-    flex: 0 0 340px;
-    border-right: 1px solid var(--mj-color-border-subtle);
-}
-
-.mj_FilesBreadcrumb {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 2px var(--mj-space-1x);
-    box-sizing: border-box;
-    padding: var(--mj-space-2x) var(--mj-space-3x);
-    border-bottom: 1px solid var(--mj-color-border-subtle);
-    font: var(--mj-font-body-sm-regular);
-}
-
-.mj_FilesBreadcrumb_seg {
-    border: 0;
-    background: transparent;
-    padding: 2px 4px;
-    border-radius: var(--mj-radius-sm);
-    color: var(--mj-color-text-action-accent);
-    cursor: pointer;
-    font: inherit;
-}
-
-.mj_FilesBreadcrumb_seg:hover:not(:disabled) {
-    background: var(--mj-state-hover);
-}
-
-.mj_FilesBreadcrumb_seg:disabled {
-    color: var(--mj-color-text-primary);
-    cursor: default;
-    font-weight: 600;
-}
-
-.mj_FilesBreadcrumb_seg:focus-visible {
-    outline: var(--mj-focus-ring);
-    outline-offset: var(--mj-focus-offset-field);
-}
-
-.mj_FilesBreadcrumb_sep {
-    color: var(--mj-color-text-tertiary);
-}
-
-.mj_FilesPane_list {
-    flex: 1 1 0;
-    min-height: 0;
-}
-
-.mj_FilesList {
-    height: 100%;
-    scrollbar-color: var(--mj-scrollbar) transparent;
-}
-
-.mj_FilesList::-webkit-scrollbar {
-    width: 10px;
-}
-
-.mj_FilesList::-webkit-scrollbar-thumb {
-    background: var(--mj-scrollbar);
-    border-radius: var(--mj-radius-pill);
-    border: 3px solid transparent;
-    background-clip: padding-box;
-}
-
-.mj_FilesRow {
-    display: flex;
-    /* Flexes inside .mj_FilesRow_shell; the shell carries react-window's absolute row box. */
-    height: 100%;
-    min-width: 0;
-    flex: 1 1 auto;
-    align-items: center;
-    gap: var(--mj-space-2x);
-    box-sizing: border-box;
-    padding: 0 var(--mj-space-3x);
-    border: 0;
-    background: transparent;
-    color: var(--mj-color-text-primary);
-    text-align: left;
-    cursor: pointer;
-    font: var(--mj-font-body-sm-regular);
-}
-
-.mj_FilesRow:hover {
-    background: var(--mj-state-hover);
-}
-
-.mj_FilesRow_selected {
-    background: var(--mj-state-selected, var(--mj-color-bg-subtle-primary));
-}
-
-.mj_FilesRow:focus-visible {
-    outline: var(--mj-focus-ring);
-    outline-offset: var(--mj-focus-offset-inset);
-}
-
-.mj_FilesRow_icon {
-    display: inline-flex;
-    flex: 0 0 auto;
-    color: var(--mj-color-icon-secondary);
-}
-
-.mj_FilesRow_dir .mj_FilesRow_icon {
-    color: var(--mj-color-icon-accent-primary);
-}
-
-.mj_FilesRow_icon svg {
-    width: var(--mj-icon-md, 18px);
-    height: var(--mj-icon-md, 18px);
-}
-
-.mj_FilesRow_name {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.mj_FilesRow_dir .mj_FilesRow_name {
-    font-weight: 600;
-}
-
-.mj_FilesRow_size,
-.mj_FilesRow_mtime {
-    flex: 0 0 auto;
-    color: var(--mj-color-text-tertiary);
-    font: var(--mj-font-body-xs-regular);
-    text-align: right;
-}
-
-.mj_FilesRow_size {
-    min-width: 56px;
-}
-
-.mj_FilesRow_mtime {
-    min-width: 68px;
-}
-
-.mj_FilesRow_chevron {
-    flex: 0 0 auto;
-    width: var(--mj-icon-sm, 16px);
-    height: var(--mj-icon-sm, 16px);
-    color: var(--mj-color-text-tertiary);
-}
-
-.mj_FilesPane_truncated {
+.mj_FilesPreview_truncated {
     margin: 0;
     padding: var(--mj-space-2x) var(--mj-space-3x);
     border-top: 1px solid var(--mj-color-border-subtle);
@@ -6105,7 +5726,7 @@ button.mj_TrackerAttachmentChip_download:disabled {
     font: var(--mj-font-body-xs-regular);
 }
 
-.mj_FilesPane_preview {
+.mj_FileViewer_preview {
     flex: 1 1 0;
     min-width: 0;
     min-height: 0;
@@ -6327,116 +5948,13 @@ button.mj_TrackerAttachmentChip_download:disabled {
     outline-offset: var(--mj-focus-offset-field);
 }
 
-/* ─── Files pane writes (Phase 2) ──────────────────────────────────────────────────────────────
-   Every selector below only ever renders when the server reported the directory `writable`, so a
-   dormant (writes-off) or dry-run deploy paints the unchanged Phase-1 pane. Same --cpd tokens, plus
-   the authored --mj-critical-* destructive surface from shell.pcss. */
-
-/* Row shell: the row button + its per-entry write actions as siblings. react-window's absolute
-   row style lands on the shell, so the button stretches inside it. */
-.mj_FilesRow_shell {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-}
-
-.mj_FilesRow_actions {
-    display: flex;
-    flex: 0 0 auto;
-    align-items: center;
-    gap: 2px;
-    padding-right: var(--mj-space-2x);
-}
-
-/* Always visible (not hover-revealed): the primary client is a phone, which has no hover. */
-.mj_FilesRow_action {
-    display: inline-flex;
-    width: 28px;
-    height: var(--mj-control-h-sm);
-    align-items: center;
-    justify-content: center;
-    border: 0;
-    border-radius: var(--mj-radius-sm);
-    background: transparent;
-    color: var(--mj-color-icon-tertiary);
-    cursor: pointer;
-}
-
-.mj_FilesRow_action svg {
-    width: var(--mj-icon-sm, 16px);
-    height: var(--mj-icon-sm, 16px);
-}
-
-.mj_FilesRow_action:hover {
-    background: var(--mj-state-hover);
-    color: var(--mj-color-text-primary);
-}
-
-.mj_FilesRow_action_danger:hover {
-    background: var(--mj-critical-tint);
-    color: var(--mj-color-text-critical-primary);
-}
-
-.mj_FilesRow_action:focus-visible {
-    outline: var(--mj-focus-ring);
-    outline-offset: var(--mj-focus-offset-inset);
-}
-
-/* Directory-level actions, directly under the breadcrumb. */
-.mj_FilesToolbar {
-    display: flex;
-    align-items: center;
-    gap: var(--mj-space-2x);
-    box-sizing: border-box;
-    padding: var(--mj-space-2x) var(--mj-space-3x);
-    border-bottom: 1px solid var(--mj-color-border-subtle);
-}
-
-.mj_FilesToolbar_button svg {
-    color: var(--mj-color-icon-secondary);
-}
-
-/* The file picker is driven by the Upload button; it is never itself a visible control. */
-.mj_FilesToolbar_file {
-    display: none;
-}
-
-/* Outcome line for the last write (trash destination / already-gone / dry-run). */
-.mj_FilesPane_notice {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--mj-space-2x);
-    margin: 0;
-    padding: var(--mj-space-2x) var(--mj-space-3x);
-    border-top: 1px solid var(--mj-color-border-subtle);
-    background: var(--mj-color-bg-subtle-primary);
-    color: var(--mj-color-text-secondary);
-    font: var(--mj-font-body-xs-regular);
-    overflow-wrap: anywhere;
-}
-
-.mj_FilesPane_noticeClose {
-    display: inline-flex;
-    flex: 0 0 auto;
-    margin-left: auto;
-    border: 0;
-    background: transparent;
-    color: var(--mj-color-icon-tertiary);
-    cursor: pointer;
-}
-
-.mj_FilesPane_noticeClose svg {
-    width: 14px;
-    height: 14px;
-}
-
 /* ─── Preview header: file name + meta, and ONE action cluster (Edit · Copy · Download) ─────────
    Sticky to the top of the scrolling preview so Copy / Download stay reachable in a long file.
    The preview drops its top padding while a header is present, so the header's natural position
    IS the scrollport's top edge and `top: 0` holds in every engine (whether or not it deflates the
    sticky rectangle by the scroll container's padding). The side margins cancel the preview's
    horizontal padding so the bar spans edge to edge. */
-.mj_FilesPane_preview:has(> .mj_FilesPreview_header) {
+.mj_FileViewer_preview:has(> .mj_FilesPreview_header) {
     padding-top: 0;
 }
 
@@ -6557,137 +6075,20 @@ button.mj_TrackerAttachmentChip_download:disabled {
     text-align: right;
 }
 
-/* ─── Write confirm dialog ─────────────────────────────────────────────────────────────────────
-   Shares the shipped upload-confirm shell (.mj_UploadConfirm*); only the form fields, the target
-   line, and the destructive treatment are new. */
-.mj_FileWrite_body {
-    display: flex;
-    flex-direction: column;
-    gap: var(--mj-space-3x);
-    padding: 0 16px 14px;
-}
-
-.mj_FileWrite_field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.mj_FileWrite_label {
-    color: var(--mj-color-text-secondary);
-    font: var(--mj-font-body-sm-regular);
-}
-
-.mj_FileWrite_textarea {
-    min-height: 220px;
-    max-height: 46vh;
-    resize: vertical;
-    font: var(--mj-font-mono);
-}
-
-/* Resolved absolute destination / character count — quiet, monospaced, never truncated silently. */
-.mj_FileWrite_dest {
-    color: var(--mj-color-text-tertiary);
-    font: 400 12px/16px var(--mj-font-family-mono);
-    overflow-wrap: anywhere;
-}
-
-.mj_FileWrite_dest_bad {
-    color: var(--mj-color-text-critical-primary);
-}
-
-/* Delete target: the name in ink, the absolute path underneath so the blast radius is explicit. */
-.mj_FileWrite_target {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    margin: 0;
-}
-
-.mj_FileWrite_targetName {
-    color: var(--mj-color-text-primary);
-    font: var(--mj-font-title);
-    overflow-wrap: anywhere;
-}
-
-.mj_FileWrite_targetPath {
-    color: var(--mj-color-text-tertiary);
-    font: 400 12px/16px var(--mj-font-family-mono);
-    overflow-wrap: anywhere;
-}
-
-/* Recovery note — the ".matron-trash/ keeps it" reassurance on destructive confirms. Deliberately
-   NEUTRAL, not critical-tinted: red is reserved for the act (title, target, button), and a red
-   panel whose text says "it can still be recovered" sends two opposite signals at once. */
-.mj_FileWrite_note {
-    margin: 0;
-    padding: var(--mj-space-2x) var(--mj-space-3x);
-    border: 1px solid var(--mj-color-border-subtle);
-    border-radius: var(--mj-radius-md);
-    background: var(--mj-color-bg-subtle-primary);
-    color: var(--mj-color-text-secondary);
-    font: var(--mj-font-body-sm-regular);
-}
-
-/* The payload-pinned retry explainer: why the fields went read-only after an attempt whose outcome
-   we could not confirm. Reads as guidance, not as a second error. */
-.mj_FileWrite_bound {
-    margin: 0;
-    color: var(--mj-color-text-secondary);
-    font: var(--mj-font-body-sm-regular);
-}
-
-.mj_FileWrite_actions {
-    padding: 0 14px 14px;
-}
-
 /* Side by side, the list's breadcrumb bar and the preview's name bar share one height, so the two
    hairlines under them run as a single line across the split (they sat 12px apart). */
 @media (min-width: 761px) {
-    .mj_FilesBreadcrumb,
     .mj_FilesPreview_header {
         min-height: var(--mj-subbar-h);
         box-sizing: border-box;
-    }
-    .mj_FilesPreview_header {
         padding-top: 0;
         padding-bottom: 0;
     }
 }
 
-/* The back button only exists for the phone's pushed preview. */
-.mj_FilesPane_back {
-    display: none;
-}
-
 /* Phone (operator call T4): one screen at a time. The list is full height; tapping a file pushes
    its preview as its own screen, and the header's back button returns to the list. No empty
    "Select a file" half. */
-@media (max-width: 760px) {
-    .mj_FilesPane_body {
-        flex-direction: column;
-    }
-
-    .mj_FilesPane_nav {
-        width: 100%;
-        flex: 1 1 0;
-        border-right: 0;
-    }
-
-    .mj_FilesPane_body:not(.mj_FilesPane_body_previewing) > .mj_FilesPane_preview,
-    .mj_FilesPane_body_previewing > .mj_FilesPane_nav {
-        display: none;
-    }
-
-    .mj_FilesPane_back {
-        display: inline-flex;
-    }
-
-    /* While previewing, back takes the leading slot; close stays reachable after the title. */
-    .mj_FilesPane_top:has(.mj_FilesPane_back) .mj_FilesPane_close {
-        order: 1;
-    }
-}
 
 /* ===========================================================================================
    Redesign v6 — the turn card (docs/design/redesign-v6; was "Under the hood"). Show the work OFF renders one
@@ -7863,141 +7264,10 @@ button.mj_TrackerAttachmentChip_download:disabled {
     font: var(--mj-font-body);
 }
 
-/* ---- v6 surface C: one-tap New session — split button + options sheet ---- */
-.mj_NewSessionSplit {
-    display: flex;
-    height: var(--mj-control-h);
-    box-sizing: border-box;
-    border: 1px solid var(--mj-accent-border);
-    border-radius: var(--mj-radius-md);
-    background: var(--mj-state-selected);
-    color: var(--mj-color-text-action-accent);
-    container-type: inline-size;
-}
-
-/* The v5 button becomes the main segment: the container owns border + fill. */
-.mj_NewSessionSplit .mj_NewSessionButton.mj_NewSessionSplit_main {
-    width: auto;
-    height: auto;
-    min-width: 0;
-    flex: 1 1 auto;
-    padding: 0 10px;
-    border: 0;
-    border-radius: calc(var(--mj-radius-md) - 1px) 0 0 calc(var(--mj-radius-md) - 1px);
-    background: transparent;
-    color: inherit;
-}
-
-.mj_NewSessionSplit_more {
-    display: flex;
-    width: var(--mj-control-h);
-    flex: 0 0 var(--mj-control-h);
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border: 0;
-    border-radius: 0 calc(var(--mj-radius-md) - 1px) calc(var(--mj-radius-md) - 1px) 0;
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
-    transition: background var(--mj-dur-fast) var(--mj-ease);
-}
-
-.mj_NewSessionSplit_main:hover:not(:disabled),
-.mj_NewSessionSplit_more:hover:not(:disabled) {
-    background: var(--mj-state-active);
-}
-
-.mj_NewSessionSplit_main:focus-visible,
-.mj_NewSessionSplit_more:focus-visible {
-    position: relative;
-    z-index: 1;
-    outline: var(--mj-focus-ring);
-    outline-offset: var(--mj-focus-offset);
-}
-
-.mj_NewSessionSplit button:disabled {
-    cursor: default;
-}
-
-.mj_NewSessionSplit_sep {
-    width: 1px;
-    flex: none;
-    margin: 7px 0;
-    background: var(--mj-accent-border);
-}
-
-.mj_NewSessionSplit .mj_V6Icon {
-    width: 15px;
-    height: 15px;
-}
-
-.mj_NewSessionSplit_label {
-    flex: none;
-    white-space: nowrap;
-}
-
-/* The defaults hint is hidden below a 240px split, never truncated to "Opus · wo…"; between
-   240 and 300px the pencil yields to it. */
-.mj_NewSessionSplit_hint {
-    display: none;
-    min-width: 0;
-    overflow: hidden;
-    color: var(--mj-color-text-secondary);
-    font: var(--mj-font-meta);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 @container (min-width: 240px) {
-    .mj_NewSessionSplit_hint {
-        display: block;
-    }
-
-    .mj_NewSessionSplit_main:has(.mj_NewSessionSplit_hint) > .mj_V6Icon {
-        display: none;
-    }
 }
 
 @container (min-width: 300px) {
-    .mj_NewSessionSplit_main:has(.mj_NewSessionSplit_hint) > .mj_V6Icon {
-        display: block;
-    }
-}
-
-.mj_NewSessionSplit_disabled {
-    border-color: var(--mj-color-border-subtle);
-    background: var(--mj-color-bg-subtle-primary);
-    color: var(--mj-color-text-secondary);
-}
-
-.mj_NewSessionSplit_disabled .mj_NewSessionSplit_sep {
-    background: var(--mj-color-border-subtle);
-}
-
-.mj_NewSessionSplit_note {
-    margin: 6px 2px 0;
-    color: var(--mj-color-text-secondary);
-    font: var(--mj-font-meta);
-    overflow-wrap: anywhere;
-}
-
-.mj_NewSessionSplit_note_error {
-    color: var(--mj-color-text-critical-primary);
-}
-
-.mj_NewSessionSplit_note button {
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: var(--mj-color-text-action-accent);
-    cursor: pointer;
-    font: inherit;
-    font-weight: 500;
-}
-
-.mj_NewSessionSplit_note button:hover {
-    text-decoration: underline;
 }
 
 .mj_NewSessionSheet .mj_UploadConfirm_body {

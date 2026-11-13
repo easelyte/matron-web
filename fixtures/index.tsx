@@ -27,7 +27,7 @@ import "@fontsource/inter/latin-600.css";
 import { JournalApi, JournalApiError } from "../src/journal/api";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../src/journal/client";
 import { MatronApp } from "../src/journal/components";
-import type { FileEntry, FileListing, FileMeta, FilesApiLike } from "../src/journal/files/filesApi";
+import type { FileMeta, FilesApiLike } from "../src/journal/files/filesApi";
 import type { Routine } from "../src/journal/routines";
 import type {
     ClientState,
@@ -623,50 +623,6 @@ const events: JournalEvent[] = [
             by: "coordinator",
             convo_id: "c1",
             reason: "Both boxes work on the same deploy",
-        },
-    },
-    {
-        // Surface B — an inline message from another AI session (durable .mj_PeerMessage block).
-        seq: 39,
-        convo_id: "c1",
-        ts: T + 1180,
-        sender: "peer:design",
-        type: "peer_message",
-        payload: {
-            from_convo: "peer-design",
-            from_name: "Design Session",
-            from_kind: "claude",
-            body: "Landed the pinned-summary surface — migrating the peer block off inline styles next.",
-        },
-    },
-    {
-        // Same peer session speaking again — each peer message keeps its own full header
-        // (from_convo-aware continuation grouping is a follow-up; see journal.pcss note).
-        seq: 40,
-        convo_id: "c1",
-        ts: T + 1200,
-        sender: "peer:design",
-        type: "peer_message",
-        payload: {
-            from_convo: "peer-design",
-            from_name: "Design Session",
-            from_kind: "claude",
-            body: "Continuation line: same session, tightened top, no repeated header.",
-        },
-    },
-    {
-        // Surface B priority variant — louder marker, never a focus steal.
-        seq: 41,
-        convo_id: "c1",
-        ts: T + 1220,
-        sender: "peer:release",
-        type: "peer_message",
-        payload: {
-            from_convo: "peer-release",
-            from_name: "Release Bot",
-            from_kind: "codex",
-            body: "Priority: prod error rate crossed 1% — needs a look before the next deploy.",
-            priority: true,
         },
     },
 ];
@@ -2532,7 +2488,7 @@ if (fixtureParams.get("filelinks") === "1") {
             body: [
                 "Report is ready.",
                 "",
-                `📁 Open README.md in Files: ${window.location.origin}/#files=${encodeURIComponent("/home/user/workspace/README.md")}`,
+                `📁 Preview README.md: ${window.location.origin}/#files=${encodeURIComponent("/home/user/workspace/README.md")}`,
                 "",
                 `Diagram: [diagram.png](https://files.example.com/view?token=${token}.sig)`,
             ].join("\n"),
@@ -2708,7 +2664,7 @@ if (new URLSearchParams(window.location.search).get("context") === "large") {
     agents: ["claude", "codex"],
     defaultAgent: "claude",
 });
-// One tap never resolves in the harness, so the split's "Starting…" state can be captured.
+// Keep session creation pending in the options-sheet fixture.
 (client as unknown as { startSessionRpc: () => Promise<unknown> }).startSessionRpc = () => new Promise(() => undefined);
 if (new URLSearchParams(window.location.search).get("remember") === "1")
     localStorage.setItem(
@@ -2732,14 +2688,6 @@ const imageFile = (name: string): File =>
 (client as unknown as { mediaUrl: (id: string) => Promise<string> }).mediaUrl = async (id: string) =>
     id.startsWith("img") ? `data:image/png;base64,${PNG_8X8}` : `data:application/octet-stream;base64,`;
 
-// ── Files pane fixture (Phase 1b) ─────────────────────────────────────────────────────────────
-// A mock FilesApi returning canned data so the harness can shoot every Files state (list, each
-// preview kind, empty, error/denied, truncated) in both themes without a live backend. Mirrors
-// how mediaUrl is stubbed above.
-const FILES_ROOT = "/home/user/workspace";
-// Global write switch for the harness: `openFilesReadOnly()` flips it off to shoot the dormant
-// (MATRON_FILE_ENABLE_WRITES=0 / dry-run) deploy, where the pane must look exactly like Phase 1.
-let filesWritable = true;
 const MIME: Record<string, string> = {
     md: "text/markdown",
     ts: "text/plain",
@@ -2755,22 +2703,6 @@ const TEXT_EXT = new Set(["md", "ts", "txt", "css"]);
 const extOf = (name: string): string => name.slice(name.lastIndexOf(".") + 1).toLowerCase();
 const MINIMAL_PDF =
     "data:application/pdf;base64,JVBERi0xLjQKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvUGFyZW50IDIgMCBSL01lZGlhQm94WzAgMCAyMDAgMjAwXT4+CmVuZG9iagp4cmVmCjAgNAowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCnRyYWlsZXIKPDwvU2l6ZSA0L1Jvb3QgMSAwIFI+PgpzdGFydHhyZWYKMTkwCiUlRU9GCg==";
-const ROOT_ENTRIES: FileEntry[] = [
-    { name: "src", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
-    { name: "docs", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
-    { name: "big-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
-    { name: "empty-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
-    { name: "denied-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
-    { name: "readonly-dir", kind: "dir", size: 0, mtime: T * 1000, mime: "" },
-    { name: ".gitignore", kind: "file", size: 84, mtime: T * 1000, mime: "text/plain" },
-    { name: "README.md", kind: "file", size: 4310, mtime: T * 1000 - 3_600_000, mime: "text/markdown" },
-    { name: "client.ts", kind: "file", size: 10_240, mtime: T * 1000 - 86_400_000, mime: "text/plain" },
-    { name: "theme.css", kind: "file", size: 2048, mtime: T * 1000 - 200_000_000, mime: "text/css" },
-    { name: "diagram.png", kind: "file", size: 18_224, mtime: T * 1000 - 5_000_000, mime: "image/png" },
-    { name: "report.pdf", kind: "file", size: 240_512, mtime: T * 1000 - 9_000_000, mime: "application/pdf" },
-    { name: "notes.txt", kind: "file", size: 512, mtime: T * 1000 - 600_000, mime: "text/plain" },
-    { name: "archive.zip", kind: "file", size: 5_242_880, mtime: T * 1000 - 400_000_000, mime: "application/zip" },
-];
 const CODE_SAMPLE = [
     "export function greet(name: string): string {",
     "    // A short sample so CodePreview shows real highlighting.",
@@ -2789,48 +2721,19 @@ const README_SAMPLE = [
     "- Path-jailed server-side; secrets never served",
     "",
     "```bash",
-    "curl -s /journal/files/list?path=/home/user/workspace",
+    "cat README.md",
     "```",
 ].join("\n");
 
 const PDF_BYTES = Uint8Array.from(atob(MINIMAL_PDF.split(",")[1]), (c) => c.charCodeAt(0));
 const mockFilesApi: FilesApiLike = {
-    listDir: async (requested: string | undefined, all?: boolean): Promise<FileListing> => {
-        // No path = the server's default folder (the mock's only read root).
-        const path = requested ?? FILES_ROOT;
-        if (path.endsWith("denied-dir")) throw new JournalApiError("denied", 403, "forbidden");
-        // `root` per the F4 contract: the read-root containing `path`. Breadcrumbs never go above it.
-        // `writable` is the Phase-2 capability flag: true everywhere EXCEPT read-only-dir, which
-        // stands in for a directory outside MATRON_FILE_WRITE_ROOTS (or a writes-off / dry-run
-        // server) so the harness can shoot the "no write affordances at all" state.
-        const base = {
-            path,
-            root: FILES_ROOT,
-            parent: path === FILES_ROOT ? null : FILES_ROOT,
-            writable: filesWritable && !path.endsWith("readonly-dir"),
-        };
-        if (path.endsWith("empty-dir")) return { ...base, entries: [], truncated: false };
-        if (path.endsWith("big-dir")) {
-            const entries: FileEntry[] = Array.from({ length: 2000 }, (_unused, index) => ({
-                name: `file-${String(index).padStart(4, "0")}.log`,
-                kind: "file" as const,
-                size: 1024 + index,
-                mtime: T * 1000 - index * 1000,
-                mime: "text/plain",
-            }));
-            return { ...base, entries, truncated: true };
-        }
-        const entries = all ? ROOT_ENTRIES : ROOT_ENTRIES.filter((entry) => !entry.name.startsWith("."));
-        return { ...base, entries, truncated: false };
-    },
     fileMeta: async (path: string): Promise<FileMeta> => {
         const name = path.slice(path.lastIndexOf("/") + 1);
         const ext = extOf(name);
-        const match = ROOT_ENTRIES.find((entry) => entry.name === name);
         return {
             kind: "file",
-            size: match?.size ?? 1024,
-            mtime: match?.mtime ?? T * 1000,
+            size: 1024,
+            mtime: T * 1000,
             mime: MIME[ext] ?? "application/octet-stream",
             isText: TEXT_EXT.has(ext),
         };
@@ -2842,8 +2745,7 @@ const mockFilesApi: FilesApiLike = {
         return "Plain text notes.\nSecond line.\n";
     },
     fileBytes: async (path: string): Promise<ArrayBuffer> => {
-        // The PDF preview wants real PDF bytes; the inline EDITOR reads through here too (strict
-        // UTF-8 decode), so a text path must return the same sample its preview shows.
+        // The PDF preview wants real PDF bytes; text previews use the text sample.
         if (TEXT_EXT.has(extOf(path))) {
             return new TextEncoder().encode(await mockFilesApi.textContent(path)).buffer as ArrayBuffer;
         }
@@ -2858,23 +2760,6 @@ const mockFilesApi: FilesApiLike = {
         return "data:application/octet-stream;base64,";
     },
     download: async (): Promise<void> => {},
-    // Phase-2 writes. The harness never touches a real filesystem: each write resolves with the
-    // shape the server contract promises, so the confirm dialogs, the post-write refresh, and the
-    // outcome notice can all be shot without a backend.
-    upload: async (file: File, opts: { targetDir: string; name?: string }) => ({
-        path: `${opts.targetDir}/${opts.name ?? file.name}`,
-        bytes: file.size,
-        dryRun: false,
-    }),
-    mkdir: async (path: string) => ({ path, dryRun: false }),
-    move: async (from: string, to: string) => ({ from, to, dryRun: false }),
-    writeFile: async (path: string, content: string) => ({ path, bytes: content.length, dryRun: false }),
-    deleteEntry: async (path: string) => ({
-        path,
-        trashed: `${FILES_ROOT}/.matron-trash/20260821T101500Z-7f3a-${path.slice(path.lastIndexOf("/") + 1)}`,
-        alreadyMissing: false,
-        dryRun: false,
-    }),
     dispose: (): void => {},
 };
 (client as unknown as { filesApi: () => FilesApiLike }).filesApi = () => mockFilesApi;
@@ -2884,7 +2769,7 @@ const patchState = (client as unknown as { patch: (update: Partial<ClientState>)
 // Canned missions / inbox items / a mission detail / an item detail so the harness can shoot the
 // four tracker surfaces (missions list, mission detail, inbox, item detail) in both themes without
 // a live server. The fake client has no `api`, so the pane's load* effects no-op and this
-// pre-patched store data is what renders (mirrors how the Files pane is driven above).
+// pre-patched store data is what renders (like the file preview fixture above).
 const H = 3_600_000;
 const trackerMissions: Mission[] = [
     {
@@ -3175,50 +3060,27 @@ if (fixtureParams.get("boxes") === "1") {
 
 (window as unknown as { __matron: unknown }).__matron = {
     client,
-    openFiles: (path: string = FILES_ROOT) => {
-        filesWritable = true;
-        patchState({ filesView: { open: true, path } });
-    },
-    // The dormant/dry-run server: `writable:false` everywhere, so zero write affordances render.
-    openFilesReadOnly: (path: string = FILES_ROOT) => {
-        filesWritable = false;
-        patchState({ filesView: { open: true, path } });
-    },
-    // Stage a Files-pane upload without a real file picker (Playwright can't drive the native one).
-    stageFileUpload: () => {
-        const input = document.querySelector(".mj_FilesToolbar_file") as HTMLInputElement | null;
-        if (!input) return;
-        const transfer = new DataTransfer();
-        transfer.items.add(new File([new Uint8Array(2048)], "contact-sheet.png", { type: "image/png" }));
-        input.files = transfer.files;
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    closeFiles: () => patchState({ filesView: undefined }),
     // Tracker: the four surfaces. The pane's load* effects no-op (no api), so pre-patch the store.
     openTrackerMissions: () =>
         patchState({
-            filesView: undefined,
             trackerView: { open: true, view: "missions" },
             missions: trackerMissions,
             inboxItems: trackerInboxItems,
         }),
     openTrackerMission: () =>
         patchState({
-            filesView: undefined,
             trackerView: { open: true, view: "missions", selectedMissionId: 5 },
             missions: trackerMissions,
             trackerMission: trackerMissionDetail,
         }),
     openTrackerInbox: () =>
         patchState({
-            filesView: undefined,
             trackerView: { open: true, view: "inbox" },
             missions: trackerMissions,
             inboxItems: trackerInboxItems,
         }),
     openTrackerItem: () =>
         patchState({
-            filesView: undefined,
             trackerView: { open: true, view: "inbox", selectedItemId: 12 },
             inboxItems: trackerInboxItems,
             trackerItem: trackerItemDetail,
@@ -3226,7 +3088,7 @@ if (fixtureParams.get("boxes") === "1") {
     closeTracker: () => patchState({ trackerView: undefined }),
     openOps: (mode: OpsFixtureMode = "ok") => {
         opsMode = mode;
-        patchState({ filesView: undefined, trackerView: undefined, opsView: { open: true } });
+        patchState({ trackerView: undefined, opsView: { open: true } });
     },
     stageImage: (name = "screenshot.png") => client.stageFiles([imageFile(name)]),
     stageDoc: () => client.stageFiles([runbook()]),
@@ -3269,8 +3131,6 @@ if (fixtureParams.get("boxes") === "1") {
         }),
     // Drive the pinned summary by rewriting the selected conversation's stored
     // digest, which is exactly how the real feed reaches it (snapshot row / convo_meta).
-    // "none" is the renders-nothing case; the empty-state box and the "updating" shimmer have
-    // no wire representation by design and are covered by unit tests instead.
     setSummary: (kind: "full" | "short" | "none" = "full") =>
         patchState({
             conversations: conversations.map((conversation) =>

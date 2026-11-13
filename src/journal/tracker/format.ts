@@ -303,7 +303,7 @@ export function milestoneKindLabel(kind: TrackerMilestoneKind): string {
 
 /**
  * Relative age for a timestamp ("just now", "5m ago", "3d ago", then a short date). Epoch ms;
- * `now` injectable for tests. Null/0 → "".
+ * `now` injectable for tests. Null/0/non-finite → "".
  */
 export function formatRelativeTime(ms: number | null | undefined, now: number = Date.now()): string {
     if (ms == null || !Number.isFinite(ms) || ms <= 0) return "";

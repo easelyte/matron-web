@@ -193,14 +193,6 @@ function turn6(): JournalEvent[] {
     ];
 }
 
-const PEER = (): JournalEvent =>
-    at(1260, "peer:triage", "peer_message", {
-        from_convo: "peer-triage",
-        from_name: "test-triage",
-        from_kind: "codex",
-        body: "3 flaky tests on main are quarantined; the other 7 fail for real. Details in item 298.",
-    });
-
 function turn210(): JournalEvent[] {
     const events: JournalEvent[] = [
         op(3000, "Move every caller onto the new JournalClient and delete the old RPC helpers."),
@@ -269,7 +261,7 @@ export function v6Fixture(scenario: V6Scenario): V6FixtureState {
         case "full":
         default:
             return {
-                events: [...turn1(), ...turn2(false), ...turn3(false), ...turn4(), PEER(), ...turn5(), ...turn6()].sort(
+                events: [...turn1(), ...turn2(false), ...turn3(false), ...turn4(), ...turn5(), ...turn6()].sort(
                     (left, right) => left.seq - right.seq,
                 ),
                 ...idle,

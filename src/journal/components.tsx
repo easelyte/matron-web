@@ -149,7 +149,6 @@ import {
     ProjectsIcon,
     PromptGlyph,
 } from "./icons";
-import { FilesPane } from "./files/FilesPane";
 import { SearchField } from "./search-field";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
 import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
@@ -164,11 +163,6 @@ import { observeSeenRows } from "./seen-tracker";
 import { preloadDeferredUi } from "./lazy";
 import { createLongPressController, type LongPressController } from "./longPress";
 
-// True inside the packaged Electron desktop app (its preload injects window.electron). The Files
-// pane is web/iOS-PWA only for Phase 1 — see FilesApi header + the gated entry button (F2).
-function isElectronRuntime(): boolean {
-    return typeof window !== "undefined" && Boolean((window as Window & { electron?: unknown }).electron);
-}
 import { MarkdownBody, markdownToPlainText } from "./markdown";
 import { snippetText } from "./plain-text";
 import { ConnectionBanner, mainSurfaceOpen } from "./mobile-shell";
@@ -284,15 +278,12 @@ import {
     type MediaDims,
     mediaFileName,
     parseMediaDims,
-    PEER_BODY_CAP,
-    PEER_NAME_CAP,
     type JournalEvent,
     type PendingMessage,
     type NewSessionOffer,
     type StartOption,
     type StartSessionPicks,
     rendersAsTopLevelRow,
-    sanitizePeerText,
     isSubChat,
     type SessionStatus,
     spawnOutcomeKind,
@@ -1989,9 +1980,7 @@ function ConversationListView({
         ? NAV_KEY_FOR_VIEW[state.trackerView.view ?? "inbox"]
         : state.opsView?.open
           ? "ops"
-          : state.filesView?.open && !isElectronRuntime()
-            ? "files"
-            : "conversations";
+          : "conversations";
     const unreadTotal = countUnread(state.conversations, state.archivedIds, state.unreadOverrideIds);
     // The For you badge: open items awaiting the user, the inbox's own "Needs you" filter.
     const needsYouTotal = (state.inboxItems ?? []).filter(needsUser).length;
@@ -2177,12 +2166,11 @@ function ConversationListView({
 
     return (
         <div
-            className={`mj_Sidebar_outerWrapper ${mainSurfaceOpen(state, !isElectronRuntime()) ? "mj_Sidebar_mobileHidden" : ""}`}
+            className={`mj_Sidebar_outerWrapper ${mainSurfaceOpen(state) ? "mj_Sidebar_mobileHidden" : ""}`}
             style={{ "--mj-left-panel-width": `${width}px` } as React.CSSProperties}
         >
             <NavRail
                 active={navActive}
-                filesAvailable={!isElectronRuntime()}
                 counts={{ projects: projectsNeedsYouTotal, conversations: unreadTotal, decisions: needsYouTotal }}
                 onSelect={(key) => {
                     setAccountOpen(false);
@@ -2190,11 +2178,8 @@ function ConversationListView({
                     if (key === "conversations") {
                         client.closeTrackerView();
                         client.closeOpsView();
-                        client.closeFilesView();
                     } else if (key === "ops") {
                         if (!state.opsView?.open) client.openOpsView();
-                    } else if (key === "files") {
-                        if (!state.filesView?.open) client.openFilesView();
                     }
                     // A rail tap always lands on the section's home, not a page left open inside it.
                     else
@@ -5551,11 +5536,7 @@ function AuthenticatedMedia({
         const figureStyle = { "--mj-image-frame-max-height": `${IMAGE_FRAME_MAX_HEIGHT_PX}px` } as React.CSSProperties;
         return (
             <figure className="mj_Image" style={figureStyle}>
-                <div
-                    className={`mj_ImageFrame${dims ? " mj_ImageFrame_sized" : ""}`}
-                    style={frameStyle}
-                    data-dims={dims ? `${dims.width}x${dims.height}` : undefined}
-                >
+                <div className={`mj_ImageFrame${dims ? " mj_ImageFrame_sized" : ""}`} style={frameStyle}>
                     {url ? (
                         <img
                             src={url}
@@ -5925,44 +5906,6 @@ function isSuppressedTrackerEvent(event: JournalEvent): boolean {
     return false;
 }
 
-function PeerMessage({ event }: { event: JournalEvent }): React.ReactElement {
-    const rawFromKind = asString(event.payload.from_kind);
-    const fromKind = rawFromKind === "claude" || rawFromKind === "codex" ? rawFromKind : null;
-    const fromName = sanitizePeerText(event.payload.from_name, PEER_NAME_CAP) || "peer agent";
-    const body = sanitizePeerText(event.payload.body, PEER_BODY_CAP);
-    // Priority is a net-new, not-yet-produced payload key — read defensively so
-    // the louder variant lights up the moment a producer sets it, and stays dormant until then.
-    const priority = event.payload.priority === true || asString(event.payload.priority) === "true";
-    const mark = markForKind(fromKind, "mj_PeerMessage_mark");
-
-    // Surface B (design 2026-08): a durable left-edged card — worker mark, session name, and a
-    // muted `peer` tag — reads as "another AI is speaking into your thread" without masquerading
-    // as your own (right, teal) or the primary agent (left, no card). The full header (name +
-    // priority badge) always renders; from_convo-aware continuation grouping is a follow-up (see
-    // journal.pcss note — the timeline's sender-only continuation predicate would misattribute).
-    return (
-        <div
-            className={`mj_PeerMessage${priority ? " mj_PeerMessage_priority" : ""}`}
-            aria-label={fromKind === null ? `Peer agent from ${fromName}` : `Peer message from ${fromName}`}
-        >
-            <div className="mj_PeerMessage_head">
-                {mark ?? <InactiveIcon className="mj_PeerMessage_mark mj_PeerMessage_mark_neutral" />}
-                <span className="mj_PeerMessage_name">
-                    <bdi>{fromName}</bdi>
-                </span>
-                {priority ? (
-                    <span className="mj_PeerMessage_priorityBadge">Priority</span>
-                ) : (
-                    <span className="mj_PeerMessage_tag">{fromKind === null ? "peer agent" : "peer"}</span>
-                )}
-            </div>
-            <div className="mj_PeerMessage_body">
-                <bdi>{body}</bdi>
-            </div>
-        </div>
-    );
-}
-
 const EMPTY_SPAWN_OUTCOMES: ReadonlyMap<string, EventPayload> = new Map();
 const EMPTY_AGENT_CHAT_RESOLUTIONS: ReadonlyMap<string, AgentChatResolution> = new Map();
 const EMPTY_COORDINATOR_DECISIONS: ReadonlyMap<string, CoordinatorDecision> = new Map();
@@ -6072,8 +6015,6 @@ export function EventContent({
             return <MilestoneCard client={client} event={event} />;
         case "mission":
             return <MissionNotice client={client} event={event} />;
-        case "peer_message":
-            return <PeerMessage event={event} />;
         case "memory":
             return <MemoryNotice client={client} event={event} />;
         case "coordinator":
@@ -6289,24 +6230,15 @@ function EventRow({
     searchHighlighted?: boolean;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
-    const peer = event.type === "peer_message";
     // A bridge notice row is its own one-line row: no sender header, no grouping, never an own bubble.
     const noticeRow = isSystemNoticeEvent(event);
-    const own = !peer && !noticeRow && event.sender.startsWith("user:");
+    const own = !noticeRow && event.sender.startsWith("user:");
     const liRef = useRef<HTMLLIElement>(null);
     const handlers = rowHandlers(event, () => liRef.current);
     return (
         <li
             ref={liRef}
-            className={`mj_EventTile${peer ? " mj_EventTile_peer" : ""}${continuation ? " mj_EventTile_continuation" : ""}${lastInSection ? " mj_EventTile_lastInSection" : ""}${noticeRow ? " mj_EventTile_systemNotice" : ""}${searchHighlighted ? " mj_EventRow_searchHighlighted" : ""}`}
-            style={
-                peer
-                    ? {
-                          borderInlineStart: "3px solid var(--cpd-color-text-action-accent)",
-                          paddingInlineStart: "var(--cpd-space-3x)",
-                      }
-                    : undefined
-            }
+            className={`mj_EventTile${continuation ? " mj_EventTile_continuation" : ""}${lastInSection ? " mj_EventTile_lastInSection" : ""}${noticeRow ? " mj_EventTile_systemNotice" : ""}${searchHighlighted ? " mj_EventRow_searchHighlighted" : ""}`}
             tabIndex={-1}
             aria-live="polite"
             aria-atomic="true"
@@ -7494,7 +7426,7 @@ function Timeline({
     const lastTurnHasCard =
         lastTurn !== undefined && (stepsOf(lastTurn.items).length > 0 || Boolean(lastTurnLive.running));
     const showActivityIndicator = showTheWork || !lastTurnHasCard;
-    // With Show the work OFF the list is one row per operator turn (plus peer messages, notices and
+    // With Show the work OFF the list is one row per operator turn (plus notices and
     // pending sends) in place of one row per event; the windowing below treats both the same.
     const displayRows = useMemo((): TimelineRow[] => {
         const conversation = state.selectedConversationId ?? "";
@@ -7528,8 +7460,8 @@ function Timeline({
         };
         const sameSenderAs = (candidate: ThreadRow | undefined, row: ThreadRow): boolean =>
             candidate !== undefined &&
-            (candidate.kind === "operator" || candidate.kind === "peer") &&
-            (row.kind === "operator" || row.kind === "peer") &&
+            candidate.kind === "operator" &&
+            row.kind === "operator" &&
             candidate.event.sender === row.event.sender;
         turnRows.forEach((row, index) => {
             const ts = rowTs(row)!;
@@ -9143,15 +9075,11 @@ export function SubagentStrip({
  * the call site in SignedInApp parses it via `conversationSummary()`. A conversation with
  * no digest passes null and this renders nothing at all.
  *
- * Reachable-state note: the app only ever passes null or a "ready" summary with at least
- * one bullet. The empty-state box and the "updating" shimmer have no data source on the
- * wire (design §5.4) and are exercised by unit tests only.
  */
 export type ConversationSummary = {
     /** Condensed bullet lines (each rendered with a • marker). Server-clamped to 20. */
     bullets: string[];
-    /** "ready" shows the list; "updating" dims it under a refresh shimmer. */
-    state?: "ready" | "updating";
+    state?: "ready";
     /** Epoch-ms of the last server refresh. The relative label is derived client-side
         (repo wire convention: timestamps are epoch-ms, relative text is recomputed on the
         client — a server-formatted "Nm ago" string would freeze when the feed does not
@@ -9176,12 +9104,10 @@ export function PinnedSummary({ summary }: { summary: ConversationSummary | null
     useEffect(() => {
         setExpanded(new Set<number>());
     }, [bulletsKey]);
-    if (!summary) {
+    if (!summary || summary.bullets.length === 0) {
         return null;
     }
     const bullets = summary.bullets;
-    const isEmpty = bullets.length === 0;
-    const isUpdating = summary.state === "updating";
     const lead = bullets[0] ?? "";
     const toggleExpanded = (index: number): void => {
         setExpanded((prev) => {
@@ -9210,43 +9136,32 @@ export function PinnedSummary({ summary }: { summary: ConversationSummary | null
             </button>
             {!collapsed && (
                 <div className="mj_PinnedSummary_body" id={bodyId} aria-live="polite">
-                    {isEmpty ? (
-                        <div className="mj_PinnedSummary_empty">
-                            No summary yet. It appears once the conversation has enough to digest.
-                        </div>
-                    ) : (
-                        <>
-                            {isUpdating && <div className="mj_PinnedSummary_shimmer" aria-hidden />}
-                            <div className={`mj_PinnedSummary_scroll${isUpdating ? " mj_PinnedSummary_updating" : ""}`}>
-                                <ul className="mj_PinnedSummary_list">
-                                    {bullets.map((text, index) => {
-                                        const clampable = text.length > PINNED_SUMMARY_CLAMP_CHARS;
-                                        const open = expanded.has(index);
-                                        return (
-                                            <li key={index} className="mj_PinnedSummary_item">
-                                                <span
-                                                    className={
-                                                        clampable && !open ? "mj_PinnedSummary_item_clamp" : undefined
-                                                    }
-                                                >
-                                                    {text}
-                                                </span>
-                                                {clampable && (
-                                                    <button
-                                                        type="button"
-                                                        className="mj_PinnedSummary_more"
-                                                        onClick={() => toggleExpanded(index)}
-                                                    >
-                                                        {open ? "Show less" : "Expand"}
-                                                    </button>
-                                                )}
-                                            </li>
-                                        );
-                                    })}
-                                </ul>
-                            </div>
-                        </>
-                    )}
+                    <div className="mj_PinnedSummary_scroll">
+                        <ul className="mj_PinnedSummary_list">
+                            {bullets.map((text, index) => {
+                                const clampable = text.length > PINNED_SUMMARY_CLAMP_CHARS;
+                                const open = expanded.has(index);
+                                return (
+                                    <li key={index} className="mj_PinnedSummary_item">
+                                        <span
+                                            className={clampable && !open ? "mj_PinnedSummary_item_clamp" : undefined}
+                                        >
+                                            {text}
+                                        </span>
+                                        {clampable && (
+                                            <button
+                                                type="button"
+                                                className="mj_PinnedSummary_more"
+                                                onClick={() => toggleExpanded(index)}
+                                            >
+                                                {open ? "Show less" : "Expand"}
+                                            </button>
+                                        )}
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    </div>
                 </div>
             )}
         </div>
@@ -9372,10 +9287,21 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     // Every tracker link in markdown shows what its number points at (tracker-link-title.tsx).
     const trackerLinkInfo = useCallback<TrackerLinkInfo>((user, num) => client.trackerLinkInfo(user, num), [client]);
     const closeMarkdownPreview = markdownPreview.close;
+    // Compare with the initial view so a file deep link opened on mount stays open.
+    const previewView = [
+        state.selectedConversationId,
+        state.trackerView?.open,
+        state.trackerView?.view,
+        state.trackerView?.selectedItemId,
+    ];
+    const previousPreviewView = useRef(previewView);
     // It belongs to the view it was opened from: moving to another conversation or item closes it.
     useEffect(() => {
-        closeMarkdownPreview();
-        closeFileViewer();
+        if (previewView.some((value, index) => value !== previousPreviewView.current[index])) {
+            closeMarkdownPreview();
+            closeFileViewer();
+        }
+        previousPreviewView.current = previewView;
     }, [
         state.selectedConversationId,
         state.trackerView?.open,
@@ -9478,14 +9404,12 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
                             ref={chatAreaRef}
                             // Covered by the subagent pane, the chat stays mounted but out of reach.
                             inert={sidePane?.kind === "subchat" && paneCoversChat(chatArea)}
-                            className={`mj_ChatView_wrapper ${mainSurfaceOpen(state, !isElectronRuntime()) ? "" : "mj_Chat_mobileHidden"}${voiceNoteBarVisible ? " mj_ChatView_wrapper_voiceNote" : ""}`}
+                            className={`mj_ChatView_wrapper ${mainSurfaceOpen(state) ? "" : "mj_Chat_mobileHidden"}${voiceNoteBarVisible ? " mj_ChatView_wrapper_voiceNote" : ""}`}
                         >
                             {state.trackerView?.open ? (
                                 <TrackerPane client={client} state={state} />
                             ) : state.opsView?.open ? (
                                 <OpsPane client={client} state={state} />
-                            ) : state.filesView?.open && !isElectronRuntime() ? (
-                                <FilesPane client={client} state={state} />
                             ) : state.selectedConversationId ? (
                                 <div
                                     className={`mj_ChatView${dragActive ? " mj_ChatView_dragActive" : ""}`}

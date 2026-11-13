@@ -132,16 +132,6 @@ describe("mobile region visibility", () => {
         expect(main(container).classList.contains("mj_Chat_mobileHidden")).toBe(false);
     });
 
-    it("hides the sidebar when Files opens from the conversation list", async () => {
-        const client = signedInClient();
-        const container = await render(client);
-
-        await patch(client, { filesView: { open: true, path: "/root" } });
-
-        expect(sidebar(container).classList.contains("mj_Sidebar_mobileHidden")).toBe(true);
-        expect(main(container).classList.contains("mj_Chat_mobileHidden")).toBe(false);
-    });
-
     it("returns to the list when the tracker closes with no conversation selected", async () => {
         const client = signedInClient({ trackerView: { open: true, view: "inbox" } });
         const container = await render(client);

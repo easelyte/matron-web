@@ -129,14 +129,13 @@ describe("assembleTurns", () => {
         expect(second.answer.map((event) => event.payload.body)).toEqual(["Any time."]);
     });
 
-    it("keeps break-throughs, notices, errors and peers out of the card", () => {
+    it("keeps break-throughs, notices, errors out of the card", () => {
         const events = [
             user("ship it"),
             cmd("pnpm vitest run", 1),
             ev("permission_request", { question: "Allow: push?" }),
             ev("image", { blob_ref: "img1" }),
             say("🗜️ Context compacted — conversation history was summarized to free up space"),
-            ev("peer_message", { body: "flaky tests quarantined" }, { sender: "peer:triage" }),
             say("[Session ended (exit 1)]"),
         ];
         const [turn] = assembleTurns(events);
@@ -144,9 +143,8 @@ describe("assembleTurns", () => {
         expect(turn.breaks.map((event) => event.type)).toEqual(["permission_request", "image"]);
         expect(turn.notices).toHaveLength(1);
         expect(turn.errors.map((event) => event.payload.body)).toEqual(["[Session ended (exit 1)]"]);
-        expect(turn.peers).toHaveLength(1);
         expect(turn.answer).toEqual([]);
-        expect(threadRows([turn]).map((row) => row.kind)).toEqual(["operator", "turn", "notice", "peer"]);
+        expect(threadRows([turn]).map((row) => row.kind)).toEqual(["operator", "turn", "notice"]);
     });
 
     it("keeps an answer to the agent's question inside the same turn", () => {

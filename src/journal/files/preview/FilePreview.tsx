@@ -5,9 +5,10 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import React from "react";
+import React, { useCallback, useEffect } from "react";
 
 import type { FileMeta, FilesApiLike } from "../filesApi";
+import { INLINE_TEXT_MAX } from "../limits";
 import { pickPreviewKind } from "../previewKind";
 import { CodeView } from "./CodePreview";
 import { GenericPreview } from "./GenericPreview";
@@ -28,26 +29,36 @@ import { type DownloadState, useDownload } from "./useDownload";
 // Every state — meta loading, meta error, and each resolved kind — renders the SAME header
 // (PreviewToolbar) above it: file name + meta on the left, one action cluster on the right. There
 // is exactly one download control per file (a READ capability, offered for every type and never
-// gated on `writable`); Edit appears only when the pane passes `onEdit` (server-writable, editable
-// text); Copy appears only for text kinds (markdown / code / plain text).
+// gated on writes); Copy appears only for text kinds (markdown / code / plain text).
 export function FilePreview({
     api,
     path,
     filename,
-    onEdit,
+    onUnsupported,
 }: {
     api: FilesApiLike;
     path: string;
     filename: string;
-    onEdit?: () => void;
+    onUnsupported?: (meta?: FileMeta) => void;
 }): React.ReactElement {
     const meta = useAsyncResource((signal) => api.fileMeta(path, signal), `meta:${path}`);
     // ONE download controller for the whole preview lifetime (see PreviewToolbar's `download`).
     const download = useDownload(api, path, filename);
+    useEffect(() => {
+        if (meta.status === "error") onUnsupported?.();
+        if (
+            meta.status === "loaded" &&
+            meta.data &&
+            (meta.data.kind !== "file" || pickPreviewKind({ ...meta.data, filename }) === "generic")
+        ) {
+            onUnsupported?.(meta.data);
+        }
+    }, [meta.status, meta.data, filename, onUnsupported]);
+    const onUnavailable = useCallback(() => onUnsupported?.(meta.data), [onUnsupported, meta.data]);
     if (meta.status !== "loaded") {
         return (
             <>
-                <PreviewToolbar api={api} download={download} filename={filename} onEdit={onEdit} />
+                <PreviewToolbar api={api} download={download} filename={filename} />
                 {meta.status === "loading" ? (
                     <PreviewStatus variant="loading">Loading…</PreviewStatus>
                 ) : (
@@ -60,10 +71,10 @@ export function FilePreview({
     }
 
     const resolved = meta.data!;
-    const props: RendererProps = { api, path, filename, meta: resolved };
+    const props: RendererProps = { api, path, filename, meta: resolved, onUnavailable };
     const kind = pickPreviewKind({ mime: resolved.mime, isText: resolved.isText, filename });
     if (kind === "markdown" || kind === "code")
-        return <TextFilePreview {...props} download={download} markdown={kind === "markdown"} onEdit={onEdit} />;
+        return <TextFilePreview {...props} download={download} markdown={kind === "markdown"} />;
 
     const renderer = ((): React.ReactElement => {
         switch (kind) {
@@ -80,7 +91,7 @@ export function FilePreview({
     })();
     return (
         <>
-            <PreviewToolbar api={api} download={download} filename={filename} meta={resolved} onEdit={onEdit} />
+            <PreviewToolbar api={api} download={download} filename={filename} meta={resolved} />
             {renderer}
         </>
     );
@@ -96,14 +107,16 @@ function TextFilePreview({
     meta,
     download,
     markdown,
-    onEdit,
+    onUnavailable,
 }: RendererProps & {
     meta: FileMeta;
     download: DownloadState;
     markdown: boolean;
-    onEdit?: () => void;
 }): React.ReactElement {
     const text = useAsyncResource((signal) => api.textContent(path, signal), `text:${path}:${meta.mtime}`);
+    useEffect(() => {
+        if (text.status === "error" || (text.data?.length ?? 0) > INLINE_TEXT_MAX) onUnavailable?.();
+    }, [text.status, text.data, onUnavailable]);
     return (
         <>
             <PreviewToolbar
@@ -111,7 +124,7 @@ function TextFilePreview({
                 download={download}
                 filename={filename}
                 meta={meta}
-                onEdit={onEdit}
+
                 copySource={{ status: text.status, text: text.data, errorStatus: text.errorStatus }}
             />
             <TextResourceView text={text}>

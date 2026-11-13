@@ -15,4 +15,5 @@ export interface RendererProps {
     /** Display name (basename) — used for language detection, download filename, labels. */
     filename: string;
     meta: FileMeta;
+    onUnavailable?: () => void;
 }

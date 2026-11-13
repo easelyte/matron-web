@@ -49,6 +49,7 @@ export function viewerFilePath(href: string | undefined): string | null {
 export interface FileViewerTarget {
     path: string;
     opener: HTMLElement;
+    href?: string;
 }
 
 export const FILE_VIEWER_OPEN = "matron:file-viewer-open";
@@ -68,6 +69,8 @@ export function handleViewerLinkClick(event: ReactMouseEvent<HTMLAnchorElement>,
         return;
     event.preventDefault();
     window.dispatchEvent(
-        new CustomEvent<FileViewerTarget>(FILE_VIEWER_OPEN, { detail: { path, opener: event.currentTarget } }),
+        new CustomEvent<FileViewerTarget>(FILE_VIEWER_OPEN, {
+            detail: { path, opener: event.currentTarget, href: event.currentTarget.href },
+        }),
     );
 }
