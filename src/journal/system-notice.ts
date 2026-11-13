@@ -52,5 +52,16 @@ export function isSystemNoticeEvent(event: JournalEvent): boolean {
  * it opens a new section with its own header.
  */
 export function sameTimelineSection(a: JournalEvent, b: JournalEvent): boolean {
-    return a.sender === b.sender && !isSystemNoticeEvent(a) && !isSystemNoticeEvent(b);
+    return (
+        a.sender === b.sender &&
+        stampedSession(a) === stampedSession(b) &&
+        !isSystemNoticeEvent(a) &&
+        !isSystemNoticeEvent(b)
+    );
+}
+
+/** The session a bridge stamped on a room message (`payload.from_session.convo_id`), if any. */
+export function stampedSession(event: JournalEvent): string | undefined {
+    const id = (event.payload?.from_session as { convo_id?: unknown } | undefined)?.convo_id;
+    return typeof id === "string" && id ? id : undefined;
 }

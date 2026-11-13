@@ -27,6 +27,7 @@ Please see LICENSE files in the repository root for full details.
 
 import { indicatorStep, payloadStep } from "./activity-text";
 import { isPersonSender } from "./room-sender";
+import { stampedSession } from "./system-notice";
 import { type JournalEvent } from "./types";
 import { type Step, stepsOf, type TurnItem } from "./turn-grouping";
 
@@ -217,11 +218,6 @@ function emptyTurn(first: JournalEvent, operator?: JournalEvent): Turn {
 }
 
 /** Group visible journal events (already filtered by the timeline) into operator turns. */
-function stampedSession(event: JournalEvent): string | undefined {
-    const id = (event.payload?.from_session as { convo_id?: unknown } | undefined)?.convo_id;
-    return typeof id === "string" && id ? id : undefined;
-}
-
 export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
     const turns: Turn[] = [];
     let current: Turn | null = null;
@@ -235,7 +231,8 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
     // notice landing mid-run stays inside the running turn, with its live card).
     let speaker: string | undefined;
     // The session a bridge stamped on the turn's first room message (`from_session`): two of our
-    // sessions on one box share a sender, so a different stamped session also starts a turn.
+    // sessions on one box share a sender, so a stamped session that differs (an unstamped first
+    // message counts as different) also starts a turn.
     let speakerSession: string | undefined;
 
     const finish = (): void => {
@@ -280,7 +277,7 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
             speaker !== undefined &&
             !isOperatorEvent(event) &&
             ((event.sender !== speaker && (isPersonSender(event.sender) || isPersonSender(speaker))) ||
-                (session !== undefined && speakerSession !== undefined && session !== speakerSession))
+                (session !== undefined && session !== speakerSession))
         ) {
             finish();
         }
