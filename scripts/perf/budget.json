@@ -24,7 +24,7 @@
     },
     "switch": {
         "firstOpenMedianMs": {
-            "max": 358
+            "max": 300
         },
         "revisitMedianMs": {
             "max": 250
@@ -46,7 +46,7 @@
             "max": 500
         },
         "missionReadyMs": {
-            "max": 358
+            "max": 300
         }
     },
     "stream": {
