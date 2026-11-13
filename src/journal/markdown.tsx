@@ -5,19 +5,6 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import bash from "highlight.js/lib/languages/bash";
-import css from "highlight.js/lib/languages/css";
-import diff from "highlight.js/lib/languages/diff";
-import go from "highlight.js/lib/languages/go";
-import javascript from "highlight.js/lib/languages/javascript";
-import json from "highlight.js/lib/languages/json";
-import markdown from "highlight.js/lib/languages/markdown";
-import python from "highlight.js/lib/languages/python";
-import rust from "highlight.js/lib/languages/rust";
-import sql from "highlight.js/lib/languages/sql";
-import typescript from "highlight.js/lib/languages/typescript";
-import xml from "highlight.js/lib/languages/xml";
-import yaml from "highlight.js/lib/languages/yaml";
 import { toString } from "hast-util-to-string";
 import React, {
     Component,
@@ -25,10 +12,10 @@ import React, {
     useEffect,
     useRef,
     useState,
+    useSyncExternalStore,
     type ComponentPropsWithoutRef,
     type ReactNode,
 } from "react";
-import { createLowlight } from "lowlight";
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -36,6 +23,7 @@ import { unified } from "unified";
 
 import { copyText } from "./clipboard";
 import { filesDeepLinkHash, handleViewerLinkClick, viewerFilePath } from "./files-link";
+import type { Highlighter } from "./highlighter";
 import { parseOwnTrackerUrl } from "./link-path";
 import { parseContactLink } from "./contact-link";
 import { TrackerLinkTarget } from "./tracker-link-title";
@@ -45,33 +33,45 @@ export const MARKDOWN_MAX = 200_000;
 export const MARKDOWN_MAX_LINES = 2_000;
 export const HIGHLIGHT_MAX = 30_000;
 
-const CURATED = {
-    bash,
-    javascript,
-    typescript,
-    python,
-    json,
-    diff,
-    yaml,
-    css,
-    xml,
-    go,
-    rust,
-    sql,
-    markdown,
-};
+// highlight.js and the curated grammars live in ./highlighter, loaded on first use so they stay
+// out of the first download. Until it arrives, a labelled fence renders plain (with its `hljs`
+// class, as before); every MarkdownBody re-renders once it has loaded.
+let highlighter: Highlighter | null = null;
+let highlighterLoad: Promise<void> | null = null;
+const highlighterListeners = new Set<() => void>();
 
-const ALIASES = {
-    typescript: ["ts", "tsx"],
-    javascript: ["js", "jsx"],
-    bash: ["sh"],
-    yaml: ["yml"],
-    python: ["py"],
-    markdown: ["md"],
-};
+export function loadHighlighter(): Promise<void> {
+    highlighterLoad ??= import(/* webpackChunkName: "highlighter" */ "./highlighter").then(
+        (module) => {
+            highlighter = module.lowlight;
+            for (const listener of highlighterListeners) listener();
+        },
+        (error: unknown) => {
+            // A failed chunk load (offline, a deploy replaced the chunk) leaves code plain;
+            // the next message that needs it tries again.
+            highlighterLoad = null;
+            console.warn("[markdown] code highlighter failed to load", error);
+        },
+    );
+    return highlighterLoad;
+}
 
-const lowlight = createLowlight(CURATED);
-lowlight.registerAlias(ALIASES);
+function subscribeHighlighter(listener: () => void): () => void {
+    highlighterListeners.add(listener);
+    return () => highlighterListeners.delete(listener);
+}
+
+function highlighterReady(): boolean {
+    return highlighter !== null;
+}
+
+// A fence that names a language, the only kind highlightCodeBlock colours. A cheap source check so
+// messages without one never fetch the highlighter.
+const LABELLED_FENCE = /(?:^|\n)[ \t]*(?:`{3,}|~{3,})[ \t]*[^\s`~]/;
+
+export function needsHighlighter(text: string): boolean {
+    return LABELLED_FENCE.test(text);
+}
 
 /**
  * Shared resource guard: above this size/line budget the parser is skipped and the raw text
@@ -264,8 +264,8 @@ function highlightCodeBlock(code: HighlightNode): void {
     const classes = Array.isArray(code.properties.className) ? code.properties.className : [];
     if (!classes.includes("hljs")) classes.unshift("hljs");
     code.properties.className = classes;
-    if (!lowlight.registered(lang)) return;
-    const result = lowlight.highlight(lang, toString(code as Parameters<typeof toString>[0]));
+    if (!highlighter?.registered(lang)) return;
+    const result = highlighter.highlight(lang, toString(code as Parameters<typeof toString>[0]));
     if (result.children.length > 0) code.children = result.children as HighlightNode[];
 }
 
@@ -694,6 +694,12 @@ function MarkdownBodyComponent({
     variant = "message",
 }: MarkdownBodyProps): React.ReactElement {
     const isDocument = variant === "document";
+    // Re-render once the highlighter arrives; the props-only memo below does not block this.
+    const highlighterLoaded = useSyncExternalStore(subscribeHighlighter, highlighterReady, highlighterReady);
+    const wantsHighlighter = !streaming && !highlighterLoaded && needsHighlighter(text);
+    useEffect(() => {
+        if (wantsHighlighter) void loadHighlighter();
+    }, [wantsHighlighter]);
     if (exceedsMarkdownRenderLimit(text)) {
         return <div className="mj_MessageText mj_MarkdownRaw">{text}</div>;
     }
