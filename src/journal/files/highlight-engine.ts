@@ -51,10 +51,7 @@ function ensureRegistered(): void {
     registered = true;
 }
 
-export function highlightWithHljs(
-    language: string | undefined,
-    code: string,
-): { html: string; language?: string } {
+export function highlightWithHljs(language: string | undefined, code: string): { html: string; language?: string } {
     ensureRegistered();
     if (language && hljs.getLanguage(language)) {
         return { html: hljs.highlight(code, { language, ignoreIllegals: true }).value, language };
