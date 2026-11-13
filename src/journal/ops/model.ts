@@ -14,7 +14,7 @@ Please see LICENSE files in the repository root for full details.
  * to "less shown", never to a broken page.
  */
 
-import type { BoxStatus, BoxStatusLimitLine } from "../types";
+import type { BoxStatus, BoxStatusLimitLine, DeviceDTO } from "../types";
 
 export type { BoxStatus };
 export type BoxLimitLine = BoxStatusLimitLine;
@@ -416,4 +416,18 @@ export function parseMetrics(raw: unknown): JournalMetrics | null {
         journal_row_count: int(o.journal_row_count) ? o.journal_row_count : null,
         db_file_size_bytes: int(o.db_file_size_bytes) ? o.db_file_size_bytes : null,
     };
+}
+
+/** Merge the persisted report with a newer live frame (newest reported_at wins). */
+export function effectiveStatus(device: DeviceDTO, live: Record<number, BoxStatus> | undefined): BoxStatus | undefined {
+    const pushed = live?.[device.device_id];
+    if (!pushed) return device.status;
+    if (!device.status) return pushed;
+    return (pushed.reported_at ?? 0) >= (device.status.reported_at ?? 0) ? pushed : device.status;
+}
+
+/** Boxes that can answer ops_snapshot: agent devices with a box report (only bridges send one),
+ *  fetched or live, so a box whose first report lands after the roster fetch is still asked. */
+export function snapshotTargets(devices: DeviceDTO[], live?: Record<number, BoxStatus>): DeviceDTO[] {
+    return devices.filter((d) => d.kind === "agent" && effectiveStatus(d, live) !== undefined);
 }

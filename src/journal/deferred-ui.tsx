@@ -25,6 +25,7 @@ type CoordinatorChooserProps = ComponentProps<typeof import("./CoordinatorSheets
 type RoutinesSheetProps = ComponentProps<typeof import("./CoordinatorSheets").RoutinesSheet>;
 type ChatTasksPaneProps = ComponentProps<typeof import("./tracker/ChatTasksPane").ChatTasksPane>;
 type TrackerPaneProps = ComponentProps<typeof import("./tracker/TrackerPane").TrackerPane>;
+type OpsPaneProps = ComponentProps<typeof import("./ops/OpsPane").OpsPane>;
 type TwoFactorSignInProps = ComponentProps<typeof import("./TwoFactor").TwoFactorSignIn>;
 type ForgotPasswordFormProps = ComponentProps<typeof import("./PasswordReset").ForgotPasswordForm>;
 type ResetPasswordPageProps = ComponentProps<typeof import("./PasswordReset").ResetPasswordPage>;
@@ -170,6 +171,30 @@ export function ChatTasksFrame({ close, failed }: { close: () => void; failed: b
 export const TrackerPane = deferred<TrackerPaneProps>(
     () => import("./tracker/TrackerPane").then((module) => module.TrackerPane),
     (props, failed) => <TrackerFrame close={() => props.client.closeTrackerView()} failed={failed} />,
+);
+
+export const OpsPane = deferred<OpsPaneProps>(
+    () => import("./ops/OpsPane").then((module) => module.OpsPane),
+    (props, failed) => (
+        <div className="mj_OpsPane" aria-busy={!failed}>
+            <div className="mj_TrackerPane_top mj_OpsPane_top">
+                <button
+                    type="button"
+                    className="mj_IconButton mj_TrackerPane_close"
+                    aria-label="Close ops"
+                    onClick={() => props.client.closeOpsView()}
+                >
+                    <CloseIcon />
+                </button>
+                <h1 className="mj_TrackerPane_title">Ops</h1>
+            </div>
+            {failed ? (
+                <p className="mj_DeferredFailed" role="alert">
+                    {LOAD_FAILED}
+                </p>
+            ) : null}
+        </div>
+    ),
 );
 
 /** The tracker's top bar, with its close button. */

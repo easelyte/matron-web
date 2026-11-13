@@ -32,7 +32,7 @@ import {
     writeRememberedBox,
 } from "./new-session";
 import { type BoxStatus } from "./ops/model";
-import { effectiveStatus } from "./ops/OpsPane";
+import { effectiveStatus } from "./ops/model";
 import { formatSampleAge, resetCountdown, resetDisplay } from "./status";
 import { type DeviceDTO } from "./types";
 import { V6Icon } from "./v6-icons";

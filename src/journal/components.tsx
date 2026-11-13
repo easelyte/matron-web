@@ -85,6 +85,7 @@ import {
     ChatTasksPane,
     CoordinatorChooserSheet,
     MintedInviteSheet,
+    OpsPane,
     RoutinesSheet,
     SettingsSheet,
     TrackerPane,
@@ -176,7 +177,6 @@ import {
     MissionNotice,
     renderItemMarker,
 } from "./tracker/cards";
-import { OpsPane } from "./ops/OpsPane";
 import { needsUser } from "./tracker/format";
 import { NeedsYouBadge } from "./tracker/glyphs";
 import {
