@@ -16,21 +16,6 @@ Please see LICENSE files in the repository root for full details.
  * lets us pick the language from the file extension deterministically.
  */
 
-import hljs from "highlight.js/lib/core";
-import bash from "highlight.js/lib/languages/bash";
-import css from "highlight.js/lib/languages/css";
-import diff from "highlight.js/lib/languages/diff";
-import go from "highlight.js/lib/languages/go";
-import javascript from "highlight.js/lib/languages/javascript";
-import json from "highlight.js/lib/languages/json";
-import markdown from "highlight.js/lib/languages/markdown";
-import python from "highlight.js/lib/languages/python";
-import rust from "highlight.js/lib/languages/rust";
-import sql from "highlight.js/lib/languages/sql";
-import typescript from "highlight.js/lib/languages/typescript";
-import xml from "highlight.js/lib/languages/xml";
-import yaml from "highlight.js/lib/languages/yaml";
-
 import { extensionOf } from "./format";
 
 // Above this size, syntax highlighting is skipped (plain escaped text) — mirrors markdown.tsx's
@@ -38,26 +23,6 @@ import { extensionOf } from "./format";
 // ceiling that switches to download-only for BOTH markdown and code lives in ./limits as
 // INLINE_TEXT_MAX — this is only the highlight-skip threshold, which is lower.)
 export const CODE_HIGHLIGHT_MAX = 120_000;
-
-let registered = false;
-
-function ensureRegistered(): void {
-    if (registered) return;
-    hljs.registerLanguage("bash", bash);
-    hljs.registerLanguage("css", css);
-    hljs.registerLanguage("diff", diff);
-    hljs.registerLanguage("go", go);
-    hljs.registerLanguage("javascript", javascript);
-    hljs.registerLanguage("json", json);
-    hljs.registerLanguage("markdown", markdown);
-    hljs.registerLanguage("python", python);
-    hljs.registerLanguage("rust", rust);
-    hljs.registerLanguage("sql", sql);
-    hljs.registerLanguage("typescript", typescript);
-    hljs.registerLanguage("xml", xml);
-    hljs.registerLanguage("yaml", yaml);
-    registered = true;
-}
 
 // Extension → curated hljs language. Only languages in the curated set above; everything else
 // falls through to highlightAuto (which scans the registered subset), then to plain escaped text.
@@ -94,7 +59,7 @@ export function languageForFilename(name: string): string | undefined {
     return EXT_LANGUAGE[extensionOf(name)];
 }
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
@@ -109,21 +74,17 @@ export interface HighlightResult {
 
 /**
  * Highlight a whole file. Deterministic language from the extension when known; else highlightAuto
- * over the curated subset; else plain escaped text. Never throws — a tokeniser failure degrades to
- * escaped text so the viewer always renders.
+ * over the curated subset; else plain escaped text. Never throws: a tokeniser failure degrades to
+ * escaped text so the viewer always renders. The engine loads on first use, so highlight.js stays
+ * out of the first download.
  */
-export function highlightFile(filename: string, code: string): HighlightResult {
+export async function highlightFile(filename: string, code: string): Promise<HighlightResult> {
     if (code.length > CODE_HIGHLIGHT_MAX) {
         return { html: escapeHtml(code), skipped: true };
     }
-    ensureRegistered();
-    const language = languageForFilename(filename);
     try {
-        if (language && hljs.getLanguage(language)) {
-            return { html: hljs.highlight(code, { language, ignoreIllegals: true }).value, language, skipped: false };
-        }
-        const auto = hljs.highlightAuto(code);
-        return { html: auto.value, language: auto.language, skipped: false };
+        const { highlightWithHljs } = await import("./highlight-engine");
+        return { ...highlightWithHljs(languageForFilename(filename), code), skipped: false };
     } catch {
         return { html: escapeHtml(code), skipped: false };
     }
