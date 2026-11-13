@@ -48,8 +48,13 @@ import {
     type OpsTimer,
     type OpsTimers,
     type OpsUsage,
+    effectiveStatus,
+    snapshotTargets,
     splitLimitLines,
 } from "./model";
+
+// The tests and the new-session sheet read these without loading the pane.
+export { effectiveStatus, snapshotTargets };
 
 // Host refreshes while the page is open and visible (the MC tab polled every 5 s; the bridge
 // samples CPU over ~300 ms per call, so 15 s keeps it cheap). Everything else on open + Refresh.
@@ -72,20 +77,6 @@ function useClock(intervalMs: number): number {
         return () => window.clearInterval(timer);
     }, [intervalMs]);
     return now;
-}
-
-/** Merge the persisted report with a newer live frame (newest reported_at wins). */
-export function effectiveStatus(device: DeviceDTO, live: Record<number, BoxStatus> | undefined): BoxStatus | undefined {
-    const pushed = live?.[device.device_id];
-    if (!pushed) return device.status;
-    if (!device.status) return pushed;
-    return (pushed.reported_at ?? 0) >= (device.status.reported_at ?? 0) ? pushed : device.status;
-}
-
-/** Boxes that can answer ops_snapshot: agent devices with a box report (only bridges send one),
- *  fetched or live, so a box whose first report lands after the roster fetch is still asked. */
-export function snapshotTargets(devices: DeviceDTO[], live?: Record<number, BoxStatus>): DeviceDTO[] {
-    return devices.filter((d) => d.kind === "agent" && effectiveStatus(d, live) !== undefined);
 }
 
 export function OpsPane({ client, state }: { client: MatronJournalClient; state: ClientState }): React.ReactElement {

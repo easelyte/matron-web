@@ -5,9 +5,9 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import React, { useMemo } from "react";
+import React, { useEffect, useState } from "react";
 
-import { highlightFile } from "../highlight";
+import { escapeHtml, highlightFile, type HighlightResult } from "../highlight";
 import { INLINE_TEXT_MAX } from "../limits";
 import { TextResourceView } from "./PreviewChrome";
 import { TooLargePreview } from "./TooLargePreview";
@@ -30,10 +30,19 @@ export function CodePreview({ api, path, filename, meta }: RendererProps): React
  */
 export function CodeView({ filename, source }: { filename: string; source: string }): React.ReactElement {
     const tooLarge = source.length > INLINE_TEXT_MAX;
-    const highlighted = useMemo(
-        () => (tooLarge ? undefined : highlightFile(filename, source)),
-        [tooLarge, filename, source],
-    );
+    // Plain escaped text shows at once; the highlighted version replaces it when the engine arrives.
+    const [highlighted, setHighlighted] = useState<HighlightResult | undefined>();
+    useEffect(() => {
+        setHighlighted(undefined);
+        if (tooLarge) return;
+        let cancelled = false;
+        void highlightFile(filename, source).then((result) => {
+            if (!cancelled) setHighlighted(result);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [tooLarge, filename, source]);
     if (tooLarge) return <TooLargePreview />;
     return (
         <div className="mj_FilesCode">
@@ -43,7 +52,7 @@ export function CodeView({ filename, source }: { filename: string; source: strin
                 </div>
             ) : null}
             <pre className="mj_FilesCode_pre">
-                <code className="hljs" dangerouslySetInnerHTML={{ __html: highlighted?.html ?? "" }} />
+                <code className="hljs" dangerouslySetInnerHTML={{ __html: highlighted?.html ?? escapeHtml(source) }} />
             </pre>
         </div>
     );

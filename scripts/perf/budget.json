@@ -1,11 +1,12 @@
 {
     "_comment": "Limits for the ci-scale run in CI (scripts/perf/run.mjs --scale=ci --runs=3). Timings are medians in ms on a GitHub-hosted runner. Lower a limit when a change makes a number better; raise one only with a reason in the pull request.",
+    "_fork": "easelyte fork: the bundle limits sit above upstream's (304/858 KB) because the fork ships extra features (turn cards, subagent view, Ops pane, Files viewer). They are the measured size plus about 5%. On an upstream sync keep these two numbers (take upstream's for every other metric); a conflict here is expected, not an error.",
     "bundle": {
         "initialGzipKB": {
-            "max": 300
+            "max": 358
         },
         "totalGzipKB": {
-            "max": 853
+            "max": 973
         }
     },
     "cold": {
