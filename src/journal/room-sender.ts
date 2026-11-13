@@ -60,8 +60,14 @@ export function roomSenderLabel(
         return { side: "theirs", name: rest, detail: via === "agent" ? "their agent" : undefined };
     }
     if (kind === "user") return { side: "ours", name: ourName || rest };
-    if (kind === "agent")
-        return { side: "ours", name: ourName || rest, detail: ourName ? `our agent · ${rest}` : "our agent" };
+    if (kind === "agent") {
+        // The bridge stamps the speaking session on a room message (`from_session`), so two
+        // sessions on one box tell apart.
+        const stamped = event.payload?.from_session as { title?: unknown } | undefined;
+        const title = typeof stamped?.title === "string" ? stamped.title.trim() : "";
+        const agent = title ? `our agent · ${title}` : "our agent";
+        return { side: "ours", name: ourName || rest, detail: ourName ? `${agent} · ${rest}` : agent };
+    }
     return { side: "system", name: rest || "System" };
 }
 

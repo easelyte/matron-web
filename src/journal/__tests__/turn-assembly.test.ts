@@ -59,6 +59,20 @@ describe("assembleTurns: room sides", () => {
         expect(turns[0].items.some((item) => item.kind === "narration" && item.text === "Running tests.")).toBe(true);
     });
 
+    it("splits two sessions on one box that a bridge stamped apart", () => {
+        const stamped = (body: string, id: string): JournalEvent =>
+            ev("text", { body, from: "agent", from_session: { convo_id: id } });
+        const turns = assembleTurns([stamped("one", "s1"), stamped("two", "s1"), stamped("three", "s2")]);
+        expect(turns.map((turn) => turn.events.length)).toEqual([2, 1]);
+    });
+
+    it("splits a stamped session from earlier unstamped messages, and ignores an unstamped notice", () => {
+        const stamped = (body: string, id: string): JournalEvent =>
+            ev("text", { body, from: "agent", from_session: { convo_id: id } });
+        const turns = assembleTurns([say("old"), stamped("one", "s1"), notice("n"), stamped("two", "s2")]);
+        expect(turns.map((turn) => turn.events.length)).toEqual([1, 2, 1]);
+    });
+
     it("keeps one sender's work in one turn", () => {
         const turns = assembleTurns([user("go"), say("Looking."), cmd("ls"), say("Done.")]);
         expect(turns).toHaveLength(1);

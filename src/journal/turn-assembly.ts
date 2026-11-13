@@ -27,6 +27,7 @@ Please see LICENSE files in the repository root for full details.
 
 import { indicatorStep, payloadStep } from "./activity-text";
 import { isPersonSender } from "./room-sender";
+import { stampedSession } from "./system-notice";
 import { type JournalEvent } from "./types";
 import { type Step, stepsOf, type TurnItem } from "./turn-grouping";
 
@@ -229,6 +230,10 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
     // side. Only a `person:` sender splits, so an ordinary session's turns are unchanged (a bridge
     // notice landing mid-run stays inside the running turn, with its live card).
     let speaker: string | undefined;
+    // The session a bridge stamped on the turn's first room message (`from_session`): two of our
+    // sessions on one box share a sender, so a stamped session that differs (an unstamped first
+    // message counts as different) also starts a turn.
+    let speakerSession: string | undefined;
 
     const finish = (): void => {
         if (!current) return;
@@ -256,6 +261,7 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
         turns.push(turn);
         current = null;
         speaker = undefined;
+        speakerSession = undefined;
     };
 
     for (const event of events) {
@@ -265,17 +271,21 @@ export function assembleTurns(events: readonly JournalEvent[]): Turn[] {
             lastTs = event.ts;
             continue;
         }
+        const session = stampedSession(event);
         if (
             current &&
             speaker !== undefined &&
             !isOperatorEvent(event) &&
-            event.sender !== speaker &&
-            (isPersonSender(event.sender) || isPersonSender(speaker))
+            ((event.sender !== speaker && (isPersonSender(event.sender) || isPersonSender(speaker))) ||
+                (session !== undefined && session !== speakerSession))
         ) {
             finish();
         }
         if (!current) current = emptyTurn(event);
-        if (speaker === undefined && !isOperatorEvent(event)) speaker = event.sender;
+        if (speaker === undefined && !isOperatorEvent(event)) {
+            speaker = event.sender;
+            speakerSession = session;
+        }
         const turn = current;
         turn.events.push(event);
         // Duration ends at the turn's last own event: bridge notices don't extend it.

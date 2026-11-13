@@ -25,6 +25,13 @@ describe("roomSenderLabel", () => {
         });
     });
 
+    it("adds the speaking session's title when the bridge stamped one", () => {
+        const payload = { from_session: { convo_id: "s1", title: "Fix the build" } };
+        expect(roomSenderLabel({ sender: "agent:box-a", type: "text", payload }, ours).detail).toBe(
+            "our agent · Fix the build · box-a",
+        );
+    });
+
     it("marks a bridge notice as system, whoever journaled it", () => {
         const payload = { body: "x", notice: { kind: "agent_chat", icon: "💬", summary: "You are now in a room" } };
         expect(roomSenderLabel({ sender: "agent:box-a", type: "text", payload }, ours).side).toBe("system");
