@@ -998,6 +998,14 @@ export class JournalApi {
         return this.json<unknown>("/notify");
     }
 
+    public async webPushVapidKey(): Promise<unknown> {
+        return this.json<unknown>("/push/web/vapid-key");
+    }
+
+    public async registerWebPush(body: Record<string, unknown>): Promise<unknown> {
+        return this.json<unknown>("/push/web/register", { method: "POST", body });
+    }
+
     /**
      * PUT /notify — changes any part of the settings: `mode`, `events`, this device's
      * `device_level`, or one conversation's `convo` level or mute (an explicit null clears it).
