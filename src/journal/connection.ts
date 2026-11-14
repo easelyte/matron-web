@@ -33,8 +33,14 @@ interface JournalConnectionCallbacks {
     onSnapshotRequired(): Promise<void>;
     onRevoked(): void;
     onState(state: ConnectionState, error?: string): void;
+    /** The socket was closed because the tab stayed hidden: views fed by the live socket (tool
+     *  output) no longer update, and the next reconnect's snapshot replaces what they show. */
+    onSuspend?(): void;
 }
 
+// A hidden tab keeps its socket this long, then closes it (battery); visible again reconnects
+// from the stored cursor.
+export const HIDDEN_CLOSE_MS = 60_000;
 const RETRY_DELAYS_MS = [0, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 // Upper bound on one coalesced journal run: keeps a single IndexedDB transaction and the render
 // after it bounded, and lets the UI paint between runs during a long replay.
@@ -43,6 +49,9 @@ export const MAX_JOURNAL_BATCH = 500;
 export class JournalConnection {
     private socket?: WebSocket;
     private retryTimer?: number;
+    private hiddenTimer?: number;
+    // Closed on purpose because the tab was hidden: no retries until it is visible again.
+    private suspended = false;
     private retryAttempt = 0;
     private stopped = true;
     private welcomed = false;
@@ -80,6 +89,9 @@ export class JournalConnection {
         this.stopped = false;
         window.addEventListener("online", this.onOnline);
         window.addEventListener("offline", this.onOffline);
+        document.addEventListener("visibilitychange", this.onVisibility);
+        this.suspended = false;
+        if (document.visibilityState === "hidden") this.armHiddenTimer();
         this.open();
     }
 
@@ -91,6 +103,9 @@ export class JournalConnection {
         this.retryTimer = undefined;
         window.removeEventListener("online", this.onOnline);
         window.removeEventListener("offline", this.onOffline);
+        document.removeEventListener("visibilitychange", this.onVisibility);
+        this.clearHiddenTimer();
+        this.suspended = false;
         this.socket?.close(1000, "client stopped");
         this.socket = undefined;
         for (const [requestId, pending] of this.pendingRpc) {
@@ -151,8 +166,57 @@ export class JournalConnection {
     }
 
     private readonly onOnline = (): void => {
-        if (!this.stopped && !this.socket) this.scheduleReconnect(0);
+        if (!this.stopped && !this.suspended && !this.socket) this.scheduleReconnect(0);
     };
+
+    private readonly onVisibility = (): void => {
+        if (this.stopped) return;
+        if (document.visibilityState === "hidden") {
+            this.armHiddenTimer();
+            return;
+        }
+        this.clearHiddenTimer();
+        if (!this.suspended) return;
+        this.suspended = false;
+        this.retryAttempt = 0;
+        // A snapshot reload in flight reopens the socket itself once the new cursor is stored.
+        if (this.replacingSnapshot) return;
+        // At once, not on a timer: the user is looking at the tab. Offline, the online event retries.
+        this.open();
+    };
+
+    private armHiddenTimer(): void {
+        this.clearHiddenTimer();
+        this.hiddenTimer = window.setTimeout(() => {
+            this.hiddenTimer = undefined;
+            this.suspendForHidden();
+        }, HIDDEN_CLOSE_MS);
+    }
+
+    private clearHiddenTimer(): void {
+        if (this.hiddenTimer !== undefined) window.clearTimeout(this.hiddenTimer);
+        this.hiddenTimer = undefined;
+    }
+
+    // Close the socket and stop retrying until the tab is visible again.
+    private suspendForHidden(): void {
+        if (this.stopped || this.suspended) return;
+        this.suspended = true;
+        if (this.retryTimer !== undefined) window.clearTimeout(this.retryTimer);
+        this.retryTimer = undefined;
+        const socket = this.socket;
+        this.socket = undefined;
+        this.welcomed = false;
+        // Frames this socket already delivered but the queue has not applied must not run now:
+        // the cursor replays them on the next connection.
+        if (socket) this.abandonedSockets.add(socket);
+        for (const [requestId, pending] of this.pendingRpc) {
+            this.resolveRpc(requestId, pending, { ok: false, origin: "relay", code: "not_connected" });
+        }
+        this.callbacks.onState("offline");
+        socket?.close(1000, "tab hidden");
+        this.callbacks.onSuspend?.();
+    }
 
     private readonly onOffline = (): void => {
         this.callbacks.onState("offline", "No network connection");
@@ -202,7 +266,7 @@ export class JournalConnection {
         socket.onclose = (event) => {
             if (this.socket === socket) this.socket = undefined;
             this.welcomed = false;
-            if (this.stopped || this.replacingSnapshot) return;
+            if (this.stopped || this.suspended || this.replacingSnapshot) return;
             const reason = event.code === 1000 ? undefined : event.reason || "Connection interrupted";
             this.callbacks.onState(navigator.onLine ? "connecting" : "offline", reason);
             this.scheduleReconnect();
@@ -427,7 +491,7 @@ export class JournalConnection {
     }
 
     private scheduleReconnect(delayOverride?: number): void {
-        if (this.stopped || this.retryTimer !== undefined || !navigator.onLine) return;
+        if (this.stopped || this.suspended || this.retryTimer !== undefined || !navigator.onLine) return;
         const baseDelay = delayOverride ?? RETRY_DELAYS_MS[Math.min(this.retryAttempt++, RETRY_DELAYS_MS.length - 1)];
         const delay = delayOverride === undefined ? Math.round(baseDelay * (0.8 + Math.random() * 0.4)) : baseDelay;
         this.retryTimer = window.setTimeout(() => {

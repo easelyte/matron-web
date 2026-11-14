@@ -5478,6 +5478,9 @@ export class MatronJournalClient {
             onState: (connection, error) => {
                 if (current()) this.patch({ connection, connectionError: error });
             },
+            onSuspend: () => {
+                if (current()) this.suspendLiveStreams();
+            },
         });
         this.connection.start();
         // Purge expired live tool logs once the session is up, not before the first paint: it walks
@@ -6358,6 +6361,8 @@ export class MatronJournalClient {
                 offset: payload.offset ?? 0,
                 headTruncated: false,
             };
+            // An offset-less chunk would continue across whatever the closed socket missed.
+            if (current.stale && payload.offset === undefined) return;
             const offset = payload.offset ?? current.offset;
             if (offset <= current.offset) {
                 const addition = trimUtf8Prefix(chunk, current.offset - offset);
@@ -6369,6 +6374,20 @@ export class MatronJournalClient {
             }
         }
         this.toolStreams.set(frame.convo_id, streams);
+    }
+
+    /**
+     * The tab's socket was closed while hidden, which ends the journal's live tool output for
+     * this device. Keep the text shown, mark it as no longer live, and let the snapshot the next
+     * connection's `viewing` draws replace it; never append to it.
+     */
+    private suspendLiveStreams(): void {
+        for (const streams of this.toolStreams.values()) {
+            // New objects, so a view memoised on the stream re-renders.
+            for (const [ref, stream] of Object.entries(streams)) streams[ref] = { ...stream, stale: true };
+        }
+        const selectedId = this.state.selectedConversationId;
+        if (selectedId !== undefined && this.toolStreams.has(selectedId)) this.refreshEphemeralState(selectedId);
     }
 
     private refreshEphemeralState(conversationId: string): void {

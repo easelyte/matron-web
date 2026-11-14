@@ -615,6 +615,9 @@ export interface ToolStreamState {
     content: string;
     offset: number;
     headTruncated: boolean;
+    /** The socket feeding it was closed (hidden tab) and no snapshot has come since: the text is
+     *  what was last shown, not live. A snapshot replaces it; the command's final row retires it. */
+    stale?: boolean;
 }
 
 export interface PendingMessage {
