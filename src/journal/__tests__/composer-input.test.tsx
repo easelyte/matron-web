@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { autoGrow, COMPOSER_MAX_HEIGHT_PX, useAutoGrow } from "../composer-input";
+import { autoGrow, COMPOSER_MAX_HEIGHT_PX, isImeComposing, isSendKey, useAutoGrow } from "../composer-input";
 
 function textareaWith(value: string, scrollHeight: number): HTMLTextAreaElement {
     const node = document.createElement("textarea");
@@ -73,9 +73,16 @@ describe("useAutoGrow", () => {
 
     let heightPerLine = 24;
     function Probe({ value }: { value: string }): React.ReactElement {
-        const ref = useRef<HTMLTextAreaElement>(null);
-        useAutoGrow(ref, value);
-        return <textarea ref={ref} rows={1} value={value} readOnly />;
+        const ref = useRef<HTMLTextAreaElement | null>(null);
+        const attach = useAutoGrow(ref, value);
+        return <textarea ref={attach} rows={1} value={value} readOnly />;
+    }
+
+    // Mirrors the composer: the textarea unmounts while a voice note records and a new one mounts after.
+    function Swappable({ value, show }: { value: string; show: boolean }): React.ReactElement {
+        const ref = useRef<HTMLTextAreaElement | null>(null);
+        const attach = useAutoGrow(ref, value);
+        return show ? <textarea ref={attach} rows={1} value={value} readOnly /> : <div>recording</div>;
     }
 
     async function render(value: string): Promise<HTMLTextAreaElement> {
@@ -101,6 +108,42 @@ describe("useAutoGrow", () => {
         expect(node.style.height).toBe("auto");
     });
 
+    it("re-sizes and re-observes a textarea that was unmounted and remounted with the same value", async () => {
+        heightPerLine = 24;
+        const observed: Element[] = [];
+        const disconnected: number[] = [];
+        globalThis.ResizeObserver = class {
+            public constructor(callback: ResizeObserverCallback) {
+                observerCallback = callback;
+            }
+            public observe(el: Element): void {
+                observed.push(el);
+            }
+            public disconnect(): void {
+                disconnected.push(observed.length);
+            }
+            public unobserve(): void {}
+        } as unknown as typeof ResizeObserver;
+        jest.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get").mockImplementation(function (
+            this: HTMLTextAreaElement,
+        ) {
+            return this.value ? this.value.split("\n").length * heightPerLine : 0;
+        });
+        container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        await act(async () => root!.render(<Swappable value={"a\nb\nc"} show />));
+        const first = container.querySelector("textarea")!;
+        expect(first.style.height).toBe("72px");
+        await act(async () => root!.render(<Swappable value={"a\nb\nc"} show={false} />));
+        await act(async () => root!.render(<Swappable value={"a\nb\nc"} show />));
+        const second = container.querySelector("textarea")!;
+        expect(second).not.toBe(first);
+        expect(second.style.height).toBe("72px");
+        expect(observed[observed.length - 1]).toBe(second);
+        expect(disconnected.length).toBeGreaterThan(0);
+    });
+
     it("re-measures when the box's width changes, not on its own height changes", async () => {
         heightPerLine = 24;
         const node = await render("a\nb");
@@ -117,5 +160,34 @@ describe("useAutoGrow", () => {
         heightPerLine = 30;
         await act(async () => observerCallback?.([], {} as ResizeObserver));
         expect(node.style.height).toBe("80px");
+    });
+});
+
+describe("send key", () => {
+    function key(init: {
+        key: string;
+        shiftKey?: boolean;
+        keyCode?: number;
+        isComposing?: boolean;
+    }): React.KeyboardEvent {
+        return {
+            key: init.key,
+            shiftKey: init.shiftKey ?? false,
+            keyCode: init.keyCode ?? 0,
+            nativeEvent: { isComposing: init.isComposing ?? false },
+        } as unknown as React.KeyboardEvent;
+    }
+
+    it("sends on Enter, not on Shift+Enter", () => {
+        expect(isSendKey(key({ key: "Enter" }))).toBe(true);
+        expect(isSendKey(key({ key: "Enter", shiftKey: true }))).toBe(false);
+        expect(isSendKey(key({ key: "a" }))).toBe(false);
+    });
+
+    it("does not send while an IME composition is in flight", () => {
+        expect(isImeComposing(key({ key: "Enter", isComposing: true }))).toBe(true);
+        expect(isImeComposing(key({ key: "Enter", keyCode: 229 }))).toBe(true);
+        expect(isSendKey(key({ key: "Enter", isComposing: true }))).toBe(false);
+        expect(isSendKey(key({ key: "Enter", keyCode: 229 }))).toBe(false);
     });
 });

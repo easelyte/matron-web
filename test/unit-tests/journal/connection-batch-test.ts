@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only
 Please see LICENSE files in the repository root for full details.
 */
 
-import { JournalConnection, MAX_CLIENT_REPLAY, MAX_JOURNAL_BATCH } from "../../../src/journal/connection";
+import { JournalConnection, MAX_JOURNAL_BATCH } from "../../../src/journal/connection";
 import { type JournalEvent, type ServerFrame } from "../../../src/journal/types";
 
 type FakeSocket = {
@@ -76,19 +76,6 @@ describe("JournalConnection journal batching", () => {
         jest.useRealTimers();
     });
 
-    it("sends max_replay in hello", async () => {
-        const { made, connection } = setup({ cursor: 42 });
-        connection.start();
-        await open(made[0]);
-        expect(JSON.parse(made[0].send.mock.calls[0][0])).toEqual({
-            op: "hello",
-            token: "token",
-            cursor: 42,
-            max_replay: MAX_CLIENT_REPLAY,
-        });
-        connection.stop();
-    });
-
     it("coalesces frames that queue behind in-flight work into one run, in order", async () => {
         const { made, connection, callbacks, order } = setup();
         let release!: () => void;
@@ -149,106 +136,49 @@ describe("JournalConnection journal batching", () => {
     });
 });
 
-describe("JournalConnection client replay valve", () => {
+describe("JournalConnection abandoned sockets", () => {
     beforeEach(() => jest.useFakeTimers());
     afterEach(() => {
         jest.restoreAllMocks();
         jest.useRealTimers();
     });
 
-    it("re-snapshots instead of replaying when a journal ignores max_replay and the gap is too large", async () => {
-        const { made, connection, callbacks, order } = setup({ cursor: 100 });
+    it("does not apply a queued run after an earlier run failed", async () => {
+        const { made, connection, order, callbacks } = setup({ cursor: 100 });
+        let fail!: (error: Error) => void;
+        callbacks.onJournalBatch.mockReturnValueOnce(new Promise<void>((_, reject) => (fail = reject)));
         connection.start();
         await open(made[0]);
-        deliver(made[0], { kind: "control", op: "hello_ok", seq: 100 + MAX_CLIENT_REPLAY + 1 });
-        // The old journal starts replaying right behind hello_ok; those frames must be dropped.
+        deliver(made[0], { kind: "control", op: "hello_ok", seq: 103 });
+        await flush();
         deliver(made[0], journal(101));
+        await flush();
+        // A second run, already queued on the socket behind the in-flight one.
         deliver(made[0], journal(102));
+        fail(new Error("quota"));
         await flush();
-
-        expect(made[0].close).toHaveBeenCalledWith(1000, "replacing snapshot");
-        expect(callbacks.onSnapshotRequired).toHaveBeenCalledTimes(1);
-        expect(callbacks.onReady).not.toHaveBeenCalled();
-        expect(order).toEqual([]);
-
-        jest.advanceTimersByTime(0);
-        expect(made).toHaveLength(2);
+        expect(callbacks.onState).toHaveBeenCalledWith("offline", "quota");
+        expect(order).not.toContain("batch:102");
         connection.stop();
     });
 
-    it("replays normally when the gap is within the limit", async () => {
-        const { made, connection, callbacks, order } = setup({ cursor: 100 });
-        connection.start();
-        await open(made[0]);
-        deliver(made[0], { kind: "control", op: "hello_ok", seq: 100 + MAX_CLIENT_REPLAY });
-        deliver(made[0], journal(101));
-        await flush();
-        expect(callbacks.onSnapshotRequired).not.toHaveBeenCalled();
-        expect(callbacks.onReady).toHaveBeenCalledTimes(1);
-        expect(order).toEqual(["batch:101"]);
-        connection.stop();
-    });
-
-    it("backs off instead of reconnecting at once when the snapshot fails", async () => {
-        const { made, connection, callbacks } = setup({ cursor: 100 });
-        callbacks.onSnapshotRequired.mockRejectedValue(new Error("offline"));
-        connection.start();
-        await open(made[0]);
-        deliver(made[0], { kind: "control", op: "snapshot_required" });
-        await flush();
-
-        expect(callbacks.onSnapshotRequired).toHaveBeenCalledTimes(1);
-        jest.advanceTimersByTime(0);
-        // The first rung of the retry ladder is 0 ms but jittered by the backoff path; either
-        // way the connection is not wedged: a reconnect is scheduled and fires.
-        jest.advanceTimersByTime(2_000);
-        expect(made.length).toBeGreaterThanOrEqual(2);
-        connection.stop();
-    });
-
-    it("does not snapshot twice when the journal's own snapshot_required queues behind a valve-tripping hello_ok", async () => {
+    it("does not snapshot twice when the journal sends snapshot_required twice", async () => {
         const { made, connection, callbacks } = setup({ cursor: 100 });
         let release!: () => void;
         callbacks.onSnapshotRequired.mockReturnValueOnce(new Promise<void>((resolve) => (release = resolve)));
         connection.start();
         await open(made[0]);
-        // A journal that honors max_replay still sends hello_ok (seq = head) first.
-        deliver(made[0], { kind: "control", op: "hello_ok", seq: 100 + MAX_CLIENT_REPLAY + 50 });
+        deliver(made[0], { kind: "control", op: "snapshot_required" });
         deliver(made[0], { kind: "control", op: "snapshot_required" });
         await flush();
         release();
         await flush();
+        made[0].onclose?.(new CloseEvent("close", { code: 1000 }));
         jest.advanceTimersByTime(0);
         await flush();
 
         expect(callbacks.onSnapshotRequired).toHaveBeenCalledTimes(1);
         expect(made).toHaveLength(2);
-        connection.stop();
-    });
-
-    it("drops journal frames an abandoned socket already delivered after a client resync", async () => {
-        const { made, connection, callbacks, order } = setup({ cursor: 100 });
-        connection.start();
-        await open(made[0]);
-        deliver(made[0], { kind: "control", op: "hello_ok", seq: 110 });
-        await flush();
-        let release!: () => void;
-        callbacks.onJournalBatch.mockImplementationOnce(
-            async (frames: JournalEvent[]) =>
-                new Promise<void>((resolve) => {
-                    order.push(`batch:${frames.map((frame) => frame.seq).join(",")}`);
-                    release = resolve;
-                }),
-        );
-        deliver(made[0], journal(101));
-        await flush();
-        deliver(made[0], journal(102)); // queued behind the in-flight run
-        const resync = connection.forceResync();
-        release();
-        await resync;
-        await flush();
-
-        expect(order).toEqual(["batch:101"]);
         connection.stop();
     });
 });

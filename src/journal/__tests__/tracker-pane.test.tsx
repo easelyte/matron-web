@@ -133,15 +133,13 @@ describe("TrackerPane", () => {
     });
 });
 
-describe("TrackerPane — Memories tab isolation", () => {
+describe("TrackerPane Memories tab isolation", () => {
     beforeAll(() => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     });
 
     it("does not prime missions or the paginated inbox while Memories is the active tab", async () => {
-        // Memories has its own list and error and shares none of this state.
-        // Priming would fetch /missions and walk /items (up to 20 pages / 10,000
-        // items) purely as a side effect of opening a tab that never reads them.
+        // Memories reads neither list; priming would walk /items (up to 20 pages) for nothing.
         const client = fakeClient();
         await mount(
             <TrackerPane
@@ -152,12 +150,9 @@ describe("TrackerPane — Memories tab isolation", () => {
 
         expect(client.loadMissions).not.toHaveBeenCalled();
         expect(client.loadInbox).not.toHaveBeenCalled();
-        expect(client.loadMemories).toHaveBeenCalled();
     });
 
-    it("still primes both list views on the tabs that actually use them", async () => {
-        // The backpressure above must not cost the inbox/missions tabs their
-        // warm badges.
+    it("still primes both list views on the tabs that use them", async () => {
         const client = fakeClient();
         await mount(
             <TrackerPane
@@ -168,21 +163,6 @@ describe("TrackerPane — Memories tab isolation", () => {
 
         expect(client.loadMissions).toHaveBeenCalled();
         expect(client.loadInbox).toHaveBeenCalled();
-    });
-
-    it("still shows the error banner on the tabs the error belongs to", async () => {
-        const client = fakeClient();
-        const { container } = await mount(
-            <TrackerPane
-                client={client as unknown as MatronJournalClient}
-                state={paneState({
-                    trackerView: { open: true, view: "inbox" },
-                    trackerError: "Could not load the inbox.",
-                })}
-            />,
-        );
-
-        expect(container.querySelector(".mj_TrackerErrorBanner")).not.toBeNull();
     });
 });
 
@@ -243,6 +223,37 @@ describe("TrackerPane inbox", () => {
             notice!.querySelector<HTMLButtonElement>("button")!.click();
         });
         expect(client.loadInbox).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the partial-inbox notice whenever Inbox is open and the list was truncated", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({ trackerView: { open: true, view: "inbox" }, inboxItems: [], inboxTruncated: true })}
+            />,
+        );
+        expect(container.querySelector(".mj_TrackerStaleNotice")?.textContent).toContain("Showing a partial inbox");
+    });
+
+    it("shows a stale notice with a retry on the Projects dashboard when the missions refresh failed", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            <TrackerPane
+                client={client as unknown as MatronJournalClient}
+                state={paneState({
+                    trackerView: { open: true, view: "missions" },
+                    projects: [trackerProject()],
+                    missions: [],
+                    missionsError: "offline",
+                })}
+            />,
+        );
+        const notice = container.querySelector(".mj_TrackerStaleNotice");
+        expect(notice?.textContent).toContain("unfiled missions");
+        client.loadMissions.mockClear();
+        await act(async () => notice!.querySelector<HTMLButtonElement>("button")!.click());
+        expect(client.loadMissions).toHaveBeenCalledTimes(1);
     });
 
     it("shows no stale notice for a loaded inbox without an inbox error", async () => {

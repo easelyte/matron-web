@@ -16,11 +16,11 @@ import { type JournalEvent } from "./types";
  * or `person:<name>@<host>` for the other person's side of a room) and the bridge's `notice` tag.
  * Our own side gets `<user>@<our journal host>` so it reads the same way as theirs.
  */
-export type RoomSide = "ours" | "theirs" | "system";
+export type RoomSide = "ours" | "theirs" | "system" | "other";
 
 export interface RoomSenderLabel {
     side: RoomSide;
-    /** Primary label, e.g. `dan@peer.example` or `alice@journal.example`. */
+    /** Primary label, e.g. `bob@peer.example` or `alice@journal.example`. */
     name: string;
     /** Secondary detail, e.g. the box our agent runs on, or "agent" for the other side. */
     detail?: string;
@@ -60,21 +60,21 @@ export function roomSenderLabel(
         return { side: "theirs", name: rest, detail: via === "agent" ? "their agent" : undefined };
     }
     if (kind === "user") return { side: "ours", name: ourName || rest };
-    if (kind === "agent") {
-        // The bridge stamps the speaking session on a room message (`from_session`), so two
-        // sessions on one box tell apart.
-        const stamped = event.payload?.from_session as { title?: unknown } | undefined;
-        const title = typeof stamped?.title === "string" ? stamped.title.trim() : "";
-        const agent = title ? `our agent · ${title}` : "our agent";
-        return { side: "ours", name: ourName || rest, detail: ourName ? `${agent} · ${rest}` : agent };
-    }
-    return { side: "system", name: rest || "System" };
+    if (kind === "agent")
+        return { side: "ours", name: ourName || rest, detail: ourName ? `our agent · ${rest}` : "our agent" };
+    // The journal's own cards (sender `journal`) are not notices: they keep the plain header.
+    return { side: "other", name: rest || "System" };
 }
 
 function sameLocalDay(a: number, b: number): boolean {
     const x = new Date(a);
     const y = new Date(b);
     return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+}
+
+/** Whether a message's time shows a date in front of the clock time (any day but today). */
+export function messageTimeHasDate(timestamp: number, now: number = Date.now()): boolean {
+    return Number.isFinite(timestamp) && !sameLocalDay(timestamp, now);
 }
 
 /** A message's time: the clock time today, with the date in front on any other day. */

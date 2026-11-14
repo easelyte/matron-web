@@ -80,6 +80,7 @@ interface FakeDatabase {
     cursor: () => Promise<number | undefined>;
     applyJournal: (event: JournalEvent) => Promise<boolean>;
     reconcileOwnMessage: (event: JournalEvent) => Promise<string | null>;
+    applyJournalBatch?: (events: JournalEvent[]) => Promise<boolean[]>;
     reconcilePersistedOwnMessages: () => Promise<string[]>;
     backfillDone?: () => Promise<boolean>;
     outcomeBackfillDue?: () => Promise<boolean>;
@@ -192,6 +193,11 @@ function historyDatabase(initialEvents: JournalEvent[] = []): FakeDatabase {
                 : conversation,
         );
         return true;
+    });
+    database.applyJournalBatch = jest.fn(async (events: JournalEvent[]) => {
+        const results: boolean[] = [];
+        for (const event of events) results.push(await database.applyJournal(event));
+        return results;
     });
     database.conversations = jest.fn(async () => conversations.map((conversation) => ({ ...conversation })));
     return database;
@@ -5488,5 +5494,198 @@ describe("MatronJournalClient read state", () => {
 
         await handle({ kind: "control", op: "error", code: "forbidden", ref: "read_marker" });
         expect(client.getSnapshot().connectionError).toBe("Journal operation failed: forbidden");
+    });
+});
+
+describe("MatronJournalClient session guards", () => {
+    beforeEach(() => {
+        localStorage.clear();
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    it("ignores callbacks a stopped connection delivers after the next session started", async () => {
+        // A stopped connection keeps draining its queue: a snapshot_required, journal frame or
+        // revoke queued on session A must not act on session B through the current database/api.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const databaseA = fakeDatabase();
+        const databaseB = fakeDatabase();
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        jest.spyOn(JournalDatabase, "open")
+            .mockResolvedValueOnce(databaseA as unknown as JournalDatabase)
+            .mockResolvedValueOnce(databaseB as unknown as JournalDatabase);
+        await state.startSession(SESSION);
+        const oldCallbacks = (
+            state.connection as unknown as { callbacks: Record<string, (...args: unknown[]) => unknown> }
+        ).callbacks;
+        await state.startSession({ ...SESSION, token: "token-b", userId: 3, username: "pat" });
+        const snapshot = jest.spyOn(JournalApi.prototype, "snapshot");
+        (databaseB.replaceWithSnapshot as jest.Mock).mockClear();
+        (databaseB.applyJournal as jest.Mock).mockClear();
+        const logout = jest.spyOn(client, "logout");
+        const stateBefore = client.getSnapshot();
+
+        await oldCallbacks.onSnapshotRequired();
+        await oldCallbacks.onReady({ kind: "control", op: "hello_ok" });
+        await oldCallbacks.onFrame({
+            kind: "journal",
+            seq: 99,
+            convo_id: "c1",
+            ts: 1,
+            sender: "user:2",
+            type: "text",
+            payload: { body: "stale" },
+        });
+        // A coalesced run queued on session A (two frames, so it takes the batch path). Session B's
+        // database has no applyJournalBatch, so an unguarded call would reject.
+        const staleRun = [99, 100].map((seq) => ({
+            kind: "journal",
+            seq,
+            convo_id: "c1",
+            ts: 1,
+            sender: "user:2",
+            type: "text",
+            payload: { body: "stale" },
+        }));
+        await oldCallbacks.onJournalBatch(staleRun);
+        oldCallbacks.onState("offline", "stale error");
+        oldCallbacks.onRevoked();
+        await Promise.resolve();
+
+        expect(snapshot).not.toHaveBeenCalled();
+        expect(databaseB.replaceWithSnapshot).not.toHaveBeenCalled();
+        expect(databaseB.applyJournal).not.toHaveBeenCalled();
+        expect(logout).not.toHaveBeenCalled();
+        expect(client.getSnapshot().session).toMatchObject({ username: "pat" });
+        expect(client.getSnapshot().connection).toBe(stateBefore.connection);
+        expect(client.getSnapshot().connectionError).toBe(stateBefore.connectionError);
+    });
+
+    it("does not wait for the tool-log expiry pass before the first paint", async () => {
+        const client = new MatronJournalClient();
+        const expire = jest.fn(() => new Promise<void>(() => undefined)); // never settles
+        const database = fakeDatabase({ expireToolLogs: expire });
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+
+        await internals(client).startSession(SESSION);
+
+        expect(expire).toHaveBeenCalledTimes(1);
+        expect(client.getSnapshot().phase).toBe("signed-in");
+        expect(client.getSnapshot().conversations.map((conversation) => conversation.id)).toEqual(["c1", "c2"]);
+    });
+
+    it("keeps going when the deferred expiry pass fails", async () => {
+        const client = new MatronJournalClient();
+        const database = fakeDatabase({ expireToolLogs: jest.fn().mockRejectedValue(new Error("closed")) });
+        jest.spyOn(JournalDatabase, "open").mockResolvedValue(database as unknown as JournalDatabase);
+        jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+        await internals(client).startSession(SESSION);
+        await Promise.resolve();
+
+        expect(client.getSnapshot().phase).toBe("signed-in");
+        expect(warn).toHaveBeenCalledWith("matron: tool-log expiry deferred", expect.any(Error));
+    });
+
+    it("reconciles a stale tool card from a duplicate session_status a peer tab already applied", async () => {
+        // Tabs sharing a server and user share one IndexedDB, so a terminal session_status applied
+        // by the peer tab advances the shared cursor and comes back applied=false here. The durable
+        // store is authoritative: without a refresh the tab that dropped the ephemeral tool_stream
+        // 'end' frame keeps a dangling tool card.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.database = fakeDatabase({
+            applyJournal: jest.fn().mockResolvedValue(false), // peer tab won the cursor race
+            conversations: jest.fn().mockResolvedValue([{ ...CONVERSATIONS[0], session_state: "done" }]),
+        });
+        const card = { messageRef: "toolref", content: "ls", offset: 2, headTruncated: false };
+        state.toolStreams.set("c1", { toolref: { ...card } });
+        state.state = { ...signedInState(client), toolStreams: { toolref: { ...card } } };
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 33,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "system",
+            type: "session_status",
+            payload: { state: "done" },
+        });
+
+        expect(state.toolStreams.has("c1")).toBe(false);
+        expect(client.getSnapshot().toolStreams).toEqual({});
+        expect(client.getSnapshot().conversations[0].session_state).toBe("done");
+    });
+
+    it("reconciles a stale title from a duplicate convo_meta a peer tab already applied", async () => {
+        // No upload is in flight, so the refresh must not be gated on one.
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        state.database = fakeDatabase({
+            applyJournal: jest.fn().mockResolvedValue(false), // peer tab won the cursor race
+            conversations: jest.fn().mockResolvedValue([{ ...CONVERSATIONS[0], title: "Renamed" }]),
+        });
+        state.state = { ...signedInState(client), conversations: [{ ...CONVERSATIONS[0], title: "One" }] };
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 34,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "agent:dev",
+            type: "convo_meta",
+            payload: { title: "Renamed" },
+        });
+
+        expect(client.getSnapshot().conversations[0].title).toBe("Renamed");
+    });
+
+    it("does not scan the conversation list for a duplicate message frame", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase({ applyJournal: jest.fn().mockResolvedValue(false) });
+        state.database = database;
+        state.state = signedInState(client);
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 35,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "agent:dev",
+            type: "text",
+            payload: { body: "dup" },
+        });
+
+        expect(database.conversations).not.toHaveBeenCalled();
+    });
+
+    it("refreshes the open timeline and retires the stream for a duplicate message in the selected conversation", async () => {
+        const client = new MatronJournalClient();
+        const state = internals(client);
+        const database = fakeDatabase({ applyJournal: jest.fn().mockResolvedValue(false) });
+        state.database = database;
+        state.state = { ...signedInState(client), selectedConversationId: "c1" };
+        state.textStreams.set("c1", { ref1: "par" });
+        const refresh = jest.spyOn(state, "refreshSelectedConversation").mockResolvedValue(undefined as never);
+
+        await state.handleJournal({
+            kind: "journal",
+            seq: 36,
+            convo_id: "c1",
+            ts: Date.now(),
+            sender: "agent:dev",
+            type: "text",
+            payload: { body: "dup", message_ref: "ref1" },
+        });
+
+        expect(refresh).toHaveBeenCalledWith("c1");
+        expect(state.textStreams.get("c1")?.ref1).toBeUndefined();
+        expect(database.conversations).not.toHaveBeenCalled();
     });
 });

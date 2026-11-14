@@ -117,6 +117,16 @@ describe("event classification", () => {
         expect(classifyEvent(event({ sender: "user:2", type: "prompt" }), undefined)).toBeNull();
     });
 
+    it("never classifies a silent event, whatever its type", () => {
+        const card = { question: "Reminder set", options: ["Send now", "Cancel"], silent: true };
+        expect(classifyEvent(event({ type: "prompt", payload: card }), undefined)).toBeNull();
+        expect(classifyEvent(event({ payload: { body: "Timer cancelled", silent: true } }), undefined)).toBeNull();
+        // Only a literal true is silent.
+        expect(
+            classifyEvent(event({ type: "prompt", payload: { ...card, silent: "true" } }), undefined),
+        ).not.toBeNull();
+    });
+
     it("classifies prompts, questions and notices as needing the user", () => {
         expect(eventKey(classifyEvent(event({ type: "prompt" }), undefined)!, plain)).toBe("prompts");
         expect(eventKey(classifyEvent(event({ type: "permission_request" }), undefined)!, plain)).toBe("prompts");

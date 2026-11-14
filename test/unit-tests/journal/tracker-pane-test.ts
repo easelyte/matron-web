@@ -168,3 +168,38 @@ describe("TrackerPane mission load failures", () => {
         expect(focus).toHaveBeenCalledWith("c7", 4242);
     });
 });
+
+describe("TrackerPane list priming", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    it("primes the lists once per pane open, not each time Memories is left", async () => {
+        const client = makeClient({ trackerView: { open: true, view: "memories" } });
+        const loadMissions = jest.spyOn(client, "loadMissions").mockResolvedValue(undefined as never);
+        const loadInbox = jest.spyOn(client, "loadInbox").mockResolvedValue(undefined as never);
+        const container = document.createElement("div");
+        document.body.append(container);
+        const root = createRoot(container);
+        const show = async (view: "memories" | "inbox" | "missions"): Promise<void> => {
+            (client as unknown as Internals).state = {
+                ...client.getSnapshot(),
+                trackerView: { open: true, view },
+            };
+            await act(async () => {
+                root.render(React.createElement(TrackerPane, { client, state: client.getSnapshot() }));
+            });
+        };
+
+        await show("memories");
+        expect(loadInbox).not.toHaveBeenCalled();
+        await show("inbox");
+        await show("memories");
+        await show("inbox");
+        await show("missions");
+        expect(loadInbox).toHaveBeenCalledTimes(1);
+        expect(loadMissions).toHaveBeenCalledTimes(1);
+        await act(async () => root.unmount());
+        container.remove();
+    });
+});

@@ -20,6 +20,7 @@ import {
     PREFERENCES_UNAVAILABLE_ERROR,
     unreadStore,
 } from "../../../src/journal/client";
+import { COMPOSER_MAX_HEIGHT_PX } from "../../../src/journal/composer-input";
 import { makeDraftStore } from "../../../src/journal/composer-drafts";
 import {
     EventContent,
@@ -1548,6 +1549,56 @@ describe("message model DOM contracts", () => {
         expect(row?.querySelectorAll(".mj_EventTile_line time")).toHaveLength(0);
     });
 
+    it("labels the other person's side in a room, apart from our agent's section", async () => {
+        const theirs = {
+            ...textEvent(2, "from the other side"),
+            sender: "person:bob@peer.example",
+            payload: { body: "from the other side", via: "agent" },
+        };
+        rendered = await renderClient(signedInClient({ events: [textEvent(1, "ours"), theirs] }));
+
+        const ours = rendered.container.querySelector('[data-event-id="1"]');
+        const other = rendered.container.querySelector('[data-event-id="2"]');
+        expect(other?.classList.contains("mj_EventTile_continuation")).toBe(false);
+        expect(other?.querySelector(".mj_SenderName_theirs .mj_SenderName_displayName")?.textContent).toBe(
+            "bob@peer.example",
+        );
+        expect(other?.querySelector(".mj_SenderName_side")?.textContent).toBe("Their side");
+        // An ordinary session keeps its plain header, with no side tag.
+        expect(ours?.querySelector(".mj_SenderName_side")).toBeNull();
+    });
+
+    it("keeps the time on the journal's own card in a room with another person", async () => {
+        const theirs = { ...textEvent(1, "hello"), sender: "person:bob@peer.example", payload: { body: "hello" } };
+        const card = { ...textEvent(2, "room card"), sender: "journal" };
+        rendered = await renderClient(signedInClient({ events: [theirs, card] }));
+
+        const row = rendered.container.querySelector('[data-event-id="2"]');
+        expect(row?.querySelector(".mj_SenderName_system")).toBeNull();
+        expect(row?.querySelector(".mj_SenderName_side")).toBeNull();
+        expect(row?.querySelectorAll(".mj_SenderName time")).toHaveLength(1);
+    });
+
+    it("keeps the box name as the header in a room between the user's own agents", async () => {
+        const first = { ...textEvent(1, "from a"), sender: "agent:box-a" };
+        const second = { ...textEvent(2, "from b"), sender: "agent:box-b" };
+        const client = signedInClient({ events: [first, second] });
+        internals(client).state = {
+            ...client.getSnapshot(),
+            conversations: [{ ...CONVERSATION, title: "box-a \u2194 box-b" }],
+        };
+        rendered = await renderClient(client);
+
+        for (const [seq, box] of [
+            [1, "box-a"],
+            [2, "box-b"],
+        ] as const) {
+            const row = rendered.container.querySelector(`[data-event-id="${seq}"]`);
+            expect(row?.querySelector(".mj_SenderName_displayName")?.textContent).toBe(box);
+            expect(row?.querySelector(".mj_SenderName_side")).toBeNull();
+        }
+    });
+
     it("puts the section timestamp on the first block and none on agent continuations", async () => {
         rendered = await renderClient(
             signedInClient({ events: [textEvent(1, "first"), textEvent(2, "continuation")] }),
@@ -1561,6 +1612,15 @@ describe("message model DOM contracts", () => {
         // Continuation blocks carry no per-block timestamp, so they fill to the shared
         // right edge with no reserved 56px gutter (kills the first-block spill).
         expect(row?.querySelectorAll("time")).toHaveLength(0);
+    });
+
+    it("reserves room for the date in an own bubble from an earlier day", async () => {
+        const old = { ...textEvent(1, "short"), sender: "user:alice", ts: Date.now() - 3 * 86_400_000 };
+        const fresh = { ...textEvent(2, "short"), sender: "user:alice", ts: Date.now() };
+        rendered = await renderClient(signedInClient({ events: [old, fresh] }));
+
+        expect(rendered.container.querySelector('[data-event-id="1"] .mj_EventTile_line_dated')).not.toBeNull();
+        expect(rendered.container.querySelector('[data-event-id="2"] .mj_EventTile_line_dated')).toBeNull();
     });
 
     it("renders a self timestamp exactly once and no avatar", async () => {
@@ -2421,7 +2481,7 @@ describe("composer sends", () => {
         await act(async () => {
             await result.client.selectConversation("c1");
         });
-        expect(composerHeight(rendered.container)).toBe("160px");
+        expect(composerHeight(rendered.container)).toBe(`${COMPOSER_MAX_HEIGHT_PX}px`);
     });
 
     test("a draft restored into a freshly mounted composer opens at its content height", async () => {

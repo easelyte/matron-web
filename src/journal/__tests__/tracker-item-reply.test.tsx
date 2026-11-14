@@ -411,6 +411,17 @@ describe("ItemDetail reply box", () => {
             );
         });
 
+        it("shows the length limit once the draft is over it, and not before", async () => {
+            const container = await renderItem(fakeClient());
+            await type(container, "x".repeat(32768));
+            expect(container.querySelector(".mj_TrackerComposer_limit")).toBeNull();
+
+            await type(container, "x".repeat(32769));
+            expect(container.querySelector(".mj_TrackerComposer_limit")?.textContent).toBe(
+                "Too long to send: a reply takes at most 32,768 characters. Split it into several replies, or attach the text as a file. (32,769 now.)",
+            );
+        });
+
         it("says nothing about splitting while the files fit on one comment", async () => {
             const container = await renderItem(fakeClient());
             await pick(container, many(20));

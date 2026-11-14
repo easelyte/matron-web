@@ -37,18 +37,18 @@ const SNAPSHOT_ROWS: Conversation[] = ["c1", "c2"].map((id, index) => ({
 const RUN: JournalEvent[] = [
     ev(1, "c1", "agent:dev"),
     ev(2, "c2", "agent:dev"),
-    ev(3, "c1", "user:dan"),
+    ev(3, "c1", "user:alice"),
     ev(4, "c1", "agent:dev"),
-    ev(5, "c1", "agent:dev", "convo_meta", { title: "Renamed", summary: "digest", summary_updated_at: 42 }),
+    ev(5, "c1", "agent:dev", "convo_meta", { title: "Renamed" }),
     ev(6, "c2", "agent:dev"),
-    ev(7, "c1", "user:dan", "read_marker", { up_to_seq: 3 }),
+    ev(7, "c1", "user:alice", "read_marker", { up_to_seq: 3 }),
     ev(8, "c2", "agent:dev", "session_status", { state: "idle", session_outcome: "done" }),
     ev(9, "c3", "agent:dev"),
     ev(10, "c1", "agent:dev", "tool_output", { text: "ok" }),
 ];
 
 async function freshDatabase(name: string): Promise<JournalDatabase> {
-    const database = await JournalDatabase.open(`https://${name}.example`, 1, "dan");
+    const database = await JournalDatabase.open(`https://${name}.example`, 1, "alice");
     await database.replaceWithSnapshot({ seq: 0, conversations: SNAPSHOT_ROWS });
     return database;
 }
@@ -78,7 +78,7 @@ describe("JournalDatabase.applyJournalBatch", () => {
         const c1 = (await batched.conversations()).find((conversation) => conversation.id === "c1");
         // The read marker saw rows 1 and 4 from this same run: only 4 (> up_to_seq 3) is unread,
         // then row 10 (tool_output, a message type) lands after it.
-        expect(c1).toMatchObject({ title: "Renamed", summary: "digest", read_up_to_seq: 3, unread_count: 2 });
+        expect(c1).toMatchObject({ title: "Renamed", read_up_to_seq: 3, unread_count: 2 });
         oneByOne.close();
         batched.close();
     });
@@ -103,6 +103,27 @@ describe("JournalDatabase.applyJournalBatch", () => {
         expect(await database.applyJournalBatch(RUN.slice(0, 4))).toEqual([false, false, false, false]);
         expect(await dump(database)).toEqual(before);
         database.close();
+    });
+
+    it("keeps silent events out of the unread count, as the per-row path does", async () => {
+        const silentRun = [
+            ev(1, "c1", "agent:dev"),
+            ev(2, "c1", "agent:dev", "text", { body: "quiet", silent: true }),
+            ev(3, "c1", "agent:dev"),
+            ev(4, "c1", "user:alice", "read_marker", { up_to_seq: 0 }),
+            ev(5, "c2", "agent:dev", "text", { body: "quiet", silent: true }),
+        ];
+        const oneByOne = await freshDatabase("silent-one");
+        for (const event of silentRun) await oneByOne.applyJournal(event);
+        const batched = await freshDatabase("silent-batch");
+        await batched.applyJournalBatch(silentRun);
+
+        expect(await dump(batched)).toEqual(await dump(oneByOne));
+        const rows = await batched.conversations();
+        expect(rows.find((row) => row.id === "c1")?.unread_count).toBe(2);
+        expect(rows.find((row) => row.id === "c2")?.unread_count).toBe(0);
+        oneByOne.close();
+        batched.close();
     });
 
     it("treats an empty run as a no-op", async () => {

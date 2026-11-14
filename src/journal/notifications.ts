@@ -37,7 +37,14 @@ import type { LiveListener, MatronJournalClient } from "./client";
 import { effectiveUnread } from "./conversation-flags";
 import { isJoinedRoom } from "./conversation-rooms";
 import { displayTitle } from "./SessionTag";
-import { type ClientState, type Conversation, eventSnippet, type JournalEvent, type Session } from "./types";
+import {
+    type ClientState,
+    type Conversation,
+    eventSnippet,
+    isSilentEvent,
+    type JournalEvent,
+    type Session,
+} from "./types";
 
 // ── Settings model (journal src/notify.js) ──────────────────────────────────────────────────
 
@@ -353,6 +360,8 @@ export function classifyEvent(event: JournalEvent, prevState: string | undefined
     if (typeof sender === "string" && sender.startsWith("user:")) return null;
     // An old-client fallback text mirrors a tracker marker that made its own decision.
     if (type === "text" && payload.fallback_for) return null;
+    // A silent event is there to be read in the chat, never to tell anyone.
+    if (isSilentEvent(event)) return null;
     if (type === "prompt" || type === "permission_request") return { kind: "attention" };
     if (type === "session_status") {
         const state = payload.state;

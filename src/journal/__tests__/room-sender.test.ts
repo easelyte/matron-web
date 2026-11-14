@@ -6,15 +6,17 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import { formatClockTime } from "../date-format";
-import { formatMessageTime, journalHost, roomSenderLabel } from "../room-sender";
+import { formatMessageTime, isPersonSender, journalHost, roomSenderLabel } from "../room-sender";
+import { sameTimelineSection } from "../system-notice";
+import { type JournalEvent } from "../types";
 
 const ours = { username: "alice", host: "journal.example" };
 
 describe("roomSenderLabel", () => {
     it("names the other person's side with its journal host", () => {
         expect(
-            roomSenderLabel({ sender: "person:dan@peer.example", type: "text", payload: { via: "agent" } }, ours),
-        ).toEqual({ side: "theirs", name: "dan@peer.example", detail: "their agent" });
+            roomSenderLabel({ sender: "person:bob@peer.example", type: "text", payload: { via: "agent" } }, ours),
+        ).toEqual({ side: "theirs", name: "bob@peer.example", detail: "their agent" });
     });
 
     it("names our agent with our user and host, and the box it runs on", () => {
@@ -25,11 +27,8 @@ describe("roomSenderLabel", () => {
         });
     });
 
-    it("adds the speaking session's title when the bridge stamped one", () => {
-        const payload = { from_session: { convo_id: "s1", title: "Fix the build" } };
-        expect(roomSenderLabel({ sender: "agent:box-a", type: "text", payload }, ours).detail).toBe(
-            "our agent · Fix the build · box-a",
-        );
+    it("leaves the journal's own cards out of the side labelling", () => {
+        expect(roomSenderLabel({ sender: "journal", type: "item", payload: {} }, ours).side).toBe("other");
     });
 
     it("marks a bridge notice as system, whoever journaled it", () => {
@@ -64,5 +63,27 @@ describe("formatMessageTime", () => {
 
     it("adds the year for an earlier year", () => {
         expect(formatMessageTime(new Date(2025, 0, 2, 9, 5).getTime(), now)).toMatch(/2025/);
+    });
+});
+
+describe("room sections", () => {
+    const event = (sender: string): JournalEvent => ({ sender, type: "text", payload: {} }) as unknown as JournalEvent;
+
+    it("recognises the other person's side by its sender", () => {
+        expect(isPersonSender("person:bob@peer.example")).toBe(true);
+        expect(isPersonSender("agent:box-a")).toBe(false);
+        expect(isPersonSender("user:alice")).toBe(false);
+    });
+
+    it("keeps the other person's messages out of our agent's section", () => {
+        expect(sameTimelineSection(event("agent:box-a"), event("person:bob@peer.example"))).toBe(false);
+        expect(sameTimelineSection(event("person:bob@peer.example"), event("person:bob@peer.example"))).toBe(true);
+    });
+
+    it("labels a bare user message as ours", () => {
+        expect(roomSenderLabel({ sender: "user:alice", type: "text", payload: {} }, ours)).toEqual({
+            side: "ours",
+            name: "alice@journal.example",
+        });
     });
 });

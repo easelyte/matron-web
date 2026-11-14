@@ -11,6 +11,7 @@ import {
     enforceToolLogTtl,
     eventSnippet,
     type JournalEvent,
+    isSilentEvent,
     MESSAGE_EVENT_TYPES,
     type PendingMessage,
     type SnapshotResponse,
@@ -127,9 +128,9 @@ function emptyConversation(id: string, timestamp: number): Conversation {
 
 /**
  * Folds one newly applied journal row into its conversation row (mutated in place). Shared by the
- * single-row and batched apply paths so both derive the sidebar state identically. `eventStore`
- * is the SAME transaction's events store, which already holds this row, so a read marker counts
- * unread against everything applied so far — including earlier rows of the same batch.
+ * single-row and batched apply paths so both derive the sidebar state identically. `eventStore` is
+ * the same transaction's events store, which already holds this row, so a read marker counts
+ * unread against everything applied so far, including earlier rows of the same batch.
  */
 async function applyEventToConversation(
     conversation: Conversation,
@@ -213,9 +214,8 @@ async function applyEventToConversation(
             );
             conversation.last_step = { tool: step.tool, input };
         } else delete conversation.last_step;
-        if (!event.sender.startsWith("user:")) {
-            conversation.unread_count += 1;
-        }
+        // A silent event is shown and never counted; the recount below leaves it out too.
+        if (!event.sender.startsWith("user:") && !isSilentEvent(event)) conversation.unread_count += 1;
     } else if (event.type === "read_marker") {
         const upToSeq = typeof event.payload.up_to_seq === "number" ? event.payload.up_to_seq : 0;
         conversation.read_up_to_seq = Math.max(conversation.read_up_to_seq, upToSeq);
@@ -226,7 +226,8 @@ async function applyEventToConversation(
             (candidate) =>
                 candidate.seq > upToSeq &&
                 MESSAGE_EVENT_TYPES.has(candidate.type) &&
-                !candidate.sender.startsWith("user:"),
+                !candidate.sender.startsWith("user:") &&
+                !isSilentEvent(candidate),
         ).length;
     }
 }
@@ -536,13 +537,12 @@ export class JournalDatabase {
     }
 
     /**
-     * Applies a run of strictly ordered rows in ONE transaction and returns, per row, whether it
-     * was newly applied (false = at or below the durable cursor, i.e. a duplicate). Semantically
-     * identical to calling applyJournal once per row in order — a later row sees every earlier
-     * row's writes (conversation fields via the in-transaction cache, events via the store) — but
-     * a replay of thousands of rows costs one commit instead of thousands. The cursor only ever
-     * moves forward, to the highest applied seq, and the whole run commits or none of it does, so
-     * a failed transaction leaves the cursor where it was and the rows are replayed again.
+     * Applies a run of strictly ordered rows in one transaction and returns, per row, whether it
+     * was newly applied (false = at or below the durable cursor, a duplicate). Same result as
+     * calling applyJournal once per row in order, since a later row sees every earlier row's
+     * writes, but a replay of thousands of rows costs a few commits instead of thousands. The
+     * cursor only moves forward, to the highest applied seq, and the run commits or fails as a
+     * whole, so a failed transaction leaves the cursor where it was and the rows are replayed.
      */
     public async applyJournalBatch(incomingEvents: JournalEvent[]): Promise<boolean[]> {
         if (incomingEvents.length === 0) return [];
@@ -577,7 +577,7 @@ export class JournalDatabase {
             try {
                 await transactionDone(transaction);
             } catch {
-                // The abort is deliberate: no writes were needed for a duplicate frame.
+                // The abort is deliberate.
             }
             return results;
         }

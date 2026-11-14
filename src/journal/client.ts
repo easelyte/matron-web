@@ -294,14 +294,6 @@ export const RPC_CREATE_WATCHDOG_MS = 30_000;
 // the created convo, so it never outlives the delay it describes.
 export const RPC_CREATE_STALLED_NOTICE =
     "New session is still starting — it will appear once it syncs. Refresh if it doesn't.";
-// reconnect-loop guard. A malformed-seq LIVE frame triggers a full resync; a single one
-// recovers cleanly (a fresh snapshot never contains it), so the healthy case never approaches
-// this bound. But a server that repeatedly pushes malformed frames would re-poison each clean
-// cursor immediately, so more than LIMIT resyncs inside WINDOW halts auto-resync and surfaces an
-// error instead of looping. The counter resets on the next well-formed frame (server recovered).
-const MALFORMED_SEQ_RESYNC_LIMIT = 3;
-const MALFORMED_SEQ_RESYNC_WINDOW_MS = 30_000;
-export const MALFORMED_SEQ_HALTED_ERROR = "Sync paused — the server is sending malformed updates. Reload to try again.";
 /**
  * The matching seqs of a find-in-chat response, newest first and without repeats. Only `seq` (and
  * `convo_id`, to drop anything outside the conversation) is read, so both the journal's
@@ -828,17 +820,6 @@ export class MatronJournalClient {
     private sessionGen = 0;
     private ackTimer?: number;
     private pendingAck = 0;
-    // timestamps (ms) of recent malformed-seq-triggered resyncs, for the reconnect-loop
-    // guard in handleMalformedJournalFrame. Pruned to MALFORMED_SEQ_RESYNC_WINDOW_MS on each hit —
-    // the sliding window IS the "clean period" reset, so a burst inside the window trips the guard
-    // while a genuinely transient blip ages out on its own. Deliberately NOT reset on a single good
-    // frame: that would let a server alternating good/malformed frames resync unbounded.
-    private malformedSeqResyncs: number[] = [];
-    // once the reconnect-loop guard trips, journal processing is HALTED — the connection is
-    // stopped and every subsequent frame is ignored so no later frame can advance/ack the cursor
-    // past the unrecovered malformed row (applyJournal has no gap detection). Cleared only by a
-    // fresh session (resetTransientSyncState on logout / snapshot transition, or a reload).
-    private journalHalted = false;
     private historyError?: string;
     // Bumped by every jump to a message; a paging jump whose token is stale has been superseded.
     private focusToken = 0;
@@ -4271,9 +4252,9 @@ export class MatronJournalClient {
     // newer session's store. ──────────────────────
 
     // Whether the pane is showing a tracker list tab (Inbox or Missions). A list load that settles
-    // after the user moved to Memories must not write the shared banner there: that tab
-    // surfaces its own failures, and the list keeps its own error (inboxError / missionsError)
-    // for when its tab is shown again.
+    // after the user moved to Memories must not write the shared banner there: that tab surfaces
+    // its own failures, and the list keeps its own error (inboxError / missionsError) for when its
+    // tab is shown again.
     private trackerListTabShown(): boolean {
         const view = this.state.trackerView;
         return !!view?.open && (view.view === "inbox" || view.view === "missions");
@@ -4286,8 +4267,8 @@ export class MatronJournalClient {
         // open and mission markers independently restart it, so a slower earlier request must never
         // overwrite a newer one's result (else closed missions / obsolete counts reappear) (F2).
         const gen = ++this.trackerMissionsGen;
-        // Like itemLoadError, missionsError stays until a load succeeds: a retry that stalls must not
-        // take the "may be out of date" notice off a list it has not replaced yet.
+        // missionsError stays until a load succeeds: a retry that stalls must not take the
+        // "may be out of date" notice off a list it has not replaced yet.
         this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             const { missions } = await api.missions();
@@ -4410,7 +4391,8 @@ export class MatronJournalClient {
         // load already dropped (e.g. items closed meanwhile) (F2).
         const gen = ++this.trackerInboxGen;
         this.inboxWalking = true;
-        this.patch({ trackerLoading: true, trackerError: undefined, inboxError: undefined });
+        // inboxError stays until a load succeeds, as missionsError does.
+        this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             // App-wide open items; the inbox sorts "needs you" (open && awaiting==user) first
             // client-side, so a single open-state fetch feeds every section. The list is
@@ -4452,13 +4434,10 @@ export class MatronJournalClient {
                 inboxItems: merged,
                 ...this.doneWithoutOpen(merged),
                 trackerLoading: false,
-                ...(this.trackerListTabShown()
-                    ? {
-                          trackerError: truncated
-                              ? "Showing a partial inbox — too many open items to load them all. Some rows may be missing."
-                              : undefined,
-                      }
-                    : {}),
+                inboxError: undefined,
+                // Kept as state (not only the shared banner) so a capped walk that settles while
+                // Memories is showing still flags the partial list when Inbox is opened later.
+                inboxTruncated: truncated,
             });
         } catch (error) {
             if (this.api !== api || this.trackerInboxGen !== gen) return;
@@ -4483,8 +4462,8 @@ export class MatronJournalClient {
         // Same generation guard as loadInbox: a memory marker restarts this while an earlier load
         // is in flight, and the older answer must never overwrite the newer one.
         const gen = ++this.trackerMemoriesGen;
-        // memoriesError stays until a load succeeds (as inboxError / missionsError do), so a stalled
-        // retry keeps the "may be out of date" notice over the rows it has not replaced yet.
+        // memoriesError stays until a load succeeds, so a stalled retry keeps the "may be out of
+        // date" notice over the rows it has not replaced yet.
         this.patch({ trackerLoading: true, trackerError: undefined });
         try {
             const { memories } = await api.memories();
@@ -5425,13 +5404,6 @@ export class MatronJournalClient {
 
     private async startSession(session: Session): Promise<void> {
         this.sessionGen += 1;
-        // A genuinely new session (initialise / login) establishes a fresh cursor and
-        // connection, so this is the ONLY place the malformed-seq reconnect-loop budget and halt
-        // are cleared. They deliberately survive resyncs (replaceSnapshot / resetTransientSyncState)
-        // — clearing them there would wipe the budget on every resnapshot, so a server emitting one
-        // malformed frame per reconnect would never reach the halt threshold (unbounded loop).
-        this.malformedSeqResyncs = [];
-        this.journalHalted = false;
         this.pinImportStarted = false;
         this.stagedPins = null;
         this.archiveOnJournal = readArchiveSince(session) !== undefined;
@@ -5648,11 +5620,11 @@ export class MatronJournalClient {
         this.emit();
         if (selectedConversation) await this.selectConversation(selectedConversation.id, { clearUnread: false });
 
-        // bind every callback to the generation that created this connection. A stopped
-        // connection keeps draining its processing queue, so a frame (or snapshot_required) queued
-        // before logout can run after the NEXT session started — and every handler below reads the
-        // client's CURRENT database/api, so an unbound callback would act on the new session (a
-        // stale resync would replace the new journal; a stale revoke would log the new account out).
+        // Bind every callback to the session that created this connection. A stopped connection
+        // keeps draining its processing queue, so a frame or snapshot_required queued before
+        // logout can run after the next session started, and the handlers read the client's
+        // current database and api: an unbound snapshot_required would replace the new session's
+        // journal, and an unbound revoke would sign the new account out.
         const connectionGen = this.sessionGen;
         const current = (): boolean => this.sessionGen === connectionGen;
         this.connection = new JournalConnection(session.serverUrl, session.token, {
@@ -5678,13 +5650,10 @@ export class MatronJournalClient {
             },
         });
         this.connection.start();
-        // Physically purge expired live tool logs only once the session is up: it walks every cached
-        // row, and the store holds every row this device has ever received, so awaiting it before
-        // the first paint kept a long-lived device on a blank screen for seconds. It runs in short
-        // chunked transactions (see expireToolLogs) so reads and live frames interleave with it.
-        // Reads already apply the TTL (events() / putHistory / applyJournal run
-        // enforceToolLogTtl), so nothing expired is shown meanwhile; this only drops stale payloads
-        // from disk.
+        // Purge expired live tool logs once the session is up, not before the first paint: it walks
+        // every cached row, and the store holds every row this device has received, so awaiting it
+        // kept a long-lived device on a blank screen for seconds. Reads already apply the TTL, so
+        // nothing expired is shown meanwhile; this only drops stale payloads from disk.
         const expiringDatabase = this.database;
         void expiringDatabase.expireToolLogs().catch((error) => {
             if (this.database === expiringDatabase) console.warn("matron: tool-log expiry deferred", error);
@@ -6294,58 +6263,120 @@ export class MatronJournalClient {
         }
     }
 
+    private retireStreamRef(event: JournalEvent): void {
+        const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
+        if (!messageRef) return;
+        this.retiredStreamRefs.add(`${event.convo_id}:${messageRef}`);
+        const text = this.textStreams.get(event.convo_id);
+        const tools = this.toolStreams.get(event.convo_id);
+        if (text) delete text[messageRef];
+        if (tools) delete tools[messageRef];
+    }
+
+    private async handleJournal(event: JournalEvent): Promise<void> {
+        if (!this.database) return;
+        // Tracker markers (item/mission/milestone) drive a live refetch of the open tracker pane's
+        // data regardless of whether this event is newly applied below — fire-and-forget so it
+        // never blocks (or is blocked by) timeline application. Non-tracker types return at once.
+        this.handleTrackerMarker(event);
+        this.handleCoordinatorMarker(event);
+        const applied = await this.database.applyJournal(event);
+        this.clearRpcCreateWatchdog(event.convo_id);
+        const removed = await this.database.reconcileOwnMessage(event);
+        if (removed) {
+            this.pendingFiles.delete(removed);
+            this.transientAttachmentErrors.delete(removed);
+        }
+        if (!applied) {
+            // A peer tab that won the cursor race has already stored this row, so its message_ref
+            // stream is finished here too; retire it so a streaming bubble cannot linger.
+            this.retireStreamRef(event);
+            let selectedRefreshed = false;
+            if (
+                event.convo_id === this.state.selectedConversationId &&
+                (removed || MESSAGE_EVENT_TYPES.has(event.type))
+            ) {
+                // The open timeline may be missing this row in this tab; reading it back from the
+                // shared store touches one conversation only.
+                await this.refreshSelectedConversation(event.convo_id);
+                selectedRefreshed = true;
+            }
+            // Tabs sharing a server and user share one IndexedDB, so applied=false can mean a peer
+            // tab already wrote this row and advanced the shared cursor. The durable store then
+            // holds the new state and this tab's copy is stale, so refresh from it instead of
+            // returning. session_status is the only frame that changes session_state; convo_meta
+            // changes the title, parent link, box and room membership. Ordinary duplicate message
+            // frames stay off this path, since the refresh scans every conversation.
+            if (event.type === "session_status") {
+                await this.refreshConversations();
+                if (!selectedRefreshed && event.convo_id === this.state.selectedConversationId) {
+                    await this.refreshSelectedConversation(event.convo_id);
+                }
+            }
+            if (event.type === "convo_meta") {
+                await this.refreshConversations();
+                if (this.uploadConvos.size > 0) this.abortUploadsForChildConvos();
+            }
+            return;
+        }
+        this.clearHistoryError();
+        this.scheduleAck(event.seq);
+        const previous = this.state.conversations.find((conversation) => conversation.id === event.convo_id);
+        this.emitLive((listener) => listener.journalEvent?.(event, previous));
+
+        this.retireStreamRef(event);
+
+        await this.refreshConversations();
+        this.abortUploadsForChildConvos();
+        if (!previous || this.newVerdictPending.has(event.convo_id)) this.considerNewConversation(event, !previous);
+        if (event.convo_id === this.state.selectedConversationId) {
+            await this.refreshSelectedConversation(event.convo_id);
+            if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
+                this.scheduleRead(event.convo_id, event.seq);
+            }
+        }
+    }
+
     /**
      * A coalesced run of sequenced journal frames (see JournalConnection.onJournalBatch). One frame
-     * takes the ordinary per-frame path unchanged. A longer run — a reconnect replay, or a burst
-     * that arrived while the previous run was still being applied — is applied in ONE store
-     * transaction, and the sidebar / open timeline are refreshed ONCE for the whole run instead of
-     * once per frame. Per-frame side effects (tracker markers, outbox reconciliation, stream
-     * retirement, acks, read scheduling) still run for every frame, in order. A malformed frame
-     * ends the batched prefix: it and everything after it take the per-frame path, which owns the
-     * halt-and-resync handling.
+     * takes the ordinary per-frame path. A longer run, such as a reconnect replay or a burst that
+     * arrived while the previous run was being applied, is applied in one store transaction, and
+     * the sidebar and open timeline are refreshed once for the whole run instead of once per frame.
+     * The per-frame side effects (live listeners, tracker markers, outbox reconciliation, stream
+     * retirement, acks, read scheduling) still run for every frame, in order. Listeners see the
+     * conversation list as it was before the run as the `previous` of a conversation's first row, and
+     * the post-apply row for its later rows, so a listener sees what the per-frame path would show.
      */
     private async handleJournalBatch(events: JournalEvent[]): Promise<void> {
         if (events.length === 1) {
-            await this.handleJournal(events[0]);
+            await this.handleFrame(events[0]);
             return;
         }
         const database = this.database;
-        if (!database || this.journalHalted) return;
-        const firstBad = events.findIndex(
-            (event) =>
-                !Number.isSafeInteger(event.seq) ||
-                event.seq < 0 ||
-                typeof event.convo_id !== "string" ||
-                !event.convo_id,
-        );
-        const prefix = firstBad === -1 ? events : events.slice(0, firstBad);
-        if (prefix.length > 0) await this.applyJournalRun(prefix, database);
-        if (firstBad === -1) return;
-        // The malformed frame takes the per-frame path (halt, or re-snapshot). Rows after it
-        // are NOT applied: committing them would advance the durable cursor past the unrecovered
-        // row, so a failed re-snapshot would reconnect beyond it and lose it for good. The resync
-        // abandons this socket, and a clean cursor replays them after the malformed row.
-        await this.handleJournal(events[firstBad]);
-    }
-
-    private async applyJournalRun(events: JournalEvent[], database: JournalDatabase): Promise<void> {
-        for (const event of events) this.handleTrackerMarker(event);
-        const applied =
-            typeof database.applyJournalBatch === "function"
-                ? await database.applyJournalBatch(events)
-                : await (async () => {
-                      const results: boolean[] = [];
-                      for (const event of events) results.push(await database.applyJournal(event));
-                      return results;
-                  })();
+        if (!database) return;
+        for (const event of events) {
+            this.emitLive((listener) => listener.frame?.(event));
+            this.handleTrackerMarker(event);
+            this.handleCoordinatorMarker(event);
+        }
+        const applied = await database.applyJournalBatch(events);
         if (this.database !== database) return;
+        const previousRows = new Map(this.state.conversations.map((conversation) => [conversation.id, conversation]));
         const selectedId = this.state.selectedConversationId;
         let refreshConversations = false;
         let abortUploads = false;
         let refreshSelected = false;
+        // Later rows of a conversation get the post-apply row as `previous` (it already carries a
+        // subagent's parent, a room's membership and its title), so refresh the list before them.
+        const liveSeen = new Set<string>();
+        if (applied.includes(true)) {
+            await this.refreshConversations();
+            if (this.database !== database) return;
+        }
         let maxAppliedSeq: number | undefined;
         const reads: Array<[string, number]> = [];
-        // Every row below is already durable (the run committed with its final cursor), so a
+        const appliedEvents: JournalEvent[] = [];
+        // Every applied row is already durable (the run committed with its final cursor), so a
         // failure on one row must not strand the side effects of the rows after it: they would never
         // be replayed. Keep going, then surface the first failure once the run is fully handled.
         let firstError: unknown;
@@ -6363,30 +6394,28 @@ export class MatronJournalClient {
                 this.transientAttachmentErrors.delete(removed);
             }
             if (!applied[index]) {
-                // Mirrors handleJournal's duplicate-frame branch (P48): a peer tab already wrote it.
-                if (removed && event.convo_id === selectedId) refreshSelected = true;
-                if (event.type === "session_status") {
-                    refreshConversations = true;
-                    if (event.convo_id === selectedId) {
-                        refreshSelected = true;
-                    }
+                // Same as handleJournal's !applied branch: a peer tab that won the cursor race has
+                // already stored this row, so finish its stream here and reconcile from the shared
+                // store. The refreshes are deferred to once per run.
+                this.retireStreamRef(event);
+                if (
+                    event.convo_id === selectedId &&
+                    (removed || MESSAGE_EVENT_TYPES.has(event.type) || event.type === "session_status")
+                ) {
+                    refreshSelected = true;
                 }
-                if (event.type === "convo_meta") {
-                    refreshConversations = true;
-                    if (this.uploadConvos.size > 0) abortUploads = true;
-                }
+                if (event.type === "session_status" || event.type === "convo_meta") refreshConversations = true;
+                if (event.type === "convo_meta" && this.uploadConvos.size > 0) abortUploads = true;
                 continue;
             }
+            appliedEvents.push(event);
             maxAppliedSeq = Math.max(maxAppliedSeq ?? event.seq, event.seq);
-            const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
-            if (messageRef) {
-                this.retiredStreamRefs.add(`${event.convo_id}:${messageRef}`);
-                const text = this.textStreams.get(event.convo_id);
-                const tools = this.toolStreams.get(event.convo_id);
-                if (text) delete text[messageRef];
-                if (tools) delete tools[messageRef];
-            }
-            refreshConversations = true;
+            const previousRow = liveSeen.has(event.convo_id)
+                ? this.state.conversations.find((conversation) => conversation.id === event.convo_id)
+                : previousRows.get(event.convo_id);
+            liveSeen.add(event.convo_id);
+            this.emitLive((listener) => listener.journalEvent?.(event, previousRow));
+            this.retireStreamRef(event);
             abortUploads = true;
             if (event.convo_id === selectedId) {
                 refreshSelected = true;
@@ -6401,157 +6430,18 @@ export class MatronJournalClient {
         }
         if (refreshConversations) await this.refreshConversations();
         if (abortUploads) this.abortUploadsForChildConvos();
+        const seenFirst = new Set<string>();
+        for (const event of appliedEvents) {
+            const firstFrame = !previousRows.has(event.convo_id) && !seenFirst.has(event.convo_id);
+            seenFirst.add(event.convo_id);
+            if (firstFrame || this.newVerdictPending.has(event.convo_id))
+                this.considerNewConversation(event, firstFrame);
+        }
         if (refreshSelected && selectedId !== undefined && this.state.selectedConversationId === selectedId) {
             await this.refreshSelectedConversation(selectedId);
         }
         for (const [conversationId, seq] of reads) this.scheduleRead(conversationId, seq);
         if (firstError !== undefined) throw firstError;
-    }
-
-    private async handleJournal(event: JournalEvent): Promise<void> {
-        if (!this.database) return;
-        // once the reconnect-loop guard has halted journal processing, ignore every frame
-        // (well-formed or not) until the session is reset. Applying a later frame here would advance
-        // the cursor past the malformed row that was never recovered — the exact silent gap this
-        // recovery exists to prevent — and re-arming the guard on a good frame would let an
-        // alternating good/malformed server evade the bound.
-        if (this.journalHalted) return;
-        // frame-decode passes journal (sequenced) frames through UNVALIDATED by design — a
-        // boundary drop would advance the cursor past the dropped seq and lose the row silently
-        // (applyJournal has no gap detection). But a frame whose `seq` is not a usable cursor value
-        // is a cursor-POISON hazard, not just a bad payload: applyJournal's dedup guard
-        // `event.seq <= currentCursor` is FALSE when seq is NaN/non-numeric (NaN comparisons are
-        // always false), so the poison frame is applied, `Math.max(last_seq, seq)` becomes NaN, and
-        // `meta.put(seq, CURSOR_KEY)` writes the poison as the durable cursor — which is then acked
-        // to the server and returned by db.cursor() on every reconnect. So a malformed seq must be
-        // neither applied NOR acked NOR allowed to advance the cursor; instead halt and re-snapshot
-        //. convo_id is validated too
-        // because applyJournal and handleTrackerMarker read it unguarded as an IndexedDB key.
-        if (
-            !Number.isSafeInteger(event.seq) ||
-            event.seq < 0 ||
-            typeof event.convo_id !== "string" ||
-            !event.convo_id
-        ) {
-            this.handleMalformedJournalFrame(event);
-            return;
-        }
-        // Tracker markers (item/mission/milestone) drive a live refetch of the open tracker pane's
-        // data regardless of whether this event is newly applied below — fire-and-forget so it
-        // never blocks (or is blocked by) timeline application. Non-tracker types return at once.
-        this.handleTrackerMarker(event);
-        this.handleCoordinatorMarker(event);
-        const applied = await this.database.applyJournal(event);
-        this.clearRpcCreateWatchdog(event.convo_id);
-        const removed = await this.database.reconcileOwnMessage(event);
-        if (removed) {
-            this.pendingFiles.delete(removed);
-            this.transientAttachmentErrors.delete(removed);
-        }
-        if (!applied) {
-            if (removed && event.convo_id === this.state.selectedConversationId) {
-                await this.refreshSelectedConversation(event.convo_id);
-            }
-            // A duplicate session_status is not a no-op for our mirror: tabs sharing a server/user
-            // share one IndexedDB, so applied=false means a peer tab already wrote the row and
-            // advanced the shared cursor — the durable store holds the new run-state and ours is
-            // the stale copy (P48). Without this the tab that dropped the ephemeral turn-end frame
-            // (the backgrounded one — the exact failure the activity reconcile fixes) keeps
-            // rendering a stale "Thinking" until some later frame it wins. session_status is the
-            // ONLY frame that mutates session_state (database.ts applyJournal), so this covers the
-            // whole run-state surface while keeping ordinary duplicate message frames off the
-            // O(conversations) scan. Refresh the selected timeline alongside it, on the applied
-            // path's terms, so the sidebar cannot advance past the events list.
-            if (event.type === "session_status") {
-                await this.refreshConversations();
-                if (event.convo_id === this.state.selectedConversationId) {
-                    await this.refreshSelectedConversation(event.convo_id);
-                }
-            }
-            // Same argument for convo_meta, and it is not upload-specific: the frame mutates
-            // title, the parent link, agent_kind and the pinned summary, so a peer
-            // tab that won the cursor race has already written all of them to the shared store
-            // while our mirror still renders the old values — the pinned digest most visibly,
-            // since it sits above the live timeline and only this frame refreshes it. Refresh
-            // unconditionally against the durable row (P48); the upload abort stays gated on
-            // there being uploads to abort.
-            if (event.type === "convo_meta") {
-                await this.refreshConversations();
-                if (this.uploadConvos.size > 0) this.abortUploadsForChildConvos();
-            }
-            return;
-        }
-        this.clearHistoryError();
-        this.scheduleAck(event.seq);
-        const previous = this.state.conversations.find((conversation) => conversation.id === event.convo_id);
-        this.emitLive((listener) => listener.journalEvent?.(event, previous));
-
-        const messageRef = typeof event.payload.message_ref === "string" ? event.payload.message_ref : undefined;
-        if (messageRef) {
-            this.retiredStreamRefs.add(`${event.convo_id}:${messageRef}`);
-            const text = this.textStreams.get(event.convo_id);
-            const tools = this.toolStreams.get(event.convo_id);
-            if (text) delete text[messageRef];
-            if (tools) delete tools[messageRef];
-        }
-
-        await this.refreshConversations();
-        this.abortUploadsForChildConvos();
-        if (!previous || this.newVerdictPending.has(event.convo_id)) this.considerNewConversation(event, !previous);
-        if (event.convo_id === this.state.selectedConversationId) {
-            await this.refreshSelectedConversation(event.convo_id);
-            if (MESSAGE_EVENT_TYPES.has(event.type) && !event.sender.startsWith("user:")) {
-                this.scheduleRead(event.convo_id, event.seq);
-            }
-        }
-    }
-
-    /**
-     * a live journal frame arrived with a `seq` that cannot serve as a cursor (NaN /
-     * non-integer / negative) or a missing convo_id. It has already been kept out of the durable
-     * store (handleJournal returns before applyJournal/scheduleAck), so the cursor is still clean.
-     * Recover by re-snapshotting through the connection's resync flow (drop socket → replaceSnapshot
-     * → reconnect), which is what actually resets the socket so the post-reconnect hello/ack carry
-     * the clean cursor — calling replaceSnapshot() in isolation would leave the old socket resuming
-     * from the poison ack cursor. Guarded by a reconnect-loop counter so a pathological server
-     * cannot drive an unbounded resync loop.
-     */
-    private handleMalformedJournalFrame(event: JournalEvent): void {
-        console.warn("matron:journal", {
-            event: "malformed_seq",
-            convo_id: typeof event.convo_id === "string" ? event.convo_id : undefined,
-            seq: event.seq,
-        });
-        const now = Date.now();
-        this.malformedSeqResyncs = this.malformedSeqResyncs.filter((ts) => now - ts < MALFORMED_SEQ_RESYNC_WINDOW_MS);
-        this.malformedSeqResyncs.push(now);
-        if (this.malformedSeqResyncs.length > MALFORMED_SEQ_RESYNC_LIMIT) {
-            // Loop guard tripped: this is a pathological server (each clean resync cursor is
-            // immediately re-poisoned). Enter a real HALT rather than looping OR leaving the socket
-            // live: mark journal processing halted (handleJournal now ignores every frame, so no
-            // later frame can silently advance the cursor past the unrecovered malformed row), stop
-            // the connection so frames stop arriving, and surface the error. Recovery is a reload,
-            // which builds a fresh session/connection and clears journalHalted. stop() fires
-            // onState("offline") which clears connectionError, so patch the halt banner AFTER it.
-            console.warn("matron:journal", { event: "malformed_seq_resync_halted" });
-            this.journalHalted = true;
-            this.connection?.stop();
-            this.patch({ connectionError: MALFORMED_SEQ_HALTED_ERROR });
-            return;
-        }
-        void this.triggerMalformedSeqResync();
-    }
-
-    private async triggerMalformedSeqResync(): Promise<void> {
-        const connection = this.connection;
-        if (!connection) return;
-        try {
-            await connection.forceResync();
-        } catch (error) {
-            this.patch({
-                connectionError: error instanceof Error ? error.message : "Could not resync after a malformed update.",
-            });
-        }
     }
 
     // A conversation this tab sees for the first time, live. One this device asked for is the

@@ -21,6 +21,17 @@ export const MESSAGE_EVENT_TYPES = new Set([
     // deliberately OUT of this set to avoid unread-badge churn (revisit in a later pass).
 ]);
 
+/**
+ * A silent event is content the user can read in the chat but is never told about: `silent: true`
+ * on the payload of any message type (protocol "Silent events"). It is shown like any other row,
+ * but never counts as unread and never raises a notification. A bridge sets it on a card that only
+ * records something, such as the one for a reminder an agent set itself. Only a literal `true`
+ * counts, as on the server.
+ */
+export function isSilentEvent(event: { payload?: Record<string, unknown> | null }): boolean {
+    return event.payload?.silent === true;
+}
+
 export interface MatronConfig {
     brand?: string;
     journal_server_url?: string;
@@ -874,6 +885,9 @@ export interface ClientState {
      *  is cleared only by the next inbox load, so a never-loaded inbox can tell "failed" from
      *  "still loading" while other loads come and go. */
     inboxError?: string;
+    /** True when the last complete inbox load hit the page cap with more pages remaining, so the
+     *  list is partial. Cleared by the next inbox load that finishes. */
+    inboxTruncated?: boolean;
     /** Error from the last item-detail load, keyed by the item it was for (`id` is the item number
      *  as a string, any leading "#" dropped). Unlike trackerError it survives other tracker loads
      *  and an in-flight retry, and is cleared only when an item load succeeds, so the pane can keep

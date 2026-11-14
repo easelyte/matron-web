@@ -153,7 +153,14 @@ import {
 import { SearchField } from "./search-field";
 import { NAV_RAIL_WIDTH, NavRail, type NavKey } from "./NavRail";
 import { isAgentRoomTitle, needsYouByConversation, projectsNeedsYou } from "./needs-you";
-import { formatFullTime, formatMessageTime, isPersonSender, journalHost, roomSenderLabel } from "./room-sender";
+import {
+    formatFullTime,
+    formatMessageTime,
+    isPersonSender,
+    journalHost,
+    messageTimeHasDate,
+    roomSenderLabel,
+} from "./room-sender";
 import { notificationsFor, unreadTotal as countUnread } from "./notifications";
 import { ConvoNotifyBell, OverflowRoomsAndNotify, RoomsControl } from "./ChatHeaderRooms";
 import { useDismissablePopover } from "./use-dismissable-popover";
@@ -6214,6 +6221,7 @@ function EventRow({
     continuation = false,
     lastInSection = true,
     searchHighlighted = false,
+    inRoom = false,
     rowHandlers,
 }: {
     client: MatronJournalClient;
@@ -6228,6 +6236,8 @@ function EventRow({
     continuation?: boolean;
     lastInSection?: boolean;
     searchHighlighted?: boolean;
+    /** The conversation has another person in it: headers say which side wrote each message. */
+    inRoom?: boolean;
     rowHandlers: RowContextMenu<JournalEvent>["rowHandlers"];
 }): React.ReactElement {
     // A bridge notice row is its own one-line row: no sender header, no grouping, never an own bubble.
@@ -6256,12 +6266,15 @@ function EventRow({
                 <SenderHeader
                     client={client}
                     event={event}
+                    inRoom={inRoom}
                     showTime={
                         event.type !== "tool_output" && event.type !== "prompt" && event.type !== "permission_request"
                     }
                 />
             )}
-            <div className="mj_EventTile_line">
+            <div
+                className={`mj_EventTile_line${own && messageTimeHasDate(event.ts) ? " mj_EventTile_line_dated" : ""}`}
+            >
                 {/* Own bubbles carry an inline timestamp (design: "…text <09:58>"). Agent
                     continuation blocks do NOT — the section shows one timestamp on the profile
                     row (§10.2 one-per-section), so continuation blocks fill to the shared right
@@ -6455,6 +6468,7 @@ function AgentTurnRow({
     resolvedAction,
     highlightedSeq,
     rowHandlers,
+    inRoom = false,
     helpers = NO_HELPERS,
     helperThread = null,
     expandHeadlines = false,
@@ -6462,6 +6476,8 @@ function AgentTurnRow({
     client: MatronJournalClient;
     turn: Turn;
     live: TurnLive;
+    /** The conversation has another person in it (see SenderHeader). */
+    inRoom?: boolean;
     /**
      * Set inside a helper's own thread (a Claude subagent or a Codex run): the steps read as a
      * list of headlines instead of one collapsed turn card. The value is the helper's worker.
@@ -6579,7 +6595,7 @@ function AgentTurnRow({
             data-self="false"
             data-turn={turn.key}
         >
-            {first && <SenderHeader client={client} event={first} />}
+            {first && <SenderHeader client={client} event={first} inRoom={inRoom} />}
             <div className="mj_EventTile_line">
                 <div className="mj_TextBody mj_EventTile_content">
                     <div className="markdown-body mj_AgentTurn_blocks">
@@ -6708,30 +6724,30 @@ function TurnNoticeRow({
 const MemoEventRow = React.memo(EventRow);
 
 /**
- * The header above a message section: who wrote it and when. In an agent-chat room it says which
- * side wrote it (ours, the other person's, or the bridge itself) with names that carry the journal
+ * The header above a message section: who wrote it and when. In a room with another person in it
+ * it says which side wrote it (ours, the other person's, or the bridge itself) with names that carry the journal
  * host, and the time carries the date on any day but today.
  */
 function SenderHeader({
     client,
     event,
+    inRoom,
     showTime = true,
 }: {
     client: MatronJournalClient;
     event: JournalEvent;
+    /** Decided once for the whole timeline, so a header does no lookup of its own. */
+    inRoom: boolean;
     showTime?: boolean;
 }): React.ReactElement {
-    // Subscribed, so a memoised row picks up a room title or session that arrives after it drew.
+    // Subscribed, so a memoised row picks up a session that arrives after it drew.
     const session = useSyncExternalStore(client.subscribe, () => client.getSnapshot().session);
-    const roomTitle = useSyncExternalStore(client.subscribe, () =>
-        isAgentRoomTitle(
-            client.getSnapshot().conversations.find((candidate) => candidate.id === event.convo_id)?.title ?? "",
-        ),
-    );
-    const inRoom = isPersonSender(event.sender) || roomTitle;
-    const label = inRoom
-        ? roomSenderLabel(event, { username: session?.username, host: journalHost(session?.serverUrl) })
-        : null;
+    const roomLabel =
+        inRoom || isPersonSender(event.sender)
+            ? roomSenderLabel(event, { username: session?.username, host: journalHost(session?.serverUrl) })
+            : null;
+    // A sender with no kind (the journal's own cards) keeps the plain header, with its time.
+    const label = roomLabel?.side === "other" ? null : roomLabel;
     const sideText = label?.side === "ours" ? "Our side" : label?.side === "theirs" ? "Their side" : undefined;
     return (
         <span className={`mj_SenderName${label ? ` mj_SenderName_room mj_SenderName_${label.side}` : ""}`}>
@@ -6739,7 +6755,6 @@ function SenderHeader({
             <span className="mj_SenderName_displayName">{label ? label.name : displaySender(event.sender)}</span>
             {label?.detail && <span className="mj_SenderName_detail">{label.detail}</span>}
             {sideText && <span className="mj_SenderName_side">{sideText}</span>}
-            {/* A notice row carries its own time on the right. */}
             {showTime && label?.side !== "system" && (
                 <a href={`#event-${event.seq}`} onClick={(clickEvent) => clickEvent.preventDefault()}>
                     <time
@@ -7180,6 +7195,9 @@ function Timeline({
             ),
         [state.events, queuedReleasePromptSeqs, legacyQueuePromptSeqs, permissionRequestSeqs, itemCards],
     );
+    // Side labels (ours / theirs) only make sense once another person has written into the room;
+    // two of the user's own agents keep their box names. Computed once per event list, not per row.
+    const roomWithPerson = useMemo(() => state.events.some((event) => isPersonSender(event.sender)), [state.events]);
     const timeline = useMemo(
         () =>
             [
@@ -7874,6 +7892,7 @@ function Timeline({
                                     isReadOnly={isReadOnly}
                                     resolvedAction={resolvedAction}
                                     rowHandlers={menu.rowHandlers}
+                                    inRoom={roomWithPerson}
                                     helpers={turnHelpers.get(row.turn.key)}
                                     helperThread={helperThread}
                                     expandHeadlines={expandedHelperTurns.has(row.turn.key)}
@@ -7912,6 +7931,7 @@ function Timeline({
                                     resolvedAction={resolvedAction}
                                     continuation={row.continuation}
                                     lastInSection={row.lastInSection}
+                                    inRoom={roomWithPerson}
                                     rowHandlers={menu.rowHandlers}
                                 />
                             );
@@ -8221,10 +8241,7 @@ function Composer({
     const [nonDurable, setNonDurable] = useState(false);
     const store = useMemo(() => makeRecentFoldersStore(state.session), [state.session]);
     const [dismissedSeq, setDismissedSeq] = useState(0);
-    const textarea = useRef<HTMLTextAreaElement>(null);
-    // Sized from the value, not from input events: a draft restored on a conversation switch (or
-    // on mount) opens at its full height, the same as it was while being typed.
-    useAutoGrow(textarea, body);
+    const textarea = useRef<HTMLTextAreaElement | null>(null);
     const fileInput = useRef<HTMLInputElement>(null);
     const convoId = state.selectedConversationId;
     const convoIdRef = useRef(convoId);
@@ -8419,7 +8436,6 @@ function Composer({
             // The send glyph unmounts once the body is empty; keep focus in the composer.
             textarea.current?.focus();
             setDismissed(null);
-            if (textarea.current) textarea.current.style.height = "auto";
         }
     };
     const clearSentDraftRef = useRef(clearSentDraft);
@@ -8448,12 +8464,12 @@ function Composer({
         resizeAfterRecall.current = true;
     };
     const resizeAfterRecall = useRef(false);
+    // Size the box to its content for every body change: typing, a restored draft, a recalled line.
+    const textareaRef = useAutoGrow(textarea, body);
     useLayoutEffect(() => {
         if (!resizeAfterRecall.current || !textarea.current) return;
         resizeAfterRecall.current = false;
         const node = textarea.current;
-        node.style.height = "auto";
-        node.style.height = `${Math.min(node.scrollHeight, 144)}px`;
         node.setSelectionRange(node.value.length, node.value.length);
     }, [body]);
     const tray = convoId ? (state.composerAttachments[convoId] ?? []) : [];
@@ -8581,7 +8597,7 @@ function Composer({
                             <div className="mj_ComposerInput">
                                 <textarea
                                     className="mj_ComposerInput_input"
-                                    ref={textarea}
+                                    ref={textareaRef}
                                     rows={1}
                                     value={body}
                                     onBlur={flushDraft}
@@ -8590,9 +8606,6 @@ function Composer({
                                         setBodyDraft(nextBody);
                                         setHighlighted(null);
                                         if (dismissed !== null && nextBody !== dismissed) setDismissed(null);
-                                        event.target.style.height = "auto";
-                                        // Mac composer: one 32px line, growing to eight (144px).
-                                        event.target.style.height = `${Math.min(event.target.scrollHeight, 144)}px`;
                                     }}
                                     onKeyDown={(event) => {
                                         if (isImeComposing(event)) return;

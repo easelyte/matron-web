@@ -1068,6 +1068,11 @@ button {
     line-height: 1.5;
 }
 
+/* An own bubble from an earlier day carries the date in its timestamp, which needs more room. */
+.mj_EventTile_line.mj_EventTile_line_dated {
+    padding-right: 100px;
+}
+
 .mj_EventTile[data-self="false"] .mj_EventTile_line {
     /* v5: agent content is a block column capped at the shared content width, so every
        block (prose, tool/diff/code cards) fills the SAME width instead of each sizing to

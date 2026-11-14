@@ -9,7 +9,7 @@ import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
 
 import { JournalDatabase } from "../../../src/journal/database";
-import { type JournalEvent } from "../../../src/journal/types";
+import { type JournalEvent, TOOL_LOG_TTL_MS } from "../../../src/journal/types";
 
 function event(
     seq: number,
@@ -58,6 +58,41 @@ describe("JournalDatabase", () => {
         expect(await database.cursor()).toBe(1);
         expect(await database.events("c1")).toHaveLength(1);
         expect((await database.conversations())[0]).toMatchObject({ last_seq: 1, unread_count: 1, snippet: "m1" });
+        database.close();
+    });
+
+    it("stores a silent event without counting it as unread, live or after a read marker", async () => {
+        const database = await JournalDatabase.open("https://journal.example", 12, "alice");
+        await database.replaceWithSnapshot({
+            seq: 0,
+            conversations: [
+                {
+                    id: "c1",
+                    title: "Agent",
+                    session_state: "running",
+                    last_seq: 0,
+                    unread_count: 0,
+                    snippet: "",
+                    created_at: 1,
+                },
+            ],
+        });
+        const card = { question: "Reminder set", options: ["Send now", "Cancel"], blocking: false, silent: true };
+
+        await database.applyJournal(event(1, "agent:dev"));
+        await database.applyJournal(event(2, "agent:dev", "prompt", card));
+        await database.applyJournal(event(3, "agent:dev"));
+        // Only a literal true is silent.
+        await database.applyJournal(event(4, "agent:dev", "text", { body: "m4", silent: 1 }));
+        expect(await database.events("c1")).toHaveLength(4);
+        expect((await database.conversations())[0]).toMatchObject({ unread_count: 3 });
+
+        // Still content: it is the row's latest line.
+        await database.applyJournal(event(5, "agent:dev", "prompt", card));
+        expect((await database.conversations())[0]).toMatchObject({ unread_count: 3, snippet: "? Reminder set" });
+
+        await database.applyJournal(event(6, "user:alice", "read_marker", { convo_id: "c1", up_to_seq: 1 }));
+        expect((await database.conversations())[0]).toMatchObject({ unread_count: 2 });
         database.close();
     });
 
@@ -551,5 +586,94 @@ describe("JournalDatabase", () => {
             summary_updated_at: 1_700_000_100_000,
         });
         database.close();
+    });
+
+    describe("expireToolLogs", () => {
+        function liveLog(seq: number): JournalEvent {
+            return {
+                ...event(seq, "agent:dev", "tool_output", {
+                    live_log: true,
+                    snippet: `out${seq}`,
+                    blob_ref: `b${seq}`,
+                }),
+                ts: Date.now(),
+            };
+        }
+
+        async function storedEvents(database: JournalDatabase): Promise<JournalEvent[]> {
+            const idb = (database as unknown as { database: IDBDatabase }).database;
+            return new Promise((resolve, reject) => {
+                const request = idb.transaction("events").objectStore("events").getAll();
+                request.onsuccess = () => resolve(request.result as JournalEvent[]);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        it("expires every stale live log across several short transactions", async () => {
+            const database = await JournalDatabase.open("https://journal.example", 21, "alice");
+            await database.replaceWithSnapshot({
+                seq: 0,
+                conversations: [
+                    {
+                        id: "c1",
+                        title: "One",
+                        session_state: "running",
+                        last_seq: 0,
+                        unread_count: 0,
+                        snippet: "",
+                        created_at: 1,
+                    },
+                ],
+            });
+            for (let seq = 1; seq <= 7; seq += 1) await database.applyJournal(liveLog(seq));
+            await database.applyJournal(event(8, "agent:dev"));
+            const idb = (database as unknown as { database: IDBDatabase }).database;
+            const transaction = jest.spyOn(idb, "transaction");
+
+            await database.expireToolLogs(Date.now() + TOOL_LOG_TTL_MS + 60_000, 3);
+
+            // 8 rows in chunks of 3: three full chunks' worth of work, each its own transaction.
+            expect(transaction.mock.calls.length).toBeGreaterThanOrEqual(3);
+            const stored = await storedEvents(database);
+            const logs = stored.filter((row) => row.type === "tool_output");
+            expect(logs).toHaveLength(7);
+            for (const row of logs) {
+                expect(row.payload).toMatchObject({ expired: true, blob_ref: null });
+                expect(row.payload.snippet).toBeUndefined();
+            }
+            expect(stored.find((row) => row.seq === 8)?.payload).toEqual({ body: "m8" });
+            database.close();
+        });
+
+        it("leaves fresh live logs alone", async () => {
+            const database = await JournalDatabase.open("https://journal.example", 22, "alice");
+            await database.replaceWithSnapshot({
+                seq: 0,
+                conversations: [
+                    {
+                        id: "c1",
+                        title: "One",
+                        session_state: "running",
+                        last_seq: 0,
+                        unread_count: 0,
+                        snippet: "",
+                        created_at: 1,
+                    },
+                ],
+            });
+            await database.applyJournal(liveLog(1));
+
+            await database.expireToolLogs(Date.now(), 2);
+
+            const [row] = await storedEvents(database);
+            expect(row.payload).toMatchObject({ live_log: true, snippet: "out1", blob_ref: "b1" });
+            database.close();
+        });
+
+        it("finishes on an empty store", async () => {
+            const database = await JournalDatabase.open("https://journal.example", 23, "alice");
+            await expect(database.expireToolLogs(Date.now(), 2)).resolves.toBeUndefined();
+            database.close();
+        });
     });
 });
