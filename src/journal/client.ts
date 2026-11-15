@@ -23,6 +23,7 @@ import type { Contact, ContactInvite, InviteAskAnswer, InviteAskDecision, Invite
 import { shareableInviteLink } from "./contact-link";
 import { JournalConnection } from "./connection";
 import { FilesApi } from "./files/filesApi";
+import { viewingConvoId, watchTabFocus } from "./viewing";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { parseCoordinatorConsent, resetSessionStops, spawnConsentRowsIn } from "./coordinator-consent";
 import { JournalDatabase } from "./database";
@@ -645,6 +646,9 @@ export class MatronJournalClient {
     private globalSearchAbort?: AbortController;
     private database?: JournalDatabase;
     private connection?: JournalConnection;
+    private stopWatchingFocus?: () => void;
+    private lastViewing?: string | null;
+    private suspendGuard?: () => boolean;
     // Read state: which timeline rows and tracker items were actually on screen, reported as
     // `seen` / `item_seen` over the socket. Separate from read_marker and the unread badge.
     public readonly seen = new SeenTracker({ send: (op) => this.connection?.send(op) ?? false });
@@ -861,6 +865,14 @@ export class MatronJournalClient {
         return this.sessionGen;
     }
 
+    /**
+     * Web push supplies a guard that returns true once a subscription is registered for the session.
+     * Without a guard, the socket is never closed while hidden.
+     */
+    public setSuspendGuard(guard: (() => boolean) | undefined): void {
+        this.suspendGuard = guard;
+    }
+
     private allStorageHealthy(): boolean {
         return Object.values(this.storeHydrated).every(Boolean) && Object.values(this.storeWritable).every(Boolean);
     }
@@ -1057,6 +1069,8 @@ export class MatronJournalClient {
         this.pendingFiles.clear();
         this.transientAttachmentErrors.clear();
         this.seen.reset();
+        this.stopWatchingFocus?.();
+        this.stopWatchingFocus = undefined;
         this.connection?.stop();
         this.connection = undefined;
         if (this.storageListener) {
@@ -1495,7 +1509,7 @@ export class MatronJournalClient {
             await history;
             return;
         }
-        this.connection?.send({ op: "viewing", convo_id: conversationId });
+        this.sendViewing(conversationId);
 
         const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
         if (conversation?.unread_count) this.scheduleRead(conversationId, conversation.last_seq, 0);
@@ -1507,7 +1521,7 @@ export class MatronJournalClient {
         // Find in chat belongs to the conversation being left: a search still in flight must not
         // reopen it, nor answer a bar opened there later.
         this.endChatSearch();
-        this.connection?.send({ op: "viewing", convo_id: null });
+        this.sendViewing(null);
         if (this.state.session) storeSelectedConversation(this.state.session, undefined);
         this.patch({ selectedConversationId: undefined, events: [], pendingMessages: [] });
     }
@@ -2833,6 +2847,7 @@ export class MatronJournalClient {
         // user has since left.
         this.focusToken += 1;
         this.patch({ trackerView: next, ...(this.state.focusTarget ? { focusTarget: undefined } : {}) });
+        this.sendViewing();
     }
 
     // Memories view entry points: a name opens that memory's editor, "" opens the new-memory form,
@@ -2863,6 +2878,7 @@ export class MatronJournalClient {
         this.trackerMissionGen += 1;
         this.trackerProjectGen += 1;
         this.patch({ trackerView: undefined, trackerItem: null, trackerMission: null, trackerProject: null });
+        this.sendViewing();
     }
 
     // ── Ops pane ───────────────────────────────────────────────
@@ -5431,6 +5447,8 @@ export class MatronJournalClient {
         this.dismissedAttachments.clear();
         this.pendingFiles.clear();
         this.transientAttachmentErrors.clear();
+        this.stopWatchingFocus?.();
+        this.stopWatchingFocus = undefined;
         this.connection?.stop();
         this.database?.close();
         this.defaultsServer = undefined;
@@ -5627,7 +5645,9 @@ export class MatronJournalClient {
         // journal, and an unbound revoke would sign the new account out.
         const connectionGen = this.sessionGen;
         const current = (): boolean => this.sessionGen === connectionGen;
+        this.lastViewing = undefined;
         this.connection = new JournalConnection(session.serverUrl, session.token, {
+            canSuspend: () => this.suspendGuard?.() ?? false,
             cursor: async () => (await this.database?.cursor()) ?? cursor ?? 0,
             archiveSince: () => readArchiveSince(session) ?? 0,
             onFrame: async (frame) => {
@@ -5648,7 +5668,11 @@ export class MatronJournalClient {
             onState: (connection, error) => {
                 if (current()) this.patch({ connection, connectionError: error });
             },
+            onSuspend: () => {
+                if (current()) this.suspendLiveStreams();
+            },
         });
+        this.stopWatchingFocus = watchTabFocus(window, document, () => this.onTabViewChange());
         this.connection.start();
         // Purge expired live tool logs once the session is up, not before the first paint: it walks
         // every cached row, and the store holds every row this device has received, so awaiting it
@@ -6113,6 +6137,24 @@ export class MatronJournalClient {
         else if (this.state.session) storeSelectedConversation(this.state.session, undefined);
     }
 
+    /** The tab was shown, hidden, focused or blurred. Only showing and hiding change what is viewed. */
+    private onTabViewChange(): void {
+        const before = this.lastViewing;
+        this.sendViewing();
+        // A hidden tab stops receiving the open chat's live updates, so what they showed can no
+        // longer be trusted to end: the idle frame would not arrive. Showing the tab again re-views
+        // the chat, and the journal replays the tool output.
+        if (before && this.lastViewing === null) this.suspendLiveStreams();
+    }
+
+    private sendViewing(selectedId = this.state.selectedConversationId ?? null): void {
+        // The tracker covers the open chat's transcript: it is not being viewed.
+        const convoId = viewingConvoId(this.state.trackerView?.open ? null : selectedId);
+        if (convoId !== this.lastViewing && this.connection?.send({ op: "viewing", convo_id: convoId })) {
+            this.lastViewing = convoId;
+        }
+    }
+
     private async handleReady(hello?: JournalControlFrame): Promise<void> {
         // hello_ok carries the pin list on a journal with pins; its absence means an older journal.
         if (hello !== undefined) this.applyJournalPins(pinsFromContainer(hello));
@@ -6170,9 +6212,19 @@ export class MatronJournalClient {
             await this.refreshSelectedConversation(message.convoId, db, gen);
             if (!ownsReplay()) return;
         }
+        // Rows another tab stored while this one was suspended or offline are not replayed here: the
+        // cursor is the shared one. Reload what the views show from the store, not from the cursor.
+        await this.refreshConversations();
+        if (!ownsReplay()) return;
+        const viewedId = this.state.selectedConversationId;
+        if (viewedId) {
+            await this.refreshSelectedConversation(viewedId, db, gen);
+            if (!ownsReplay()) return;
+        }
         for (const message of kept) this.sendPendingMessage(message, connection);
+        this.lastViewing = undefined;
+        this.sendViewing();
         if (this.state.selectedConversationId) {
-            connection.send({ op: "viewing", convo_id: this.state.selectedConversationId });
             const conversation = this.selectedConversation();
             if (conversation?.unread_count) this.scheduleRead(conversation.id, conversation.last_seq, 0);
         }
@@ -6584,6 +6636,8 @@ export class MatronJournalClient {
                 offset: payload.offset ?? 0,
                 headTruncated: false,
             };
+            // An offset-less chunk would continue across whatever the closed socket missed.
+            if (current.stale && payload.offset === undefined) return;
             const offset = payload.offset ?? current.offset;
             if (offset <= current.offset) {
                 const addition = trimUtf8Prefix(chunk, current.offset - offset);
@@ -6608,6 +6662,23 @@ export class MatronJournalClient {
         const parentId = conversation?.parent_convo_id;
         if (parentId == null || parentId === conversationId) return status;
         return helperContextStatus(status, this.statuses.get(parentId));
+    }
+
+    /**
+     * The tab's socket was closed while hidden, which ends the journal's live tool output for
+     * this device. Keep the text shown, mark it as no longer live, and let the snapshot the next
+     * connection's `viewing` draws replace it; never append to it.
+     */
+    private suspendLiveStreams(): void {
+        for (const streams of this.toolStreams.values()) {
+            // New objects, so a view memoised on the stream re-renders.
+            for (const [ref, stream] of Object.entries(streams)) streams[ref] = { ...stream, stale: true };
+        }
+        // An activity indicator is cleared only by the frame that ends it, which a closed socket
+        // cannot deliver; drop it rather than leave "thinking" shown after the agent went idle.
+        this.activities.clear();
+        const selectedId = this.state.selectedConversationId;
+        if (selectedId !== undefined) this.refreshEphemeralState(selectedId);
     }
 
     private refreshEphemeralState(conversationId: string): void {

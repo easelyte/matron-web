@@ -32,6 +32,7 @@ interface FakeDatabase {
     addToOutbox: jest.MockedFunction<(message: PendingMessage) => Promise<void>>;
     deleteOutboxRows: jest.MockedFunction<(localIds: string[]) => Promise<void>>;
     events: jest.MockedFunction<(conversationId: string) => Promise<[]>>;
+    conversations: jest.MockedFunction<() => Promise<[]>>;
     cursor: jest.MockedFunction<() => Promise<number | undefined>>;
 }
 
@@ -77,6 +78,7 @@ function fakeDatabase(initial: PendingMessage[] = []): { database: FakeDatabase;
             for (const localId of localIds) rows.delete(localId);
         }),
         events: jest.fn().mockResolvedValue([]),
+        conversations: jest.fn().mockResolvedValue([]),
         cursor: jest.fn().mockResolvedValue(undefined),
     };
     return { database, rows };

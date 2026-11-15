@@ -6880,6 +6880,7 @@ export function ToolStream({ stream }: { stream: ToolStreamState }): React.React
                         >
                             {nodes}
                         </pre>
+                        {stream.stale && <div className="mj_LiveTool_stale">live output no longer available</div>}
                     </div>
                 </div>
             </div>

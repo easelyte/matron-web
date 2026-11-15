@@ -6,9 +6,8 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * Desktop notifications and the unread badge, while a tab is open (no service worker, no Web
- * Push). The phone and Mac apps are told what to show by the journal's push pipeline; a browser
- * tab is not a push target, so this module makes the same decision locally from the journal
+ * Desktop notifications and the unread badge, while a tab is open. Web Push covers hidden and closed tabs
+ * through the service worker; this module makes the local decision from the journal
  * events the tab already receives:
  *
  * - which switch an event falls under (the journal's push classification: prompts, questions,
@@ -33,6 +32,10 @@ Please see LICENSE files in the repository root for full details.
  */
 
 import { JournalApi, JournalApiError } from "./api";
+import { notificationTag, parseConvoHash } from "./push-shared";
+import { WebPushRegistrar } from "./web-push";
+import { isTabFocused, isTabVisible, watchTabFocus } from "./viewing";
+
 import type { LiveListener, MatronJournalClient } from "./client";
 import { effectiveUnread } from "./conversation-flags";
 import { isJoinedRoom } from "./conversation-rooms";
@@ -45,6 +48,8 @@ import {
     type JournalEvent,
     type Session,
 } from "./types";
+
+export { notificationTag } from "./push-shared";
 
 // ── Settings model (journal src/notify.js) ──────────────────────────────────────────────────
 
@@ -528,6 +533,12 @@ export interface NotifySettingsState {
 
 /** Everything the notifier touches outside itself; tests pass fakes. */
 export interface NotifierEnvironment {
+    webPush?: {
+        sync(session: Session, wanted: boolean): Promise<void>;
+        unregister(session: Session): Promise<void>;
+        /** True once a push subscription is registered for the session. */
+        active?(session: Session): boolean;
+    };
     Notification?: NotificationConstructorLike;
     channel?: () => ChannelLike | undefined;
     storage?: Storage;
@@ -556,6 +567,7 @@ function defaultEnvironment(): NotifierEnvironment {
         storage = undefined;
     }
     return {
+        webPush: new WebPushRegistrar(),
         Notification: typeof Notification === "undefined" ? undefined : (Notification as NotificationConstructorLike),
         channel: () => (typeof BroadcastChannel === "undefined" ? undefined : new BroadcastChannel(CHANNEL)),
         storage,
@@ -569,7 +581,10 @@ function defaultEnvironment(): NotifierEnvironment {
 }
 
 interface PeerView {
+    /** On screen and holding focus: only one document at a time. */
     focused: boolean;
+    /** On screen, focused or not: the journal counts such a tab as viewing its chat. */
+    visible: boolean;
     convoId: string | null;
 }
 
@@ -596,6 +611,8 @@ export class DesktopNotifier {
     private readonly open = new Map<string, NotificationLike>();
     private coordinatorId: string | null = null;
     private sessionKey?: string;
+    private pushSession?: Session;
+    private hashRead = false;
     // Moves on every live `notify` frame and session change: a GET sent before is older news.
     private settingsEpoch = 0;
     // Moves on every session change: an answer for the previous session is dropped.
@@ -730,6 +747,10 @@ export class DesktopNotifier {
     // ── Lifecycle ──
 
     private attach(): void {
+        this.client.setSuspendGuard(() => {
+            const s = this.client.getSnapshot().session;
+            return !!s && !!this.env.webPush?.active?.(s);
+        });
         const doc = this.env.document;
         this.baseTitle = (doc?.title ?? "Matron").replace(TITLE_COUNT, "");
         const live: LiveListener = {
@@ -740,23 +761,37 @@ export class DesktopNotifier {
         this.teardown.push(this.client.subscribe(() => this.onClientChange()));
 
         const win = this.env.window;
+        const worker = win?.navigator?.serviceWorker;
+        if (worker) {
+            const onMessage = (event: MessageEvent): void => {
+                const data = event.data;
+                if (
+                    !data ||
+                    data.type !== "matron-open-convo" ||
+                    typeof data.convoId !== "string" ||
+                    !data.convoId ||
+                    data.convoId.length > 128
+                )
+                    return;
+                win?.focus();
+                void this.client.selectConversation(data.convoId).catch(() => undefined);
+            };
+            worker.addEventListener("message", onMessage);
+            this.teardown.push(() => worker.removeEventListener("message", onMessage));
+        }
         if (win) {
             const onFocusChange = (): void => {
-                // Only one document has focus: no other tab can have a conversation on screen.
-                if (this.ownView().focused) this.peers.clear();
+                // Only one document has focus: no other tab holds it.
+                if (this.ownView().focused) this.releasePeerFocus();
                 this.refresh();
                 this.announce();
             };
-            const onHide = (): void => this.post({ type: "view", tab: this.tabId, focused: false, convoId: null });
-            win.addEventListener("focus", onFocusChange);
-            win.addEventListener("blur", onFocusChange);
+            const onHide = (): void =>
+                this.post({ type: "view", tab: this.tabId, focused: false, visible: false, convoId: null });
+            this.teardown.push(watchTabFocus(win, doc, onFocusChange));
             win.addEventListener("pagehide", onHide);
-            doc?.addEventListener("visibilitychange", onFocusChange);
             this.teardown.push(() => {
-                win.removeEventListener("focus", onFocusChange);
-                win.removeEventListener("blur", onFocusChange);
                 win.removeEventListener("pagehide", onHide);
-                doc?.removeEventListener("visibilitychange", onFocusChange);
             });
         }
 
@@ -775,7 +810,12 @@ export class DesktopNotifier {
     }
 
     private detach(): void {
-        this.post({ type: "view", tab: this.tabId, focused: false, convoId: null });
+        this.client.setSuspendGuard(undefined);
+        if (this.pushSession) void this.env.webPush?.unregister(this.pushSession);
+        this.pushSession = undefined;
+        this.sessionKey = undefined;
+        this.lastConnection = undefined;
+        this.post({ type: "view", tab: this.tabId, focused: false, visible: false, convoId: null });
         for (const stop of this.teardown.splice(0)) stop();
         this.channel?.close();
         this.channel = undefined;
@@ -807,6 +847,8 @@ export class DesktopNotifier {
         const session = state.phase === "signed-in" ? state.session : undefined;
         const key = session ? `${session.serverUrl}|${session.userId}|${session.token}` : undefined;
         if (key !== this.sessionKey) {
+            if (this.pushSession) void this.env.webPush?.unregister(this.pushSession);
+            this.pushSession = session;
             this.sessionKey = key;
             this.view = undefined;
             this.sessionStates.clear();
@@ -818,11 +860,23 @@ export class DesktopNotifier {
             this.settingsError = null;
             this.emitSettings();
         }
+        if (session && !this.hashRead) {
+            this.hashRead = true;
+            const win = this.env.window;
+            const convoId = parseConvoHash(win?.location?.hash ?? "");
+            if (convoId && win) {
+                void this.client.selectConversation(convoId).catch(() => undefined);
+                win.history.replaceState(win.history.state, "", win.location.pathname + win.location.search);
+            }
+        }
         // The `notify` frame is never replayed, so each (re)connect reads the settings again. Read
         // even with desktop notifications off: Settings and the chat header edit them.
         if (session && state.connection !== this.lastConnection) {
             this.lastConnection = state.connection;
-            if (state.connection === "online") void this.loadSettings();
+            if (state.connection === "online") {
+                this.syncWebPush();
+                void this.loadSettings();
+            }
         }
     }
 
@@ -941,7 +995,28 @@ export class DesktopNotifier {
             view === undefined ? NEEDS_ME.has(key) : shouldNotify(key, event.type, event.convo_id, view, now);
         if (!allowed) return;
         if (this.isOnScreen(event.convo_id)) return;
+        // With a push subscription registered, the alert is left to the push when one will
+        // arrive (the journal sends it for an open socket too, and both would sound, since a
+        // replacing notification re-alerts). It will not arrive while a tab of this browser has
+        // focus (the worker stays quiet) or shows the conversation (the journal sees it viewed and
+        // sends none): then this tab, the only one that applied the event, alerts for itself.
+        const session = this.client.getSnapshot().session;
+        if (session && this.env.webPush?.active?.(session) && this.pushWillAlert(event.convo_id)) return;
         this.show(event, previous, cls);
+    }
+
+    /** Whether the journal's push for this conversation will show a notification. */
+    private pushWillAlert(convoId: string): boolean {
+        const own = this.ownView();
+        if (own.focused || (own.visible && own.convoId === convoId)) return false;
+        for (const peer of this.peers.values()) {
+            if (peer.focused || (peer.visible && peer.convoId === convoId)) return false;
+        }
+        return true;
+    }
+
+    private releasePeerFocus(): void {
+        for (const [tab, peer] of this.peers) this.peers.set(tab, { ...peer, focused: false });
     }
 
     private isOnScreen(convoId: string): boolean {
@@ -961,7 +1036,7 @@ export class DesktopNotifier {
                 body: notificationBody(event),
                 // One notification per conversation: a newer one replaces it. What needs the user
                 // alerts again; routine activity updates quietly.
-                tag: `matron:${conversationId}`,
+                tag: notificationTag(conversationId),
                 renotify: cls.kind !== "activity",
                 silent: !this.snapshot.sound,
                 data: { convo_id: conversationId, seq: event.seq },
@@ -983,16 +1058,17 @@ export class DesktopNotifier {
 
     private ownView(): PeerView {
         const doc = this.env.document;
-        const focused = Boolean(doc && doc.visibilityState === "visible" && doc.hasFocus());
+        const focused = !!doc && isTabFocused(doc);
+        const visible = !!doc && isTabVisible(doc);
         const state = this.client.getSnapshot();
         const convoId = state.trackerView?.open ? null : (state.selectedConversationId ?? null);
-        return { focused, convoId };
+        return { focused, visible, convoId };
     }
 
     private announce(): void {
         if (!this.channel) return;
         const view = this.ownView();
-        const key = `${view.focused}|${view.convoId ?? ""}`;
+        const key = `${view.focused}|${view.visible}|${view.convoId ?? ""}`;
         if (key === this.lastAnnounced) return;
         this.lastAnnounced = key;
         this.post({ type: "view", tab: this.tabId, ...view });
@@ -1000,18 +1076,25 @@ export class DesktopNotifier {
 
     private onPeerMessage(data: unknown): void {
         if (!data || typeof data !== "object") return;
-        const message = data as { type?: unknown; tab?: unknown; focused?: unknown; convoId?: unknown };
+        const message = data as {
+            type?: unknown;
+            tab?: unknown;
+            focused?: unknown;
+            visible?: unknown;
+            convoId?: unknown;
+        };
         if (message.type === "query") {
             this.lastAnnounced = "";
             this.announce();
             return;
         }
         if (message.type !== "view" || typeof message.tab !== "string" || message.tab === this.tabId) return;
-        if (message.focused === true) {
-            // Only one document has focus: whichever tab had it before no longer does.
-            this.peers.clear();
+        const focused = message.focused === true;
+        if (focused) this.releasePeerFocus();
+        if (focused || message.visible === true) {
             this.peers.set(message.tab, {
-                focused: true,
+                focused,
+                visible: true,
                 convoId: typeof message.convoId === "string" ? message.convoId : null,
             });
         } else {
@@ -1098,11 +1181,26 @@ export class DesktopNotifier {
         };
     }
 
+    private syncWebPush(): void {
+        const state = this.client.getSnapshot();
+        if (state.phase !== "signed-in" || !state.session) return;
+        // Notifications off: only a subscription this page knows of is removed (sync does that),
+        // so a reconnect never costs a request for someone who never turned push on.
+        // The preference is shared by every tab through storage, and this tab's snapshot moves only on
+        // focus changes: read it again so a tab another tab turned push off for never re-subscribes.
+        const enabled = this.computeSnapshot().enabled;
+        if (!enabled) void this.env.webPush?.sync(state.session, false);
+        else if (state.connection === "online") void this.env.webPush?.sync(state.session, true);
+    }
+
     private refresh(): void {
         const next = this.computeSnapshot();
         const prev = this.snapshot;
         if (prev.permission === next.permission && prev.enabled === next.enabled && prev.sound === next.sound) return;
         this.snapshot = next;
+        const session = this.client.getSnapshot().session;
+        if (prev.enabled && !next.enabled && session) void this.env.webPush?.unregister(session);
+        else this.syncWebPush();
         if (next.enabled && !prev.enabled && this.client.getSnapshot().connection === "online")
             void this.loadSettings();
         for (const listener of this.listeners) listener();

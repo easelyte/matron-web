@@ -55,6 +55,8 @@ CI runs `pnpm lint` and `pnpm test` on every PR.
 
 The build emits absolute URLs (`/assets/…`, `/config.json`, `/manifest.json`), so the same `index.html` works at any client-side route the server falls back to it for, such as the journal's `/u/<name>/<n>` tracker links. To serve `webapp/` from a sub-path instead of the root, set `PUBLIC_PATH` when building, e.g. `PUBLIC_PATH=/chat/ pnpm build`.
 
+The service worker is emitted as `<PUBLIC_PATH>sw.js` and registers only when that URL is served from the app’s own origin with a JavaScript MIME type. Serve it with a short cache policy, for example `Cache-Control: no-cache`, to avoid delaying worker updates. Web Push requires HTTPS and a VAPID key configured in the journal; see the journal README for setup.
+
 `config.json` is copied into the build output, so edit it before `pnpm build` (or edit `webapp/config.json` after). `config.sample.json` shows the full key set; see [docs/config.md](docs/config.md) for the complete runtime configuration surface.
 
 ## License

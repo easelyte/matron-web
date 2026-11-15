@@ -1,0 +1,8 @@
+{
+    "package": "matron-journal-conformance",
+    "version": "0.1.0",
+    "protocol": 1,
+    "manifestSha256": "91aa7617ccac167e28bbf679324886610637308fa004d8f069ee145ac86c7972",
+    "source": "local tarball built with the conformance pack script, passed as MATRON_CONFORMANCE_TARBALL",
+    "note": "Switches to a released package version once the journal publishes one."
+}
