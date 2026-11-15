@@ -112,7 +112,7 @@ describe("contributor rows", () => {
     it("an item row says who filed it", async () => {
         const { container } = await mount(
             <ItemRow
-                item={trackerItem({ num: 21, title: "Check the bleed", contributor: { name: "bob", via: "agent" } })}
+                item={trackerItem({ num: 21, title: "Check the margins", contributor: { name: "bob", via: "agent" } })}
                 onOpen={jest.fn()}
             />,
         );
@@ -134,13 +134,13 @@ describe("contributor rows", () => {
         };
         const { container } = await mount(
             <ItemDetail
-                item={trackerItem({ title: "Check the bleed", contributor: { name: "bob", via: "user" } })}
+                item={trackerItem({ title: "Check the margins", contributor: { name: "bob", via: "user" } })}
                 comments={[
                     trackerComment({
                         id: "cm_1",
                         author: "agent",
                         device_id: 0,
-                        body: "Bleed is 3 mm on every page.",
+                        body: "Margins are 16 px on every page.",
                         contributor: { name: "bob", via: "agent" },
                         attribution: "bob's agent",
                     }),
@@ -160,7 +160,7 @@ describe("contributor rows", () => {
                 detail={trackerMissionDetail({
                     mission: trackerMission({
                         num: 5,
-                        title: "Cover editor",
+                        title: "Docs site",
                         state: "closed",
                         closed_at: 9,
                         status: "Export works.",
@@ -191,13 +191,13 @@ describe("timeline markers", () => {
                 client={markerClient}
                 event={event("mission", {
                     num: 4,
-                    title: "Cover editor",
+                    title: "Docs site",
                     action: "closed",
                     handed_over: { to: "bob" },
                 })}
             />,
         );
-        expect(container.textContent).toContain("Mission #4 handed to bob · Cover editor");
+        expect(container.textContent).toContain("Mission #4 handed to bob · Docs site");
     });
 
     it("a plain closed mission marker is unchanged", async () => {
@@ -228,11 +228,11 @@ describe("timeline markers", () => {
                 event={event("item", {
                     num: 12,
                     kind: "question",
-                    title: "Which paper?",
+                    title: "Which theme?",
                     action: "commented",
                     by: "agent",
                     person: { name: "bob", via: "user" },
-                    comment: { body: "The matte one." },
+                    comment: { body: "The dark one." },
                 })}
             />,
         );

@@ -32,7 +32,7 @@ const handoverOut = {
     level: "owner",
     owner: { user_id: 2, name: "alice" },
     grantee: { name: "bob", address: "bob" },
-    subject: { kind: "mission", id: "ms_1", num: 4, title: "Cover editor" },
+    subject: { kind: "mission", id: "ms_1", num: 4, title: "Docs site" },
     brief: "The palette is done. **Next:** the export dialog.",
     preview: {
         missions: 1,
@@ -55,7 +55,7 @@ const handoverIn = {
     level: "owner",
     owner: { user_id: 2, name: "alice" },
     grantee: { name: "bob", address: "bob" },
-    subject: { kind: "mission", title: "Cover editor" },
+    subject: { kind: "mission", title: "Docs site" },
     brief: "The palette is done.",
     preview: { missions: 1, milestones: 3, items: 5, comments: 9, attachments: 2 },
 };
@@ -105,7 +105,7 @@ describe("parsePeopleCard for a hand-over", () => {
         expect(out.person).toBe("bob");
         expect(out.headline).toBe("Your agent asks to hand a mission over to bob");
         expect(out.topicLabel).toBe("Mission");
-        expect(out.topic).toBe("Cover editor");
+        expect(out.topic).toBe("Docs site");
 
         const incoming = parsePeopleCard(handoverIn)!;
         expect(incoming.person).toBe("alice");
@@ -160,7 +160,7 @@ describe("mission share level", () => {
             grant_id: "gr_1",
             level: "contribute",
             grantee: { name: "bob" },
-            mission: { id: "ms_1", num: 4, title: "Cover editor" },
+            mission: { id: "ms_1", num: 4, title: "Docs site" },
         };
         expect(parsePeopleCard(share)!.access).toBe("can contribute");
         expect(parsePeopleCard({ ...share, level: "read" })!.access).toBe("can read");
@@ -468,7 +468,7 @@ describe("hand-over card", () => {
             grant_id: "gr_1",
             level: "contribute",
             owner: { name: "alice" },
-            mission: { id: "ms_1", num: 4, title: "Cover editor" },
+            mission: { id: "ms_1", num: 4, title: "Docs site" },
         });
         expect(container.querySelector(".mj_PeopleDetail_access")?.textContent).toBe("Accesscan contribute");
     });

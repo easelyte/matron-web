@@ -1980,7 +1980,11 @@ describe("MatronJournalClient notices and user settings", () => {
     it("on (re)connect takes the settings from hello_ok and loads the inbox for the badge", async () => {
         const { client, state } = makeClient();
         const internal = state as SettingsInternals;
-        internal.database = { outbox: jest.fn().mockResolvedValue([]), cursor: jest.fn().mockResolvedValue(undefined) };
+        internal.database = {
+            outbox: jest.fn().mockResolvedValue([]),
+            conversations: jest.fn().mockResolvedValue([]),
+            cursor: jest.fn().mockResolvedValue(undefined),
+        };
         internal.connection = { send: jest.fn() };
         internal.api = { items: jest.fn().mockResolvedValue({ items: [item()], next_cursor: null }) };
 

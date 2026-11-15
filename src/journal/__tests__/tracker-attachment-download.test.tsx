@@ -14,7 +14,7 @@ import { AttachmentChip, buildTrackerMediaCorpus } from "../tracker/ItemAttachme
 import { trackerItem } from "./tracker-fixtures";
 import type { TrackerAttachment } from "../types";
 
-const pdf: TrackerAttachment = { blob_ref: "pp44", mime: "application/pdf", name: "Cover proof.pdf", size: 577_000 };
+const pdf: TrackerAttachment = { blob_ref: "pp44", mime: "application/pdf", name: "Release notes.pdf", size: 577_000 };
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -51,13 +51,13 @@ describe("AttachmentChip download", () => {
             <AttachmentChip client={{ mediaUrl } as unknown as MatronJournalClient} attachment={pdf} />,
         );
         const chip = view.querySelector<HTMLButtonElement>("button.mj_TrackerAttachmentChip_download")!;
-        expect(chip.getAttribute("aria-label")).toBe("Download Cover proof.pdf");
+        expect(chip.getAttribute("aria-label")).toBe("Download Release notes.pdf");
         expect(mediaUrl).not.toHaveBeenCalled();
 
         await act(async () => chip.click());
 
         expect(mediaUrl).toHaveBeenCalledWith("pp44");
-        expect(clicked).toEqual([{ href: "blob:test/pp44", download: "Cover proof.pdf" }]);
+        expect(clicked).toEqual([{ href: "blob:test/pp44", download: "Release notes.pdf" }]);
         // The transient link does not stay in the page.
         expect(document.querySelector("a[download]")).toBeNull();
     });
@@ -79,7 +79,7 @@ describe("AttachmentChip download", () => {
     it("stays a plain name chip without a client", async () => {
         const view = await mount(<AttachmentChip attachment={pdf} />);
         expect(view.querySelector("button")).toBeNull();
-        expect(view.querySelector(".mj_TrackerAttachmentChip")?.textContent).toContain("Cover proof.pdf");
+        expect(view.querySelector(".mj_TrackerAttachmentChip")?.textContent).toContain("Release notes.pdf");
     });
 });
 

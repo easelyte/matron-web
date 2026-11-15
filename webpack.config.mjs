@@ -97,7 +97,10 @@ export default (_environment, arguments_) => {
         mode: development ? "development" : "production",
         bail: true,
         devtool: development ? "inline-source-map" : "source-map",
-        entry: "./src/journal/index.tsx",
+        entry: {
+            main: "./src/journal/index.tsx",
+            sw: { import: "./src/journal/sw.ts", filename: "sw.js" },
+        },
         output: {
             path: path.join(root, "webapp"),
             publicPath,
@@ -161,7 +164,7 @@ export default (_environment, arguments_) => {
         },
         plugins: [
             new MiniCssExtractPlugin({ filename: "assets/[name].[contenthash:8].css" }),
-            new HtmlWebpackPlugin({ template: "./src/index.html", minify: !development }),
+            new HtmlWebpackPlugin({ template: "./src/index.html", minify: !development, chunks: ["main"] }),
             // Bundles served from another origin (an absolute PUBLIC_PATH) must be allowed too.
             new ContentSecurityPolicyPlugin(/^https?:\/\//.test(publicPath) ? [new URL(publicPath).origin] : []),
             new CopyWebpackPlugin({

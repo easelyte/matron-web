@@ -112,7 +112,7 @@ const shareOut = {
     level: "read",
     owner: { user_id: 2, name: "alice" },
     grantee: { name: "bob", address: "bob" },
-    mission: { id: "ms_1", num: 4, title: "Cover editor" },
+    mission: { id: "ms_1", num: 4, title: "Docs site" },
     preview: { milestones: 1, items: 2, comments: 0, attachments: 0 },
 };
 const shareIn = { ...shareOut, direction: "in", grant_id: "gr_2", owner: { user_id: 3, name: "alice" } };
@@ -123,7 +123,7 @@ const sessionShareOut = {
     direction: "out",
     session_share_id: "ss_1",
     person: { name: "bob" },
-    session_title: "Cover editor work",
+    session_title: "Docs site work",
     from_device_id: 7,
     from_name: "box-a",
 };
@@ -132,8 +132,8 @@ const roomOut = {
     direction: "out",
     room_link_id: "rl_1",
     person: { name: "bob" },
-    session_title: "Cover editor work",
-    topic: "Cover editor colours",
+    session_title: "Docs site work",
+    topic: "Docs site colours",
     justification: "bob owns the palette",
     mission: null,
     from_device_id: 7,
@@ -216,15 +216,15 @@ describe("parsePeopleCard", () => {
 
     it("words a raise of an existing share as a raise, not as a new share", () => {
         const card = parsePeopleCard(shareRaiseIn)!;
-        expect(card.headline).toBe("alice asks you to contribute to Cover editor (you can read it now)");
+        expect(card.headline).toBe("alice asks you to contribute to Docs site (you can read it now)");
         expect(card.access).toBe("can contribute");
-        expect(card.topic).toBe("Cover editor");
+        expect(card.topic).toBe("Docs site");
         expect(card.consentUrl).toBe("matron://consent/share/gr_3");
         expect(parsePeopleCard({ ...shareRaiseIn, mission: null })!.headline).toBe(
             "alice asks you to contribute to a mission (you can read it now)",
         );
         expect(parsePeopleCard({ ...shareRaiseIn, from_level: undefined })!.headline).toBe(
-            "alice asks you to contribute to Cover editor",
+            "alice asks you to contribute to Docs site",
         );
     });
 
@@ -241,10 +241,10 @@ describe("parsePeopleCard", () => {
     });
 
     it("carries the topic: the room's topic, the mission title or the session title", () => {
-        expect(parsePeopleCard(roomOut)!.topic).toBe("Cover editor colours");
-        expect(parsePeopleCard(talkIn)!.topic).toBe("Cover editor colours");
-        expect(parsePeopleCard(shareOut)!.topic).toBe("Cover editor");
-        expect(parsePeopleCard(sessionShareOut)!.topic).toBe("Cover editor work");
+        expect(parsePeopleCard(roomOut)!.topic).toBe("Docs site colours");
+        expect(parsePeopleCard(talkIn)!.topic).toBe("Docs site colours");
+        expect(parsePeopleCard(shareOut)!.topic).toBe("Docs site");
+        expect(parsePeopleCard(sessionShareOut)!.topic).toBe("Docs site work");
         expect(parsePeopleCard(contactOut)!.topic).toBe("");
     });
 
@@ -367,19 +367,14 @@ describe("person-to-person card in the timeline", () => {
         const card = container.querySelector(".mj_PeopleCard")!;
 
         expect(card.textContent).toContain("alice's agent wants to talk");
-        expect(card.textContent).toContain("Cover editor colours");
+        expect(card.textContent).toContain("Docs site colours");
         expect(card.textContent).toContain("bob owns the palette");
         expect(card.querySelector(".mj_PromptLabel")?.textContent).toBe("Talk request");
     });
 
     it.each([
         ["a new share", shareIn, "alice wants to share a mission with you", "can read"],
-        [
-            "a raise",
-            shareRaiseIn,
-            "alice asks you to contribute to Cover editor (you can read it now)",
-            "can contribute",
-        ],
+        ["a raise", shareRaiseIn, "alice asks you to contribute to Docs site (you can read it now)", "can contribute"],
     ])("draws an incoming mission share card for %s", async (_name, payload, headline, access) => {
         const client = signedInClient();
         jest.spyOn(client, "findConsentItem").mockResolvedValue(null);
@@ -388,7 +383,7 @@ describe("person-to-person card in the timeline", () => {
 
         expect(card.querySelector(".mj_PromptLabel")?.textContent).toBe("Mission share");
         expect(card.querySelector(".mj_PromptQuestion")?.textContent).toBe(headline);
-        expect(card.querySelector(".mj_PeopleDetail_topic .mj_SpawnDetail_value")?.textContent).toBe("Cover editor");
+        expect(card.querySelector(".mj_PeopleDetail_topic .mj_SpawnDetail_value")?.textContent).toBe("Docs site");
         expect(card.querySelector(".mj_PeopleDetail_access .mj_SpawnDetail_value")?.textContent).toBe(access);
     });
 
@@ -449,7 +444,7 @@ describe("person-to-person card in the timeline", () => {
                 direction: "out",
                 grant_id: "gr_7",
                 grantee: { name: "bob" },
-                subject: { kind: "mission", title: "Cover editor" },
+                subject: { kind: "mission", title: "Docs site" },
                 brief: "Where things stand.",
                 preview: { missions: 1, milestones: 0, items: 0, comments: 0, attachments: [] },
             }),
@@ -480,7 +475,7 @@ describe("person-to-person card in the timeline", () => {
                 direction: "out",
                 grant_id: "gr_7",
                 grantee: { name: "bob" },
-                subject: { kind: "mission", title: "Cover editor" },
+                subject: { kind: "mission", title: "Docs site" },
                 brief: "Where things stand.",
                 preview: { attachments: [{ media_id: "md_1", name: "palette.png" }] },
             }),

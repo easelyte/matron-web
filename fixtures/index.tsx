@@ -688,11 +688,11 @@ const peopleParam = new URLSearchParams(window.location.search).get("people");
 if (peopleParam === "handover-out" || peopleParam === "handover-in") {
     const out = peopleParam === "handover-out";
     const brief = [
-        "**Where it stands.** The cover editor ships colour themes and the palette tokens are final.",
+        "**Where it stands.** The docs site ships colour themes and the palette tokens are final.",
         "",
-        "**Next.** The export dialog: PDF works, the PNG path still drops the bleed.",
+        "**Next.** The search page: results load, the filter still drops the last page.",
         "",
-        "**Watch out.** Proofs print darker than the screen; compare against the printed swatch.",
+        "**Watch out.** The dark theme looks dimmer on older screens; compare against the reference screenshot.",
     ].join("\n");
     const card: JournalEvent = {
         seq: 3,
@@ -708,8 +708,8 @@ if (peopleParam === "handover-out" || peopleParam === "handover-in") {
             owner: { user_id: out ? 1 : 2, name: out ? "operator" : "alice" },
             grantee: out ? { name: "bob", address: "bob" } : { name: "operator", address: "operator" },
             subject: out
-                ? { kind: "mission", id: "ms_1", num: 4, title: "Cover editor colour themes" }
-                : { kind: "mission", title: "Cover editor colour themes" },
+                ? { kind: "mission", id: "ms_1", num: 4, title: "Docs site colour themes" }
+                : { kind: "mission", title: "Docs site colour themes" },
             brief,
             preview: {
                 missions: 1,
@@ -727,14 +727,14 @@ if (peopleParam === "handover-out" || peopleParam === "handover-in") {
                           },
                           {
                               media_id: "md_2",
-                              name: "proof-gloss.pdf",
+                              name: "theme-light.pdf",
                               mime: "application/pdf",
                               size: 2_400_000,
                               item_num: 14,
                           },
                           {
                               media_id: "md_3",
-                              name: "proof-matte.pdf",
+                              name: "theme-dark.pdf",
                               mime: "application/pdf",
                               size: 2_300_000,
                               item_num: 14,
@@ -753,7 +753,7 @@ if (peopleParam === "handover-out" || peopleParam === "handover-in") {
                   ts: T,
                   sender: "user:operator",
                   type: "text",
-                  payload: { body: "bob is taking over the cover editor. Hand the mission over to him.", from: "user" },
+                  payload: { body: "bob is taking over the docs site. Hand the mission over to him.", from: "user" },
               },
               {
                   seq: 2,
@@ -783,11 +783,11 @@ if (peopleParam === "out" || peopleParam === "talk") {
             direction: out ? "out" : "in",
             room_link_id: out ? "rl_1" : "rl_2",
             person: { name: out ? "bob" : "alice" },
-            session_title: out ? "Cover editor" : null,
-            topic: "Cover editor colours",
+            session_title: out ? "Docs site" : null,
+            topic: "Docs site colours",
             justification: out
-                ? "bob's session owns the palette tokens the editor reads."
-                : "We need the palette tokens before the cover editor ships.",
+                ? "bob's session owns the palette tokens the site reads."
+                : "We need the palette tokens before the docs site ships.",
             mission: null,
             ...(out
                 ? { from_device_id: 1, from_name: "box-a" }
@@ -806,7 +806,7 @@ if (peopleParam === "out" || peopleParam === "talk") {
                   ts: T,
                   sender: "user:operator",
                   type: "text",
-                  payload: { body: "Can you check the cover editor colours with bob's agent?", from: "user" },
+                  payload: { body: "Can you check the docs site colours with bob's agent?", from: "user" },
               },
               {
                   seq: 2,
@@ -837,7 +837,7 @@ if (peopleParam === "share-in" || peopleParam === "share-raise") {
             grant_id: raise ? "gr_4" : "gr_3",
             level: raise ? "contribute" : "read",
             owner: { user_id: null, name: "alice", address: "alice" },
-            mission: { id: null, num: 4, title: "Cover editor" },
+            mission: { id: null, num: 4, title: "Docs site" },
             preview: { milestones: 3, items: 5, comments: 2, attachments: 1 },
             ...(raise ? { raise: true, from_level: "read" } : {}),
         },
@@ -1585,19 +1585,13 @@ if (trackerMode === "memories" || trackerMode === "memory") {
             3_600_000,
         ),
         memory(
-            "read-replica-only",
+            "style-guide",
             "reference",
-            "Answer production data questions from the read replica, never the primary database.",
+            "The style guide lives in docs/style.md; follow it for new code.",
             "",
             86_400_000,
         ),
-        memory(
-            "leave-local-snapshots",
-            "feedback",
-            "Never delete or thin local backup snapshots on the build machine.",
-            "",
-            2 * 86_400_000,
-        ),
+        memory("lint-before-commit", "feedback", "Run the linter before every commit.", "", 2 * 86_400_000),
     ];
     const stub = client as unknown as Record<string, unknown>;
     for (const name of ["loadInbox", "loadMissions", "loadItem", "loadMemories", "loadMission"]) {
@@ -1938,8 +1932,8 @@ if (trackerMode === "inbox" || trackerMode === "item") {
                 num: 61,
                 kind: "question",
                 awaiting: "user",
-                title: "Use the matte paper stock for the cover proofs?",
-                body: "The gloss proofs show banding on the dark gradient. Matte hides it and costs the same.",
+                title: "Use the dark theme for the docs screenshots?",
+                body: "The light screenshots show banding on the header gradient. Dark hides it and reads just as well.",
                 mission_id: "ms_1706",
                 mission_num: 1706,
                 origin_device_id: 0,
@@ -1966,7 +1960,7 @@ if (trackerMode === "inbox" || trackerMode === "item") {
                 item: contributed,
                 comments: [
                     contributedComment("cm_61a", {
-                        body: "I checked both proofs on the light table: matte is the clear winner.",
+                        body: "I checked both sets on the big monitor: dark is the clear winner.",
                         created_at: now - 2 * 3_600_000,
                         contributor: { name: "bob", via: "user" },
                         attribution: "bob",
@@ -1974,7 +1968,7 @@ if (trackerMode === "inbox" || trackerMode === "item") {
                     contributedComment("cm_61b", {
                         author: "user",
                         device_id: 1,
-                        body: "Agreed on matte. Can you send the updated proof once it is printed?",
+                        body: "Agreed on dark. Can you send the updated screenshots once they are taken?",
                         created_at: now - 20 * 60_000,
                     }),
                 ],

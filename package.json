@@ -19,7 +19,8 @@
         "test:shell": "bash scripts/test/test-nginx-bin-resolution.sh && bash scripts/test/test-check-nginx-conf.sh",
         "coverage": "jest --runInBand --coverage",
         "build:fixtures": "webpack --config webpack.fixtures.mjs --mode production",
-        "perf": "node scripts/perf/run.mjs"
+        "perf": "node scripts/perf/run.mjs",
+        "conformance": "node scripts/conformance/replay.mjs"
     },
     "dependencies": {
         "@fontsource/fira-code": "^5.3.0",

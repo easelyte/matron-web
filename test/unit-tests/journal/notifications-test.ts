@@ -661,6 +661,59 @@ describe("DesktopNotifier", () => {
         deliver(background.client, event({ convo_id: "c3", type: "prompt" }));
         expect(background.notification.shown).toHaveLength(1);
     });
+
+    describe("with an active push subscription", () => {
+        const webPush = () => ({
+            active: jest.fn(() => true),
+            sync: jest.fn().mockResolvedValue(undefined),
+            unregister: jest.fn().mockResolvedValue(undefined),
+        });
+
+        it("alerts for itself when another visible tab has the conversation open, because the journal sends no push", async () => {
+            const bus = channelBus();
+            const background = setup({ focused: false, env: { channel: bus, webPush: webPush() } });
+            background.notifier.start();
+            await flush();
+            // A visible, unfocused tab of this browser shows c2; the hidden one applies the event.
+            bus().postMessage({ type: "view", tab: "side-by-side", focused: false, visible: true, convoId: "c2" });
+            Object.defineProperty(background.doc, "visibilityState", { configurable: true, value: "hidden" });
+            deliver(background.client, event({ convo_id: "c2", type: "prompt" }));
+            expect(background.notification.shown).toHaveLength(1);
+        });
+
+        it("alerts for itself when another tab has focus on a different conversation, because the worker stays quiet", async () => {
+            const bus = channelBus();
+            const background = setup({ focused: false, env: { channel: bus, webPush: webPush() } });
+            const front = setup({ focused: true, env: { channel: bus } });
+            signedIn(front.client, { selectedConversationId: "c9" });
+            background.notifier.start();
+            front.notifier.start();
+            await flush();
+            deliver(background.client, event({ convo_id: "c2", type: "prompt" }));
+            expect(background.notification.shown).toHaveLength(1);
+        });
+
+        it("leaves the alert to the push when no tab has focus or shows the conversation", async () => {
+            const bus = channelBus();
+            const background = setup({ focused: false, env: { channel: bus, webPush: webPush() } });
+            background.notifier.start();
+            await flush();
+            bus().postMessage({ type: "view", tab: "other", focused: false, visible: true, convoId: "c9" });
+            deliver(background.client, event({ convo_id: "c2", type: "prompt" }));
+            expect(background.notification.shown).toHaveLength(0);
+        });
+
+        it("forgets a tab that reports itself hidden", async () => {
+            const bus = channelBus();
+            const background = setup({ focused: false, env: { channel: bus, webPush: webPush() } });
+            background.notifier.start();
+            await flush();
+            bus().postMessage({ type: "view", tab: "other", focused: false, visible: true, convoId: "c2" });
+            bus().postMessage({ type: "view", tab: "other", focused: false, visible: false, convoId: null });
+            deliver(background.client, event({ convo_id: "c2", type: "prompt" }));
+            expect(background.notification.shown).toHaveLength(0);
+        });
+    });
 });
 
 describe("Settings → Notifications", () => {

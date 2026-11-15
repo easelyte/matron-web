@@ -78,6 +78,9 @@ describe("subchat automatic selection", () => {
     beforeEach(() => {
         localStorage.clear();
         jest.spyOn(JournalConnection.prototype, "start").mockImplementation(() => undefined);
+        // The page reports the open chat only while the tab is focused; jsdom has no focus of its own.
+        jest.spyOn(document, "hasFocus").mockReturnValue(true);
+        jest.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     });
 
     afterEach(() => jest.restoreAllMocks());

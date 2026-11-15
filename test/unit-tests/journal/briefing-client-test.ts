@@ -250,6 +250,7 @@ describe("MatronJournalClient briefing live frame", () => {
         internals.api!.latestBriefing.mockResolvedValue(latest());
         internals.database = {
             outbox: jest.fn().mockResolvedValue([]),
+            conversations: jest.fn().mockResolvedValue([]),
             deleteOutboxRows: jest.fn(),
             cursor: jest.fn().mockResolvedValue(undefined),
         };
