@@ -67,9 +67,6 @@ Please see LICENSE files in the repository root for full details.
     --mj-selection: rgb(11 110 125 / 0.2);
     --mj-scrollbar: rgb(28 24 20 / 0.22);
     --mj-scrollbar-hover: rgb(28 24 20 / 0.34);
-    /* Surface A/B design additions (2026-08): priority accent (peer-priority left edge +
-       jump chip) and the pinned-summary raised-surface alias. See design-tokens.json. */
-    --mj-priority-accent: #0d9488;
     /* Modal scrim — a fixed dark veil over content; identical in both themes so the media
        viewer / upload modal read the same regardless of canvas colour. */
     --mj-scrim-modal: rgb(18 16 14 / 55%);
@@ -240,8 +237,6 @@ Please see LICENSE files in the repository root for full details.
     --mj-selection: rgb(110 205 220 / 0.26);
     --mj-scrollbar: rgb(255 255 255 / 0.2);
     --mj-scrollbar-hover: rgb(255 255 255 / 0.32);
-    /* Surface A/B: priority accent brightens in dark (mirrors --mj-color-text-action-accent). */
-    --mj-priority-accent: #2dd4bf;
 
     /* Destructive surface (dark): the critical token is light here, so the tint is built from it
        rather than from the light-theme red — same treatment, theme-correct contrast. */
@@ -1967,13 +1962,6 @@ label.mj_SettingsSheet_row {
 .mj_TrackerComposer_send:focus-visible {
     outline: var(--mj-focus-ring);
     outline-offset: var(--mj-focus-offset);
-}
-
-/* Shown under the composer while a historical window is open: sending waits for Jump to latest. */
-.mj_ComposerHint {
-    padding: 4px 12px 0;
-    color: var(--mj-color-text-secondary);
-    font: var(--mj-font-meta);
 }
 
 /* Theme-independent fork tokens (control scale, focus ring, motion, z-layers). */
