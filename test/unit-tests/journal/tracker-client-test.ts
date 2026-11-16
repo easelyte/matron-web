@@ -1185,6 +1185,43 @@ describe("MatronJournalClient handleTrackerMarker (WS invalidation)", () => {
 
         expect(state.api.items).toHaveBeenCalledTimes(1);
     });
+    it("refetches the open mission and the loaded list on a matching mission marker", async () => {
+        const { state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail({ num: 5 }),
+            missions: [mission()],
+        });
+        state.api = {
+            mission: jest.fn().mockResolvedValue(missionDetail({ num: 5 })),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+        };
+
+        state.handleTrackerMarker(marker("mission", { num: 5, action: "updated" }));
+        await flush();
+
+        expect(state.api.mission).toHaveBeenCalledWith(5);
+        jest.advanceTimersByTime(250);
+        expect(state.api.missions).toHaveBeenCalled();
+    });
+
+    it("refetches the parent mission on a milestone marker carrying its mission_num", async () => {
+        const { state } = makeClient({
+            trackerView: { open: true, view: "missions", selectedMissionId: 5 },
+            trackerMission: missionDetail({ num: 5 }),
+            missions: [mission()],
+        });
+        state.api = {
+            mission: jest.fn().mockResolvedValue(missionDetail({ num: 5 })),
+            missions: jest.fn().mockResolvedValue({ missions: [] }),
+        };
+
+        state.handleTrackerMarker(marker("milestone", { num: 12, mission_num: 5, action: "created" }));
+        await flush();
+
+        expect(state.api.mission).toHaveBeenCalledWith(5);
+        jest.advanceTimersByTime(250);
+        expect(state.api.missions).toHaveBeenCalled();
+    });
 
     it("coalesces a burst of mission and milestone markers into one missions refetch", async () => {
         const { state } = makeClient({ trackerView: { open: true, view: "missions" }, missions: [mission()] });

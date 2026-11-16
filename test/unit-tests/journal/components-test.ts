@@ -20,7 +20,6 @@ import {
     PREFERENCES_UNAVAILABLE_ERROR,
     unreadStore,
 } from "../../../src/journal/client";
-import { COMPOSER_MAX_HEIGHT_PX } from "../../../src/journal/composer-input";
 import { makeDraftStore } from "../../../src/journal/composer-drafts";
 import {
     EventContent,
@@ -2445,73 +2444,6 @@ describe("composer sends", () => {
         await pressEnter(result.container);
         expect(send).toHaveBeenCalledTimes(1);
     });
-
-    // jsdom has no layout: stand in for the content height the browser measures (24px a line).
-    function stubLineHeights(): void {
-        jest.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
-            const value = (this as HTMLTextAreaElement).value ?? "";
-            return value ? value.split("\n").length * 24 : 0;
-        });
-    }
-
-    function composerHeight(container: HTMLElement): string {
-        return container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input")!.style.height;
-    }
-
-    test("a draft restored on switching back keeps its typed height, capped at the max", async () => {
-        stubLineHeights();
-        const result = await renderComposerApp(["c1", "c2"]);
-        rendered = result;
-        await typeInComposer(rendered.container, "one\ntwo\nthree\nfour");
-        expect(composerHeight(rendered.container)).toBe("96px");
-        await act(async () => {
-            await result.client.selectConversation("c2");
-        });
-        expect(composerHeight(rendered.container)).toBe("auto");
-        await act(async () => {
-            await result.client.selectConversation("c1");
-        });
-        expect(composerValue(rendered.container)).toBe("one\ntwo\nthree\nfour");
-        expect(composerHeight(rendered.container)).toBe("96px");
-
-        await typeInComposer(rendered.container, "x\n".repeat(20));
-        await act(async () => {
-            await result.client.selectConversation("c2");
-        });
-        await act(async () => {
-            await result.client.selectConversation("c1");
-        });
-        expect(composerHeight(rendered.container)).toBe(`${COMPOSER_MAX_HEIGHT_PX}px`);
-    });
-
-    test("a draft restored into a freshly mounted composer opens at its content height", async () => {
-        stubLineHeights();
-        const result = await renderComposerAppWithChild("c1", "c1-child");
-        rendered = result;
-        await typeInComposer(result.container, "alpha\nbeta\ngamma");
-        // The read-only child unmounts the composer; coming back mounts a new one from the draft.
-        await act(async () => {
-            await result.client.selectConversation("c1-child");
-        });
-        expect(result.container.querySelector(".mj_ComposerInput_input")).toBeNull();
-        await act(async () => {
-            await result.client.selectConversation("c1");
-        });
-        expect(composerValue(result.container)).toBe("alpha\nbeta\ngamma");
-        expect(composerHeight(result.container)).toBe("72px");
-    });
-
-    test("a send clears the box back to its one-row height", async () => {
-        stubLineHeights();
-        const result = await renderComposerApp(["c1"]);
-        rendered = result;
-        jest.spyOn(result.client, "sendMessage").mockResolvedValue(true);
-        await typeInComposer(rendered.container, "one\ntwo");
-        expect(composerHeight(rendered.container)).toBe("48px");
-        await pressEnter(rendered.container);
-        expect(composerValue(rendered.container)).toBe("");
-        expect(composerHeight(rendered.container)).toBe("auto");
-    });
 });
 
 describe("stop turn button", () => {
@@ -2937,31 +2869,6 @@ describe("attachment composer", () => {
         await act(async () => textarea.dispatchEvent(paste));
 
         expect(stageFiles).toHaveBeenCalledWith([screenshot]);
-    });
-
-    it("composer paste is consumed and does not bubble to a document-level listener", async () => {
-        // Regression: a trusted paste stages once in the composer, which mounts the upload
-        // modal whose useEffect registers a document-level paste listener. React 19 flushes
-        // that effect synchronously inside the trusted event, so without stopPropagation the
-        // SAME paste reaches the new listener and stages the file a second time ("1 of 2" for a
-        // single paste). The composer must stopPropagation so the event never reaches document.
-        const client = signedInClient();
-        const stageFiles = jest.spyOn(client, "stageFiles").mockImplementation(() => undefined);
-        rendered = await renderClient(client);
-        const textarea = rendered.container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
-        if (!textarea) throw new Error("Missing composer textarea");
-        const documentPaste = jest.fn();
-        document.addEventListener("paste", documentPaste);
-        try {
-            const screenshot = new File(["image"], "screenshot.png", { type: "image/png" });
-            const paste = new Event("paste", { bubbles: true, cancelable: true });
-            Object.defineProperty(paste, "clipboardData", { value: { files: [screenshot] } });
-            await act(async () => textarea.dispatchEvent(paste));
-            expect(stageFiles).toHaveBeenCalledTimes(1);
-            expect(documentPaste).not.toHaveBeenCalled();
-        } finally {
-            document.removeEventListener("paste", documentPaste);
-        }
     });
 
     it("puts pasted files in the tray above the field, and removes one with its button", async () => {

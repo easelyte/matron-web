@@ -54,8 +54,8 @@ export function usageBarLabel(label: string): string {
 const USAGE_SHORT_LABELS: Record<string, string> = {
     context: "ctx",
     Session: "5h",
-    // Lowercase tolerance: a bridge may label the session limit "session" (post-#156).
-    // Keep both so the label fallback (no `id`) still resolves either casing.
+    // The post-#156 bridge labels the session limit in lowercase ("session"); keep both
+    // spellings so an id-less frame from either era maps to the same short tag.
     session: "5h",
     "Week (all models)": "wk",
     Week: "wk",
@@ -79,7 +79,7 @@ const USAGE_ID_SHORT_LABELS: Record<string, string> = {
 };
 
 // Canonical id → grid rank. Column-first 3×2: col1 [cpu,ram], col2 [ctx,5h],
-// col3 [fbl/model, wk]. Host vitals lead. Per-model
+// col3 [fbl/model, wk]. Host vitals lead (leftmost column). Per-model
 // weekly (`week_<slug>`) shares rank 4 with fbl.
 const USAGE_ID_RANKS: Record<string, number> = {
     host_cpu: 0,
@@ -200,7 +200,8 @@ export function resetDisplay(
     now = Date.now(),
     resetsAtMs?: number,
 ): string {
-    // Try reset candidates in priority order: the NEW epoch-ms field (`resets_at_ms`), then
+    // Try reset candidates in priority order: the epoch-ms `resetsAtMs` argument (never sent
+    // by the final #156 bridge contract — accepted purely as a client-side tolerance), then
     // `resets_at` (ISO string, or a number belt-and-suspenders). A candidate that yields an
     // out-of-range Date (e.g. Number.MAX_VALUE → Invalid Date, which Intl.format throws a
     // RangeError on) is SKIPPED so a usable lower-priority candidate — or the textual
@@ -310,45 +311,6 @@ export function mergeSessionStatus(current: SessionStatus | undefined, update: S
         effort: "effort" in update ? (update.effort ?? undefined) : current?.effort,
         model_options: mergeOptions(update.model_options, current?.model_options),
         effort_levels: mergeOptions(update.effort_levels, current?.effort_levels),
-    };
-}
-
-const ONE_MILLION = 1_000_000;
-
-/** The model family a model id or alias names ("opus", "sonnet"…), or the bare id. */
-function modelFamily(model: string | undefined): string {
-    const id = (model ?? "")
-        .toLowerCase()
-        .replace(/\[1m\]/g, "")
-        .replace(/-\d{8}$/, "");
-    return /\b(opus|sonnet|haiku|fable|mythos)\b/.exec(id.replace(/[-_]/g, " "))?.[1] ?? id;
-}
-
-/**
- * A helper's own context gauge (a Claude subagent's child conversation). Bridges up to
- * size a subagent's window from the bare API model id its transcript carries
- * (`claude-opus-5-5`), which never has the `[1m]` marker, so a subagent running in its
- * parent's 1M window read 200k and pinned the bar at 100% in red. Corrected here, from data
- * the frame already carries:
- *   - more tokens than the reported window proves the window is the larger one (1M);
- *   - a subagent on the parent's model family inherits the parent's (larger) window.
- * A different-family subagent (haiku under an opus[1m] parent) keeps its own window.
- */
-export function helperContextStatus(
-    child: SessionStatus | undefined,
-    parent: SessionStatus | undefined,
-): SessionStatus | undefined {
-    const context = child?.context;
-    if (!child || !context || !(context.tokens > 0)) return child;
-    let window = context.window > 0 ? context.window : ONE_MILLION;
-    if (context.tokens > window) window = ONE_MILLION;
-    const parentWindow = parent?.context?.window ?? 0;
-    if (parentWindow > window && (!child.model || modelFamily(child.model) === modelFamily(parent?.model)))
-        window = parentWindow;
-    if (window === context.window) return child;
-    return {
-        ...child,
-        context: { tokens: context.tokens, window, pct: Math.min(100, Math.round((context.tokens / window) * 100)) },
     };
 }
 

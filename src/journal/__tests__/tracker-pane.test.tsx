@@ -76,7 +76,7 @@ async function mount(element: React.ReactElement): Promise<{ container: HTMLDivE
     return { container, root };
 }
 
-describe("TrackerPane", () => {
+describe("TrackerPane selection/detail matching (F1)", () => {
     beforeAll(() => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     });
