@@ -2871,31 +2871,6 @@ describe("attachment composer", () => {
         expect(stageFiles).toHaveBeenCalledWith([screenshot]);
     });
 
-    it("composer paste is consumed and does not bubble to a document-level listener", async () => {
-        // Regression: a trusted paste stages once in the composer, which mounts the upload
-        // modal whose useEffect registers a document-level paste listener. React 19 flushes
-        // that effect synchronously inside the trusted event, so without stopPropagation the
-        // SAME paste reaches the new listener and stages the file a second time ("1 of 2" for a
-        // single paste). The composer must stopPropagation so the event never reaches document.
-        const client = signedInClient();
-        const stageFiles = jest.spyOn(client, "stageFiles").mockImplementation(() => undefined);
-        rendered = await renderClient(client);
-        const textarea = rendered.container.querySelector<HTMLTextAreaElement>(".mj_ComposerInput_input");
-        if (!textarea) throw new Error("Missing composer textarea");
-        const documentPaste = jest.fn();
-        document.addEventListener("paste", documentPaste);
-        try {
-            const screenshot = new File(["image"], "screenshot.png", { type: "image/png" });
-            const paste = new Event("paste", { bubbles: true, cancelable: true });
-            Object.defineProperty(paste, "clipboardData", { value: { files: [screenshot] } });
-            await act(async () => textarea.dispatchEvent(paste));
-            expect(stageFiles).toHaveBeenCalledTimes(1);
-            expect(documentPaste).not.toHaveBeenCalled();
-        } finally {
-            document.removeEventListener("paste", documentPaste);
-        }
-    });
-
     it("puts pasted files in the tray above the field, and removes one with its button", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);

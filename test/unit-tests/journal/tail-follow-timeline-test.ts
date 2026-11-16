@@ -205,6 +205,7 @@ describe("timeline tail following", () => {
         expect(panel.scrollTop).toBe(1000);
         expect(rendered.container.querySelector(".mj_JumpToBottom")).toBeNull();
     });
+
     it("a conversation switch forces follow and a pre-switch frame cannot flip it off", async () => {
         const client = signedInClient();
         rendered = await renderClient(client);

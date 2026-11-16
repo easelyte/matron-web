@@ -25,11 +25,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { previewLine } from "../activity-text";
 import { HeadlineList } from "../headline-list";
 import { buildHeadlines, type Headline, headlineRowText, testCounts } from "../headlines";
-import { helperContextStatus } from "../status";
 import { describeCommand, describeStep, looksRaw, stepHeadline, stepLiveHeadline } from "../step-phrases";
 import { assembleTurns, eventToStep } from "../turn-assembly";
 import { type Step } from "../turn-grouping";
-import type { JournalEvent, SessionStatus } from "../types";
+import type { JournalEvent } from "../types";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -362,33 +361,5 @@ describe("sidebar preview on real helper traffic (Developer view off)", () => {
         expect(previewLine({ snippet: "", session_state: "done", last_step: step })).toBe(stepHeadline(step));
         expect(previewLine({ snippet: "", session_state: "running", last_step: step })).toBe(stepLiveHeadline(step));
         expect(stepHeadline(step)).toBe("Queried the journal database");
-    });
-});
-
-describe("helper context gauge", () => {
-    const status = (model: string, tokens: number, window: number): SessionStatus => ({
-        model,
-        context: { tokens, window, pct: Math.min(100, Math.round((tokens / window) * 100)) },
-    });
-
-    it("a subagent past 200k on the parent's 1M model reads against 1M, not a red 100%", () => {
-        const child = status("claude-opus-5-5", 300_000, 200_000);
-        expect(helperContextStatus(child, status("claude-opus-5-5[1m]", 500_000, 1_000_000))?.context).toEqual({
-            tokens: 300_000,
-            window: 1_000_000,
-            pct: 30,
-        });
-        // Even without the parent's status: more tokens than the window proves the larger one.
-        expect(helperContextStatus(child, undefined)?.context?.pct).toBe(30);
-    });
-
-    it("inherits the parent's window on the same family; another family keeps its own", () => {
-        const parent = status("opus[1m]", 400_000, 1_000_000);
-        expect(helperContextStatus(status("claude-opus-5-5", 150_000, 200_000), parent)?.context?.pct).toBe(15);
-        expect(helperContextStatus(status("claude-haiku-4-5", 50_000, 200_000), parent)?.context?.pct).toBe(25);
-        expect(
-            helperContextStatus(status("claude-opus-5-5", 50_000, 200_000), status("claude-opus-5-5", 9, 200_000)),
-        ).toEqual(status("claude-opus-5-5", 50_000, 200_000));
-        expect(helperContextStatus(undefined, parent)).toBeUndefined();
     });
 });

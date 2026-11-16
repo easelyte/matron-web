@@ -27,7 +27,7 @@ import { viewingConvoId, watchTabFocus } from "./viewing";
 import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation-flags";
 import { parseCoordinatorConsent, resetSessionStops, spawnConsentRowsIn } from "./coordinator-consent";
 import { JournalDatabase } from "./database";
-import { helperContextStatus, mergeSessionStatus } from "./status";
+import { mergeSessionStatus } from "./status";
 import { sectionStateFromReply, type JournalMetrics, type OpsSection, type OpsSectionState } from "./ops/model";
 import {
     parseRoutine,
@@ -117,7 +117,6 @@ import {
     type GlobalSearchResult,
     type ServerFrame,
     type Session,
-    type SessionStatus,
     type SnapshotResponse,
     type SpawnConsentRows,
     type StartOption,
@@ -286,15 +285,6 @@ function sanitizeSearchHits(response: { hits?: unknown } | null | undefined): Se
     }
     return hits;
 }
-// The bridge publishes the new convo's first frame (convo_upsert -> convo_meta) at create time,
-// before the CLI emits anything, so a healthy create clears this within milliseconds. It only
-// fires when that frame sits in the bridge publisher's queue across a reconnect, whose backoff
-// caps at 30s (journal-publisher DEFAULT_BACKOFF_CAP_MS). 10s flagged ordinary blips under load.
-export const RPC_CREATE_WATCHDOG_MS = 30_000;
-// Shown (as a dismissible status) when the watchdog fires; cleared again by the first frame for
-// the created convo, so it never outlives the delay it describes.
-export const RPC_CREATE_STALLED_NOTICE =
-    "New session is still starting — it will appear once it syncs. Refresh if it doesn't.";
 /**
  * The matching seqs of a find-in-chat response, newest first and without repeats. Only `seq` (and
  * `convo_id`, to drop anything outside the conversation) is read, so both the journal's
@@ -318,6 +308,15 @@ export function conversationMatchSeqs(
 
 // How long a marker-driven refetch waits, so a burst of markers costs one GET.
 const MARKER_REFETCH_DELAY_MS = 250;
+// The bridge publishes the new convo's first frame (convo_upsert -> convo_meta) at create time,
+// before the CLI emits anything, so a healthy create clears this within milliseconds. It only
+// fires when that frame sits in the bridge publisher's queue across a reconnect, whose backoff
+// caps at 30s (journal-publisher DEFAULT_BACKOFF_CAP_MS). 10s flagged ordinary blips under load.
+export const RPC_CREATE_WATCHDOG_MS = 30_000;
+// Shown (as a dismissible status) when the watchdog fires; cleared again by the first frame for
+// the created convo, so it never outlives the delay it describes.
+export const RPC_CREATE_STALLED_NOTICE =
+    "New session is still starting — it will appear once it syncs. Refresh if it doesn't.";
 const BACKFILL_SNAPSHOT_TIMEOUT_MS = 10_000;
 // How long after start-up the one-off room-membership backfill reads its snapshot, so it never
 // competes with the first paint and the first history read.
@@ -1131,6 +1130,30 @@ export class MatronJournalClient {
                     (left.name ?? "").localeCompare(right.name ?? "") ||
                     left.device_id - right.device_id,
             );
+    }
+
+    // Seed each box's stored report from the roster, but never regress a row a live
+    // `box_status` frame has already moved past (protocol.md: latest report wins).
+    private rememberBoxStatuses(devices: DeviceDTO[]): void {
+        let next: Record<number, BoxStatus> | undefined;
+        for (const device of devices) {
+            if (!device.status) continue;
+            const current = this.state.boxStatuses[device.device_id];
+            if (current && current.reported_at > device.status.reported_at) continue;
+            next ??= { ...this.state.boxStatuses };
+            next[device.device_id] = device.status;
+        }
+        if (next) this.patch({ boxStatuses: next });
+    }
+
+    // A live report replaces the stored row for that box wholesale — the blocks the frame
+    // omits are gone, not kept (only `box_status` itself carries the full picture).
+    private handleBoxStatus(frame: JournalBoxStatusFrame): void {
+        const deviceId: unknown = frame.device_id;
+        if (typeof deviceId !== "number" || !Number.isFinite(deviceId)) return;
+        const status = parseBoxStatus(frame);
+        if (!status) return;
+        this.patch({ boxStatuses: { ...this.state.boxStatuses, [deviceId]: status } });
     }
 
     public async recentFolders(agentDeviceId: number): Promise<RecentFolder[]> {
@@ -2856,13 +2879,7 @@ export class MatronJournalClient {
     public openTrackerMemory(name: string): void {
         if (this.state.trackerItem) this.patch({ trackerItem: null });
         if (this.state.trackerMission) this.patch({ trackerMission: null });
-        this.openTrackerView({
-            view: "memories",
-            memoryName: name,
-            itemId: null,
-            missionId: null,
-            projectId: null,
-        });
+        this.openTrackerView({ view: "memories", memoryName: name, itemId: null, missionId: null, projectId: null });
     }
 
     public closeTrackerMemory(): void {
@@ -6235,30 +6252,6 @@ export class MatronJournalClient {
         if (cursor !== undefined) connection.send({ op: "ack", cursor });
     }
 
-    // Seed each box's stored report from the roster, but never regress a row a live
-    // `box_status` frame has already moved past (protocol.md: latest report wins).
-    private rememberBoxStatuses(devices: DeviceDTO[]): void {
-        let next: Record<number, BoxStatus> | undefined;
-        for (const device of devices) {
-            if (!device.status) continue;
-            const current = this.state.boxStatuses[device.device_id];
-            if (current && current.reported_at > device.status.reported_at) continue;
-            next ??= { ...this.state.boxStatuses };
-            next[device.device_id] = device.status;
-        }
-        if (next) this.patch({ boxStatuses: next });
-    }
-
-    // A live report replaces the stored row for that box wholesale — the blocks the frame
-    // omits are gone, not kept (only `box_status` itself carries the full picture).
-    private handleBoxStatus(frame: JournalBoxStatusFrame): void {
-        const deviceId: unknown = frame.device_id;
-        if (typeof deviceId !== "number" || !Number.isFinite(deviceId)) return;
-        const status = parseBoxStatus(frame);
-        if (!status) return;
-        this.patch({ boxStatuses: { ...this.state.boxStatuses, [deviceId]: status } });
-    }
-
     private async handleFrame(frame: ServerFrame): Promise<void> {
         this.emitLive((listener) => listener.frame?.(frame));
         if (frame.kind === "journal") {
@@ -6605,9 +6598,6 @@ export class MatronJournalClient {
             }
         }
         if (convoId === this.state.selectedConversationId) this.refreshEphemeralState(convoId);
-        // A helper's gauge borrows its parent's window (statusFor): repaint it when that changes.
-        else if (frame.status && this.selectedConversation()?.parent_convo_id === convoId)
-            this.refreshEphemeralState(this.state.selectedConversationId!);
     }
 
     private applyToolStream(frame: JournalEphemeralFrame, convoId: string): void {
@@ -6651,19 +6641,6 @@ export class MatronJournalClient {
     }
 
     /**
-     * A conversation's header status. A helper's own conversation (a Claude subagent) has its
-     * context gauge sized against the parent's window where the bridge under-reported it.
-     */
-    private statusFor(conversationId: string): SessionStatus | undefined {
-        const status = this.statuses.get(conversationId);
-        if (!status?.context) return status;
-        const conversation = this.state.conversations.find((candidate) => candidate.id === conversationId);
-        const parentId = conversation?.parent_convo_id;
-        if (parentId == null || parentId === conversationId) return status;
-        return helperContextStatus(status, this.statuses.get(parentId));
-    }
-
-    /**
      * The tab's socket was closed while hidden, which ends the journal's live tool output for
      * this device. Keep the text shown, mark it as no longer live, and let the snapshot the next
      * connection's `viewing` draws replace it; never append to it.
@@ -6683,7 +6660,7 @@ export class MatronJournalClient {
     private refreshEphemeralState(conversationId: string): void {
         this.patch({
             activity: this.activities.get(conversationId),
-            sessionStatus: this.statusFor(conversationId),
+            sessionStatus: this.statuses.get(conversationId),
             textStreams: { ...(this.textStreams.get(conversationId) ?? {}) },
             toolStreams: { ...(this.toolStreams.get(conversationId) ?? {}) },
         });

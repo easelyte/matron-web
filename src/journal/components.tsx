@@ -419,49 +419,26 @@ export function MenuSeparator(): React.ReactElement {
     return <div className="mj_MenuSeparator" role="separator" />;
 }
 
-/**
- * A formatRelativeDay that builds each Intl.DateTimeFormat at most once. Constructing a formatter
- * is by far the costliest part of the label, and the sidebar formats one per row on every render
- * (thousands on an account with a long history), so ConversationList makes one of these per
- * render and shares it across rows. Per render, not module-level: the formatters capture the
- * time zone and locale at construction, so a long-lived cache would keep stale ones.
- */
-export function makeRelativeDayFormatter(): (timestamp: number, now: number) => string {
-    let clock: Intl.DateTimeFormat | undefined;
-    let weekday: Intl.DateTimeFormat | undefined;
-    let dayMonth: Intl.DateTimeFormat | undefined;
-    let dayMonthYear: Intl.DateTimeFormat | undefined;
-    return (timestamp, now) => {
-        if (!Number.isFinite(timestamp)) return ""; // Non-finite → no throw, empty string.
-        const then = new Date(timestamp);
-        if (Number.isNaN(then.getTime())) return ""; // Invalid Date → Intl.format would throw; bail.
-        const today = new Date(now);
-        const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-        const dayMs = 86_400_000;
-        const daysAgo = Math.round((startOf(today) - startOf(then)) / dayMs);
-        if (daysAgo === 0) {
-            // Today (including same-day minor-future skew) → clock.
-            clock ??= new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
-            return clock.format(then);
-        }
-        if (daysAgo >= 1 && daysAgo <= 6) {
-            weekday ??= new Intl.DateTimeFormat(undefined, { weekday: "short" });
-            return weekday.format(then);
-        }
-        // Older than six days or a genuinely future calendar day falls through to a dated label.
-        if (then.getFullYear() === today.getFullYear()) {
-            dayMonth ??= new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
-            return dayMonth.format(then);
-        }
-        dayMonthYear ??= new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
-        return dayMonthYear.format(then);
-    };
-}
-
 // EXPORTED: the render callsite uses it, and unit tests import it directly to inject `now`.
 // The clock time comes from date-format; only this helper needs the test seam.
 export function formatRelativeDay(timestamp: number, now: number = Date.now()): string {
-    return makeRelativeDayFormatter()(timestamp, now);
+    if (!Number.isFinite(timestamp)) return ""; // Non-finite → no throw, empty string.
+    const then = new Date(timestamp);
+    if (Number.isNaN(then.getTime())) return ""; // Invalid Date → Intl.format would throw; bail.
+    const today = new Date(now);
+    const startOf = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const dayMs = 86_400_000;
+    const daysAgo = Math.round((startOf(today) - startOf(then)) / dayMs);
+    if (daysAgo === 0) return formatClockTime(timestamp); // Today (including same-day minor-future skew) → clock.
+    if (daysAgo >= 1 && daysAgo <= 6) {
+        return dateTimeFormat(undefined, { weekday: "short" }).format(then);
+    }
+    // Older than six days or a genuinely future calendar day falls through to a dated label.
+    const sameYear = then.getFullYear() === today.getFullYear();
+    return dateTimeFormat(
+        undefined,
+        sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" },
+    ).format(then);
 }
 
 // formatRelativeDay for the sidebar, which labels every row on each render: a label depends only
@@ -8681,15 +8658,7 @@ function Composer({
                                     onPaste={(event) => {
                                         const files = namedPastedFiles(event.clipboardData);
                                         if (files.length > 0) {
-                                            // preventDefault() marks this paste as consumed; the upload
-                                            // modal's document-level paste listener (mounted synchronously by
-                                            // stageFiles under React 19's discrete flush) checks
-                                            // event.defaultPrevented and skips it, so the file stages once.
-                                            // stopPropagation() is kept as defense-in-depth but is not the
-                                            // load-bearing guard (it does not reliably stop a listener that is
-                                            // registered mid-dispatch at document).
                                             event.preventDefault();
-                                            event.stopPropagation();
                                             client.stageFiles(files);
                                         }
                                     }}
