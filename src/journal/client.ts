@@ -1787,6 +1787,8 @@ export class MatronJournalClient {
     public async loadOlderHistory(opts?: { suppressNotFound?: boolean }): Promise<void> {
         const conversationId = this.state.selectedConversationId;
         if (!conversationId || !this.database || !this.api || this.state.loadingHistory) return;
+        // Use only the session captured here: a sign-out and sign-in can land during any await below,
+        // and the old page must not be written into the new session's database or state.
         const database = this.database;
         const api = this.api;
         const gen = this.sessionGen;
@@ -5418,10 +5420,14 @@ export class MatronJournalClient {
             this.trackerMissionsRefetchTimer = undefined;
             const detail = this.trackerMissionRefetchPending;
             this.trackerMissionRefetchPending = false;
-            // Nothing while closed, and nothing for the Memories tab (see scheduleInboxRefetch).
+            // Nothing while closed. The missions list stays fresh on every tab (the rail's Projects badge
+            // reads it), but the Memories tab shows no project or mission page, so the projects and the
+            // selected project and mission are skipped there (see TrackerPane's priming effect for the
+            // same reasoning).
             const view = this.state.trackerView;
-            if (!view?.open || (view.view !== "inbox" && view.view !== "missions")) return;
+            if (!view?.open) return;
             if (this.state.missions) void this.loadMissions();
+            if (view.view === "memories") return;
             // Projects roll up their missions (protocol: refresh on any mission marker).
             if (this.state.projects) void this.loadProjects();
             const selectedProject = view.selectedProjectId;
@@ -6057,10 +6063,10 @@ export class MatronJournalClient {
     }
 
     private async replaceSnapshot(): Promise<void> {
-        // capture the session this replace belongs to and use ONLY the captured refs. A
-        // logout + login (another account, or the same one in a new generation) can land during
-        // any await below; without the guard the old snapshot would be written into the NEW
-        // session's database and published into its state. Mirrors handleReady's ownsReplay.
+        // Capture the session this replace belongs to and use only the captured refs. A sign-out and
+        // sign-in (another account, or the same one again) can land during any await below; without
+        // the guard the old snapshot would be written into the new session's database and state.
+        // Mirrors handleReady's ownsReplay.
         const gen = this.sessionGen;
         const db = this.database;
         const api = this.api;
@@ -6085,12 +6091,8 @@ export class MatronJournalClient {
         if (!owns()) return;
         await db.replaceWithSnapshot(snapshot);
         if (!owns()) return;
-        const removed = await db.reconcilePersistedOwnMessages();
+        await this.reconcilePersistedOwnMessages(db);
         if (!owns()) return;
-        for (const localId of removed) {
-            this.pendingFiles.delete(localId);
-            this.transientAttachmentErrors.delete(localId);
-        }
         const conversations = keepUnchangedConversations(this.state.conversations, await db.conversations());
         if (!owns()) return;
         let { archivedIds, pinnedIds, favoriteIds, unreadOverrideIds, collapsedSubagentParentIds } = this.state;
