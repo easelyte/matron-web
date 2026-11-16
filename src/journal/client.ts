@@ -6139,19 +6139,18 @@ export class MatronJournalClient {
 
     /** The tab was shown, hidden, focused or blurred. Only showing and hiding change what is viewed. */
     private onTabViewChange(): void {
-        const before = this.lastViewing;
         this.sendViewing();
-        // A hidden tab stops receiving the open chat's live updates, so what they showed can no
-        // longer be trusted to end: the idle frame would not arrive. Showing the tab again re-views
-        // the chat, and the journal replays the tool output.
-        if (before && this.lastViewing === null) this.suspendLiveStreams();
     }
 
     private sendViewing(selectedId = this.state.selectedConversationId ?? null): void {
         // The tracker covers the open chat's transcript: it is not being viewed.
         const convoId = viewingConvoId(this.state.trackerView?.open ? null : selectedId);
         if (convoId !== this.lastViewing && this.connection?.send({ op: "viewing", convo_id: convoId })) {
+            const before = this.lastViewing;
             this.lastViewing = convoId;
+            // Leaving the chat stops its live updates, so the idle frame may never arrive.
+            // Viewing it again lets the journal replay the tool output.
+            if (before && convoId === null) this.suspendLiveStreams();
         }
     }
 

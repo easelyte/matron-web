@@ -89,6 +89,105 @@ describe("ItemDetail", () => {
         (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     });
 
+    describe("comment copy", () => {
+        const attachment = { blob_ref: "fixture-file", mime: "text/plain", name: "notes.txt", size: 12 };
+        let view: { container: HTMLDivElement; root: Root };
+        let clipboardDescriptor: PropertyDescriptor | undefined;
+        let writeText: jest.Mock;
+
+        beforeEach(() => {
+            clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+            writeText = jest.fn().mockResolvedValue(undefined);
+            Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+        });
+
+        afterEach(async () => {
+            if (view) {
+                await act(async () => view.root.unmount());
+                view.container.remove();
+            }
+            jest.useRealTimers();
+            if (clipboardDescriptor) Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
+            else Reflect.deleteProperty(navigator, "clipboard");
+        });
+
+        async function show(comment: TrackerComment): Promise<void> {
+            view = await mount(
+                <ItemDetail
+                    item={trackerItem()}
+                    comments={[comment]}
+                    client={fakeClient() as unknown as MatronJournalClient}
+                    onBack={jest.fn()}
+                />,
+            );
+        }
+
+        function copyButton(): HTMLButtonElement {
+            const button = view.container.querySelector<HTMLButtonElement>(".mj_TrackerComment_copy");
+            expect(button).not.toBeNull();
+            expect(button?.getAttribute("aria-label")).toBe("Copy comment");
+            return button!;
+        }
+
+        it("copies trimmed markdown as written without appending attachments and briefly confirms", async () => {
+            const body = " \n**Bold** and [link](https://example.com)\n\n```ts\nconst n = 1;\n```\n ";
+            await show(trackerComment({ body, attachments: [attachment] }));
+            const button = copyButton();
+            expect(button.textContent).toBe("Copy");
+            jest.useFakeTimers();
+            await act(async () => button.click());
+            expect(writeText).toHaveBeenCalledTimes(1);
+            expect(writeText).toHaveBeenCalledWith(body.trim());
+            expect(button.textContent).toBe("Copied");
+            await act(async () => jest.advanceTimersByTime(1_500));
+            expect(button.textContent).toBe("Copy");
+        });
+
+        it.each(["", " \n\t "])("offers no copy action for an empty body (%j), even with attachments", async (body) => {
+            await show(trackerComment({ body, attachments: [attachment] }));
+            expect(view.container.querySelector(".mj_TrackerComment_copy")).toBeNull();
+            expect(writeText).not.toHaveBeenCalled();
+        });
+
+        it("copies the note under a status row without the derived status text", async () => {
+            await show(
+                trackerComment({
+                    kind: "status",
+                    body: "  Finished **today**.\n",
+                    meta: { to: { state: "closed", resolution: "done", awaiting: null } },
+                }),
+            );
+            expect(view.container.querySelector(".mj_TrackerStatusRow")).not.toBeNull();
+            const button = copyButton();
+            await act(async () => button.click());
+            expect(writeText).toHaveBeenCalledWith("Finished **today**.");
+            expect(button.textContent).toBe("Copied");
+        });
+
+        it("shows Copy failed when neither clipboard method succeeds", async () => {
+            writeText.mockRejectedValue(new Error("Clipboard unavailable"));
+            await show(trackerComment());
+            const button = copyButton();
+            await act(async () => button.click());
+            expect(button.textContent).toBe("Copy failed");
+        });
+
+        it("clears the confirmation timer on unmount", async () => {
+            await show(trackerComment());
+            jest.useFakeTimers();
+            const setTimer = jest.spyOn(globalThis, "setTimeout");
+            const clearTimer = jest.spyOn(globalThis, "clearTimeout");
+            await act(async () => copyButton().click());
+            const timerIndex = setTimer.mock.calls.findIndex(([, delay]) => delay === 1_500);
+            expect(timerIndex).toBeGreaterThanOrEqual(0);
+            const timer = setTimer.mock.results[timerIndex].value;
+            await act(async () => view.root.unmount());
+            expect(clearTimer).toHaveBeenCalledWith(timer);
+            setTimer.mockRestore();
+            clearTimer.mockRestore();
+        });
+    });
+
     it("reports the open item as seen through its newest comment, and lets it go on close", async () => {
         const client = fakeClient();
         const asClient = client as unknown as MatronJournalClient;
@@ -1566,15 +1665,36 @@ describe("ItemDetail spawn consent", () => {
         expect(button(container, "Deny")).toBeDefined();
     });
 
-    it("sits between the links and the body", async () => {
+    it("sits between the links and the body while the card has not arrived", async () => {
         const client = fakeClient();
-        client.spawnConsentRows.mockResolvedValue(rows());
+        client.spawnConsentRows.mockResolvedValue(rows({ request: null }));
         const { container } = await render(client, consentItem({ body: "Box rules allow it." }));
 
         const order = Array.from(
             container.querySelectorAll(".mj_TrackerLinks, .mj_TrackerConsent, .mj_TrackerItemBody"),
         ).map((node) => node.className);
         expect(order).toEqual(["mj_TrackerLinks", "mj_TrackerConsent", expect.stringContaining("mj_TrackerItemBody")]);
+    });
+
+    it("leaves out the body that repeats the request once the card is drawn", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows());
+        const { container } = await render(
+            client,
+            consentItem({ body: "**box-b** asks to start a new agent session on **box-a**." }),
+        );
+
+        expect(container.querySelector(".mj_TrackerConsent .mj_PromptCard_spawn")).not.toBeNull();
+        expect(container.querySelector(".mj_TrackerItemBody")).toBeNull();
+        expect(container.textContent).not.toContain("asks to start a new agent session");
+    });
+
+    it("keeps the body under a read-only card that shows no task", async () => {
+        const client = fakeClient();
+        client.spawnConsentRows.mockResolvedValue(rows({ request: spawnCard({ task: "" }) }));
+        const { container } = await render(client, consentItem({ body: "The task, as text." }));
+
+        expect(container.querySelector(".mj_TrackerItemBody")?.textContent).toContain("The task, as text.");
     });
 
     it("approves through the client's consent answer for this item", async () => {

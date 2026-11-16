@@ -565,6 +565,45 @@ describe("tool output across a hidden tab", () => {
         expect(internals.toolStreams.get("c1")?.tu1).toMatchObject({ stale: true });
     });
 
+    it("opening the tracker suspends live activity and tool output, and closing re-views the chat", () => {
+        const { client, internals } = liveClient();
+        const state = client as unknown as {
+            lastViewing?: string | null;
+            activities: Map<string, unknown>;
+            sendViewing(): void;
+            connection?: { send(operation: unknown): boolean };
+            state: { selectedConversationId?: string };
+        };
+        state.state.selectedConversationId = "c1";
+        const send = jest.fn(() => true);
+        state.connection = { send };
+        state.sendViewing();
+        internals.handleEphemeral({ kind: "ephemeral", convo_id: "c1", activity: { state: "thinking" } });
+        expect(client.getSnapshot().activity).toMatchObject({ state: "thinking" });
+        expect(client.getSnapshot().toolStreams.tu1.stale).toBeUndefined();
+        expect(send).toHaveBeenLastCalledWith({ op: "viewing", convo_id: "c1" });
+
+        client.openTrackerView({ view: "missions" });
+
+        expect(send).toHaveBeenLastCalledWith({ op: "viewing", convo_id: null });
+        expect(state.lastViewing).toBeNull();
+        expect(client.getSnapshot().activity).toBeUndefined();
+        expect(state.activities.size).toBe(0);
+        expect(client.getSnapshot().toolStreams.tu1).toMatchObject({ content: "a\nb\nc\n", stale: true });
+        expect(internals.toolStreams.get("c1")?.tu1.stale).toBe(true);
+
+        client.closeTrackerView();
+
+        expect(send.mock.calls).toEqual([
+            [{ op: "viewing", convo_id: "c1" }],
+            [{ op: "viewing", convo_id: null }],
+            [{ op: "viewing", convo_id: "c1" }],
+        ]);
+        expect(state.lastViewing).toBe("c1");
+        expect(client.getSnapshot().activity).toBeUndefined();
+        expect(client.getSnapshot().toolStreams.tu1.stale).toBe(true);
+    });
+
     it("a blur that leaves the tab visible keeps live output live", () => {
         const { internals } = liveClient();
         const client = internals as unknown as {

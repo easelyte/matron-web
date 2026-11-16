@@ -1260,6 +1260,34 @@ button.mj_TrackerCrumb:hover {
     font: var(--mj-font-meta);
     color: var(--mj-color-text-secondary);
 }
+.mj_TrackerComment_copy {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--mj-space-1x);
+    flex: none;
+    margin-left: auto;
+    border: 0;
+    border-radius: var(--mj-space-1x);
+    background: transparent;
+    padding: var(--mj-space-1x) var(--mj-space-2x);
+    font: var(--mj-font-meta);
+    color: var(--mj-color-text-secondary);
+    cursor: pointer;
+    opacity: 0;
+}
+.mj_TrackerComment:hover .mj_TrackerComment_copy,
+.mj_TrackerComment:focus-within .mj_TrackerComment_copy {
+    opacity: 1;
+}
+.mj_TrackerComment_copy:hover,
+.mj_TrackerComment_copy:focus-visible {
+    color: var(--mj-color-text-action-accent);
+}
+@media (hover: none) {
+    .mj_TrackerComment_copy {
+        opacity: 1;
+    }
+}
 .mj_TrackerComment_user {
     padding: 14px;
     border-radius: 10px;
