@@ -348,10 +348,19 @@ const REQUIRED: { [S in OpsSection]: (d: Obj) => boolean } = {
 };
 
 /** Map an RPC reply (see client RpcReply) onto a section state. */
+/** A bridge plugin cannot answer with its own error code: a failure arrives as `internal` with detail "<code>: <detail>". */
+const PLUGIN_ERROR_CODES = new Set(["not_configured", "unavailable", "too_large", "bad_request"]);
+function decodePluginError(reply: { code: string; detail?: string }): { code: string; detail?: string } {
+    if (reply.code !== "internal" || !reply.detail) return reply;
+    const m = /^([a-z_]+): ([\s\S]*)$/.exec(reply.detail);
+    return m && PLUGIN_ERROR_CODES.has(m[1]) ? { code: m[1], detail: m[2] } : reply;
+}
+
 export function sectionStateFromReply<S extends OpsSection>(
     section: S,
-    reply: { ok: true; result: unknown } | { ok: false; code: string; detail?: string },
+    rawReply: { ok: true; result: unknown } | { ok: false; code: string; detail?: string },
 ): OpsSectionState<S> {
+    const reply = rawReply.ok ? rawReply : { ...rawReply, ...decodePluginError(rawReply) };
     if (!reply.ok) {
         switch (reply.code) {
             case "unknown_method":
@@ -384,6 +393,23 @@ export function sectionStateFromReply<S extends OpsSection>(
         generatedAt: int(result.generated_at_ms) ? result.generated_at_ms : null,
         truncated: result.truncated === true,
     };
+}
+
+/** The snapshot as a bridge plugin (`x_ops_snapshot`), and the built-in name older bridges answer to. */
+export const OPS_SNAPSHOT_METHOD = "x_ops_snapshot";
+export const OPS_SNAPSHOT_LEGACY_METHOD = "ops_snapshot";
+
+export type OpsReply = { ok: true; result: unknown } | { ok: false; code: string; detail?: string };
+
+/**
+ * Asks for the plugin method first and falls back to the built-in one only when the bridge answers
+ * unknown_method, so the page works on either side of the switchover. Any other answer (including
+ * not_configured or an error) is final: it is not retried under the other name.
+ */
+export async function opsSnapshotReply(call: (method: string) => Promise<OpsReply>): Promise<OpsReply> {
+    const reply = await call(OPS_SNAPSHOT_METHOD);
+    if (!reply.ok && reply.code === "unknown_method") return call(OPS_SNAPSHOT_LEGACY_METHOD);
+    return reply;
 }
 
 // ───────────────────────── journal /metrics ─────────────────────────

@@ -28,7 +28,13 @@ import { effectiveUnread, makeIdSetStore, type IdSetStore } from "./conversation
 import { parseCoordinatorConsent, resetSessionStops, spawnConsentRowsIn } from "./coordinator-consent";
 import { JournalDatabase } from "./database";
 import { mergeSessionStatus } from "./status";
-import { sectionStateFromReply, type JournalMetrics, type OpsSection, type OpsSectionState } from "./ops/model";
+import {
+    opsSnapshotReply,
+    sectionStateFromReply,
+    type JournalMetrics,
+    type OpsSection,
+    type OpsSectionState,
+} from "./ops/model";
 import {
     parseRoutine,
     parseRoutineList,
@@ -2926,9 +2932,9 @@ export class MatronJournalClient {
         }
     }
 
-    /** One `ops_snapshot` section from a box, mapped onto the page's section state. Read-only. */
+    /** One Ops snapshot section from a box (`x_ops_snapshot`, else the built-in `ops_snapshot`), mapped onto the page's section state. Read-only. */
     public async opsSnapshot<S extends OpsSection>(agentDeviceId: number, section: S): Promise<OpsSectionState<S>> {
-        const reply = await this.agentRpc(agentDeviceId, "ops_snapshot", { section });
+        const reply = await opsSnapshotReply((method) => this.agentRpc(agentDeviceId, method, { section }));
         return sectionStateFromReply(section, reply);
     }
 

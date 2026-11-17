@@ -17,7 +17,7 @@ import {
     usedPercent,
 } from "../ops/format";
 import { parseBoxStatus } from "../api";
-import { parseMetrics, sectionStateFromReply, splitLimitLines } from "../ops/model";
+import { opsSnapshotReply, parseMetrics, sectionStateFromReply, splitLimitLines, type OpsReply } from "../ops/model";
 
 // A real device_status row (2026-09-26), verbatim shape, identifiers replaced.
 const LIVE_STATUS = {
@@ -194,5 +194,61 @@ describe("format", () => {
         expect(severityTone("P1")).toBe("critical");
         expect(severityTone("P2")).toBe("warn");
         expect(severityTone("P3")).toBe("info");
+    });
+});
+
+describe("plugin errors (a plugin answers internal with '<code>: <detail>')", () => {
+    it("decodes the known codes back to the page's states", () => {
+        const internal = (detail: string) => ({ ok: false as const, code: "internal", detail });
+        expect(sectionStateFromReply("timers", internal("not_configured: MATRON_OPS_SNAPSHOT_CMD is not set"))).toEqual(
+            {
+                phase: "not_configured",
+            },
+        );
+        expect(sectionStateFromReply("host", internal("unavailable: no /proc on this platform"))).toEqual({
+            phase: "error",
+            message: "Unavailable: no /proc on this platform",
+        });
+    });
+
+    it("leaves other internal errors alone", () => {
+        expect(sectionStateFromReply("host", { ok: false, code: "internal", detail: "boom" })).toEqual({
+            phase: "error",
+            message: "boom",
+        });
+        // Not a code the page maps: stays an ordinary error, never a different state.
+        expect(sectionStateFromReply("host", { ok: false, code: "internal", detail: "unknown_method: x" }).phase).toBe(
+            "error",
+        );
+    });
+});
+
+describe("opsSnapshotReply", () => {
+    const good: OpsReply = { ok: true, result: { section: "host" } };
+
+    it("asks for x_ops_snapshot first and stops there when it answers", async () => {
+        const call = jest.fn(async () => good);
+        await expect(opsSnapshotReply(call)).resolves.toBe(good);
+        expect(call.mock.calls).toEqual([["x_ops_snapshot"]]);
+    });
+
+    it("falls back to ops_snapshot only on unknown_method", async () => {
+        const call = jest.fn(async (method: string): Promise<OpsReply> =>
+            method === "x_ops_snapshot" ? { ok: false, code: "unknown_method" } : good,
+        );
+        await expect(opsSnapshotReply(call)).resolves.toBe(good);
+        expect(call.mock.calls).toEqual([["x_ops_snapshot"], ["ops_snapshot"]]);
+    });
+
+    it("reports unknown_method when neither name is known", async () => {
+        const call = jest.fn(async (): Promise<OpsReply> => ({ ok: false, code: "unknown_method" }));
+        await expect(opsSnapshotReply(call)).resolves.toEqual({ ok: false, code: "unknown_method" });
+        expect(call).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(["not_configured", "internal", "timeout", "agent_unreachable"])("does not retry after %s", async (code) => {
+        const call = jest.fn(async (): Promise<OpsReply> => ({ ok: false, code }));
+        await expect(opsSnapshotReply(call)).resolves.toEqual({ ok: false, code });
+        expect(call).toHaveBeenCalledTimes(1);
     });
 });
