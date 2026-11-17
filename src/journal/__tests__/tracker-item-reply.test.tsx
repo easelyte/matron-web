@@ -273,87 +273,108 @@ describe("ItemDetail reply box", () => {
             });
             return event;
         };
-        const originalMatchMedia = window.matchMedia;
-        afterEach(() => {
-            window.matchMedia = originalMatchMedia;
+        // A browser drops the focus to the body when the focused box is disabled; jsdom ignores blur()
+        // on a disabled control, so park the focus on a node and remove it to the same effect.
+        const dropFocus = (): void => {
+            const parked = document.createElement("button");
+            document.body.append(parked);
+            parked.focus();
+            parked.remove();
+        };
+        const pendingPost = (client: FakeClient): Deferred<TrackerCommentOutcome> => {
+            const post = deferred<TrackerCommentOutcome>();
+            client.postTrackerComment.mockReturnValueOnce(post.promise);
+            return post;
+        };
+
+        it("adds a new line on a plain Enter and sends nothing", async () => {
+            const client = fakeClient();
+            const container = await renderItem(client);
+            await type(container, "first line");
+
+            const event = await press(container, {});
+
+            expect(event.defaultPrevented).toBe(false);
+            expect(client.postTrackerComment).not.toHaveBeenCalled();
         });
 
-        it("sends on Enter, like the chat composer, and keeps the focus in the box", async () => {
+        it.each([
+            ["Cmd", { metaKey: true }],
+            ["Ctrl", { ctrlKey: true }],
+        ])("sends on %s+Enter and hands the focus back once the post settles", async (_name, modifier) => {
             const client = fakeClient();
+            const post = pendingPost(client);
             const container = await renderItem(client);
             await type(container, "looks good");
             input(container).focus();
 
-            const event = await press(container, {});
+            const event = await press(container, modifier);
 
             expect(event.defaultPrevented).toBe(true);
             expect(client.postTrackerComment).toHaveBeenCalledWith(12, { body: "looks good" }, expect.any(String));
+            // The box is disabled while the reply posts, which is where a browser drops its focus.
+            expect(input(container).disabled).toBe(true);
+            dropFocus();
+            expect(document.activeElement).toBe(document.body);
+
+            await act(async () => post.resolve({ ok: true }));
+
             expect(input(container).value).toBe("");
             expect(document.activeElement).toBe(input(container));
         });
 
         it("leaves the focus where the user moved it while the reply was posting", async () => {
             const client = fakeClient();
-            let settle!: (outcome: TrackerCommentOutcome) => void;
-            client.postTrackerComment.mockReturnValueOnce(
-                new Promise<TrackerCommentOutcome>((resolve) => (settle = resolve)),
-            );
+            const post = pendingPost(client);
             const container = await renderItem(client);
             await type(container, "on my way");
             input(container).focus();
-            await press(container, {});
+            await press(container, { metaKey: true });
             const elsewhere = document.createElement("button");
             document.body.append(elsewhere);
             elsewhere.focus();
 
-            await act(async () => settle({ ok: true }));
+            await act(async () => post.resolve({ ok: true }));
 
             expect(document.activeElement).toBe(elsewhere);
-            elsewhere.remove();
         });
 
-        it("adds a new line on Shift+Enter instead of sending", async () => {
+        it("does not pull the focus into another item's box when the item changes mid-post", async () => {
             const client = fakeClient();
-            const container = await renderItem(client);
-            await type(container, "first line");
-
-            const event = await press(container, { shiftKey: true });
-
-            expect(event.defaultPrevented).toBe(false);
-            expect(client.postTrackerComment).not.toHaveBeenCalled();
-        });
-
-        it("never sends while an IME composition is in flight", async () => {
-            const client = fakeClient();
-            const container = await renderItem(client);
-            await type(container, "にほん");
-
-            await press(container, { isComposing: true });
-
-            expect(client.postTrackerComment).not.toHaveBeenCalled();
-        });
-
-        it("keeps return as a new line on a touch-first device; Cmd/Ctrl+Enter still sends", async () => {
-            window.matchMedia = jest.fn((query: string) => ({
-                matches: query === "(pointer: coarse)",
-                media: query,
-                onchange: null,
-                addListener: jest.fn(),
-                removeListener: jest.fn(),
-                addEventListener: jest.fn(),
-                removeEventListener: jest.fn(),
-                dispatchEvent: jest.fn(),
-            })) as unknown as typeof window.matchMedia;
-            const client = fakeClient();
-            const container = await renderItem(client);
-            await type(container, "from the phone");
-
-            const plain = await press(container, {});
-            expect(plain.defaultPrevented).toBe(false);
-            expect(client.postTrackerComment).not.toHaveBeenCalled();
-
+            const post = pendingPost(client);
+            const props = {
+                comments: [],
+                client: client as unknown as MatronJournalClient,
+                onBack: jest.fn(),
+            };
+            const { container, root } = await mount(<ItemDetail item={trackerItem({ num: 12 })} {...props} />);
+            await type(container, "on my way");
+            input(container).focus();
             await press(container, { metaKey: true });
-            expect(client.postTrackerComment).toHaveBeenCalledWith(12, { body: "from the phone" }, expect.any(String));
+            dropFocus();
+
+            await act(async () => root.render(<ItemDetail item={trackerItem({ id: "it_2", num: 13 })} {...props} />));
+            await act(async () => post.resolve({ ok: true }));
+
+            expect(document.activeElement).not.toBe(input(container));
+        });
+
+        it("does not pull the focus into the box after a Cmd+Enter that sent nothing", async () => {
+            const client = fakeClient();
+            let settle!: (ok: boolean) => void;
+            client.closeTrackerItem.mockReturnValueOnce(new Promise<boolean>((resolve) => (settle = resolve)));
+            const container = await renderItem(client);
+            input(container).focus();
+            await press(container, { metaKey: true });
+            expect(client.postTrackerComment).not.toHaveBeenCalled();
+            input(container).blur();
+
+            await click(container.querySelector<HTMLButtonElement>(".mj_TrackerMenu_button"));
+            await click(container.querySelector<HTMLButtonElement>(".mj_TrackerMenu_item"));
+            await act(async () => settle(true));
+
+            expect(client.closeTrackerItem).toHaveBeenCalled();
+            expect(document.activeElement).not.toBe(input(container));
         });
     });
 

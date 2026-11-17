@@ -15,23 +15,20 @@ the decoder is wrong (or the producer drifted); fix whichever is actually wrong.
 
 The producers are two repos:
 
-| Frame                                              | Producer                              | Anchor                                                                              |
-| -------------------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------- |
-| `kind:"journal"`                                   | matron-journal                        | `src/ws.js:13` (`journalFrame`), `src/journal.js:321`                               |
-| `kind:"control"`                                   | matron-journal                        | `src/ws.js:390/473/480/652` (error / hello_ok / snapshot_required)                  |
-| `kind:"rpc"`                                       | matron-journal                        | `src/rpc-broker.js:41`                                                              |
-| `kind:"ephemeral"` `host_vitals`                   | matron-journal relay of matron-bridge | `src/ws.js:567`; bridge `index.js:12389-12391` builds `{cpu?, ram?, sampled_at_ms}` |
-| `kind:"ephemeral"` `status`                        | matron-bridge                         | `buildSessionStatus` (`lib/session-status.js`)                                      |
-| `kind:"ephemeral"` `activity`/`tool_stream`/`text` | matron-bridge / journal relay         | `src/ws.js:643/789`                                                                 |
+| Frame                                              | Producer                      | Anchor                                                             |
+| -------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------ |
+| `kind:"journal"`                                   | matron-journal                | `src/ws.js:13` (`journalFrame`), `src/journal.js:321`              |
+| `kind:"control"`                                   | matron-journal                | `src/ws.js:390/473/480/652` (error / hello_ok / snapshot_required) |
+| `kind:"rpc"`                                       | matron-journal                | `src/rpc-broker.js:41`                                             |
+| `kind:"ephemeral"` `status`                        | matron-bridge                 | `buildSessionStatus` (`lib/session-status.js`)                     |
+| `kind:"ephemeral"` `activity`/`tool_stream`/`text` | matron-bridge / journal relay | `src/ws.js:643/789`                                                |
 
-Note the deliberate two-shape vitals split, documented in `src/journal/types.ts`:
-`status.vitals` uses `cpu_pct`/`ram_pct` (nullable), the host-global `host_vitals`
-frame uses `cpu`/`ram` (omitted until the sampler warms). The `status.*` fixtures
-were captured live from the bridge on 2026-09-22:
+`status.vitals` uses `cpu_pct`/`ram_pct` (nullable until the sampler warms). The
+`status.*` fixtures were captured live from the bridge on 2026-09-22:
 
 ```
 $ node --input-type=module -e '
-  import { hostVitals, buildSessionStatus } from "./lib/session-status.js";
+  import { buildSessionStatus } from "./lib/session-status.js";
   console.log(JSON.stringify(buildSessionStatus({ model: "claude-opus-4-8",
     vitals: { cpu_pct: 12, ram_pct: 47, sampled_at_ms: Date.now() } })));'
 # → {"model":"claude-opus-4-8","vitals":{"cpu_pct":12,"ram_pct":47,"sampled_at_ms":...}}

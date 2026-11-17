@@ -6,15 +6,14 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * "Enable browser tools" state (redesign v6, CONTRACTS 3): idle → queued → restarting → on.
+ * "Enable browser tools" state for one conversation: idle → queued → restarting → on.
  *
  * Whether browser tools are ON is read from data, never from the transcript: the bridge's
- * status frame carries `extras`, the MCP extras the session's process was spawned with (the
- * journal caches and replays it, so it survives reconnects, offline spells and stopped
- * sessions). A frame without `extras` (an older bridge) makes the state "unknown", and the
- * session-menu row is hidden rather than guessed.
+ * status frame carries `extras`, the MCP extras the session's process was spawned with. A frame
+ * without `extras` (an older bridge) makes the state "unknown", and the menu row is hidden
+ * rather than guessed.
  *
- * Only the TRANSIENT phases of a request the operator just made are read from the conversation:
+ * Only the TRANSIENT phases of a request the user just made are read from the conversation:
  * their own `/restart --browser` message and the bridge's fixed replies to it —
  *   "Waiting for turn to finish before restarting…"   → queued (the restart waits for the turn)
  *   "🔄 Restarting Claude session..."                   → restarting
@@ -26,8 +25,15 @@ import { type JournalEvent } from "./types";
 
 export type BrowserToolsState = "unknown" | "idle" | "queued" | "restarting" | "on";
 
-export const BROWSER_RESTART_COMMAND = "/restart --browser";
-export const BROWSER_RESTART_NOW_COMMAND = "/restart --browser --force";
+/**
+ * The command that adds browser tools. A session restart replaces its opt-in extras with the
+ * flags it is given, so the extras the session already has (from the status frame) are sent
+ * along as flags too, or they would be dropped.
+ */
+export function browserRestartCommand(extras: readonly string[] | undefined): string {
+    const kept = (extras ?? []).filter((name) => name !== "browser" && /^[a-z0-9][a-z0-9-]*$/i.test(name));
+    return ["/restart", "--browser", ...kept.map((name) => `--${name}`)].join(" ");
+}
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
 
@@ -100,24 +106,4 @@ export function browserToolsState(
     // ABANDONED replies above cover the ways it drops one.
     if (pending.phase === "queued" || sessionRunning) return "queued";
     return "restarting";
-}
-
-/**
- * Seqs of the bridge's "Restarting…" notices that answer a `/restart --browser`, so the thread
- * can word them "Restarting with browser tools…" (the design's notice copy).
- */
-export function browserRestartNoticeSeqs(events: readonly JournalEvent[]): ReadonlySet<number> {
-    const seqs = new Set<number>();
-    let pending = false;
-    for (const event of events) {
-        if (event.type !== "text") continue;
-        const body = asString(event.payload.body).trim();
-        if (event.sender.startsWith("user:")) {
-            if (RESTART_REQUEST.test(body)) pending = /(^|\s)--browser\b/.test(body);
-            continue;
-        }
-        if (REFUSED.test(body) || RESTARTED.test(body)) pending = false;
-        else if (pending && RESTARTING.test(body)) seqs.add(event.seq);
-    }
-    return seqs;
 }

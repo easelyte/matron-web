@@ -6,7 +6,7 @@ Please see LICENSE files in the repository root for full details.
 */
 
 /*
- * Helper-thread headlines (2026-09-26): the shared step categoriser (step-phrases.ts), the
+ * Helper-thread headlines (2026-09-26): the shared step categoriser (step-categories.ts), the
  * headline list inside a helper's own thread, the sidebar preview line, and the helper's context
  * gauge. Regression-tested on a scrubbed sample of real helper traffic
  * (fixtures/helper-corpus.json): every step shape seen in three days of Claude subagents and
@@ -25,7 +25,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { previewLine } from "../activity-text";
 import { HeadlineList } from "../headline-list";
 import { buildHeadlines, type Headline, headlineRowText, testCounts } from "../headlines";
-import { describeCommand, describeStep, looksRaw, stepHeadline, stepLiveHeadline } from "../step-phrases";
+import { describeCommand, describeStep, looksRaw, stepHeadline, stepLiveHeadline } from "../step-categories";
 import { assembleTurns, eventToStep } from "../turn-assembly";
 import { type Step } from "../turn-grouping";
 import type { JournalEvent } from "../types";

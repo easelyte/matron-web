@@ -13,6 +13,7 @@ import { JournalApiError } from "../api";
 import { favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../client";
 import { MatronApp } from "../components";
 import { getSnapshot, setTheme } from "../theme";
+import { plainToolCards } from "../step-phrases";
 import type { ClientState, Conversation, DeviceDTO, ServerFrame, Session, UserDefaults } from "../types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
@@ -121,6 +122,18 @@ describe("Settings sheet (Mac grouped form)", () => {
         expect(getSnapshot()).toBeNull();
     });
 
+    it("turns Plain tool cards on and off, starting off", async () => {
+        await openSettings();
+        const toggle = (): HTMLButtonElement =>
+            sheet()!.querySelector<HTMLButtonElement>('button[data-setting="plain-tool-cards"]')!;
+        expect(toggle().getAttribute("aria-checked")).toBe("false");
+        await act(async () => toggle().click());
+        expect(toggle().getAttribute("aria-checked")).toBe("true");
+        expect(plainToolCards()).toBe(true);
+        await act(async () => toggle().click());
+        expect(plainToolCards()).toBe(false);
+    });
+
     it("signs out from the sheet and closes on Escape", async () => {
         const client = signedInClient();
         const logout = jest.spyOn(client, "logout").mockResolvedValue(undefined);
@@ -200,6 +213,7 @@ describe("Settings sheet (Mac grouped form)", () => {
         type Api = {
             settings: jest.Mock;
             patchSettings: jest.Mock;
+            coordinator: jest.Mock;
             twoFactorStatus: jest.Mock;
             accountEmail: jest.Mock;
         };
@@ -252,64 +266,10 @@ describe("Settings sheet (Mac grouped form)", () => {
             const { JournalApiError } = await import("../api");
             const client = withApi({ settings: jest.fn().mockRejectedValue(new JournalApiError("Not found", 404)) });
             // Even a value from hello_ok gives way to the 404.
-            (client as unknown as { state: ClientState }).state.userSettings = {
-                notices: true,
-                auto_approve_coordinator_spawns: true,
-            };
+            (client as unknown as { state: ClientState }).state.userSettings = { notices: true };
             await openSettings(client);
             expect(toggle()).toBeNull();
             expect(sheet()!.textContent).not.toContain("For you");
-            expect(spawnToggle()).toBeNull();
-        });
-
-        const spawnToggle = (): HTMLButtonElement | null =>
-            sheet()?.querySelector('button[data-setting="auto_approve_coordinator_spawns"]') ?? null;
-
-        it("shows spawn auto-approval off and saves both directions with the exact setting key", async () => {
-            const patchSettings = jest.fn().mockImplementation(async (patch) => ({ notices: true, ...patch }));
-            await openSettings(
-                withApi({
-                    settings: jest.fn().mockResolvedValue({ notices: true, auto_approve_coordinator_spawns: false }),
-                    patchSettings,
-                }),
-            );
-            expect(spawnToggle()?.getAttribute("aria-checked")).toBe("false");
-            expect(sheet()!.textContent).toContain("Auto-approve spawns the Coordinator requests");
-            expect(sheet()!.textContent).toContain(
-                "When on, a session the Coordinator starts on one of your own online boxes starts at once, without a consent card. Other requests still ask you.",
-            );
-            await act(async () => spawnToggle()!.click());
-            expect(patchSettings).toHaveBeenLastCalledWith({ auto_approve_coordinator_spawns: true });
-            expect(spawnToggle()?.getAttribute("aria-checked")).toBe("true");
-            expect(toggle()?.getAttribute("aria-checked")).toBe("true");
-            await act(async () => spawnToggle()!.click());
-            expect(patchSettings).toHaveBeenLastCalledWith({ auto_approve_coordinator_spawns: false });
-            expect(spawnToggle()?.getAttribute("aria-checked")).toBe("false");
-        });
-
-        it("hides spawn auto-approval on an older journal", async () => {
-            await openSettings(withApi({ settings: jest.fn().mockResolvedValue({ notices: true }) }));
-            expect(spawnToggle()).toBeNull();
-            expect(toggle()).not.toBeNull();
-        });
-
-        it("updates spawn auto-approval live and rolls back a failed save with an error", async () => {
-            const client = withApi({
-                settings: jest.fn().mockResolvedValue({ notices: true, auto_approve_coordinator_spawns: false }),
-                patchSettings: jest.fn().mockRejectedValue(new Error("offline")),
-            });
-            await openSettings(client);
-            await act(async () => {
-                await (client as unknown as { handleFrame(frame: unknown): Promise<void> }).handleFrame({
-                    kind: "control",
-                    op: "settings",
-                    settings: { notices: false, auto_approve_coordinator_spawns: true },
-                });
-            });
-            expect(spawnToggle()?.getAttribute("aria-checked")).toBe("true");
-            await act(async () => spawnToggle()!.click());
-            expect(spawnToggle()?.getAttribute("aria-checked")).toBe("true");
-            expect(sheet()!.textContent).toContain("Couldn't save: offline");
         });
 
         it("shows the auto-archive choice when the journal has it, and saves a change", async () => {
@@ -443,6 +403,54 @@ describe("Settings sheet (Mac grouped form)", () => {
                 await new Promise((resolve) => setTimeout(resolve, 0));
             });
             expect(select().value).toBe("0");
+        });
+
+        describe("Coordinator spawn auto-approval", () => {
+            const spawnToggle = (): HTMLButtonElement | null =>
+                sheet()?.querySelector('button[data-setting="auto_approve_coordinator_spawns"]') ?? null;
+            const consent = (on: boolean): jest.Mock => jest.fn().mockResolvedValue({ convo_id: "c9", consent: on });
+            const reported = (): jest.Mock =>
+                jest.fn().mockResolvedValue({ notices: true, auto_approve_coordinator_spawns: false });
+
+            it("shows the switch off in the Coordinator group, and saves both directions with the exact key", async () => {
+                const patchSettings = jest.fn().mockImplementation(async (patch) => ({ notices: true, ...patch }));
+                await openSettings(withApi({ settings: reported(), coordinator: consent(true), patchSettings }));
+                expect(spawnToggle()?.getAttribute("aria-checked")).toBe("false");
+                expect(spawnToggle()?.closest("section")?.textContent).toContain("Coordinator");
+                expect(sheet()!.textContent).toContain("Auto-approve spawns");
+                await act(async () => spawnToggle()!.click());
+                expect(patchSettings).toHaveBeenLastCalledWith({ auto_approve_coordinator_spawns: true });
+                expect(spawnToggle()?.getAttribute("aria-checked")).toBe("true");
+                await act(async () => spawnToggle()!.click());
+                expect(patchSettings).toHaveBeenLastCalledWith({ auto_approve_coordinator_spawns: false });
+                expect(spawnToggle()?.getAttribute("aria-checked")).toBe("false");
+            });
+
+            it("is disabled while the Coordinator may not approve chats and spawns", async () => {
+                await openSettings(withApi({ settings: reported(), coordinator: consent(false) }));
+                expect(spawnToggle()?.disabled).toBe(true);
+            });
+
+            it("rolls back a failed save and says so", async () => {
+                await openSettings(
+                    withApi({
+                        settings: reported(),
+                        coordinator: consent(true),
+                        patchSettings: jest.fn().mockRejectedValue(new Error("offline")),
+                    }),
+                );
+                await act(async () => spawnToggle()!.click());
+                expect(spawnToggle()?.getAttribute("aria-checked")).toBe("false");
+                expect(sheet()!.textContent).toContain("Couldn't save: offline");
+            });
+
+            it("is hidden when the journal does not report the setting", async () => {
+                await openSettings(
+                    withApi({ settings: jest.fn().mockResolvedValue({ notices: true }), coordinator: consent(true) }),
+                );
+                expect(spawnToggle()).toBeNull();
+                expect(sheet()!.textContent).not.toContain("Auto-approve spawns");
+            });
         });
 
         it("hides the auto-archive choice on a journal without it", async () => {

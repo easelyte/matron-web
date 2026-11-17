@@ -285,9 +285,10 @@ function parseBoxDisk(raw: unknown): BoxStatus["disk"] | undefined {
 
 function parseBoxVitals(raw: unknown): BoxStatus["vitals"] | undefined {
     if (!isObject(raw)) return undefined;
-    const pct = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100;
-    if (!pct(raw.cpu_pct) || !pct(raw.ram_pct) || !Number.isSafeInteger(raw.sampled_at_ms)) return undefined;
-    return { cpu_pct: raw.cpu_pct, ram_pct: raw.ram_pct, sampled_at_ms: raw.sampled_at_ms as number };
+    const { cpu_pct: cpu, ram_pct: ram, sampled_at_ms: at } = raw;
+    if (typeof cpu !== "number" || typeof ram !== "number" || typeof at !== "number") return undefined;
+    if (!(cpu >= 0 && cpu <= 100 && ram >= 0 && ram <= 100 && Number.isFinite(at))) return undefined;
+    return { cpu_pct: cpu, ram_pct: ram, sampled_at_ms: at };
 }
 
 function parseBoxAccount(raw: unknown): BoxStatus["account"] | undefined {
@@ -1247,13 +1248,13 @@ export class JournalApi {
     /** PATCH /settings — change any subset; the whole settings object comes back. */
     public patchSettings(body: {
         notices?: boolean;
-        auto_approve_coordinator_spawns?: boolean;
         auto_archive_days?: number;
-    }): Promise<{ notices?: unknown; auto_approve_coordinator_spawns?: unknown; auto_archive_days?: unknown }> {
-        return this.json<{ notices?: unknown; auto_approve_coordinator_spawns?: unknown; auto_archive_days?: unknown }>(
-            "/settings",
-            { method: "PATCH", body },
-        );
+        auto_approve_coordinator_spawns?: boolean;
+    }): Promise<{ notices?: unknown; auto_approve_coordinator_spawns?: unknown }> {
+        return this.json<{ notices?: unknown; auto_approve_coordinator_spawns?: unknown }>("/settings", {
+            method: "PATCH",
+            body,
+        });
     }
 
     /** POST /archive — archive or unarchive up to 500 of the user's conversations. */

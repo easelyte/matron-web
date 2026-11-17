@@ -76,7 +76,14 @@ limit in the same pull request so the gain can't quietly slip back. Raise a limi
 reason in the pull request description. A budgeted metric that a run fails to measure counts as a
 breach.
 
-Limits sit about two to three times above the CI medians (bundle sizes about 10 KB above). That
+Limits sit about two to three times above the CI medians (bundle sizes a few KB above).
+
+`totalGzipKB` counts every JS and CSS file the build emits except pdf.js's worker
+(`pdf.worker.*.mjs`), which has its own limit, `pdfWorkerGzipKB`. The worker ships prebuilt and
+minified, the build only copies it, and it loads only when a PDF is opened. Counted in the total,
+its size (about 365 KB of about 860 KB) would hide growth in the app's own code, and any change to
+it would mostly be a pdf.js upgrade. Its own limit sits just above its current size, so an upgrade
+that grows it is still caught and gets its own reason in the pull request. That
 absorbs runner noise but still catches the regressions the harness was built for. For example, when
 every row re-rendered on each streamed token, the longest task while streaming was 190–340 ms on CI.
 It is now 0 ms, and the limit is 150 ms.

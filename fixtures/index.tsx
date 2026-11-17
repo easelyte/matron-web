@@ -1867,6 +1867,35 @@ if (trackerMode === "inbox" || trackerMode === "item") {
                     created_at: now - 20 * 60_000,
                     device_name: "build-box",
                 },
+                // ?edited=1: a reply the user cancelled before the agent read it, then sent again
+                // edited. The edit names it in `replaces`, so the thread shows the edit alone.
+                ...(fixtureParams.get("edited") === "1"
+                    ? [
+                          {
+                              id: "cm_5",
+                              item_id: "it_1755",
+                              author: "user",
+                              device_id: 1,
+                              kind: "comment",
+                              body: "Compare them side by side on Friday",
+                              attachments: [],
+                              meta: null,
+                              created_at: now - 10 * 60_000,
+                          },
+                          {
+                              id: "cm_6",
+                              item_id: "it_1755",
+                              author: "user",
+                              device_id: 1,
+                              kind: "comment",
+                              body: "Compare them side by side on Thursday, before the review",
+                              attachments: [],
+                              meta: null,
+                              created_at: now - 9 * 60_000,
+                              replaces: "cm_5",
+                          },
+                      ]
+                    : []),
             ],
         };
         // ?consent=waiting|missing|started|elsewhere: a spawn consent item with the ask's card

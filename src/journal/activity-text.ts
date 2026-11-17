@@ -17,12 +17,12 @@ Please see LICENSE files in the repository root for full details.
  * the server's snippet (which only ever carries the body).
  *
  * Everything here turns those into a turn-grouping Step; the sentences come from the shared
- * step categoriser (step-phrases.ts), the same one the helper thread's headlines use:
+ * step categoriser (step-categories.ts), the same one the helper thread's headlines use:
  * "Reading paths.py…", "Queried a database".
  */
 
 import { snippetText } from "./plain-text";
-import { legacyWebQuery, looksRaw, stepHeadline, stepLiveHeadline } from "./step-phrases";
+import { legacyWebQuery, looksRaw, stepHeadline, stepLiveHeadline } from "./step-categories";
 import { type Step } from "./turn-grouping";
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");

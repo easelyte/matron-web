@@ -645,22 +645,21 @@ export class JournalDatabase {
         const transaction = this.database.transaction(["events", "outbox"], "readwrite");
         const outbox = transaction.objectStore("outbox");
         const pendingMessages = (await requestResult(outbox.getAll())) as PendingMessage[];
-        const candidates = pendingMessages.filter(
-            (message) => message.attachState === "sending" || message.errorKind === "send_failed",
-        );
         const removed: string[] = [];
-        if (candidates.length > 0) {
-            const byConversation = transaction.objectStore("events").index("byConversation");
-            const eventsByConvo = new Map<string, JournalEvent[]>();
-            for (const convoId of new Set(candidates.map((message) => message.convoId))) {
-                eventsByConvo.set(convoId, (await requestResult(byConversation.getAll(convoId))) as JournalEvent[]);
+        // A pending message only matches an event of its own conversation, so read just those
+        // conversations through the byConversation index rather than the whole events store.
+        const byConversation = transaction.objectStore("events").index("byConversation");
+        const eventsByConvo = new Map<string, JournalEvent[]>();
+        for (const pending of pendingMessages) {
+            if (pending.attachState !== "sending" && pending.errorKind !== "send_failed") continue;
+            let events = eventsByConvo.get(pending.convoId);
+            if (!events) {
+                events = (await requestResult(byConversation.getAll(pending.convoId))) as JournalEvent[];
+                eventsByConvo.set(pending.convoId, events);
             }
-            for (const pending of candidates) {
-                const events = eventsByConvo.get(pending.convoId) ?? [];
-                if (!events.some((event) => matchesOwnPendingMessage(event, pending, this.ownSender))) continue;
-                outbox.delete(pending.localId);
-                removed.push(pending.localId);
-            }
+            if (!events.some((event) => matchesOwnPendingMessage(event, pending, this.ownSender))) continue;
+            outbox.delete(pending.localId);
+            removed.push(pending.localId);
         }
         await transactionDone(transaction);
         return removed;

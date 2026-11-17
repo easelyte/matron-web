@@ -120,12 +120,8 @@ export interface BoxStatus {
     account?: {
         email: string;
     };
-    // Host CPU / RAM sample the bridge attaches to its report (read by the Ops page).
-    vitals?: {
-        cpu_pct: number;
-        ram_pct: number;
-        sampled_at_ms: number;
-    };
+    // Host CPU/RAM, refreshed by small vitals-only reports between full ones.
+    vitals?: { cpu_pct: number; ram_pct: number; sampled_at_ms: number };
 }
 
 export interface DeviceDTO {
@@ -467,28 +463,9 @@ export interface ToolStreamPayload {
     };
 }
 
-// Host-global vitals reading. The journal server pushes this
-// on a host-scoped ephemeral frame (NO convo_id) roughly every 5s; one value refreshes the
-// host_cpu / host_ram usage bars for EVERY conversation. It is an OVERRIDE, not the source:
-// the bars themselves are synthesized from the status frame's top-level `vitals` (see
-// SessionStatus.vitals), which is the contract shared with upstream and matron-apple. Note the
-// field names differ from SessionStatus.vitals (`cpu`/`ram` here, `cpu_pct`/`ram_pct` there) —
-// that is the bridge's wire shape for this frame, not a typo. `sampled_at_ms` is the epoch ms of
-// the reading so the staleness dim (status.ts HOST_VITALS_STALE_MS) still ages it if pushes stop.
-export interface HostVitals {
-    // OPTIONAL, matching the bridge frame: it omits `cpu` until its CPU sampler has two ticks
-    // after boot, and `ram` if the OS reports no total memory. Consumers must narrow before
-    // using either as a percent.
-    cpu?: number;
-    ram?: number;
-    sampled_at_ms: number;
-}
-
 export interface JournalEphemeralFrame {
     kind: "ephemeral";
-    // Host-scoped frames (host_vitals) carry NO convo_id — the client must not gate them on the
-    // selected-conversation guard. Conversation-scoped frames (activity/status/streams) do.
-    convo_id?: string;
+    convo_id: string;
     message_ref?: string;
     text?: string;
     replace_text?: string;
@@ -498,9 +475,6 @@ export interface JournalEphemeralFrame {
     };
     tool_stream?: ToolStreamPayload;
     status?: SessionStatus;
-    // Present only on the host-global push (no convo_id). Absent on older servers/bridges →
-    // the meters still render from `status.vitals`, just at turn-end cadence.
-    host_vitals?: HostVitals;
 }
 
 // Live box-status fan-out (client sockets only, never replayed): a full replacement of the
@@ -631,12 +605,8 @@ export interface SessionStatus {
     // host readings only refresh on turn-end and get replayed verbatim to new viewers, so an
     // idle conversation can show a minutes-old reading as live. See status.ts HOST_VITALS_STALE_MS.
     vitals?: {
-        cpu_pct: number | null;
-        ram_pct: number | null;
-        // Epoch ms of the last real sample. Drives the same staleness muting as the per-meter
-        // field on limits[]: host readings refresh on turn-end and are replayed verbatim to
-        // new viewers, so an idle conversation can show a minutes-old reading as live.
-        // See status.ts HOST_VITALS_STALE_MS.
+        cpu_pct: number;
+        ram_pct: number;
         sampled_at_ms: number;
     };
     email?: string;
@@ -805,10 +775,6 @@ export interface ClientState {
     hasOlderHistory: boolean;
     activity?: JournalEphemeralFrame["activity"];
     sessionStatus?: SessionStatus;
-    // Host-global vitals: one host reading (cpu/ram/sample stamp) shared by the whole app,
-    // pushed with no convo_id. Threaded into buildUsageMeters to override the per-status host_cpu /
-    // host_ram meters. Null/undefined → no push yet (or older server) → fall back to per-status limits.
-    hostVitals?: HostVitals | null;
     // Last capacity report per agent device id — seeded from GET /devices, replaced by live
     // `box_status` frames. Read by the new-session sheet.
     boxStatuses: Record<number, BoxStatus>;
@@ -921,6 +887,8 @@ export interface ClientState {
     userSettingsError?: string;
     /** The last failed save of the auto-archive setting (shown in Settings → Archive). */
     autoArchiveError?: string;
+    /** The last failed save of the Coordinator spawn auto-approval setting. */
+    spawnApprovalError?: string;
     /** Settings → Coordinator: whether the Coordinator may answer chat and spawn asks (`consent`
      *  on GET /coordinator). `enabled` undefined = not known yet, or a journal without the switch. */
     coordinatorConsent?: { enabled?: boolean; error?: string };
@@ -997,11 +965,12 @@ export interface BoxDefaultsState {
 
 /** Per-user journal settings. `notices`: agents file things to read as notice items. */
 export interface UserSettings {
-    notices?: boolean;
-    /** False by default; absent on journals that do not support spawn auto-approval. */
-    auto_approve_coordinator_spawns?: boolean;
+    notices: boolean;
     /** Auto-archive idle conversations after this many days (0 = off); absent on an older journal. */
     auto_archive_days?: number;
+    /** Start sessions the Coordinator requests on the user's own online boxes without a consent card
+     *  (off by default); absent on a journal without the setting. */
+    auto_approve_coordinator_spawns?: boolean;
 }
 
 /**
@@ -1279,6 +1248,10 @@ export interface TrackerComment {
     /** Who wrote it, in words, when that is not this log's own user or agents: "bob" or "bob's
      *  agent" on a contributor's comment and on every comment copied in by a hand-over. */
     attribution?: string;
+    /** The id of the user's own reply this one is the edited version of: that reply was cancelled
+     *  before it reached the agent and this one sent in its place, so the thread shows this reply
+     *  alone. Absent on every other comment. */
+    replaces?: string;
 }
 
 /** `POST /items/:id/comments` body. `action` + `reply_to` is a tap on a comment's button. */

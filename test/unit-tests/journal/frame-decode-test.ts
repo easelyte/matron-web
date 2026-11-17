@@ -78,25 +78,6 @@ describe("decodeServerFrame: narrowing", () => {
         expect(result.narrowed).toEqual(["status.vitals"]);
     });
 
-    it("strips a host_vitals push with an out-of-range percentage and keeps the rest of the frame", () => {
-        const result = decodeServerFrame({
-            kind: "ephemeral",
-            host_vitals: { cpu: 250, ram: 48, sampled_at_ms: 1 },
-            activity: { state: "thinking" },
-        });
-        expect(result.ok).toBe(true);
-        if (!result.ok) return;
-        expect(result.narrowed).toEqual(["host_vitals"]);
-        const frame = result.frame as { host_vitals?: unknown; activity?: unknown };
-        expect(frame.host_vitals).toBeUndefined();
-        expect(frame.activity).toEqual({ state: "thinking" });
-    });
-
-    it("keeps a well-formed host_vitals push", () => {
-        const result = decodeServerFrame({ kind: "ephemeral", host_vitals: { cpu: 12, ram: 48, sampled_at_ms: 1 } });
-        expect(result.ok && result.narrowed).toBeFalsy();
-    });
-
     it("passes a frame of a kind it does not know, and says so", () => {
         const frame = { kind: "wat", anything: 1 };
         expect(decodeServerFrame(frame)).toEqual({ ok: true, frame, unknownKind: "wat" });

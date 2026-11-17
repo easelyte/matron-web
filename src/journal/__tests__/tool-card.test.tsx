@@ -11,6 +11,7 @@ import { TextEncoder as NodeTextEncoder } from "node:util";
 
 import { favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../client";
 import { MatronApp } from "../components";
+import { setPlainToolCards } from "../step-phrases";
 import type { ClientState, Conversation, JournalEvent, Session } from "../types";
 import { resetShowTheWorkForTests, SHOW_THE_WORK_KEY } from "../show-the-work";
 
@@ -93,18 +94,41 @@ describe("tool card summary", () => {
         return container.querySelector<HTMLElement>(".mj_ToolCard")!;
     }
 
-    it("shows a green glyph, the bold command and grey args for a clean exit, with no badge or time", async () => {
-        const card = await render({ command: "git status --short", exit_code: 0, snippet: "M file" });
+    it("shows a green glyph, the bold command and grey args for an unrecognised command and a clean exit, with no badge or time", async () => {
+        const card = await render({ command: "frobnicate status --short", exit_code: 0, snippet: "M file" });
         const summary = card.querySelector("summary")!;
         expect(summary.querySelector(".mj_ToolCard_status_ok")).not.toBeNull();
-        expect(summary.querySelector(".mj_ToolCard_cmd")?.textContent).toBe("git");
+        expect(summary.querySelector(".mj_ToolCard_cmd")?.textContent).toBe("frobnicate");
         expect(summary.querySelector(".mj_ToolCard_args")?.textContent?.trim()).toBe("status --short");
         expect(summary.textContent).not.toContain("$ ");
         expect(summary.querySelector(".mj_ToolBadge")).toBeNull();
         expect(summary.querySelector("time")).toBeNull();
-        expect(summary.getAttribute("title")).toBe("git status --short");
-        expect(summary.getAttribute("aria-label")).toBe("git status --short, exit 0");
+        expect(summary.getAttribute("title")).toBe("frobnicate status --short");
+        expect(summary.getAttribute("aria-label")).toBe("frobnicate status --short, exit 0");
         expect(card.querySelector(".mj_ToolCard_meta")?.textContent).toMatch(/^exit 0 · \d/);
+    });
+
+    it("shows the command as typed while Plain tool cards is off, the default", async () => {
+        const card = await render({ command: "npm test", exit_code: 0, snippet: "ok" });
+        expect(card.querySelector("summary .mj_ToolCard_cmd")?.textContent).toBe("npm");
+        expect(card.querySelector("summary .mj_ToolCard_args")?.textContent?.trim()).toBe("test");
+    });
+
+    it("keeps a mixed command as typed even with Plain tool cards on", async () => {
+        setPlainToolCards(true);
+        const card = await render({ command: "git status && rm -rf build", exit_code: 0, snippet: "" });
+        expect(card.querySelector("summary .mj_ToolCard_cmd")?.textContent).toBe("git");
+    });
+
+    it("reads a recognised command as a plain sentence and keeps the exact command available", async () => {
+        setPlainToolCards(true);
+        const card = await render({ command: "cd /srv/app && npm test -- --watch=false", exit_code: 0, snippet: "ok" });
+        const summary = card.querySelector("summary")!;
+        expect(summary.querySelector(".mj_ToolCard_cmd")?.textContent).toBe("Ran the tests");
+        expect(summary.querySelector(".mj_ToolCard_args")).toBeNull();
+        expect(summary.getAttribute("title")).toBe("cd /srv/app && npm test -- --watch=false");
+        expect(summary.getAttribute("aria-label")).toBe("cd /srv/app && npm test -- --watch=false, exit 0");
+        expect(card.querySelector(".mj_ToolCommand")?.textContent).toBe("cd /srv/app && npm test -- --watch=false");
     });
 
     it("shows a red glyph and says failed for a non-zero exit", async () => {
@@ -122,8 +146,8 @@ describe("tool card summary", () => {
     });
 
     it("keeps a one-word command whole with no args span", async () => {
-        const card = await render({ command: "ls", exit_code: 0, snippet: "" });
-        expect(card.querySelector("summary .mj_ToolCard_cmd")?.textContent).toBe("ls");
+        const card = await render({ command: "frobnicate", exit_code: 0, snippet: "" });
+        expect(card.querySelector("summary .mj_ToolCard_cmd")?.textContent).toBe("frobnicate");
         expect(card.querySelector("summary .mj_ToolCard_args")).toBeNull();
     });
 });
