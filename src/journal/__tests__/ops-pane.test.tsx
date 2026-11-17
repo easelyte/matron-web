@@ -460,3 +460,15 @@ it("a definitive 'unknown_method' after a good reading replaces it (bridge rolle
     expect(container.querySelector(".mj_OpsFootnote_stale")).toBeNull();
     await unmount();
 });
+
+it("says the box is locked, not 'The box answered box_locked'", async () => {
+    const client = fakeClient(() => ({ ok: false, code: "box_locked" }));
+    client.opsSnapshot.mockImplementation(async (_id: number, section: OpsSection) =>
+        sectionStateFromReply(section, { ok: false, code: "box_locked", detail: "this box is locked" }),
+    );
+    const { container, unmount } = await mount(client);
+    expect(container.textContent).toContain("This box is locked");
+    expect(container.textContent).not.toContain("box_locked");
+    expect(container.querySelector(".mj_OpsNote_error")).toBeNull();
+    await unmount();
+});
