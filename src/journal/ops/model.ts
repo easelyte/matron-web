@@ -149,6 +149,8 @@ export type OpsSectionState<S extends OpsSection> =
     | { phase: "unsupported" } // bridge predates ops_snapshot
     | { phase: "not_configured" }
     | { phase: "asleep" }
+    // The bridge refuses every plugin call while the account or the box is locked.
+    | { phase: "locked" }
     | { phase: "error"; message: string };
 
 function list<T>(v: unknown, map: (o: Obj) => T | null): T[] {
@@ -367,6 +369,9 @@ export function sectionStateFromReply<S extends OpsSection>(
                 return { phase: "unsupported" };
             case "not_configured":
                 return { phase: "not_configured" };
+            case "box_locked":
+            case "account_locked":
+                return { phase: "locked" };
             case "agent_unreachable":
             case "not_found":
                 return { phase: "asleep" };

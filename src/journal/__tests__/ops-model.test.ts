@@ -246,9 +246,20 @@ describe("opsSnapshotReply", () => {
         expect(call).toHaveBeenCalledTimes(2);
     });
 
-    it.each(["not_configured", "internal", "timeout", "agent_unreachable"])("does not retry after %s", async (code) => {
-        const call = jest.fn(async (): Promise<OpsReply> => ({ ok: false, code }));
-        await expect(opsSnapshotReply(call)).resolves.toEqual({ ok: false, code });
-        expect(call).toHaveBeenCalledTimes(1);
+    it.each(["not_configured", "internal", "timeout", "agent_unreachable", "box_locked", "account_locked"])(
+        "does not retry after %s",
+        async (code) => {
+            const call = jest.fn(async (): Promise<OpsReply> => ({ ok: false, code }));
+            await expect(opsSnapshotReply(call)).resolves.toEqual({ ok: false, code });
+            expect(call).toHaveBeenCalledTimes(1);
+        },
+    );
+});
+
+describe("locked box", () => {
+    it.each(["box_locked", "account_locked"])("%s maps to the locked state, not a generic error", (code) => {
+        expect(sectionStateFromReply("host", { ok: false, code, detail: "this box is locked" })).toEqual({
+            phase: "locked",
+        });
     });
 });

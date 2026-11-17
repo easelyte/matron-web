@@ -394,6 +394,8 @@ function SectionBody<S extends OpsSection>({
             return (
                 <OpsNote>The box is asleep or offline. It wakes on the next request; try Refresh in a minute.</OpsNote>
             );
+        case "locked":
+            return <OpsNote>This box is locked. The snapshot is unavailable until it is unlocked.</OpsNote>;
         case "error":
             return <OpsNote tone="error">{state.message}</OpsNote>;
         case "ok":
