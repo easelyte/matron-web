@@ -50,16 +50,6 @@ function isString(value: unknown): value is string {
     return typeof value === "string";
 }
 
-// host_vitals (the host-scoped push the header meters read): { sampled_at_ms, cpu?, ram? } with
-// percentages 0..100. A malformed one is stripped so the last good value stays on screen.
-function isValidHostVitals(value: unknown): boolean {
-    if (!isObject(value)) return false;
-    if (!isFiniteNumber(value.sampled_at_ms)) return false;
-    if (value.cpu !== undefined && !isPercent(value.cpu)) return false;
-    if (value.ram !== undefined && !isPercent(value.ram)) return false;
-    return true;
-}
-
 // status.vitals: { cpu_pct, ram_pct, sampled_at_ms }. The bridge sends `null` for a reading it does
 // not have yet (no first CPU sample, or no total memory reported), and the renderer skips each
 // non-finite reading on its own, so a partial object is valid. Returns the vitals to keep (a
@@ -166,10 +156,6 @@ function decodeEphemeral(raw: Record<string, unknown>): FrameDecodeResult {
             }
             out.status = status;
         }
-    }
-    if (out.host_vitals !== undefined && !isValidHostVitals(out.host_vitals)) {
-        delete out.host_vitals;
-        narrowed.push("host_vitals");
     }
     if (out.activity !== undefined && !isValidActivity(out.activity)) {
         delete out.activity;

@@ -195,10 +195,13 @@ import {
 } from "./markdown-preview";
 import { FileViewerPanel, useFileViewerPanel } from "./file-viewer";
 import { TrackerLinkInfoContext, type TrackerLinkInfo } from "./tracker-link-title";
+import { browserRestartCommand, browserToolsState } from "./browser-tools";
 import { MediaBrowserSheet } from "./media-browser";
+import { foldReleasedActions, type ReleasedAction } from "./queued-release";
 import { paneCoversChat, SubChatPane, type SubChatRow, useChatArea } from "./subchat-pane";
 import { chatSidePane, subtaskDescription } from "./subtask";
 import { SubtaskLine } from "./subtask-link";
+import { describeCommand, plainToolCards, subscribePlainToolCards } from "./step-phrases";
 import {
     buildMediaCorpus,
     isRenderableInViewer,
@@ -231,13 +234,6 @@ import { noticeText, TurnCard, type TurnCardMode, TurnErrorRow } from "./turn-ca
 import { V6Icon } from "./v6-icons";
 import { applyPaneBand } from "./pane-width";
 import { BoxUsage, NewSessionSheet as OneTapNewSessionSheet } from "./new-session-ui";
-import {
-    BROWSER_RESTART_COMMAND,
-    BROWSER_RESTART_NOW_COMMAND,
-    browserRestartNoticeSeqs,
-    browserToolsState,
-    type BrowserToolsState,
-} from "./browser-tools";
 import { type Step, stepSentence, stepsOf } from "./turn-grouping";
 import { helperForStep, helpersByTurn, SubagentCard } from "./subagent-card";
 import { HeadlineList } from "./headline-list";
@@ -278,7 +274,6 @@ import {
     hasSubagentChildRows,
     type FileKind,
     fileKindFromMime,
-    type HostVitals,
     IMAGE_FRAME_MAX_HEIGHT_PX,
     imageFrameStyle,
     isNearBottom,
@@ -2408,12 +2403,6 @@ function ConversationListView({
                     connection={state.connection}
                     notices={state.userSettingsUnsupported ? undefined : state.userSettings?.notices}
                     noticesError={state.userSettingsError}
-                    autoApproveCoordinatorSpawns={
-                        state.userSettingsUnsupported ? undefined : state.userSettings?.auto_approve_coordinator_spawns
-                    }
-                    onAutoApproveCoordinatorSpawnsChange={(value) =>
-                        void client.setAutoApproveCoordinatorSpawnsSetting(value)
-                    }
                     autoArchiveDays={state.userSettingsUnsupported ? undefined : state.userSettings?.auto_archive_days}
                     autoArchiveError={state.autoArchiveError}
                     onAutoArchiveChange={(days) => void client.setAutoArchiveDays(days)}
@@ -2923,54 +2912,12 @@ function useMinuteClock(now?: number): number {
     return now ?? clockNow;
 }
 
-// Pick the newest of several readings for the same meter. An unstamped candidate (a legacy
-// limits[] entry from a bridge that predates `sampled_at_ms`) has no freshness to compare, so it
-// ranks below any stamped one but still wins when it is all we have. Ties go to the later
-// candidate, which keeps the callers' source order as the tiebreak: legacy < status.vitals < the
-// live push, i.e. the fastest-cadence source wins a same-millisecond stamp.
-// Upper bound on a believable epoch-millisecond sample stamp. A garbled or wrongly-scaled wire
-// value (1e308, say) is finite, so it would otherwise win every freshness comparison forever
-// AND clamp to age zero, pinning the meter to a bogus reading no later sample could displace.
-//
-// Deliberately an ABSOLUTE plausibility bound, not a distance from the client clock: the two
-// clocks here are the browser's and the bridge's, and a browser running minutes behind is
-// ordinary. Rejecting stamps relative to local time would make that skew reject every real
-// bridge timestamp, freezing the meters on the first reading and ignoring the 5s pushes that
-// should replace it. Comparisons between candidates stay purely relative, so any shared offset
-// cancels out and only a value that is not a plausible timestamp at all is discarded.
-const MAX_PLAUSIBLE_STAMP_MS = Date.UTC(2100, 0, 1);
-
-function usableStamp(sampledAtMs: number | undefined): number | null {
-    if (typeof sampledAtMs !== "number" || !Number.isFinite(sampledAtMs)) return null;
-    if (sampledAtMs <= 0 || sampledAtMs > MAX_PLAUSIBLE_STAMP_MS) return null;
-    return sampledAtMs;
-}
-
-function freshestSample<T extends { sampled_at_ms?: number }>(candidates: T[]): T | undefined {
-    let best: T | undefined;
-    let bestStamp: number | null = null;
-    for (const candidate of candidates) {
-        const stamp = usableStamp(candidate.sampled_at_ms);
-        if (best === undefined) {
-            best = candidate;
-            bestStamp = stamp;
-            continue;
-        }
-        if (stamp === null) continue;
-        if (bestStamp === null || stamp >= bestStamp) {
-            best = candidate;
-            bestStamp = stamp;
-        }
-    }
-    return best;
-}
-
 // The usage meter leads with a synthetic "ctx" bar (context-window %), matching
 // the v3/v4 mock where ctx is the first, emphasised meter; the rate limits follow.
 export function buildUsageMeters(
     status: SessionStatus | undefined,
     limits: SessionStatus["limits"] | undefined,
-    hostVitals?: HostVitals | null,
+    boxVitals?: SessionStatus["vitals"],
 ): NonNullable<SessionStatus["limits"]> {
     const meters: NonNullable<SessionStatus["limits"]> = [];
     // Synthetic ctx meter carries id "context" (drives short tag / rank / a11y name) plus
@@ -2984,64 +2931,30 @@ export function buildUsageMeters(
             limit: status.context.window,
         });
     }
-    // Account subscription quotas only. Legacy host_cpu/host_ram entries (a bridge still
-    // injecting synthetic host meters into limits[]) are held back here rather than pushed
-    // through: they are folded into the host-meter resolution below so they compete on
-    // FRESHNESS instead of double-rendering next to the vitals-derived pair.
-    const legacyHostMeters = new Map<string, NonNullable<SessionStatus["limits"]>[number]>();
-    if (limits?.length) {
-        for (const limit of limits) {
-            if (limit.id === "host_cpu" || limit.id === "host_ram") legacyHostMeters.set(limit.id, limit);
-            else meters.push(limit);
+    if (limits?.length) meters.push(...limits);
+    // Host CPU/RAM ride a TOP-LEVEL `status.vitals` object on the status frame (never a
+    // limits[] entry). Synthesize them into the meter row here, carrying `sampled_at_ms` so
+    // the shared staleness muting expires an idle conversation's replayed reading. Absent
+    // `status.vitals` → no host meters, no crash (graceful degradation). Non-finite readings
+    // are skipped individually so a partial vitals object still renders what it can.
+    // The box's own report (box_status) is preferred; a session's `status.vitals` is the
+    // fallback for a box that reports none, and wins only when it is newer.
+    const vitals =
+        boxVitals && !(status?.vitals && status.vitals.sampled_at_ms > boxVitals.sampled_at_ms)
+            ? boxVitals
+            : status?.vitals;
+    if (vitals) {
+        const { cpu_pct, ram_pct, sampled_at_ms } = vitals;
+        if (Number.isFinite(cpu_pct)) {
+            meters.push({ id: "host_cpu", label: "host CPU", percent: cpu_pct, sampled_at_ms });
+        }
+        if (Number.isFinite(ram_pct)) {
+            meters.push({ id: "host_ram", label: "host RAM", percent: ram_pct, sampled_at_ms });
         }
     }
-    // Host CPU/RAM reach us from up to three places, and the right reading is the FRESHEST one,
-    // never "whichever is present":
-    //   1. legacy limits[] entries      — a pre-#156 or synthetic-injecting bridge
-    // 2. status.vitals (top level) — the, shared with upstream + matron-apple
-    // 3. the host_vitals push — fork-side, ~5s cadence, host-scoped across all convos
-    // Presence is the wrong test for any of them, because none is ever cleared once seen:
-    // mergeSessionStatus carries `vitals` across updates that omit it, and client.ts never drops
-    // a cached push. So a bridge rollback that resumes sending newer limits[] host entries would,
-    // under a presence test, be permanently masked by the retained older `vitals` — the header
-    // would show stale telemetry on exactly the compatibility path this is meant to preserve.
-    // Ranking every candidate by `sampled_at_ms` collapses that whole class: the newest sample
-    // wins regardless of which source produced it, in either deploy direction.
-    for (const id of ["host_cpu", "host_ram"] as const) {
-        const candidates: NonNullable<SessionStatus["limits"]> = [];
-        const legacy = legacyHostMeters.get(id);
-        // A legacy entry is a full meter already (label, resets, the lot) — take it verbatim so
-        // nothing a pre-#156 bridge sent is dropped in translation.
-        if (legacy) candidates.push(legacy);
-        const label = id === "host_cpu" ? "host CPU" : "host RAM";
-        // Each half is narrowed on its own: the bridge sends `cpu_pct: null` until its sampler
-        // has two ticks, and omits `cpu` from the push for the same reason, so a partial object
-        // must still contribute the half it does have.
-        const vitalsPercent = id === "host_cpu" ? status?.vitals?.cpu_pct : status?.vitals?.ram_pct;
-        if (typeof vitalsPercent === "number" && Number.isFinite(vitalsPercent)) {
-            candidates.push({ id, label, percent: vitalsPercent, sampled_at_ms: status?.vitals?.sampled_at_ms });
-        }
-        // The host-vitals push REFRESHES a host meter; it never creates one. A status source is what
-        // establishes that this conversation shows host bars at all — the push is host-scoped,
-        // carries no convo_id, and is deliberately not enough on its own.
-        //
-        // The gate is that source's PRESENCE (a `vitals` object, or a legacy limits[] entry),
-        // not whether it produced a finite value for this particular half. The bridge sends
-        // `cpu_pct: null` until its sampler has two ticks, and status only republishes at turn
-        // end — so gating per-half would let a conversation that opened during warm-up sit
-        // without a CPU bar indefinitely while valid pushes streamed past it.
-        const hostMetersEnabled = candidates.length > 0 || Boolean(status?.vitals);
-        const pushPercent = id === "host_cpu" ? hostVitals?.cpu : hostVitals?.ram;
-        if (hostMetersEnabled && typeof pushPercent === "number" && Number.isFinite(pushPercent)) {
-            candidates.push({ id, label, percent: pushPercent, sampled_at_ms: hostVitals?.sampled_at_ms });
-        }
-        const winner = freshestSample(candidates);
-        if (winner) meters.push(winner);
-    }
-    const merged = meters;
     // Normalise to the design's column-first grid order (ctx/5h, fbl/model/wk, cpu/ram);
     // stable so any extra limits keep their relative order after the known ones.
-    return merged
+    return meters
         .map((meter, index) => ({ meter, index }))
         .sort((a, b) => usageOrderRank(a.meter) - usageOrderRank(b.meter) || a.index - b.index)
         .map((entry) => entry.meter);
@@ -3425,192 +3338,8 @@ export function HeaderShell({
     );
 }
 
-/**
- * "Enable browser tools" confirm (redesign v6 surface B) on the upload-confirm shell. One
- * primary ("Restart with browser tools"); "Restart now" appears only while the agent is
- * mid-task and stops the current step instead of waiting. Focus lands on the primary; Escape
- * and Cancel return focus to the header ⋯.
- */
-function BrowserToolsConfirm({
-    busy,
-    queued,
-    onConfirm,
-    onClose,
-}: {
-    busy: boolean;
-    /** A restart is already waiting for the turn to end: only "Restart now" applies. */
-    queued: boolean;
-    /** Resolves false when the command couldn't be queued; the dialog stays open and says so. */
-    onConfirm: (now: boolean) => Promise<boolean>;
-    onClose: () => void;
-}): React.ReactElement {
-    const primaryRef = useRef<HTMLButtonElement>(null);
-    const scrimRef = useRef<HTMLDivElement>(null);
-    useFocusTrap(scrimRef);
-    const dialogRef = useRef<HTMLDivElement>(null);
-    const [error, setError] = useState<string>();
-    const [sending, setSending] = useState(false);
-    // Focus lands on the primary, and returns there if "Restart now" disappears under it.
-    useLayoutEffect(() => {
-        if (!dialogRef.current?.contains(document.activeElement)) primaryRef.current?.focus();
-    }, [busy]);
-    const confirm = (now: boolean): void => {
-        if (sending) return;
-        setSending(true);
-        setError(undefined);
-        void onConfirm(now).then(
-            (sent) => {
-                setSending(false);
-                if (!sent) setError("Couldn’t send the restart. Try again.");
-            },
-            () => {
-                setSending(false);
-                setError("Couldn’t send the restart. Try again.");
-            },
-        );
-    };
-    return (
-        <div
-            ref={scrimRef}
-            className="mj_UploadConfirm_scrim"
-            onClick={(event) => {
-                if (event.target === event.currentTarget) onClose();
-            }}
-            onKeyDown={(event) => {
-                if (event.key !== "Escape") return;
-                event.preventDefault();
-                event.stopPropagation();
-                onClose();
-            }}
-        >
-            <div
-                ref={dialogRef}
-                className="mj_UploadConfirm mj_UploadConfirm_queue mj_BrowserToolsConfirm"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="mj-browser-tools-title"
-            >
-                <header className="mj_UploadConfirm_header">
-                    <V6Icon name="globe" className="mj_UploadConfirm_uploadIcon" />
-                    <h2 className="mj_UploadConfirm_title" id="mj-browser-tools-title">
-                        Enable browser tools
-                    </h2>
-                    <span className="mj_UploadConfirm_headerSpacer" />
-                    <button type="button" className="mj_UploadConfirm_close" aria-label="Close" onClick={onClose}>
-                        <CloseIcon />
-                    </button>
-                </header>
-                <div className="mj_UploadConfirm_body">
-                    <p>
-                        Matron restarts this session with browser tools, so the agent can take screenshots and use web
-                        pages.
-                    </p>
-                    <ul className="mj_ConfirmList">
-                        <li>
-                            <V6Icon name="chat" />
-                            <span>The conversation is kept.</span>
-                        </li>
-                        <li>
-                            <V6Icon name="memory" />
-                            <span>Browser tools use about 400 MB of memory while on.</span>
-                        </li>
-                    </ul>
-                    {busy && (
-                        <div className="mj_ConfirmBusy">
-                            <span className="mj_LiveDot" aria-hidden="true" />
-                            <span>
-                                {queued
-                                    ? "A restart is already waiting for the agent to finish."
-                                    : "The agent is in the middle of a task. The restart waits until it finishes."}{" "}
-                                <b>Restart now</b> stops the current step instead.
-                            </span>
-                        </div>
-                    )}
-                    {error && (
-                        <p className="mj_UploadConfirm_error" role="alert">
-                            {error}
-                        </p>
-                    )}
-                </div>
-                <footer className="mj_UploadConfirm_footer">
-                    <div className="mj_UploadConfirm_actions">
-                        <button type="button" onClick={onClose}>
-                            Cancel
-                        </button>
-                        {busy && (
-                            <button
-                                type="button"
-                                className="mj_UploadConfirm_skip"
-                                disabled={sending}
-                                onClick={() => confirm(true)}
-                            >
-                                Restart now
-                            </button>
-                        )}
-                        {!queued && (
-                            <button
-                                ref={primaryRef}
-                                type="button"
-                                className="mj_UploadConfirm_send"
-                                disabled={sending}
-                                onClick={() => confirm(false)}
-                            >
-                                Restart with browser tools
-                            </button>
-                        )}
-                    </div>
-                </footer>
-            </div>
-        </div>
-    );
-}
-
-/** The session-menu row for browser tools, in its five states (v6 component-map). */
-function BrowserToolsItem({
-    state,
-    codex,
-    busy,
-    onEnable,
-}: {
-    state: BrowserToolsState;
-    codex: boolean;
-    /** The agent is mid-turn: a queued restart can still be forced via the dialog's "Restart now". */
-    busy: boolean;
-    onEnable: () => void;
-}): React.ReactElement {
-    const on = !codex && state === "on";
-    // Round 2: no descriptive hint; a hint only when it gives the reason an item is disabled.
-    const hint = codex
-        ? "Not available for Codex sessions"
-        : state === "queued"
-          ? "Restarting after this step"
-          : state === "restarting"
-            ? "Restarting…"
-            : undefined;
-    // A queued restart stays reachable while the agent is busy: the dialog's "Restart now" is the way out of the wait.
-    const disabled = codex || (state !== "idle" && !(state === "queued" && busy));
-    return (
-        <button
-            className={`mj_ConversationMenu_item${hint ? " mj_ConversationMenu_item_hinted" : ""}`}
-            type="button"
-            role={on ? "menuitemcheckbox" : "menuitem"}
-            aria-checked={on ? true : undefined}
-            aria-disabled={disabled || undefined}
-            onClick={() => {
-                if (!disabled) onEnable();
-            }}
-        >
-            <V6Icon name={on ? "check" : "globe"} />
-            <span className="mj_MenuText">
-                <span className="mj_MenuLabel">{on ? "Browser tools on" : "Enable browser tools"}</span>
-                {hint && <span className="mj_MenuHint">{hint}</span>}
-            </span>
-        </button>
-    );
-}
-// The items a header menu's arrow keys walk: actions, the level choices' radio items, and the
-// browser-tools row's checkbox item (every role starting "menuitem").
-const MENU_ITEM_SELECTOR = '[role^="menuitem"]';
+// The items a header menu's arrow keys walk: actions, and the level choices' radio items.
+const MENU_ITEM_SELECTOR = '[role="menuitem"], [role="menuitemradio"]';
 
 // Header "⋯" overflow: the selected conversation's actions (same set as the sidebar
 // row menu), opened by click only (never hover — these mutate state).
@@ -3628,17 +3357,9 @@ function HeaderOverflowMenu({
     extras?: (pick: (run: () => void) => void) => React.ReactNode;
 }): React.ReactElement {
     const [open, setOpen] = useState(false);
-    const [confirmBrowser, setConfirmBrowser] = useState(false);
     const openerRef = useRef<HTMLButtonElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
     const restoreFrameRef = useRef<number | undefined>(undefined);
-    const busy = conversation.session_state === "running";
-    const codex = conversation.agent_kind === "codex";
-    const statusExtras = state.sessionStatus?.extras;
-    const browserState = useMemo(
-        () => browserToolsState(state.events, busy, statusExtras),
-        [state.events, busy, statusExtras],
-    );
     const close = useCallback(() => setOpen(false), []);
     useDismissablePopover(open, close, { openerRef, panelRef });
     const toggle = usePressToggle(open, (next) => {
@@ -3666,6 +3387,15 @@ function HeaderOverflowMenu({
     const isFavorite = state.favoriteIds.has(id);
     const isArchived = state.archivedIds.has(id);
     const isUnread = effectiveUnread(conversation, state.unreadOverrideIds);
+    // "Enable browser tools" restarts the session with the extra. Shown only while it is off or a
+    // request is in flight, and never on a bridge that reports no extras. A Codex session gets
+    // the bridge's own refusal reply.
+    const browserState = browserToolsState(
+        state.events,
+        conversation.session_state === "running",
+        state.sessionStatus?.extras,
+    );
+    const showBrowserRow = browserState === "idle" || browserState === "queued" || browserState === "restarting";
     const act = (run: () => void): void => {
         const opener = openerRef.current;
         close();
@@ -3736,6 +3466,35 @@ function HeaderOverflowMenu({
                     }}
                 >
                     {extras?.(act)}
+                    {showBrowserRow && (
+                        <button
+                            className="mj_ConversationMenu_item"
+                            type="button"
+                            role="menuitem"
+                            aria-disabled={browserState !== "idle" || undefined}
+                            onClick={() => {
+                                if (browserState === "idle")
+                                    act(
+                                        () =>
+                                            void client.sendMessage(
+                                                browserRestartCommand(state.sessionStatus?.extras),
+                                                id,
+                                            ),
+                                    );
+                            }}
+                        >
+                            <Icon>
+                                <circle cx="12" cy="12" r="9" />
+                                <ellipse cx="12" cy="12" rx="4" ry="9" />
+                                <path d="M3 12h18" />
+                            </Icon>
+                            {browserState === "idle"
+                                ? "Enable browser tools"
+                                : browserState === "queued"
+                                  ? "Browser tools: restarting after this step"
+                                  : "Browser tools: restarting…"}
+                        </button>
+                    )}
                     {state.journalPins ? (
                         journalPinned ? (
                             <>
@@ -3819,19 +3578,6 @@ function HeaderOverflowMenu({
                             {isUnread ? "Mark as read" : "Mark as unread"}
                         </button>
                     )}
-                    {/* Hidden, never guessed, until the bridge reports the session's extras. */}
-                    {statusExtras !== undefined && (
-                        <BrowserToolsItem
-                            state={browserState}
-                            codex={codex}
-                            busy={busy}
-                            onEnable={() => {
-                                close();
-                                setConfirmBrowser(true);
-                            }}
-                        />
-                    )}
-                    <MenuSeparator />
                     <button
                         className="mj_ConversationMenu_item"
                         type="button"
@@ -3844,27 +3590,6 @@ function HeaderOverflowMenu({
                         {isArchived ? "Unarchive" : "Archive"}
                     </button>
                 </div>
-            )}
-            {confirmBrowser && (
-                <BrowserToolsConfirm
-                    busy={busy}
-                    queued={browserState === "queued"}
-                    onClose={() => {
-                        setConfirmBrowser(false);
-                        openerRef.current?.focus();
-                    }}
-                    onConfirm={async (now) => {
-                        const sent = await client.sendMessage(
-                            now ? BROWSER_RESTART_NOW_COMMAND : BROWSER_RESTART_COMMAND,
-                            id,
-                        );
-                        if (sent) {
-                            setConfirmBrowser(false);
-                            openerRef.current?.focus();
-                        }
-                        return sent;
-                    }}
-                />
             )}
             {pinDialog && (
                 <PinDialog client={client} state={state} target={pinDialog} onClose={() => setPinDialog(undefined)} />
@@ -4192,6 +3917,12 @@ export function MissionChip({
     );
 }
 
+// The host vitals last reported by the box that runs this conversation.
+function boxVitalsOf(state: ClientState, conversation: { agent_device_id?: number | null } | undefined) {
+    const id = conversation?.agent_device_id;
+    return id == null ? undefined : state.boxStatuses[id]?.vitals;
+}
+
 function ChatHeader({
     client,
     state,
@@ -4208,14 +3939,8 @@ function ChatHeader({
     const status = state.sessionStatus;
     const runState = conversation?.session_state;
     const limits = status?.limits?.filter((limit) => limit.label.trim());
-    const meters = buildUsageMeters(status, limits, state.hostVitals);
+    const meters = buildUsageMeters(status, limits, boxVitalsOf(state, conversation));
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
-    const browserQueued = useMemo(
-        () =>
-            conversation?.agent_kind !== "codex" &&
-            browserToolsState(state.events, runState === "running", status?.extras) === "queued",
-        [conversation?.agent_kind, state.events, runState, status?.extras],
-    );
     const browserTools = status?.extras?.includes("browser");
     const browserToolsIndicator = (label?: string): React.ReactNode =>
         browserTools && (
@@ -4281,12 +4006,6 @@ function ChatHeader({
                 // remounts (and closes) it, instead of silently retargeting the actions.
                 conversation && (
                     <>
-                        {browserQueued && (
-                            <span className="mj_HeaderChip" role="status">
-                                <span className="mj_Spinner" aria-hidden="true" />
-                                Restarting after this step
-                            </span>
-                        )}
                         {!controlsFolded && (
                             <RoomsControl
                                 key={`rooms-${conversation.id}`}
@@ -4422,7 +4141,7 @@ function SubChatHeader({
     const selected = client.selectedConversation();
     const status = state.sessionStatus;
     const limits = status?.limits?.filter((limit) => limit.label.trim());
-    const meters = buildUsageMeters(status, limits, state.hostVitals);
+    const meters = buildUsageMeters(status, limits, boxVitalsOf(state, selected));
     const runState = selected?.session_state;
     const running = runState === "running";
     const shortModel = status?.model ? shortModelName(status.model) : undefined;
@@ -4500,7 +4219,7 @@ export function QueuedReleaseCard({
     client: MatronJournalClient;
     event: JournalEvent;
     isReadOnly?: boolean;
-    resolvedAction?: (itemId: string) => "send" | "cancel" | "expired" | undefined;
+    resolvedAction?: (itemId: string) => ReleasedAction | undefined;
 }): React.ReactElement {
     const items = (Array.isArray(event.payload.items) ? event.payload.items : []).flatMap((item) => {
         if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
@@ -4620,13 +4339,10 @@ export function QueuedReleaseCard({
                 </div>
             )}
             {resolution === "expired" && (
-                // Terminal abandoned state: the bridge has
-                // authoritatively expired this card (restart/crash abandoned the
-                // live queue). Both buttons are already removed (gated on
-                // `resolution === undefined` above); render a muted terminal
-                // note distinct from the Sent/Cancelled resolution.
+                // The bridge dropped this queued message without sending it: no buttons, a muted final note.
                 <div className="mj_PromptResolved mj_PromptResolved_expired">
-                    <span className="mj_Answered mj_Expired">Expired — no longer actionable</span>
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Answered mj_Expired">Expired, not sent</span>
                 </div>
             )}
         </div>
@@ -5204,8 +4920,13 @@ function ToolOutput({
     const exitCode = typeof payload.exit_code === "number" ? payload.exit_code : undefined;
     const failed = payload.denied === true || (exitCode !== undefined && exitCode !== 0);
     const expired = payload.expired === true;
-    // Mac ToolCallCard: the command's first token bold, its arguments smaller and grey, one line.
-    const [commandName, ...commandRest] = command === "Tool output" ? [command] : command.split(/\s+/);
+    // With "Plain tool cards" on, a recognised, harmless command reads as a sentence ("Ran the
+    // tests"); the exact command stays in the tooltip and the opened card. Anything else keeps the
+    // Mac ToolCallCard form: the command's first token bold, its arguments smaller and grey.
+    const plainOn = useSyncExternalStore(subscribePlainToolCards, plainToolCards);
+    const sentence = plainOn && payload.command ? describeCommand(command) : null;
+    const [commandName, ...commandRest] =
+        sentence !== null ? [sentence] : command === "Tool output" ? [command] : command.split(/\s+/);
     const commandArgs = commandRest.join(" ");
     const outcome =
         payload.denied === true ? "denied" : exitCode !== undefined ? `exit ${exitCode}` : failed ? "failed" : "done";
@@ -5951,7 +5672,7 @@ export function EventContent({
     coordinatorDecisions?: ReadonlyMap<string, CoordinatorDecision>;
     itemCards?: ItemCardFold;
     isReadOnly?: boolean;
-    resolvedAction?: (itemId: string) => "send" | "cancel" | "expired" | undefined;
+    resolvedAction?: (itemId: string) => ReleasedAction | undefined;
 }): React.ReactElement | null {
     const answer = answeredPromptReplies.get(`${event.convo_id}:${event.seq}`);
     switch (event.type) {
@@ -6209,7 +5930,7 @@ function EventRow({
     coordinatorDecisions?: ReadonlyMap<string, CoordinatorDecision>;
     itemCards?: ItemCardFold;
     isReadOnly?: boolean;
-    resolvedAction: (itemId: string) => "send" | "cancel" | "expired" | undefined;
+    resolvedAction: (itemId: string) => ReleasedAction | undefined;
     continuation?: boolean;
     lastInSection?: boolean;
     searchHighlighted?: boolean;
@@ -6672,16 +6393,7 @@ function AgentTurnRow({
 }
 
 /** A bridge system notice (`.mj_SystemNotice`): one tertiary meta line, no avatar. */
-function TurnNoticeRow({
-    event,
-    highlighted,
-    text,
-}: {
-    event: JournalEvent;
-    highlighted: boolean;
-    /** Display copy override (e.g. "Restarting with browser tools…"). */
-    text?: string;
-}): React.ReactElement {
+function TurnNoticeRow({ event, highlighted }: { event: JournalEvent; highlighted: boolean }): React.ReactElement {
     const body = asString(event.payload.body);
     return (
         <li
@@ -6690,7 +6402,7 @@ function TurnNoticeRow({
             aria-live="polite"
             title={body}
         >
-            {text ?? noticeText(body)}
+            {noticeText(body)}
         </li>
     );
 }
@@ -7250,38 +6962,9 @@ function Timeline({
     const agentChatResolutions = useMemo(() => readAgentChatResolutions(state.events), [state.events]);
     // The Coordinator's answers to chat and spawn cards (`consent_decision`), for their badges.
     const coordinatorDecisions = useMemo(() => readCoordinatorDecisions(state.events), [state.events]);
-    const releasedActions = useMemo(() => {
-        const actions = new Map<string, "send" | "cancel" | "expired">();
-        for (const event of state.events) {
-            if (
-                event.type !== "prompt_reply" ||
-                asString(event.payload.kind) !== "queued_release" ||
-                !Array.isArray(event.payload.released)
-            )
-                continue;
-            const action = asString(event.payload.action);
-            if (action !== "send" && action !== "cancel" && action !== "expired") continue;
-            for (const releasedId of event.payload.released) {
-                const itemId = asString(releasedId);
-                if (!itemId) continue;
-                // Terminal precedence: a real resolution (send/cancel) is FINAL
-                // and outranks a later — or earlier — `expired` release for the
-                // same item. This neutralizes the bridge's
-                // narrow disk-fail-then-restart re-expiry: even if the bridge
-                // re-emits `expired` for a release it already committed as
-                // sent/cancelled, the card keeps showing the true result.
-                // Precedence: send = cancel > expired. Order-independent.
-                if (action === "expired") {
-                    const prev = actions.get(itemId);
-                    if (prev === "send" || prev === "cancel") continue; // never downgrade
-                }
-                actions.set(itemId, action);
-            }
-        }
-        return actions;
-    }, [state.events]);
+    const releasedActions = useMemo(() => foldReleasedActions(state.events), [state.events]);
     const resolvedAction = useCallback(
-        (itemId: string): "send" | "cancel" | "expired" | undefined => releasedActions.get(itemId),
+        (itemId: string): ReleasedAction | undefined => releasedActions.get(itemId),
         [releasedActions],
     );
     const sessionRunning = client.selectedConversation()?.session_state === "running";
@@ -7322,10 +7005,6 @@ function Timeline({
         }
         return map;
     }, [showTheWork, visibleEvents, helperChildren, state.hasOlderHistory]);
-    const browserNoticeSeqs = useMemo(
-        () => (showTheWork ? new Set<number>() : browserRestartNoticeSeqs(visibleEvents)),
-        [showTheWork, visibleEvents],
-    );
     const lastTurn = liveTurnOf(turns);
     // Inside a helper's thread the newest turns open with their work in view; older ones keep
     // the compact list, which bounds the DOM on a long thread (EXPANDED_HELPER_TURNS).
@@ -7878,18 +7557,7 @@ function Timeline({
                             );
                         }
                         if (row.kind === "notice") {
-                            return (
-                                <TurnNoticeRow
-                                    key={row.key}
-                                    event={row.event}
-                                    highlighted={false}
-                                    text={
-                                        browserNoticeSeqs.has(row.event.seq)
-                                            ? "Restarting with browser tools…"
-                                            : undefined
-                                    }
-                                />
-                            );
+                            return <TurnNoticeRow key={row.key} event={row.event} highlighted={false} />;
                         }
                         if (row.kind === "helper") {
                             return <DevHelperRow key={row.key} client={client} child={row.child} />;
@@ -9160,7 +8828,7 @@ function subChatTranscript(events: JournalEvent[], client: MatronJournalClient):
     const permissionRequestSeqs = new Set<number>();
     const answeredPromptReplies = new Map<string, { choice?: string }>();
     const spawnOutcomes = new Map<string, EventPayload>();
-    const releasedActions = new Map<string, "send" | "cancel">();
+    const releasedActions = foldReleasedActions(events);
     for (const event of events) {
         if (event.type === "permission_request") permissionRequestSeqs.add(event.seq);
         else if (event.type === "prompt") {
@@ -9172,17 +8840,6 @@ function subChatTranscript(events: JournalEvent[], client: MatronJournalClient):
                 const choice = asString(event.payload.choice, asString(event.payload.label)) || undefined;
                 answeredPromptReplies.set(`${event.convo_id}:${targetSeq}`, { choice });
             }
-            const action = asString(event.payload.action);
-            if (
-                asString(event.payload.kind) === "queued_release" &&
-                Array.isArray(event.payload.released) &&
-                (action === "send" || action === "cancel")
-            ) {
-                for (const releasedId of event.payload.released) {
-                    const itemId = asString(releasedId);
-                    if (itemId) releasedActions.set(itemId, action);
-                }
-            }
         } else if (event.type === "spawn_outcome" && typeof event.payload.request_id === "string") {
             spawnOutcomes.set(event.payload.request_id, event.payload);
         }
@@ -9190,7 +8847,7 @@ function subChatTranscript(events: JournalEvent[], client: MatronJournalClient):
     const itemCards = foldItemCards(events);
     const agentChatResolutions = readAgentChatResolutions(events);
     const coordinatorDecisions = readCoordinatorDecisions(events);
-    const resolvedAction = (itemId: string): "send" | "cancel" | undefined => releasedActions.get(itemId);
+    const resolvedAction = (itemId: string): ReleasedAction | undefined => releasedActions.get(itemId);
     return events
         .filter(
             (event) =>
@@ -9234,7 +8891,7 @@ function SignedInApp({ client, state }: { client: MatronJournalClient; state: Cl
     const meterCount = buildUsageMeters(
         state.sessionStatus,
         state.sessionStatus?.limits?.filter((limit) => limit.label.trim()),
-        state.hostVitals,
+        boxVitalsOf(state, client.selectedConversation()),
     ).filter((meter) => meter.label.trim()).length;
     const collapse = useAdaptiveHeader(bodyEl, meterCount);
     // The command palette puts the caret back in the composer on screen after a pick.

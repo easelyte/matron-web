@@ -7,6 +7,9 @@
         },
         "totalGzipKB": {
             "max": 977
+        },
+        "pdfWorkerGzipKB": {
+            "max": 367
         }
     },
     "cold": {

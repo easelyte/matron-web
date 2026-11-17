@@ -1927,7 +1927,7 @@ describe("MatronJournalClient notices and user settings", () => {
                 }),
         );
         (state as SettingsInternals).api = { patchSettings };
-        const saving = client.setAutoApproveCoordinatorSpawnsSetting(true);
+        const saving = client.patchUserSettings({ auto_approve_coordinator_spawns: true });
         expect(client.getSnapshot().userSettings).toEqual({ ...initial, auto_approve_coordinator_spawns: true });
         // Saves are queued behind earlier ones, so the PATCH goes out a tick later.
         await Promise.resolve();
@@ -1958,7 +1958,7 @@ describe("MatronJournalClient notices and user settings", () => {
                 }),
             ),
         };
-        const saving = client.setAutoApproveCoordinatorSpawnsSetting(true);
+        const saving = client.patchUserSettings({ auto_approve_coordinator_spawns: true });
         await internal.handleFrame({
             kind: "control",
             op: "settings",
@@ -1970,27 +1970,7 @@ describe("MatronJournalClient notices and user settings", () => {
         fail(new Error("offline"));
         await expect(saving).resolves.toBe(false);
         expect(client.getSnapshot().userSettings).toEqual({ notices: false, auto_approve_coordinator_spawns: true });
-        expect(client.getSnapshot().userSettingsError).toBeUndefined();
-    });
-
-    it("validates spawn auto-approval independently and hides unsupported values", async () => {
-        const { client, state } = makeClient();
-        const internal = state as SettingsInternals;
-        internal.api = {
-            settings: jest.fn().mockResolvedValue({ notices: "bad", auto_approve_coordinator_spawns: false }),
-        };
-        await client.loadSettings();
-        expect(client.getSnapshot().userSettings).toEqual({ auto_approve_coordinator_spawns: false });
-        await internal.handleFrame({
-            kind: "control",
-            op: "settings",
-            settings: {
-                notices: true,
-                auto_approve_coordinator_spawns: "true",
-            },
-        });
-        // An invalid value is ignored: the last good one stays (a key the payload lacks keeps its value).
-        expect(client.getSnapshot().userSettings).toEqual({ notices: true, auto_approve_coordinator_spawns: false });
+        expect(client.getSnapshot().spawnApprovalError).toBeUndefined();
     });
 
     it("setNoticesSetting puts the old value back and reports a failed save", async () => {
@@ -2001,6 +1981,55 @@ describe("MatronJournalClient notices and user settings", () => {
 
         expect(client.getSnapshot().userSettings).toEqual({ notices: true });
         expect(client.getSnapshot().userSettingsError).toBe("offline");
+    });
+
+    it("patchUserSettings saves the spawn auto-approval only its key and keeps the other settings", async () => {
+        const { client, state } = makeClient({ userSettings: { notices: true, auto_archive_days: 30 } });
+        const patchSettings = jest
+            .fn()
+            .mockResolvedValue({ notices: true, auto_archive_days: 30, auto_approve_coordinator_spawns: true });
+        (state as SettingsInternals).api = { patchSettings };
+
+        await expect(client.patchUserSettings({ auto_approve_coordinator_spawns: true })).resolves.toBe(true);
+
+        expect(patchSettings).toHaveBeenCalledWith({ auto_approve_coordinator_spawns: true });
+        expect(client.getSnapshot().userSettings).toEqual({
+            notices: true,
+            auto_archive_days: 30,
+            auto_approve_coordinator_spawns: true,
+        });
+    });
+
+    it("a failed spawn auto-approval save puts the switch back and reports the error on its own key", async () => {
+        const { client, state } = makeClient({
+            userSettings: { notices: true, auto_approve_coordinator_spawns: false },
+        });
+        (state as SettingsInternals).api = { patchSettings: jest.fn().mockRejectedValue(new Error("offline")) };
+
+        await expect(client.patchUserSettings({ auto_approve_coordinator_spawns: true })).resolves.toBe(false);
+
+        expect(client.getSnapshot().userSettings).toEqual({ notices: true, auto_approve_coordinator_spawns: false });
+        expect(client.getSnapshot().spawnApprovalError).toBe("offline");
+        expect(client.getSnapshot().userSettingsError).toBeUndefined();
+    });
+
+    it("reads the spawn setting only when it is a boolean, so an older journal leaves it absent", async () => {
+        const { client, state } = makeClient({ userSettings: { notices: true } });
+        const internal = state as SettingsInternals;
+
+        await internal.handleFrame({
+            kind: "control",
+            op: "settings",
+            settings: { notices: true, auto_approve_coordinator_spawns: "true" },
+        });
+        expect(client.getSnapshot().userSettings).toEqual({ notices: true });
+
+        await internal.handleFrame({
+            kind: "control",
+            op: "settings",
+            settings: { notices: true, auto_approve_coordinator_spawns: true },
+        });
+        expect(client.getSnapshot().userSettings).toEqual({ notices: true, auto_approve_coordinator_spawns: true });
     });
 
     it("applies the settings control frame live and ignores a malformed one", async () => {

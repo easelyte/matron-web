@@ -28,7 +28,7 @@ import React, { useEffect, useId, useMemo, useState } from "react";
 
 import { plainLine } from "./activity-text";
 import { buildHeadlines, type Headline, headlineCount, visibleHeadlines } from "./headlines";
-import { stepHeadline } from "./step-phrases";
+import { stepHeadline } from "./step-categories";
 import { formatElapsed, type Step, stepCount, type TurnItem } from "./turn-grouping";
 import { V6Icon, type V6IconName } from "./v6-icons";
 

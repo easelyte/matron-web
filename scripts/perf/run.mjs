@@ -76,7 +76,13 @@ const KB = (bytes) => round(bytes / 1024, 1);
 function bundleSizes() {
     const assets = path.join(WEBAPP, "assets");
     const html = fs.readFileSync(path.join(WEBAPP, "index.html"), "utf8");
-    const files = fs.readdirSync(assets).filter((f) => /\.(m?js|css)$/.test(f));
+    const assetFiles = fs.readdirSync(assets).filter((f) => /\.(m?js|css)$/.test(f));
+    // pdf.js's worker ships prebuilt and minified, our build only copies it, and it loads only when
+    // a PDF is opened. It has a budget of its own, so it can neither hide growth in our code nor
+    // hand out its own size as room for it.
+    const isPdfWorker = (f) => /^pdf\.worker\b.*\.mjs$/.test(f);
+    const files = assetFiles.filter((f) => !isPdfWorker(f));
+    const pdfWorkerFiles = assetFiles.filter(isPdfWorker);
     const entry = files.filter((f) => html.includes(f));
     const sizeOf = (list) =>
         list.reduce(
@@ -91,12 +97,15 @@ function bundleSizes() {
         );
     const all = sizeOf(files);
     const initial = sizeOf(entry);
+    const pdfWorker = sizeOf(pdfWorkerFiles);
     return {
         initialJsCssKB: KB(initial.raw),
         initialGzipKB: KB(initial.gzip),
         initialBrotliKB: KB(initial.brotli),
         totalJsCssKB: KB(all.raw),
         totalGzipKB: KB(all.gzip),
+        pdfWorkerJsKB: KB(pdfWorker.raw),
+        pdfWorkerGzipKB: pdfWorkerFiles.length ? KB(pdfWorker.gzip) : undefined,
         chunks: files.length,
         largest: files
             .map((f) => ({ file: f, KB: KB(fs.statSync(path.join(assets, f)).size), initial: entry.includes(f) }))

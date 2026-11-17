@@ -16,7 +16,7 @@ Please see LICENSE files in the repository root for full details.
  *     Opened a PR
  *
  * Consecutive steps of the same kind fold into one headline; narration between them ends the
- * run. Pure: no React. The phrases come from step-phrases.ts (the categoriser the sidebar
+ * run. Pure: no React. The phrases come from step-categories.ts (the categoriser the sidebar
  * preview shares).
  */
 
@@ -30,7 +30,7 @@ import {
     PHRASE_ICON,
     type Phrase,
     type PhraseKey,
-} from "./step-phrases";
+} from "./step-categories";
 import { type GroupIcon, type GroupStatus, type Step, type TurnItem } from "./turn-grouping";
 
 export interface Headline {

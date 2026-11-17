@@ -8,10 +8,9 @@ Please see LICENSE files in the repository root for full details.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { browserRestartNoticeSeqs, browserToolsState } from "../browser-tools";
+import { browserRestartCommand, browserToolsState } from "../browser-tools";
 import { archiveStore, favoriteStore, MatronJournalClient, pinnedStore, unreadStore } from "../client";
 import { MatronApp } from "../components";
-import { resetShowTheWorkForTests } from "../show-the-work";
 import type { ClientState, Conversation, JournalEvent, Session } from "../types";
 
 jest.mock("../../../res/matron-logo-simple.svg", () => "matron-logo.svg");
@@ -152,16 +151,13 @@ describe("browserToolsState (read from the bridge's replies)", () => {
             "idle",
         );
     });
+});
 
-    it("marks only the restart notices that answer a browser request", () => {
-        const events = [
-            op("/restart"),
-            ev("🔄 Restarting Claude session..."),
-            ev(RESTARTED_OFF),
-            op("/restart --browser"),
-            ev("🔄 Restarting Claude session..."),
-        ];
-        expect([...browserRestartNoticeSeqs(events)]).toEqual([5]);
+describe("browserRestartCommand", () => {
+    it("adds browser to the extras already on, skipping odd names", () => {
+        expect(browserRestartCommand(undefined)).toBe("/restart --browser");
+        expect(browserRestartCommand([])).toBe("/restart --browser");
+        expect(browserRestartCommand(["circleci", "browser", "bad name", "--x"])).toBe("/restart --browser --circleci");
     });
 });
 
@@ -215,7 +211,6 @@ describe("Enable browser tools in the session menu", () => {
 
     beforeEach(() => {
         localStorage.clear();
-        resetShowTheWorkForTests();
         container = document.createElement("div");
         document.body.append(container);
         root = createRoot(container);
@@ -235,82 +230,44 @@ describe("Enable browser tools in the session menu", () => {
             /browser tools/i.test(node.textContent ?? ""),
         )!;
 
-    it("opens the confirm (one primary, no Restart now while idle) and sends /restart --browser", async () => {
+    it("sends /restart --browser from the row and closes the menu", async () => {
         const instance = client([op("hi")]);
         const send = jest.spyOn(instance, "sendMessage").mockResolvedValue(true);
         await act(async () => root.render(<MatronApp client={instance} />));
         await openMenu();
         expect(item().textContent).toBe("Enable browser tools");
-        expect(item().querySelector(".mj_MenuHint")).toBeNull();
         await act(async () => item().click());
-        const dialog = container.querySelector('[role="dialog"]')!;
-        expect(dialog.textContent).toContain("Browser tools use about 400 MB of memory while on.");
-        expect([...dialog.querySelectorAll(".mj_UploadConfirm_actions button")].map((b) => b.textContent)).toEqual([
-            "Cancel",
-            "Restart with browser tools",
-        ]);
-        expect(document.activeElement?.textContent).toBe("Restart with browser tools");
-        await act(async () => dialog.querySelector<HTMLButtonElement>(".mj_UploadConfirm_send")!.click());
         expect(send).toHaveBeenCalledWith("/restart --browser", "c1");
-        expect(document.activeElement?.getAttribute("aria-label")).toBe("Conversation actions");
+        expect(container.querySelector(".mj_ConversationMenu")).toBeNull();
     });
 
-    it("offers Restart now (the forced variant) while the agent is mid-task", async () => {
-        const instance = client([op("hi")], { session_state: "running" });
+    it("keeps the session's other opt-in extras when it adds browser tools", async () => {
+        const instance = client([op("hi")], {}, ["circleci", "share"]);
         const send = jest.spyOn(instance, "sendMessage").mockResolvedValue(true);
         await act(async () => root.render(<MatronApp client={instance} />));
         await openMenu();
         await act(async () => item().click());
-        const dialog = container.querySelector('[role="dialog"]')!;
-        expect(dialog.querySelector(".mj_ConfirmBusy")?.textContent).toContain("The restart waits until it finishes.");
-        await act(async () => dialog.querySelector<HTMLButtonElement>(".mj_UploadConfirm_skip")!.click());
-        expect(send).toHaveBeenCalledWith("/restart --browser --force", "c1");
+        expect(send).toHaveBeenCalledWith("/restart --browser --circleci --share", "c1");
     });
 
-    it("keeps the row enabled while queued mid-turn, so Restart now stays reachable", async () => {
+    it("disables the row while the restart is queued or under way", async () => {
         const instance = client([op("/restart --browser")], { session_state: "running" });
         const send = jest.spyOn(instance, "sendMessage").mockResolvedValue(true);
         await act(async () => root.render(<MatronApp client={instance} />));
-        expect(container.querySelector(".mj_HeaderChip")?.textContent).toBe("Restarting after this step");
-        await openMenu();
-        expect(item().getAttribute("aria-disabled")).toBeNull();
-        expect(item().querySelector(".mj_MenuHint")?.textContent).toBe("Restarting after this step");
-        await act(async () => item().click());
-        const dialog = container.querySelector('[role="dialog"]')!;
-        expect([...dialog.querySelectorAll(".mj_UploadConfirm_actions button")].map((b) => b.textContent)).toEqual([
-            "Cancel",
-            "Restart now",
-        ]);
-        await act(async () => dialog.querySelector<HTMLButtonElement>(".mj_UploadConfirm_skip")!.click());
-        expect(send).toHaveBeenCalledWith("/restart --browser --force", "c1");
-    });
-
-    it("disables the row once the forced restart is under way", async () => {
-        await act(async () =>
-            root.render(
-                <MatronApp client={client([op("/restart --browser --force")], { session_state: "running" })} />,
-            ),
-        );
         await openMenu();
         expect(item().getAttribute("aria-disabled")).toBe("true");
+        expect(item().textContent).toBe("Browser tools: restarting after this step");
+        await act(async () => item().click());
+        expect(send).not.toHaveBeenCalled();
     });
 
-    it("shows 'Browser tools on' as a checked, disabled item, from the status frame's extras", async () => {
+    it("hides the row once browser tools are on, from the status frame's extras", async () => {
         await act(async () => root.render(<MatronApp client={client([op("hi")], {}, ["browser"])} />));
         await openMenu();
-        expect(item().getAttribute("role")).toBe("menuitemcheckbox");
-        expect(item().getAttribute("aria-checked")).toBe("true");
-        expect(item().getAttribute("aria-disabled")).toBe("true");
-        expect(item().textContent).toBe("Browser tools on");
+        expect(item()).toBeUndefined();
     });
 
-    it("stays on for a stopped session with no restart in its loaded events (offline / reconnect)", async () => {
-        await act(async () => root.render(<MatronApp client={client([], { session_state: "done" }, ["browser"])} />));
-        await openMenu();
-        expect(item().textContent).toBe("Browser tools on");
-    });
-
-    it("does not turn on from a transcript notice while the status frame says no extras", async () => {
+    it("does not treat a transcript notice as on while the status frame says no extras", async () => {
         await act(async () => root.render(<MatronApp client={client([op("/restart --browser"), ev(RESTARTED_ON)])} />));
         await openMenu();
         expect(item().textContent).toBe("Enable browser tools");
@@ -321,34 +278,7 @@ describe("Enable browser tools in the session menu", () => {
             root.render(<MatronApp client={client([op("/restart --browser"), ev(RESTARTED_ON)], {}, null)} />),
         );
         await openMenu();
-        expect(container.querySelector('[role="menu"], .mj_ConversationMenu')).not.toBeNull();
+        expect(container.querySelector(".mj_ConversationMenu")).not.toBeNull();
         expect(item()).toBeUndefined();
-    });
-
-    it("keeps the row hidden on an older bridge even while a browser restart is pending", async () => {
-        await act(async () =>
-            root.render(<MatronApp client={client([op("/restart --browser")], { session_state: "running" }, null)} />),
-        );
-        // The transient chip still reflects the operator's own request...
-        expect(container.querySelector(".mj_HeaderChip")?.textContent).toBe("Restarting after this step");
-        await openMenu();
-        // ...but the row never appears without the bridge's extras.
-        expect(item()).toBeUndefined();
-    });
-
-    it("is unavailable for Codex sessions", async () => {
-        await act(async () => root.render(<MatronApp client={client([op("hi")], { agent_kind: "codex" })} />));
-        await openMenu();
-        expect(item().getAttribute("aria-disabled")).toBe("true");
-        expect(item().querySelector(".mj_MenuHint")?.textContent).toBe("Not available for Codex sessions");
-    });
-
-    it("words the restart notice for a browser restart", async () => {
-        await act(async () =>
-            root.render(
-                <MatronApp client={client([op("/restart --browser"), ev("🔄 Restarting Claude session...")])} />,
-            ),
-        );
-        expect(container.querySelector(".mj_SystemNotice")?.textContent).toBe("Restarting with browser tools…");
     });
 });

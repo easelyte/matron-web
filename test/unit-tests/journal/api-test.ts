@@ -765,6 +765,17 @@ describe("JournalApi devices box status", () => {
         expect(parseBoxStatus({ reported_at: 1, disk: { free_bytes: 0, total_bytes: 0 } })).toEqual({ reported_at: 1 });
     });
 
+    it("keeps a valid vitals block and drops one that is out of range or incomplete", () => {
+        const vitals = { cpu_pct: 12, ram_pct: 70.5, sampled_at_ms: 1_790_000_000_000, extra: 1 };
+        expect(parseBoxStatus({ reported_at: 1, vitals })).toEqual({
+            reported_at: 1,
+            vitals: { cpu_pct: 12, ram_pct: 70.5, sampled_at_ms: 1_790_000_000_000 },
+        });
+        expect(parseBoxStatus({ reported_at: 1, vitals: { ...vitals, cpu_pct: 101 } })).toEqual({ reported_at: 1 });
+        expect(parseBoxStatus({ reported_at: 1, vitals: { ...vitals, ram_pct: "5" } })).toEqual({ reported_at: 1 });
+        expect(parseBoxStatus({ reported_at: 1, vitals: { cpu_pct: 1, ram_pct: 2 } })).toEqual({ reported_at: 1 });
+    });
+
     it("ignores unknown fields at every level without throwing", () => {
         const parsed = parseBoxStatus({
             reported_at: 1,

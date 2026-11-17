@@ -55,6 +55,7 @@ import {
 import { displayTitle } from "./SessionTag";
 import { useShowTheWork } from "./show-the-work";
 import { getSnapshot, setTheme, subscribe, type ThemePref } from "./theme";
+import { plainToolCards, setPlainToolCards, subscribePlainToolCards } from "./step-phrases";
 import type { BoxDefaults, BoxDefaultsState, DefaultsState, Session, UserDefaultKey } from "./types";
 import { AUTO_ARCHIVE_CHOICES, autoArchiveLabel } from "./server-archive";
 
@@ -357,6 +358,11 @@ function CoordinatorSettings({
     const state = useSyncExternalStore(client.subscribe, () => client.getSnapshot().coordinatorConsent);
     const convoId = useSyncExternalStore(client.subscribe, () => client.getSnapshot().coordinatorConvoId);
     const conversations = useSyncExternalStore(client.subscribe, () => client.getSnapshot().conversations);
+    const autoSpawns = useSyncExternalStore(
+        client.subscribe,
+        () => client.getSnapshot().userSettings,
+    )?.auto_approve_coordinator_spawns;
+    const autoSpawnsError = useSyncExternalStore(client.subscribe, () => client.getSnapshot().spawnApprovalError);
     const [saveError, setSaveError] = useState<string>();
 
     useEffect(() => void client.loadCoordinatorConsent(), [client]);
@@ -442,6 +448,23 @@ function CoordinatorSettings({
                         />
                     </div>
                 )}
+                {enabled !== undefined && autoSpawns !== undefined && (
+                    <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                        <span id="mj-settings-auto-spawns">Auto-approve spawns I ask for</span>
+                        <button
+                            type="button"
+                            role="switch"
+                            className="mj_SettingsSheet_switch"
+                            data-setting="auto_approve_coordinator_spawns"
+                            disabled={!enabled}
+                            aria-checked={autoSpawns}
+                            aria-labelledby="mj-settings-auto-spawns"
+                            onClick={() =>
+                                void client.patchUserSettings({ auto_approve_coordinator_spawns: !autoSpawns })
+                            }
+                        />
+                    </div>
+                )}
                 {onOpenRoutines && (
                     <div className="mj_SettingsSheet_row">
                         <span>Routines</span>
@@ -459,6 +482,11 @@ function CoordinatorSettings({
             {state?.error ? (
                 <p className="mj_SettingsSheet_error" role="alert">
                     Couldn't save: {state.error}
+                </p>
+            ) : null}
+            {autoSpawnsError ? (
+                <p className="mj_SettingsSheet_error" role="alert">
+                    Couldn't save: {autoSpawnsError}
                 </p>
             ) : null}
             {saveError ? (
@@ -696,8 +724,6 @@ export function SettingsSheet({
     connection,
     notices,
     noticesError,
-    autoApproveCoordinatorSpawns,
-    onAutoApproveCoordinatorSpawnsChange,
     autoArchiveDays,
     autoArchiveError,
     onAutoArchiveChange,
@@ -713,9 +739,6 @@ export function SettingsSheet({
     connection: string;
     /** The notices setting; undefined hides the switch (not known yet, or an older journal). */
     notices?: boolean;
-    /** Undefined hides the switch on an older journal. */
-    autoApproveCoordinatorSpawns?: boolean;
-    onAutoApproveCoordinatorSpawnsChange?: (enabled: boolean) => void;
     /** The last failed save of the setting. */
     noticesError?: string;
     /** Days before an idle chat is archived (0 = off); undefined hides the row (an older journal). */
@@ -735,6 +758,7 @@ export function SettingsSheet({
 }): React.ReactElement {
     const preference = useSyncExternalStore(subscribe, getSnapshot);
     const [developerView, setDeveloperView] = useShowTheWork();
+    const plainTools = useSyncExternalStore(subscribePlainToolCards, plainToolCards);
     const sheetRef = useRef<HTMLDivElement>(null);
     // The latest onClose without re-running the focus effect when a caller passes a new function.
     const onCloseRef = useRef(onClose);
@@ -855,6 +879,24 @@ export function SettingsSheet({
                             </button>
                         ))}
                     </div>
+                    <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
+                        <span className="mj_SettingsSheet_switchText">
+                            <span id="mj-settings-plain-tool-cards">Plain tool cards</span>
+                            <span id="mj-settings-plain-tool-cards-help" className="mj_SettingsSheet_help">
+                                Describe simple commands in words, like “Ran the tests”. Anything else shows as typed.
+                            </span>
+                        </span>
+                        <button
+                            type="button"
+                            role="switch"
+                            className="mj_SettingsSheet_switch"
+                            data-setting="plain-tool-cards"
+                            aria-checked={plainTools}
+                            aria-labelledby="mj-settings-plain-tool-cards"
+                            aria-describedby="mj-settings-plain-tool-cards-help"
+                            onClick={() => setPlainToolCards(!plainTools)}
+                        />
+                    </div>
                 </section>
                 <SecuritySettings client={client} onPasswordChanged={() => setDevicesRevision((n) => n + 1)} />
                 <DevicesSettings client={client} session={session} revision={devicesRevision} />
@@ -916,41 +958,6 @@ export function SettingsSheet({
                                     aria-labelledby="mj-settings-notices"
                                     aria-describedby="mj-settings-notices-help"
                                     onClick={() => onNoticesChange(!notices)}
-                                />
-                            </div>
-                        </div>
-                        {noticesError ? (
-                            <p className="mj_SettingsSheet_error" role="alert">
-                                Couldn't save: {noticesError}
-                            </p>
-                        ) : null}
-                    </section>
-                ) : null}
-                {autoApproveCoordinatorSpawns !== undefined && onAutoApproveCoordinatorSpawnsChange ? (
-                    <section className="mj_SettingsSheet_group" aria-labelledby="mj-settings-spawns">
-                        <h3 id="mj-settings-spawns" className="mj_SettingsSheet_groupTitle">
-                            Sessions
-                        </h3>
-                        <div className="mj_SettingsSheet_rows">
-                            <div className="mj_SettingsSheet_row mj_SettingsSheet_switchRow">
-                                <span className="mj_SettingsSheet_switchText">
-                                    <span id="mj-settings-auto-approve-spawns">
-                                        Auto-approve spawns the Coordinator requests
-                                    </span>
-                                    <span id="mj-settings-auto-approve-spawns-help" className="mj_SettingsSheet_help">
-                                        When on, a session the Coordinator starts on one of your own online boxes starts
-                                        at once, without a consent card. Other requests still ask you.
-                                    </span>
-                                </span>
-                                <button
-                                    type="button"
-                                    role="switch"
-                                    className="mj_SettingsSheet_switch"
-                                    data-setting="auto_approve_coordinator_spawns"
-                                    aria-checked={autoApproveCoordinatorSpawns}
-                                    aria-labelledby="mj-settings-auto-approve-spawns"
-                                    aria-describedby="mj-settings-auto-approve-spawns-help"
-                                    onClick={() => onAutoApproveCoordinatorSpawnsChange(!autoApproveCoordinatorSpawns)}
                                 />
                             </div>
                         </div>

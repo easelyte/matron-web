@@ -119,7 +119,9 @@ export default (_environment, arguments_) => {
             minimizer: [
                 new MinimizerPlugin({
                     exclude: /pdf\.worker\.min\..*\.mjs$/,
-                    terserOptions: { compress: { passes: 2 } },
+                    // The output is an ES module bundle for modern browsers (see browserslist), so
+                    // Terser may use ES2020 syntax and module scope when it shortens code.
+                    terserOptions: { ecma: 2020, module: true, compress: { passes: 2 } },
                 }),
                 // Webpack minifies only JS by default. Without this the stylesheet ships with its
                 // comments and indentation, nearly doubling its compressed size.
