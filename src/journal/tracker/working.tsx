@@ -9,12 +9,17 @@ Please see LICENSE files in the repository root for full details.
  * The working indicator at the foot of an item's thread: the same three dots a chat shows while
  * its agent is busy, driven by the item's own `working` block (the journal derives it from the
  * conversation that owns the item). "Working" while that session is mid-turn; "Starting" from the
- * moment the user writes on the item until the agent's turn begins.
+ * moment the user writes on the item until the agent's turn begins; and, when the session is
+ * mid-turn on something that started before the user wrote (`behind_turn`), a line that says so,
+ * so the item never reads as the agent working on a reply it has not seen.
  */
 
 import React, { useEffect, useState } from "react";
 
 import type { TrackerWorking } from "../types";
+
+/** The label while the user's reply waits behind a turn already running. */
+export const BUSY_ELSEWHERE = "Busy with something else. Yours is next";
 
 /** The indicator's label at `now`, or null when there is nothing to show. A queued state lapses at
  *  its `until`; a state this build does not know is not guessed at. */
@@ -22,7 +27,7 @@ export function workingLabel(working: TrackerWorking | null | undefined, now: nu
     if (!working) return null;
     if (working.until != null && now >= working.until) return null;
     if (working.state === "running") return "Working";
-    if (working.state === "queued") return "Starting";
+    if (working.state === "queued") return working.behind_turn ? BUSY_ELSEWHERE : "Starting";
     return null;
 }
 

@@ -1162,6 +1162,9 @@ export interface TrackerWorking {
     state: "running" | "queued";
     since: number | null;
     until: number | null;
+    /** `queued` only: the session is mid-turn on something that started before the user wrote, so
+     *  the reply waits for that turn to end. Absent from older journals. */
+    behind_turn?: boolean;
 }
 
 /** A pending offer to move an item to another conversation. The owner changes only on acceptance. */
