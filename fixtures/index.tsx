@@ -1764,15 +1764,18 @@ if (trackerMode === "inbox" || trackerMode === "item") {
     tracker.trackerView =
         trackerMode === "item" ? { open: true, view: "inbox", selectedItemId: 1755 } : { open: true, view: "inbox" };
     if (trackerMode === "item") {
-        // ?working=running|queued: the indicator at the foot of the thread while the owning
-        // session is mid-turn, or between the user's tap and the turn starting.
+        // ?working=running|queued|behind: the indicator at the foot of the thread while the owning
+        // session is mid-turn, between the user's tap and the turn starting, or while the tap
+        // waits behind a turn that started before it.
         const workingParam = fixtureParams.get("working");
         const working =
             workingParam === "running"
                 ? { state: "running", since: now - 20_000, until: null }
                 : workingParam === "queued"
                   ? { state: "queued", since: now - 2_000, until: now + 10 * 60_000 }
-                  : null;
+                  : workingParam === "behind"
+                    ? { state: "queued", since: now - 2_000, until: null, behind_turn: true }
+                    : null;
         // ?actions=offered|chosen: the item's own one-tap answers under its body, untapped or with
         // the user's choice marked (the item then waits on the agent).
         const actionsParam = fixtureParams.get("actions");

@@ -73,6 +73,13 @@ describe("workingLabel", () => {
     it("names a running session and a queued one, and nothing else", () => {
         expect(workingLabel({ state: "running", since: NOW, until: null }, NOW)).toBe("Working");
         expect(workingLabel({ state: "queued", since: NOW, until: NOW + 1000 }, NOW)).toBe("Starting");
+        expect(workingLabel({ state: "queued", since: NOW, until: null, behind_turn: true }, NOW)).toBe(
+            "Busy with something else. Yours is next",
+        );
+        // A long turn: the reply still waits, with nothing to lapse.
+        expect(workingLabel({ state: "queued", since: NOW, until: null, behind_turn: true }, NOW + 3_600_000)).toBe(
+            "Busy with something else. Yours is next",
+        );
         expect(workingLabel(null, NOW)).toBeNull();
         expect(workingLabel(undefined, NOW)).toBeNull();
         // A state a newer journal might send is not guessed at.
