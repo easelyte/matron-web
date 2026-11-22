@@ -7,6 +7,7 @@ Please see LICENSE files in the repository root for full details.
 
 import {
     availableResolutions,
+    chosenLabels,
     isFromViewedConvo,
     itemOriginTitle,
     itemStatusText,
@@ -59,6 +60,26 @@ describe("offeredItemActions", () => {
     });
     it("still offers Seen on an open notice from a journal that predates item actions", () => {
         expect(offeredItemActions({ kind: "notice", state: "open" })).toEqual(["Seen"]);
+    });
+});
+
+describe("chosenLabels", () => {
+    const offered = ["Docs", "Billing", "Search"];
+    it("lists the latest answer's labels in the order they are offered", () => {
+        expect(chosenLabels({ chosen_actions: ["Search", "Docs"], chosen_action: "Search" }, offered)).toEqual([
+            "Docs",
+            "Search",
+        ]);
+    });
+    it("is empty before an answer", () => {
+        expect(chosenLabels({ chosen_actions: [], chosen_action: null }, offered)).toEqual([]);
+        expect(chosenLabels({}, offered)).toEqual([]);
+    });
+    it("reads a journal that predates multi-select from chosen_action alone", () => {
+        expect(chosenLabels({ chosen_action: "Billing" }, offered)).toEqual(["Billing"]);
+    });
+    it("drops labels that are no longer offered", () => {
+        expect(chosenLabels({ chosen_actions: ["Docs", "Withdrawn"] }, offered)).toEqual(["Docs"]);
     });
 });
 

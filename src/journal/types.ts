@@ -1212,6 +1212,13 @@ export interface TrackerItem {
     actions?: string[];
     /** The action the user last tapped on the item itself ("Seen" on a notice they have read). */
     chosen_action?: string | null;
+    /** The item's `actions` are ticked together and sent as one answer (a list of checkboxes and a
+     *  Send button) instead of being one-tap buttons. Absent on a one-tap item and on a journal
+     *  that predates multi-select. */
+    multi_select?: boolean;
+    /** Every label of the user's latest answer on the item itself (a one-tap answer reads as one
+     *  label); `[]` before one. Absent on a journal that predates multi-select. */
+    chosen_actions?: string[];
     /** Null when the owning session is idle; absent on a journal that predates the field and on
      *  another person's item. */
     working?: TrackerWorking | null;
@@ -1236,10 +1243,16 @@ export interface TrackerComment {
     actions?: string[];
     /** The label of the user's latest tap on this comment's `actions`, null until one. */
     chosen_action?: string | null;
+    /** This comment's `actions` are ticked together and sent as one answer, as on an item. */
+    multi_select?: boolean;
+    /** Every label of the user's latest answer to this comment's `actions`; `[]` before one. */
+    chosen_actions?: string[];
     /** Set on the user's tap comment: the tapped label, and the id of the comment it answers
      *  (null when it answered the item's own buttons). */
     action?: string | null;
     reply_to?: string | null;
+    /** Set on the user's multi-select answer: every label ticked (`action` is the first). */
+    selected?: string[];
     /** Who wrote an agent's comment: the box's name, and the conversation its session writes from
      *  when the bridge named one. Absent on a journal that predates the fields; null on the user's
      *  own comments and wherever the journal cannot say. */
@@ -1257,11 +1270,14 @@ export interface TrackerComment {
     replaces?: string;
 }
 
-/** `POST /items/:id/comments` body. `action` + `reply_to` is a tap on a comment's button. */
+/** `POST /items/:id/comments` body. `action` + `reply_to` is a tap on a comment's button;
+ *  `selected` (never with `action`) is a multi-select answer, with `reply_to` when it answers a
+ *  comment's question. */
 export interface TrackerCommentWrite {
     body?: string;
     attachments?: TrackerAttachment[];
     action?: string;
+    selected?: string[];
     reply_to?: string;
 }
 

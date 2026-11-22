@@ -1862,3 +1862,239 @@ describe("ItemDetail spawn consent", () => {
         expect(container.querySelector(".mj_TrackerConsent")).toBeNull();
     });
 });
+
+describe("ItemDetail multi-select questions", () => {
+    beforeAll(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    const labels = ["Docs", "Billing", "Search"];
+    const question = (over: Partial<TrackerItem> = {}): TrackerItem =>
+        trackerItem({
+            id: "it_12",
+            num: 12,
+            kind: "question",
+            state: "open",
+            awaiting: "user",
+            body: "Which areas should the next release cover?",
+            actions: labels,
+            multi_select: true,
+            chosen_action: null,
+            chosen_actions: [],
+            ...over,
+        });
+    const followUp = (over: Partial<TrackerComment> = {}): TrackerComment =>
+        trackerComment({
+            id: "ic_q",
+            author: "agent",
+            body: "Which checks should run?",
+            actions: ["Unit", "Lint", "Visual"],
+            multi_select: true,
+            chosen_action: null,
+            chosen_actions: [],
+            ...over,
+        });
+    const detail = (client: FakeClient, item: TrackerItem, comments: TrackerComment[] = []): React.ReactElement => (
+        <ItemDetail
+            item={item}
+            comments={comments}
+            client={client as unknown as MatronJournalClient}
+            onBack={jest.fn()}
+        />
+    );
+    const boxes = (scope: Element): HTMLInputElement[] =>
+        Array.from(scope.querySelectorAll<HTMLInputElement>(".mj_TrackerCheck_box"));
+    const send = (scope: Element): HTMLButtonElement =>
+        scope.querySelector<HTMLButtonElement>(".mj_TrackerChecklist_send")!;
+    const itemList = (container: HTMLElement): Element => container.querySelector(".mj_TrackerItemActions")!;
+    const tick = async (box: HTMLInputElement): Promise<void> => {
+        await act(async () => {
+            box.click();
+        });
+    };
+
+    it("draws the item's labels as tick rows with a Send, not as one-tap buttons", async () => {
+        const client = fakeClient();
+        const { container } = await mount(detail(client, question()));
+
+        const list = itemList(container);
+        expect(list.classList.contains("mj_TrackerChecklist")).toBe(true);
+        expect(Array.from(list.querySelectorAll(".mj_TrackerCheck_label")).map((n) => n.textContent)).toEqual(labels);
+        expect(boxes(list).every((box) => !box.checked && !box.disabled)).toBe(true);
+        expect(container.querySelector(".mj_TrackerAction")).toBeNull();
+        expect(send(list).disabled).toBe(true);
+    });
+
+    it("enables Send once one is ticked and posts every ticked label in offered order", async () => {
+        const client = fakeClient();
+        const { container } = await mount(detail(client, question()));
+        const list = itemList(container);
+
+        await tick(boxes(list)[2]);
+        expect(send(list).disabled).toBe(false);
+        await tick(boxes(list)[0]);
+        await act(async () => {
+            send(list).click();
+        });
+
+        expect(client.commentItem).toHaveBeenCalledTimes(1);
+        const [num, body, key] = client.commentItem.mock.calls[0];
+        expect(num).toBe(12);
+        expect(body).toEqual({ selected: ["Docs", "Search"] });
+        expect(typeof key).toBe("string");
+    });
+
+    it("disables Send again when every tick is taken off", async () => {
+        const client = fakeClient();
+        const { container } = await mount(detail(client, question()));
+        const list = itemList(container);
+        await tick(boxes(list)[1]);
+        await tick(boxes(list)[1]);
+        expect(send(list).disabled).toBe(true);
+    });
+
+    it("shows the latest answer ticked and chosen, and sends only a changed selection", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            detail(client, question({ awaiting: "agent", chosen_action: "Docs", chosen_actions: ["Docs", "Billing"] })),
+        );
+        const list = itemList(container);
+
+        expect(boxes(list).map((box) => box.checked)).toEqual([true, true, false]);
+        expect(Array.from(list.querySelectorAll(".mj_TrackerCheck_chosen")).map((n) => n.textContent)).toEqual([
+            "Docs",
+            "Billing",
+        ]);
+        expect(send(list).disabled).toBe(true);
+
+        await tick(boxes(list)[1]);
+        await tick(boxes(list)[2]);
+        await act(async () => {
+            send(list).click();
+        });
+        expect(client.commentItem.mock.calls[0][1]).toEqual({ selected: ["Docs", "Search"] });
+    });
+
+    it("resets the ticks to the answer the journal hands back", async () => {
+        const client = fakeClient();
+        const { container, root } = await mount(detail(client, question()));
+        await tick(boxes(itemList(container))[0]);
+        await act(async () =>
+            root.render(detail(client, question({ chosen_action: "Billing", chosen_actions: ["Billing"] }))),
+        );
+        expect(boxes(itemList(container)).map((box) => box.checked)).toEqual([false, true, false]);
+    });
+
+    it("disables the rows and Send while the answer is on its way", async () => {
+        const client = fakeClient();
+        let settle!: (ok: boolean) => void;
+        client.commentItem.mockReturnValueOnce(new Promise<boolean>((resolve) => (settle = resolve)));
+        const { container } = await mount(detail(client, question()));
+        const list = itemList(container);
+        await tick(boxes(list)[0]);
+        await act(async () => {
+            send(list).click();
+        });
+        expect(boxes(list).every((box) => box.disabled)).toBe(true);
+        expect(send(list).disabled).toBe(true);
+        await act(async () => settle(true));
+        expect(boxes(list).every((box) => !box.disabled)).toBe(true);
+    });
+
+    it("a failed send reuses its key for the same ticks; another selection gets a new one", async () => {
+        const client = fakeClient();
+        client.commentItem.mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+        const { container } = await mount(detail(client, question()));
+        const list = itemList(container);
+
+        await tick(boxes(list)[0]);
+        await act(async () => send(list).click());
+        await act(async () => send(list).click());
+        await tick(boxes(list)[1]);
+        await act(async () => send(list).click());
+
+        const keys = client.commentItem.mock.calls.map((call) => call[2]);
+        expect(client.commentItem.mock.calls.map((call) => call[1].selected)).toEqual([
+            ["Docs"],
+            ["Docs"],
+            ["Docs", "Billing"],
+        ]);
+        expect(keys[1]).toBe(keys[0]);
+        expect(keys[2]).not.toBe(keys[1]);
+    });
+
+    it("hides the item's list once the item is closed", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            detail(
+                client,
+                question({ state: "closed", resolution: "answered", awaiting: null, chosen_actions: ["Docs"] }),
+            ),
+        );
+        expect(container.querySelector(".mj_TrackerChecklist")).toBeNull();
+    });
+
+    it("leaves a one-tap item's buttons as they are", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            detail(client, question({ multi_select: undefined, chosen_actions: undefined, chosen_action: "Billing" })),
+        );
+        expect(container.querySelector(".mj_TrackerChecklist")).toBeNull();
+        const buttons = Array.from(
+            container.querySelectorAll<HTMLButtonElement>(".mj_TrackerItemActions .mj_TrackerAction"),
+        );
+        expect(buttons.map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([
+            ["Docs", "false"],
+            ["Billing", "true"],
+            ["Search", "false"],
+        ]);
+    });
+
+    it("answers a follow-up comment's multi-select question with reply_to", async () => {
+        const client = fakeClient();
+        const { container } = await mount(detail(client, question({ actions: [] }), [followUp()]));
+        const card = container.querySelector(".mj_TrackerComment")!;
+
+        await tick(boxes(card)[0]);
+        await tick(boxes(card)[2]);
+        await act(async () => {
+            send(card).click();
+        });
+        expect(client.commentItem.mock.calls[0][1]).toEqual({ selected: ["Unit", "Visual"], reply_to: "ic_q" });
+    });
+
+    it("shows the sent answer, not unsent ticks, once the item closes", async () => {
+        const client = fakeClient();
+        const answered = followUp({ chosen_action: "Unit", chosen_actions: ["Unit"] });
+        const { container, root } = await mount(detail(client, question({ actions: [] }), [answered]));
+        await tick(boxes(container.querySelector(".mj_TrackerComment")!)[1]);
+        await act(async () =>
+            root.render(
+                detail(client, question({ actions: [], state: "closed", resolution: "answered", awaiting: null }), [
+                    answered,
+                ]),
+            ),
+        );
+        expect(boxes(container.querySelector(".mj_TrackerComment")!).map((box) => box.checked)).toEqual([
+            true,
+            false,
+            false,
+        ]);
+    });
+
+    it("keeps a follow-up's ticks as a record on a closed item, with no Send", async () => {
+        const client = fakeClient();
+        const { container } = await mount(
+            detail(client, question({ actions: [], state: "closed", resolution: "answered", awaiting: null }), [
+                followUp({ chosen_action: "Unit", chosen_actions: ["Unit", "Lint"] }),
+            ]),
+        );
+        const card = container.querySelector(".mj_TrackerComment")!;
+        expect(boxes(card).map((box) => [box.checked, box.disabled])).toEqual([
+            [true, true],
+            [true, true],
+            [false, true],
+        ]);
+        expect(send(card)).toBeNull();
+    });
+});
