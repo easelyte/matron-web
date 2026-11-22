@@ -1901,6 +1901,82 @@ if (trackerMode === "inbox" || trackerMode === "item") {
                     : []),
             ],
         };
+        // ?multiselect=open|answered: a multi-select question, its labels as tick rows with a Send,
+        // unanswered or with the user's latest answer ticked and their answer in the thread. A
+        // follow-up comment asks a second multi-select question of its own.
+        const multiParam = fixtureParams.get("multiselect");
+        if (multiParam === "open" || multiParam === "answered") {
+            const answered = multiParam === "answered";
+            const areas = ["Docs", "Billing", "Search", "Onboarding emails"];
+            const checks = ["Unit tests", "Lint", "Visual diff"];
+            tracker.trackerItem = {
+                item: {
+                    ...items[0],
+                    id: "it_1755",
+                    title: "Which areas should the next release cover?",
+                    body: "Tick every area you want in this release; the rest move to the next one.",
+                    actions: areas,
+                    multi_select: true,
+                    chosen_action: answered ? "Docs" : null,
+                    chosen_actions: answered ? ["Docs", "Search"] : [],
+                    awaiting: answered ? "agent" : "user",
+                    has_image: false,
+                    working: null,
+                },
+                comments: [
+                    {
+                        id: "cm_m1",
+                        item_id: "it_1755",
+                        author: "agent",
+                        device_id: 2,
+                        kind: "comment",
+                        body: "And which checks should gate the release build?",
+                        attachments: [],
+                        meta: null,
+                        created_at: now - 30 * 60_000,
+                        device_name: "box-a",
+                        convo_id: "c1",
+                        convo_title: "Release planning",
+                        actions: checks,
+                        multi_select: true,
+                        chosen_action: answered ? "Unit tests" : null,
+                        chosen_actions: answered ? ["Unit tests", "Visual diff"] : [],
+                    },
+                    ...(answered
+                        ? [
+                              {
+                                  id: "cm_m2",
+                                  item_id: "it_1755",
+                                  author: "user",
+                                  device_id: 1,
+                                  kind: "comment",
+                                  body: "Docs, Search",
+                                  attachments: [],
+                                  meta: null,
+                                  created_at: now - 12 * 60_000,
+                                  action: "Docs",
+                                  selected: ["Docs", "Search"],
+                                  reply_to: null,
+                              },
+                              {
+                                  id: "cm_m3",
+                                  item_id: "it_1755",
+                                  author: "user",
+                                  device_id: 1,
+                                  kind: "comment",
+                                  body: "Unit tests, Visual diff",
+                                  attachments: [],
+                                  meta: null,
+                                  created_at: now - 11 * 60_000,
+                                  action: "Unit tests",
+                                  selected: ["Unit tests", "Visual diff"],
+                                  reply_to: "cm_m1",
+                              },
+                          ]
+                        : []),
+                ],
+            };
+        }
         // ?consent=waiting|missing|started|elsewhere: a spawn consent item with the ask's card
         // answerable inside it, its card not synced yet, started (closed, with the outcome), or
         // closed with no outcome here (answered on another device). Approve never settles, so a

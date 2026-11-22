@@ -86,9 +86,10 @@ const AFFIRMATIVE_ANSWERS: ReadonlySet<string> = new Set(["Approve", "Accept"]);
  * The journal answers the tap exactly as the card. Empty for anything else.
  */
 export function rowConsentAnswers(
-    item: Pick<TrackerItem, "kind" | "state" | "awaiting" | "labels" | "actions">,
+    item: Pick<TrackerItem, "kind" | "state" | "awaiting" | "labels" | "actions" | "multi_select">,
 ): string[] {
     if (item.kind !== "question" || !needsUser(item) || !item.labels.includes(CONSENT_LABEL)) return [];
+    if (item.multi_select) return [];
     const actions = item.actions ?? [];
     return actions.length > 0 && actions.every((label) => ROW_ANSWERS.has(label)) ? actions : [];
 }
@@ -96,6 +97,23 @@ export function rowConsentAnswers(
 /** Whether a consent answer says yes, for the filled button. */
 export function isAffirmativeAnswer(label: string): boolean {
     return AFFIRMATIVE_ANSWERS.has(label);
+}
+
+/**
+ * Every label of the user's latest answer to an item's or a comment's `actions`, in the order they
+ * are offered. A journal that predates multi-select sends only `chosen_action`, which reads as a
+ * one-label answer. Labels no longer offered are dropped, so nothing withdrawn is shown as chosen.
+ */
+export function chosenLabels(
+    answered: { chosen_actions?: string[]; chosen_action?: string | null },
+    offered: string[],
+): string[] {
+    const chosen = Array.isArray(answered.chosen_actions)
+        ? answered.chosen_actions
+        : answered.chosen_action
+          ? [answered.chosen_action]
+          : [];
+    return offered.filter((label) => chosen.includes(label));
 }
 
 /**

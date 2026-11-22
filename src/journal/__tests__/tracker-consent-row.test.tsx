@@ -87,6 +87,8 @@ describe("Consent requests answered from their For you row", () => {
         expect(rowConsentAnswers(chatAsk({ actions: ["Accept", "Pick a box", "Decline"] }))).toEqual([]);
         expect(rowConsentAnswers(chatAsk({ actions: [] }))).toEqual([]);
         expect(rowConsentAnswers(chatAsk({ actions: undefined }))).toEqual([]);
+        // Ticked together and sent from the item, never tapped one at a time on the row.
+        expect(rowConsentAnswers(chatAsk({ multi_select: true }))).toEqual([]);
     });
 
     it("draws Approve filled and Decline outlined under the row, outside the row's own button", async () => {
