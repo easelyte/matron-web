@@ -46,6 +46,7 @@ import {
 import { useVoiceRecorder, VoiceErrorBanner, VoiceMicButton, VoiceRecordingBar } from "../voice-recorder";
 import {
     availableResolutions,
+    chosenLabels,
     formatRelativeTime,
     humanizeSize,
     isConsentItem,
@@ -70,6 +71,81 @@ import { useWorkingLabel, WorkingIndicator } from "./working";
 
 /** Answers one of a comment's buttons; resolves once the tap is sent (or has failed). */
 type TapAction = (comment: TrackerComment, label: string) => Promise<void>;
+/** Sends the labels ticked on a comment's multi-select question as one answer. */
+type SendSelection = (comment: TrackerComment, selected: string[]) => Promise<void>;
+
+/**
+ * A multi-select question's answers: one row with a tick box per label and a Send button that
+ * posts every ticked label as one answer. The rows start ticked as the user's latest answer
+ * (`chosen`) left them, and those rows stay marked as chosen; the user can change the ticks and
+ * send again, and the journal keeps the latest answer. Send waits for at least one tick and for a
+ * selection that differs from the latest answer, just as re-tapping a chosen one-tap button does
+ * nothing. `readOnly` keeps the rows as the record of what was offered and chosen (a closed item)
+ * with no Send: they show the latest answer, never ticks the user changed but did not send. The owner remounts it (a `key` on the answer) when the latest answer changes, so a
+ * refetched answer resets the ticks.
+ */
+function MultiSelectActions({
+    actions,
+    chosen,
+    disabled,
+    readOnly = false,
+    className,
+    onSend,
+}: {
+    actions: string[];
+    chosen: string[];
+    disabled: boolean;
+    readOnly?: boolean;
+    className?: string;
+    onSend: (selected: string[]) => void;
+}): React.ReactElement | null {
+    const [ticked, setTicked] = useState<ReadonlySet<string>>(() => new Set(chosen));
+    if (actions.length === 0) return null;
+    const selected = actions.filter((label) => ticked.has(label));
+    const unchanged = selected.length === chosen.length && selected.every((label) => chosen.includes(label));
+    const toggle = (label: string): void =>
+        setTicked((current) => {
+            const next = new Set(current);
+            if (next.has(label)) next.delete(label);
+            else next.add(label);
+            return next;
+        });
+    return (
+        <div
+            className={`mj_TrackerChecklist${className ? ` ${className}` : ""}`}
+            role="group"
+            aria-label="Choose answers"
+        >
+            {actions.map((label) => {
+                const isChosen = chosen.includes(label);
+                return (
+                    <label key={label} className={`mj_TrackerCheck${isChosen ? " mj_TrackerCheck_chosen" : ""}`}>
+                        <input
+                            type="checkbox"
+                            className="mj_TrackerCheck_box"
+                            checked={readOnly ? isChosen : ticked.has(label)}
+                            disabled={disabled || readOnly}
+                            onChange={() => toggle(label)}
+                        />
+                        <span className="mj_TrackerCheck_label">{label}</span>
+                    </label>
+                );
+            })}
+            {readOnly ? null : (
+                <div className="mj_TrackerChecklist_foot">
+                    <button
+                        type="button"
+                        className="mj_TrackerChecklist_send"
+                        disabled={disabled || selected.length === 0 || unchanged}
+                        onClick={() => onSend(selected)}
+                    >
+                        Send
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
 
 /**
  * The one-tap answers an agent offered with a follow-up question, under the comment that asks. The
@@ -81,14 +157,32 @@ type TapAction = (comment: TrackerComment, label: string) => Promise<void>;
 function CommentActions({
     comment,
     disabled,
+    readOnly,
     onTap,
+    onSendSelection,
 }: {
     comment: TrackerComment;
     disabled: boolean;
+    readOnly: boolean;
     onTap: TapAction;
+    onSendSelection: SendSelection;
 }): React.ReactElement | null {
     const actions = comment.actions ?? [];
     if (actions.length === 0) return null;
+    if (comment.multi_select) {
+        const chosen = chosenLabels(comment, actions);
+        return (
+            <MultiSelectActions
+                key={chosen.join("\n")}
+                actions={actions}
+                chosen={chosen}
+                disabled={disabled || readOnly}
+                readOnly={readOnly}
+                onSend={(selected) => void onSendSelection(comment, selected)}
+            />
+        );
+    }
+    const inert = disabled || readOnly;
     return (
         <div className="mj_TrackerActions" role="group" aria-label="Quick replies">
             {actions.map((label) => {
@@ -99,7 +193,7 @@ function CommentActions({
                         type="button"
                         className={`mj_TrackerAction${chosen ? " mj_TrackerAction_chosen" : ""}`}
                         aria-pressed={chosen}
-                        disabled={disabled}
+                        disabled={inert}
                         onClick={() => void onTap(comment, label)}
                     >
                         {label}
@@ -259,7 +353,9 @@ function CommentCard({
     onOpenConvo,
     onTrackerLink,
     actionsDisabled,
+    actionsReadOnly,
     onTap,
+    onSendSelection,
 }: {
     client: MatronJournalClient;
     comment: TrackerComment;
@@ -267,7 +363,9 @@ function CommentCard({
     onOpenConvo: (convoId: string) => void;
     onTrackerLink: TrackerLinkHandler;
     actionsDisabled: boolean;
+    actionsReadOnly: boolean;
     onTap: TapAction;
+    onSendSelection: SendSelection;
 }): React.ReactElement {
     // An agent's comment is headed with the box that wrote it and, when the journal knows it, the
     // conversation (which opens on click); "Agent" only when neither is known.
@@ -344,7 +442,13 @@ function CommentCard({
                 label={`comment-${comment.id}`}
                 onTrackerLink={onTrackerLink}
             />
-            <CommentActions comment={comment} disabled={actionsDisabled} onTap={onTap} />
+            <CommentActions
+                comment={comment}
+                disabled={actionsDisabled}
+                readOnly={actionsReadOnly}
+                onTap={onTap}
+                onSendSelection={onSendSelection}
+            />
         </div>
     );
 }
@@ -361,7 +465,9 @@ function CommentRow({
     onOpenConvo,
     onTrackerLink,
     actionsDisabled,
+    actionsReadOnly,
     onTap,
+    onSendSelection,
 }: {
     client: MatronJournalClient;
     comment: TrackerComment;
@@ -369,7 +475,9 @@ function CommentRow({
     onOpenConvo: (convoId: string) => void;
     onTrackerLink: TrackerLinkHandler;
     actionsDisabled: boolean;
+    actionsReadOnly: boolean;
     onTap: TapAction;
+    onSendSelection: SendSelection;
 }): React.ReactElement {
     const card = (
         <CommentCard
@@ -379,7 +487,9 @@ function CommentRow({
             onOpenConvo={onOpenConvo}
             onTrackerLink={onTrackerLink}
             actionsDisabled={actionsDisabled}
+            actionsReadOnly={actionsReadOnly}
             onTap={onTap}
+            onSendSelection={onSendSelection}
         />
     );
     if (comment.kind === "status") {
@@ -1014,6 +1124,32 @@ export function ItemDetail({
         }
     };
 
+    // A multi-select answer is one comment carrying every ticked label (`selected`, never with
+    // `action`); the journal writes the body ("A, C") itself. It follows the tap's retry rule, with
+    // the whole selection standing for the label: one slot per question (the asking comment's id,
+    // or the item's id for the item's own list), so a failed send retried with the same ticks keeps
+    // its key and any other selection gets a fresh one.
+    const selectionKeysRef = useRef<Map<string, { signature: string; key: string }>>(new Map());
+    const postSelection = async (slotId: string, selected: string[], replyTo?: string): Promise<void> => {
+        if (busy || selected.length === 0) return;
+        const signature = selected.join("\n");
+        let slot = selectionKeysRef.current.get(slotId);
+        if (!slot || slot.signature !== signature) {
+            slot = { signature, key: crypto.randomUUID() };
+            selectionKeysRef.current.set(slotId, slot);
+        }
+        setBusy(true);
+        try {
+            const write: TrackerCommentWrite = replyTo ? { selected, reply_to: replyTo } : { selected };
+            const ok = await client.commentItem(item.num, write, slot.key);
+            if (ok && selectionKeysRef.current.get(slotId) === slot) selectionKeysRef.current.delete(slotId);
+        } finally {
+            setBusy(false);
+        }
+    };
+    const sendSelection = (comment: TrackerComment, selected: string[]): Promise<void> =>
+        postSelection(comment.id, selected, comment.id);
+
     // A tap on one of the item's own buttons: a comment whose body is the label, with no reply_to
     // (the journal records it as the item's `chosen_action`, and closes a notice answered Seen).
     // The tap shows as chosen while it is on its way. Same retry rule as a comment's buttons: one
@@ -1312,12 +1448,23 @@ export function ItemDetail({
                     />
                 )}
 
-                <ItemActions
-                    actions={offeredActions}
-                    chosen={chosenAction}
-                    disabled={busy}
-                    onTap={(label) => void tapItemAction(label)}
-                />
+                {item.multi_select ? (
+                    <MultiSelectActions
+                        key={`${item.id}\n${chosenLabels(item, offeredActions).join("\n")}`}
+                        className="mj_TrackerItemActions"
+                        actions={offeredActions}
+                        chosen={chosenLabels(item, offeredActions)}
+                        disabled={busy}
+                        onSend={(selected) => void postSelection(item.id, selected)}
+                    />
+                ) : (
+                    <ItemActions
+                        actions={offeredActions}
+                        chosen={chosenAction}
+                        disabled={busy}
+                        onTap={(label) => void tapItemAction(label)}
+                    />
+                )}
 
                 {thread.length > 0 ? (
                     <div className="mj_TrackerThread">
@@ -1329,8 +1476,10 @@ export function ItemDetail({
                                 author={commentAuthor(comment, conversations, agents)}
                                 onOpenConvo={openConvo}
                                 onTrackerLink={onTrackerLink}
-                                actionsDisabled={busy || item.state === "closed"}
+                                actionsDisabled={busy}
+                                actionsReadOnly={item.state === "closed"}
                                 onTap={tap}
+                                onSendSelection={sendSelection}
                             />
                         ))}
                     </div>

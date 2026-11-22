@@ -1345,6 +1345,72 @@ button.mj_TrackerCrumb:hover {
     opacity: 1;
 }
 
+/* A multi-select question: one row per answer with a tick box, and a Send for the ticked ones. */
+.mj_TrackerChecklist {
+    display: flex;
+    flex-direction: column;
+    gap: var(--mj-space-1x);
+    margin-top: var(--mj-space-1x);
+    max-width: 480px;
+}
+.mj_TrackerCheck {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--mj-space-2x);
+    padding: var(--mj-space-2x) var(--mj-space-3x);
+    border: 1px solid var(--mj-color-border-subtle);
+    border-radius: var(--mj-radius-md);
+    background: var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-primary);
+    font: var(--mj-font-label);
+    cursor: pointer;
+}
+.mj_TrackerCheck:hover:has(.mj_TrackerCheck_box:not(:disabled)) {
+    background: var(--mj-state-hover);
+}
+.mj_TrackerCheck:has(.mj_TrackerCheck_box:disabled) {
+    cursor: default;
+}
+.mj_TrackerCheck:has(.mj_TrackerCheck_box:focus-visible) {
+    outline: 2px solid var(--mj-color-border-accent);
+    outline-offset: 1px;
+}
+/* The rows in the user's latest answer, as a one-tap answer's chosen button is marked. */
+.mj_TrackerCheck_chosen {
+    border-color: var(--mj-color-border-accent);
+    background: var(--mj-color-bg-accent-tint);
+}
+.mj_TrackerCheck_box {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin: 2px 0 0;
+    accent-color: var(--mj-color-bg-accent);
+    cursor: inherit;
+}
+.mj_TrackerCheck_label {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.mj_TrackerChecklist_foot {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--mj-space-1x);
+}
+.mj_TrackerChecklist_send {
+    padding: var(--mj-space-1x) var(--mj-space-4x);
+    border-radius: var(--mj-radius-pill);
+    border: 1px solid var(--mj-color-bg-accent);
+    background: var(--mj-color-bg-accent);
+    color: var(--mj-color-text-on-accent);
+    font: var(--mj-font-label);
+    cursor: pointer;
+}
+.mj_TrackerChecklist_send:disabled {
+    cursor: default;
+    opacity: 0.45;
+}
+
 .mj_TrackerAttachments {
     display: flex;
     flex-wrap: wrap;
