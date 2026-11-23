@@ -7049,6 +7049,8 @@ export function commentFailureMessage(error: unknown): string {
     ) {
         return errorMessage(error);
     }
+    // A refused signature says what to do about it rather than the verifier's reason.
+    if (error.code === "approval_invalid") return errorMessage(error);
     const body = error.body ?? {};
     if (typeof body.message === "string" && body.message.trim()) return body.message.trim();
     if (error.code === "too_many_attachments") {

@@ -1704,9 +1704,15 @@ if (trackerMode === "inbox" || trackerMode === "item") {
         } as (typeof items)[number],
     );
     // ?consentrows=1: consent requests waiting on the user, each answered from its own row.
+    // With ?stepup=1 the chat and spawn asks are aimed at a protected box: their Approve needs the
+    // approval key, which only the iPhone and Mac apps hold.
     if (fixtureParams.has("consentrows")) {
+        const stepUp = fixtureParams.has("stepup");
+        const consentOf: Record<number, string> = { 1901: "chat", 1902: "spawn", 1903: "transfer" };
         const ask = (num: number, title: string, body: string, origin: string): (typeof items)[number] =>
             ({
+                consent: consentOf[num],
+                ...(stepUp && num !== 1903 ? { step_up: true, subject: { op: consentOf[num], box: "box-a" } } : {}),
                 ...baseItem,
                 id: `it_${num}`,
                 num,
@@ -1779,8 +1785,12 @@ if (trackerMode === "inbox" || trackerMode === "item") {
         // ?actions=offered|chosen: the item's own one-tap answers under its body, untapped or with
         // the user's choice marked (the item then waits on the agent).
         const actionsParam = fixtureParams.get("actions");
+        // ?actions=stepup: the item's answers need the approval key, so they are shown but not
+        // tappable here.
         const itemActions =
-            actionsParam === "offered" || actionsParam === "chosen"
+            actionsParam === "stepup"
+                ? { actions: ["Merge", "Hold"], chosen_action: null, awaiting: "user", step_up: true, subject: { op: "merge" } }
+                : actionsParam === "offered" || actionsParam === "chosen"
                 ? {
                       actions: ["Confirm the order", "Discuss first"],
                       chosen_action: actionsParam === "chosen" ? "Confirm the order" : null,

@@ -464,6 +464,10 @@ export function knownErrorMessage(code: string | undefined): string | undefined 
             return "This device session is no longer valid.";
         case "forbidden":
             return "This device is not allowed to perform that action.";
+        case "approval_required":
+            return "This needs your approval key. Approve it on your iPhone or Mac.";
+        case "approval_invalid":
+            return "Your approval didn't check out. Approve it again on your iPhone or Mac.";
         case "not_found":
             return "The requested item was not found.";
         case "too_large":

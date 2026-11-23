@@ -100,6 +100,42 @@ export function isAffirmativeAnswer(label: string): boolean {
 }
 
 /**
+ * What a button that needs the user's approval key says in this app. Only the iPhone and Mac apps
+ * hold a key, so such a tap is made there.
+ */
+export const APPROVE_ON_DEVICE = "Approve on your iPhone or Mac";
+
+/**
+ * The line under a row of buttons some of which need the approval key: every one of them (a
+ * step-up question), or only the yes of a consent request, whose decline still works here.
+ */
+export function approvalKeyNote(everyButton: boolean): string {
+    return everyButton
+        ? "This needs your approval key. Answer it on your iPhone or Mac."
+        : "Approving needs your approval key. Approve on your iPhone or Mac, or decline here.";
+}
+
+// The consent requests whose approval the journal can ask to be signed: an agent's session start,
+// chat invite or file transfer aimed at a protected box.
+const SIGNED_CONSENT: ReadonlySet<string> = new Set(["spawn", "chat", "transfer"]);
+
+/**
+ * Whether tapping `label` needs a signature from one of the account's approval keys, which this app
+ * cannot make. A step-up item covers every button in its thread (its own, and every follow-up
+ * question's); a step-up comment covers its own buttons. On a consent request only the yes needs a
+ * signature: a decline never does.
+ */
+export function needsApprovalKey(
+    item: Pick<TrackerItem, "step_up" | "consent">,
+    label: string,
+    comment?: Pick<TrackerComment, "step_up"> | null,
+): boolean {
+    if (item.step_up !== true && comment?.step_up !== true) return false;
+    if (!comment && item.consent && SIGNED_CONSENT.has(item.consent)) return isAffirmativeAnswer(label);
+    return true;
+}
+
+/**
  * Every label of the user's latest answer to an item's or a comment's `actions`, in the order they
  * are offered. A journal that predates multi-select sends only `chosen_action`, which reads as a
  * one-label answer. Labels no longer offered are dropped, so nothing withdrawn is shown as chosen.

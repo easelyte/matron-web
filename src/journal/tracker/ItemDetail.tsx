@@ -49,9 +49,12 @@ import {
     chosenLabels,
     formatRelativeTime,
     humanizeSize,
+    approvalKeyNote,
+    APPROVE_ON_DEVICE,
     isConsentItem,
     isRouteElsewhere,
     itemStatusText,
+    needsApprovalKey,
     kindLabel,
     needsUser,
     offeredItemActions,
@@ -155,12 +158,14 @@ function MultiSelectActions({
  * `actions` and nothing is drawn.
  */
 function CommentActions({
+    item,
     comment,
     disabled,
     readOnly,
     onTap,
     onSendSelection,
 }: {
+    item: Pick<TrackerItem, "step_up" | "consent">;
     comment: TrackerComment;
     disabled: boolean;
     readOnly: boolean;
@@ -183,24 +188,32 @@ function CommentActions({
         );
     }
     const inert = disabled || readOnly;
+    const gated = actions.filter((label) => needsApprovalKey(item, label, comment));
     return (
-        <div className="mj_TrackerActions" role="group" aria-label="Quick replies">
-            {actions.map((label) => {
-                const chosen = comment.chosen_action === label;
-                return (
-                    <button
-                        key={label}
-                        type="button"
-                        className={`mj_TrackerAction${chosen ? " mj_TrackerAction_chosen" : ""}`}
-                        aria-pressed={chosen}
-                        disabled={inert}
-                        onClick={() => void onTap(comment, label)}
-                    >
-                        {label}
-                    </button>
-                );
-            })}
-        </div>
+        <>
+            <div className="mj_TrackerActions" role="group" aria-label="Quick replies">
+                {actions.map((label) => {
+                    const chosen = comment.chosen_action === label;
+                    const keyed = gated.includes(label);
+                    return (
+                        <button
+                            key={label}
+                            type="button"
+                            className={`mj_TrackerAction${chosen ? " mj_TrackerAction_chosen" : ""}`}
+                            aria-pressed={chosen}
+                            disabled={inert || keyed}
+                            title={keyed ? APPROVE_ON_DEVICE : undefined}
+                            onClick={() => void onTap(comment, label)}
+                        >
+                            {label}
+                        </button>
+                    );
+                })}
+            </div>
+            {gated.length > 0 && !readOnly ? (
+                <p className="mj_TrackerActions_keyNote">{approvalKeyNote(gated.length === actions.length)}</p>
+            ) : null}
+        </>
     );
 }
 
@@ -211,35 +224,47 @@ function CommentActions({
  * item has a write in flight, since a tap racing a close would reopen the item it closes.
  */
 function ItemActions({
+    item,
     actions,
     chosen,
     disabled,
     onTap,
 }: {
+    item: Pick<TrackerItem, "step_up" | "consent">;
     actions: string[];
     chosen: string | null;
     disabled: boolean;
     onTap: (label: string) => void;
 }): React.ReactElement | null {
     if (actions.length === 0) return null;
+    // A button that needs the approval key cannot be answered from this app: it stays visible, so
+    // the user sees what is asked, but only the iPhone and Mac apps can sign the tap.
+    const gated = actions.filter((label) => needsApprovalKey(item, label));
     return (
-        <div className="mj_TrackerActions mj_TrackerItemActions" role="group" aria-label="Quick replies">
-            {actions.map((label) => {
-                const isChosen = label === chosen;
-                return (
-                    <button
-                        key={label}
-                        type="button"
-                        className={`mj_TrackerAction${isChosen ? " mj_TrackerAction_chosen" : ""}`}
-                        aria-pressed={isChosen}
-                        disabled={disabled}
-                        onClick={isChosen ? undefined : () => onTap(label)}
-                    >
-                        {label}
-                    </button>
-                );
-            })}
-        </div>
+        <>
+            <div className="mj_TrackerActions mj_TrackerItemActions" role="group" aria-label="Quick replies">
+                {actions.map((label) => {
+                    const isChosen = label === chosen;
+                    const keyed = gated.includes(label);
+                    return (
+                        <button
+                            key={label}
+                            type="button"
+                            className={`mj_TrackerAction${isChosen ? " mj_TrackerAction_chosen" : ""}`}
+                            aria-pressed={isChosen}
+                            disabled={disabled || keyed}
+                            title={keyed ? APPROVE_ON_DEVICE : undefined}
+                            onClick={isChosen ? undefined : () => onTap(label)}
+                        >
+                            {label}
+                        </button>
+                    );
+                })}
+            </div>
+            {gated.length > 0 ? (
+                <p className="mj_TrackerActions_keyNote">{approvalKeyNote(gated.length === actions.length)}</p>
+            ) : null}
+        </>
     );
 }
 
@@ -283,6 +308,7 @@ function SpawnConsentCard({
     rows,
     closed,
     answersBelow,
+    answersHere = true,
     onAnswer,
     onOpenRoom,
     onStopSession,
@@ -291,6 +317,8 @@ function SpawnConsentCard({
     closed: boolean;
     /** The item carries its own Approve and Decline, drawn under its body. */
     answersBelow: boolean;
+    /** False when the ask is answered only on the item's own buttons (a step-up ask). */
+    answersHere?: boolean;
     onAnswer: (decision: AgentSpawnDecision, signal?: AbortSignal) => Promise<void>;
     onOpenRoom: (roomId: string) => void;
     onStopSession: (convoId: string) => void;
@@ -305,8 +333,11 @@ function SpawnConsentCard({
                     outcome={outcome}
                     coordinatorDecision={coordinatorDecision}
                     isReadOnly={!answerable}
-                    settled={closed}
-                    onAnswer={answerable ? onAnswer : undefined}
+                    answersElsewhere={!answersHere}
+                    // Answered on the item's buttons, the card never saw the tap: until its outcome
+                    // arrives it must not read as answered elsewhere or expired.
+                    settled={answersHere ? closed : false}
+                    onAnswer={answerable && answersHere ? onAnswer : undefined}
                     onOpen={onOpenRoom}
                     onStopSession={onStopSession}
                 />
@@ -348,6 +379,7 @@ function SpawnConsentCard({
  */
 function CommentCard({
     client,
+    item,
     comment,
     author,
     onOpenConvo,
@@ -358,6 +390,8 @@ function CommentCard({
     onSendSelection,
 }: {
     client: MatronJournalClient;
+    /** The item the comment is on: its step-up mark covers the comment's buttons too. */
+    item: Pick<TrackerItem, "step_up" | "consent">;
     comment: TrackerComment;
     author: CommentAuthor | null;
     onOpenConvo: (convoId: string) => void;
@@ -443,6 +477,7 @@ function CommentCard({
                 onTrackerLink={onTrackerLink}
             />
             <CommentActions
+                item={item}
                 comment={comment}
                 disabled={actionsDisabled}
                 readOnly={actionsReadOnly}
@@ -460,6 +495,7 @@ function CommentCard({
  */
 function CommentRow({
     client,
+    item,
     comment,
     author,
     onOpenConvo,
@@ -470,6 +506,8 @@ function CommentRow({
     onSendSelection,
 }: {
     client: MatronJournalClient;
+    /** The item the comment is on: its step-up mark covers the comment's buttons too. */
+    item: Pick<TrackerItem, "step_up" | "consent">;
     comment: TrackerComment;
     author: CommentAuthor | null;
     onOpenConvo: (convoId: string) => void;
@@ -482,6 +520,7 @@ function CommentRow({
     const card = (
         <CommentCard
             client={client}
+            item={item}
             comment={comment}
             author={author}
             onOpenConvo={onOpenConvo}
@@ -1160,8 +1199,12 @@ export function ItemDetail({
     // A spawn item whose answerable card is drawn above answers on the card's own buttons; the
     // item's Approve and Decline (the same answer on the journal) would only repeat them. Until the
     // card read finishes neither is offered, so a button cannot appear and then vanish under a tap.
+    // A step-up spawn ask (one aimed at a protected box) is answered on the item's own buttons,
+    // whose Approve says to use the iPhone or Mac and whose Decline works here; its card is shown
+    // read-only.
     const cardAnswers =
         !!spawnRequestId &&
+        item.step_up !== true &&
         (spawnRows === undefined || (!!spawnRows.request && isAnswerableAgentSpawn(spawnRows.request.payload)));
     const offeredActions = cardAnswers ? [] : offeredItemActions(item);
     const [sendingAction, setSendingAction] = useState<{ itemId: string; label: string } | null>(null);
@@ -1425,6 +1468,7 @@ export function ItemDetail({
                 {spawnRequestId && spawnRows ? (
                     <SpawnConsentCard
                         answersBelow={offeredActions.length > 0}
+                        answersHere={item.step_up !== true}
                         rows={spawnRows}
                         closed={item.state === "closed"}
                         onAnswer={answerSpawn}
@@ -1459,6 +1503,7 @@ export function ItemDetail({
                     />
                 ) : (
                     <ItemActions
+                        item={item}
                         actions={offeredActions}
                         chosen={chosenAction}
                         disabled={busy}
@@ -1472,6 +1517,7 @@ export function ItemDetail({
                             <CommentRow
                                 key={comment.id}
                                 client={client}
+                                item={item}
                                 comment={comment}
                                 author={commentAuthor(comment, conversations, agents)}
                                 onOpenConvo={openConvo}
