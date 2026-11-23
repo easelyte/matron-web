@@ -282,6 +282,11 @@ Please see LICENSE files in the repository root for full details.
     gap: 8px;
     padding: 2px 12px 10px 42px;
 }
+.mj_TrackerItemRow_keyNote {
+    align-self: center;
+    font-size: 12px;
+    color: var(--mj-color-text-secondary);
+}
 
 .mj_TrackerItemRow_glyph,
 .mj_TrackerMissionRow_glyph {
@@ -1306,6 +1311,12 @@ button.mj_TrackerCrumb:hover {
     flex-wrap: wrap;
     gap: var(--mj-space-2x);
     margin-top: var(--mj-space-1x);
+}
+/* Under buttons that need the approval key, which only the iPhone and Mac apps hold. */
+.mj_TrackerActions_keyNote {
+    margin: var(--mj-space-1x) 0 var(--mj-space-3x);
+    font-size: 12px;
+    color: var(--mj-color-text-secondary);
 }
 .mj_TrackerAction {
     padding: var(--mj-space-1x) var(--mj-space-3x);

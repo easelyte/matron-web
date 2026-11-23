@@ -1226,6 +1226,15 @@ export interface TrackerItem {
     handover?: TrackerHandover | null;
     /** Filed by another person (or their agent) under a `contribute` share. */
     contributor?: TrackerContributor;
+    /** A tap on this item's buttons, or on any follow-up question in its thread, must be signed
+     *  with one of the account's approval keys. Absent on a journal that predates approval keys;
+     *  false on another person's view of the item. */
+    step_up?: boolean;
+    /** What the user signs over with such a tap, as short named lines; null when none was given. */
+    subject?: Record<string, string> | null;
+    /** The kind of request a consent item stands for (`spawn`, `chat`, `transfer`, …); null on an
+     *  ordinary item. Absent on a journal that predates the field. */
+    consent?: string | null;
 }
 
 export interface TrackerComment {
@@ -1267,7 +1276,10 @@ export interface TrackerComment {
     /** The id of the user's own reply this one is the edited version of: that reply was cancelled
      *  before it reached the agent and this one sent in its place, so the thread shows this reply
      *  alone. Absent on every other comment. */
-    replaces?: string;
+    replaces?: string; /** A tap on this comment's `actions` must be signed with an approval key. */
+    step_up?: boolean;
+    /** What the user signs over with such a tap; null when none was given. */
+    subject?: Record<string, string> | null;
 }
 
 /** `POST /items/:id/comments` body. `action` + `reply_to` is a tap on a comment's button;

@@ -31,6 +31,8 @@ import {
     kindLabel,
     needsUser,
     oneLine,
+    needsApprovalKey,
+    APPROVE_ON_DEVICE,
     rowConsentAnswers,
 } from "./format";
 import { CommentBubbleGlyph, ImagePlaceholderGlyph, MissionGlyph, TrackerGlyph } from "./glyphs";
@@ -165,18 +167,26 @@ export const ItemRow = React.memo(function ItemRow({
             <div className="mj_TrackerItemRow_wrap mj_TrackerItemRow_answerWrap">
                 {row}
                 <div className="mj_TrackerItemRow_answers" role="group" aria-label={`Answer number ${item.num}`}>
-                    {answers.map((label) => (
-                        <button
-                            key={label}
-                            type="button"
-                            className={`mj_TrackerAction${isAffirmativeAnswer(label) ? " mj_TrackerAction_affirmative" : ""}`}
-                            aria-label={`${label}, number ${item.num}`}
-                            disabled={answerBusy}
-                            onClick={() => onAnswer?.(item.num, label)}
-                        >
-                            {label}
-                        </button>
-                    ))}
+                    {answers.map((label) =>
+                        // An approval that needs the approval key is made on the iPhone or Mac: the
+                        // row says so where its Approve would be, and keeps its Decline.
+                        needsApprovalKey(item, label) ? (
+                            <span key={label} className="mj_TrackerItemRow_keyNote">
+                                {APPROVE_ON_DEVICE}
+                            </span>
+                        ) : (
+                            <button
+                                key={label}
+                                type="button"
+                                className={`mj_TrackerAction${isAffirmativeAnswer(label) ? " mj_TrackerAction_affirmative" : ""}`}
+                                aria-label={`${label}, number ${item.num}`}
+                                disabled={answerBusy}
+                                onClick={() => onAnswer?.(item.num, label)}
+                            >
+                                {label}
+                            </button>
+                        ),
+                    )}
                 </div>
             </div>
         );

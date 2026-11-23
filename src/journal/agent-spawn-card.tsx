@@ -14,6 +14,7 @@ Please see LICENSE files in the repository root for full details.
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { JournalApiError } from "./api";
+import { APPROVE_ON_DEVICE, approvalKeyNote } from "./tracker/format";
 import { formatClockTime } from "./date-format";
 import {
     coordinatorBadgeText,
@@ -66,7 +67,7 @@ function spawnOutcomeCardLabel(payload: EventPayload): string {
 }
 
 export type AgentSpawnDecision = "approve" | "deny";
-type AgentSpawnLocalPhase = "idle" | "sending" | "retryable" | "already-answered" | "gone";
+type AgentSpawnLocalPhase = "idle" | "sending" | "retryable" | "needs-key" | "already-answered" | "gone";
 
 const noopAgentSpawnAnswer = (_decision: AgentSpawnDecision, _signal?: AbortSignal): Promise<void> => Promise.resolve();
 const noopAgentSpawnOpen = (): void => undefined;
@@ -106,6 +107,7 @@ export function AgentSpawnCard({
     outcome,
     coordinatorDecision,
     isReadOnly = false,
+    answersElsewhere = false,
     settled = false,
     onAnswer = noopAgentSpawnAnswer,
     onOpen = noopAgentSpawnOpen,
@@ -116,6 +118,9 @@ export function AgentSpawnCard({
     /** The Coordinator's answer to this card, when it gave one. */
     coordinatorDecision?: CoordinatorDecision;
     isReadOnly?: boolean;
+    /** The ask is answered somewhere else on the page (a step-up ask's item buttons): no Approve
+     *  or Deny here, but everything else the live card shows. */
+    answersElsewhere?: boolean;
     /**
      * The ask has stopped waiting for an answer although no `spawn_outcome` is here yet: the
      * consent item the journal filed for it is closed. The journal closes that item the moment the
@@ -203,6 +208,13 @@ export function AgentSpawnCard({
                 if (!mountedRef.current || attemptId !== attemptIdRef.current) return;
                 if (error instanceof JournalApiError && error.status === 409) setLocalPhase("already-answered");
                 else if (error instanceof JournalApiError && error.status === 404) setLocalPhase("gone");
+                // A spawn onto a protected box: approving it needs the user's approval key, which
+                // only the iPhone and Mac apps hold. Deny still works here.
+                else if (
+                    error instanceof JournalApiError &&
+                    (error.code === "approval_required" || error.code === "approval_invalid")
+                )
+                    setLocalPhase("needs-key");
                 else setLocalPhase("retryable"); // transport/other error -> back to answerable
             },
         );
@@ -226,6 +238,7 @@ export function AgentSpawnCard({
     const open = !resolved && !settled && !coordinatorAnswered;
     const pending = open && phase === "sending";
     const retryable = open && phase === "retryable";
+    const needsKey = open && phase === "needs-key";
     const gone = !resolved && !coordinatorAnswered && phase === "gone";
     // Settled with no outcome: this card's own accepted answer stands; otherwise the ask was
     // answered elsewhere (or expired), the same fact a 409 reports. An in-flight send never
@@ -286,7 +299,7 @@ export function AgentSpawnCard({
             )}
             {/* A read-only card (sub-chat transcript viewer) never shows live Approve/Deny — it
                 mirrors PromptCard's own isReadOnly gate (§ Task-1-review scope A). */}
-            {!isReadOnly && !pseudoResolved && (
+            {!isReadOnly && !answersElsewhere && !pseudoResolved && (
                 <div className="mj_PromptOptions">
                     <button type="button" disabled={pending} onClick={() => handleAnswer("deny")}>
                         Deny
@@ -294,7 +307,8 @@ export function AgentSpawnCard({
                     <button
                         type="button"
                         className="mj_PromptOption_affirmative"
-                        disabled={pending}
+                        disabled={pending || needsKey}
+                        title={needsKey ? APPROVE_ON_DEVICE : undefined}
                         onClick={() => handleAnswer("approve")}
                     >
                         Approve
@@ -311,6 +325,12 @@ export function AgentSpawnCard({
                 <div className="mj_PromptResolved mj_PromptResolved_retryable">
                     <span className="mj_PromptGlyph" aria-hidden="true" />
                     <span className="mj_Muted">Reply not confirmed — tap to retry</span>
+                </div>
+            )}
+            {needsKey && (
+                <div className="mj_PromptResolved mj_PromptResolved_retryable">
+                    <span className="mj_PromptGlyph" aria-hidden="true" />
+                    <span className="mj_Muted">{approvalKeyNote(false)}</span>
                 </div>
             )}
             {alreadyAnswered && (
