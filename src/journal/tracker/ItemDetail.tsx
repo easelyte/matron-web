@@ -85,7 +85,8 @@ type SendSelection = (comment: TrackerComment, selected: string[]) => Promise<vo
  * selection that differs from the latest answer, just as re-tapping a chosen one-tap button does
  * nothing. `readOnly` keeps the rows as the record of what was offered and chosen (a closed item)
  * with no Send: they show the latest answer, never ticks the user changed but did not send. The owner remounts it (a `key` on the answer) when the latest answer changes, so a
- * refetched answer resets the ticks.
+ * refetched answer resets the ticks. Beside Send, one toggle ticks every label ("Select all") or,
+ * once every label is ticked, none ("Unselect all"); like a tick, it sends nothing.
  */
 function MultiSelectActions({
     actions,
@@ -106,6 +107,7 @@ function MultiSelectActions({
     if (actions.length === 0) return null;
     const selected = actions.filter((label) => ticked.has(label));
     const unchanged = selected.length === chosen.length && selected.every((label) => chosen.includes(label));
+    const allTicked = selected.length === actions.length;
     const toggle = (label: string): void =>
         setTicked((current) => {
             const next = new Set(current);
@@ -136,6 +138,14 @@ function MultiSelectActions({
             })}
             {readOnly ? null : (
                 <div className="mj_TrackerChecklist_foot">
+                    <button
+                        type="button"
+                        className="mj_TrackerChecklist_all"
+                        disabled={disabled}
+                        onClick={() => setTicked(allTicked ? new Set() : new Set(actions))}
+                    >
+                        {allTicked ? "Unselect all" : "Select all"}
+                    </button>
                     <button
                         type="button"
                         className="mj_TrackerChecklist_send"

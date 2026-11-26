@@ -1944,6 +1944,30 @@ describe("ItemDetail multi-select questions", () => {
         expect(typeof key).toBe("string");
     });
 
+    it("ticks every label with Select all, then unticks them all with Unselect all, sending nothing", async () => {
+        const client = fakeClient();
+        const { container } = await mount(detail(client, question()));
+        const list = itemList(container);
+        const toggle = (): HTMLButtonElement => list.querySelector<HTMLButtonElement>(".mj_TrackerChecklist_all")!;
+
+        await tick(boxes(list)[1]);
+        expect(toggle().textContent).toBe("Select all");
+        await act(async () => {
+            toggle().click();
+        });
+        expect(boxes(list).every((box) => box.checked)).toBe(true);
+        expect(toggle().textContent).toBe("Unselect all");
+        expect(send(list).disabled).toBe(false);
+        expect(client.commentItem).not.toHaveBeenCalled();
+
+        await act(async () => {
+            toggle().click();
+        });
+        expect(boxes(list).some((box) => box.checked)).toBe(false);
+        expect(toggle().textContent).toBe("Select all");
+        expect(send(list).disabled).toBe(true);
+    });
+
     it("disables Send again when every tick is taken off", async () => {
         const client = fakeClient();
         const { container } = await mount(detail(client, question()));

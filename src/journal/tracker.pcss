@@ -1406,7 +1406,25 @@ button.mj_TrackerCrumb:hover {
 .mj_TrackerChecklist_foot {
     display: flex;
     justify-content: flex-end;
+    gap: var(--mj-space-2x);
     margin-top: var(--mj-space-1x);
+}
+/* Ticks every answer, or none once all are ticked: a quiet button beside Send. */
+.mj_TrackerChecklist_all {
+    padding: var(--mj-space-1x) var(--mj-space-4x);
+    border-radius: var(--mj-radius-pill);
+    border: 1px solid var(--mj-color-border-subtle);
+    background: var(--mj-color-bg-canvas-default);
+    color: var(--mj-color-text-primary);
+    font: var(--mj-font-label);
+    cursor: pointer;
+}
+.mj_TrackerChecklist_all:hover:not(:disabled) {
+    background: var(--mj-state-hover);
+}
+.mj_TrackerChecklist_all:disabled {
+    cursor: default;
+    opacity: 0.45;
 }
 .mj_TrackerChecklist_send {
     padding: var(--mj-space-1x) var(--mj-space-4x);
